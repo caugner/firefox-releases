@@ -21,7 +21,9 @@ class FontList;  // See the separate SharedFontList-impl.h header
  * A Pointer in the shared font list contains a packed index/offset pair,
  * with a 12-bit index into the array of shared-memory blocks, and a 20-bit
  * offset into the block.
- * The maximum size of each block is therefore 2^20 bytes (1048576).
+ * The maximum size of each block is therefore 2^20 bytes (1 MB) if sub-parts
+ * of the block are to be allocated; however, a larger block (up to 2^32 bytes)
+ * can be created and used as a single allocation if necessary.
  */
 struct Pointer {
  private:
@@ -205,7 +207,8 @@ struct Family {
              bool aBundled = false,       // [win] font was bundled with the app
                                           // rather than system-installed
              bool aBadUnderline = false,  // underline-position in font is bad
-             bool aForceClassic = false   // [win] use "GDI classic" rendering
+             bool aForceClassic = false,  // [win] use "GDI classic" rendering
+             bool aAltLocale = false      // font is alternate localized family
              )
         : mKey(aKey),
           mName(aName),
@@ -213,7 +216,8 @@ struct Family {
           mVisibility(aVisibility),
           mBundled(aBundled),
           mBadUnderline(aBadUnderline),
-          mForceClassic(aForceClassic) {}
+          mForceClassic(aForceClassic),
+          mAltLocale(aAltLocale) {}
     bool operator<(const InitData& aRHS) const { return mKey < aRHS.mKey; }
     bool operator==(const InitData& aRHS) const {
       return mKey == aRHS.mKey && mName == aRHS.mName &&
@@ -227,6 +231,7 @@ struct Family {
     bool mBundled;
     bool mBadUnderline;
     bool mForceClassic;
+    bool mAltLocale;
   };
 
   /**
@@ -276,6 +281,7 @@ struct Family {
   bool IsBadUnderlineFamily() const { return mIsBadUnderlineFamily; }
   bool IsForceClassic() const { return mIsForceClassic; }
   bool IsSimple() const { return mIsSimple; }
+  bool IsAltLocaleFamily() const { return mIsAltLocale; }
 
   // IsInitialized indicates whether the family has been populated with faces,
   // and is therefore ready to use.
@@ -302,10 +308,11 @@ struct Family {
   Pointer mFaces;         // Pointer to array of |mFaceCount| face pointers
   uint32_t mIndex;        // [win] Top bit set indicates app-bundled font family
   FontVisibility mVisibility;
-  bool mIsBadUnderlineFamily;
-  bool mIsForceClassic;
   bool mIsSimple;  // family allows simplified style matching: mFaces contains
                    // exactly 4 entries [Regular, Bold, Italic, BoldItalic].
+  bool mIsBadUnderlineFamily : 1;
+  bool mIsForceClassic : 1;
+  bool mIsAltLocale : 1;
 };
 
 /**

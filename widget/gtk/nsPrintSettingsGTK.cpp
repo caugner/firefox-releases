@@ -424,7 +424,7 @@ nsPrintSettingsGTK::GetPrinterName(nsAString& aPrinter) {
       return NS_OK;
     }
   }
-  aPrinter = NS_ConvertUTF8toUTF16(gtkPrintName);
+  CopyUTF8toUTF16(MakeStringSpan(gtkPrintName), aPrinter);
   return NS_OK;
 }
 
@@ -476,17 +476,18 @@ nsPrintSettingsGTK::SetScaling(double aScaling) {
 }
 
 NS_IMETHODIMP
-nsPrintSettingsGTK::GetPaperName(nsAString& aPaperName) {
+nsPrintSettingsGTK::GetPaperId(nsAString& aPaperId) {
   const gchar* name =
       gtk_paper_size_get_name(gtk_page_setup_get_paper_size(mPageSetup));
-  aPaperName = NS_ConvertUTF8toUTF16(name);
+  CopyUTF8toUTF16(mozilla::MakeStringSpan(name), aPaperId);
   return NS_OK;
 }
 NS_IMETHODIMP
-nsPrintSettingsGTK::SetPaperName(const nsAString& aPaperName) {
-  NS_ConvertUTF16toUTF8 gtkPaperName(aPaperName);
+nsPrintSettingsGTK::SetPaperId(const nsAString& aPaperId) {
+  NS_ConvertUTF16toUTF8 gtkPaperName(aPaperId);
 
   // Convert these Gecko names to GTK names
+  // XXX (jfkthame): is this still relevant?
   if (gtkPaperName.EqualsIgnoreCase("letter"))
     gtkPaperName.AssignLiteral(GTK_PAPER_NAME_LETTER);
   else if (gtkPaperName.EqualsIgnoreCase("legal"))

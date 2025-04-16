@@ -21,7 +21,7 @@
 class APZCTreeManagerTester : public APZCTesterBase {
  protected:
   virtual void SetUp() {
-    gfxPlatform::GetPlatform();
+    APZCTesterBase::SetUp();
     APZThreadUtils::SetThreadAssertionsEnabled(false);
     APZThreadUtils::SetControllerThread(NS_GetCurrentThread());
 
@@ -59,7 +59,7 @@ class APZCTreeManagerTester : public APZCTesterBase {
   template <typename Callback>
   void ModifyFrameMetrics(Layer* aLayer, Callback aCallback) {
     ScrollMetadata metadata = aLayer->GetScrollMetadata(0);
-    aCallback(metadata.GetMetrics());
+    aCallback(metadata, metadata.GetMetrics());
     aLayer->SetScrollMetadata(metadata);
   }
 

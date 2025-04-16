@@ -8,12 +8,15 @@ from pathlib import Path
 from mozperftest.metadata import Metadata
 from mozperftest.environment import MachEnvironment
 from mozperftest.hooks import Hooks
+from mozperftest.script import ScriptInfo
 
 
 HERE = Path(__file__).parent
+ROOT = Path(HERE, "..", "..", "..", "..").resolve()
 EXAMPLE_TESTS_DIR = os.path.join(HERE, "data", "samples")
 EXAMPLE_TEST = os.path.join(EXAMPLE_TESTS_DIR, "perftest_example.js")
 EXAMPLE_XPCSHELL_TEST = Path(EXAMPLE_TESTS_DIR, "test_xpcshell.js")
+EXAMPLE_XPCSHELL_TEST2 = Path(EXAMPLE_TESTS_DIR, "test_xpcshell_flavor2.js")
 BT_DATA = Path(HERE, "data", "browsertime-results", "browsertime.json")
 BT_DATA_VIDEO = Path(HERE, "data", "browsertime-results-video", "browsertime.json")
 DMG = Path(HERE, "data", "firefox.dmg")
@@ -59,8 +62,13 @@ def get_running_env(**kwargs):
     }
     mach_args.update(kwargs)
     hooks = Hooks(mach_cmd, mach_args.pop("hooks", None))
+    tests = mach_args.get("tests", [])
+    if len(tests) > 0:
+        script = ScriptInfo(tests[0])
+    else:
+        script = None
     env = MachEnvironment(mach_cmd, hooks=hooks, **mach_args)
-    metadata = Metadata(mach_cmd, env, "desktop-browser")
+    metadata = Metadata(mach_cmd, env, "desktop-browser", script)
     return mach_cmd, metadata, env
 
 

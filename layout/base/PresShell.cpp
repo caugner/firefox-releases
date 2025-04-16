@@ -58,6 +58,7 @@
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/DocumentInlines.h"
 #include "mozilla/dom/UserActivation.h"
+#include "mozilla/dom/WindowGlobalChild.h"
 #include "nsAnimationManager.h"
 #include "nsNameSpaceManager.h"  // for Pref-related rule management (bugs 22963,20760,31816)
 #include "nsFlexContainerFrame.h"
@@ -6646,8 +6647,12 @@ void PresShell::RecordMouseLocation(WidgetGUIEvent* aEvent) {
           mPresContext, aEvent->mWidget, aEvent->mRefPoint, rootView);
       mMouseEventTargetGuid = InputAPZContext::GetTargetLayerGuid();
     } else {
-      mMouseLocation = nsLayoutUtils::GetEventCoordinatesRelativeTo(
-          aEvent, RelativeTo{rootFrame, ViewportType::Visual});
+      RelativeTo relativeTo{rootFrame};
+      if (rootFrame->PresContext()->IsRootContentDocumentCrossProcess()) {
+        relativeTo.mViewportType = ViewportType::Visual;
+      }
+      mMouseLocation =
+          nsLayoutUtils::GetEventCoordinatesRelativeTo(aEvent, relativeTo);
       mMouseEventTargetGuid = InputAPZContext::GetTargetLayerGuid();
     }
     mMouseLocationWasSetBySynthesizedMouseEventForTests =
@@ -6982,7 +6987,9 @@ nsresult PresShell::EventHandler::HandleEventUsingCoordinates(
   WidgetMouseEvent* mouseEvent = aGUIEvent->AsMouseEvent();
   bool isWindowLevelMouseExit =
       (aGUIEvent->mMessage == eMouseExitFromWidget) &&
-      (mouseEvent && mouseEvent->mExitFrom == WidgetMouseEvent::eTopLevel);
+      (mouseEvent &&
+       (mouseEvent->mExitFrom.value() == WidgetMouseEvent::eTopLevel ||
+        mouseEvent->mExitFrom.value() == WidgetMouseEvent::ePuppet));
 
   // Get the frame at the event point. However, don't do this if we're
   // capturing and retargeting the event because the captured frame will
@@ -7604,7 +7611,8 @@ bool PresShell::EventHandler::MaybeDiscardOrDelayMouseEvent(
              (aGUIEvent->mMessage == eMouseUp ||
               // contextmenu is triggered after right mouseup on Windows and
               // right mousedown on other platforms.
-              aGUIEvent->mMessage == eContextMenu)) {
+              aGUIEvent->mMessage == eContextMenu ||
+              aGUIEvent->mMessage == eMouseExitFromWidget)) {
     UniquePtr<DelayedMouseEvent> delayedMouseEvent =
         MakeUnique<DelayedMouseEvent>(aGUIEvent->AsMouseEvent());
     PushDelayedEventIntoQueue(std::move(delayedMouseEvent));
@@ -8500,6 +8508,14 @@ void PresShell::EventHandler::RecordEventHandlingResponsePerformance(
   if (GetDocument() &&
       GetDocument()->GetReadyStateEnum() != Document::READYSTATE_COMPLETE) {
     Telemetry::Accumulate(Telemetry::LOAD_INPUT_EVENT_RESPONSE_MS, millis);
+
+    if (GetDocument()->ShouldIncludeInTelemetry(
+            /* aAllowExtensionURIs = */ false) &&
+        GetDocument()->IsTopLevelContentDocument()) {
+      if (auto* wgc = GetDocument()->GetWindowGlobalChild()) {
+        Unused << wgc->SendSubmitLoadInputEventResponsePreloadTelemetry(millis);
+      }
+    }
   }
 
   if (!sLastInputProcessed || sLastInputProcessed < aEvent->mTimeStamp) {
@@ -9584,7 +9600,7 @@ bool PresShell::DoReflow(nsIFrame* target, bool aInterruptible,
   // constrained height implies page/column breaking.
   LogicalSize reflowSize(wm, size.ISize(wm), NS_UNCONSTRAINEDSIZE);
   ReflowInput reflowInput(mPresContext, target, rcx, reflowSize,
-                          ReflowInput::CALLER_WILL_INIT);
+                          ReflowInput::InitFlag::CallerWillInit);
   reflowInput.mOrthogonalLimit = size.BSize(wm);
 
   if (isRoot) {
@@ -11108,6 +11124,23 @@ void PresShell::MarkFixedFramesForReflow(IntrinsicDirty aIntrinsicDirty) {
   }
 }
 
+static void AppendSubtree(nsIDocShell* aDocShell,
+                          nsTArray<nsCOMPtr<nsIContentViewer>>& aArray) {
+  if (nsCOMPtr<nsIContentViewer> cv = aDocShell->GetContentViewer()) {
+    aArray.AppendElement(cv);
+  }
+
+  int32_t n = aDocShell->GetInProcessChildCount();
+  for (int32_t i = 0; i < n; i++) {
+    nsCOMPtr<nsIDocShellTreeItem> childItem;
+    aDocShell->GetInProcessChildAt(i, getter_AddRefs(childItem));
+    if (childItem) {
+      nsCOMPtr<nsIDocShell> child(do_QueryInterface(childItem));
+      AppendSubtree(child, aArray);
+    }
+  }
+}
+
 void PresShell::MaybeReflowForInflationScreenSizeChange() {
   nsPresContext* pc = GetPresContext();
   const bool fontInflationWasEnabled = FontSizeInflationEnabled();
@@ -11122,13 +11155,8 @@ void PresShell::MaybeReflowForInflationScreenSizeChange() {
     return;
   }
   if (nsCOMPtr<nsIDocShell> docShell = pc->GetDocShell()) {
-    nsCOMPtr<nsIContentViewer> cv;
-    docShell->GetContentViewer(getter_AddRefs(cv));
-    if (!cv) {
-      return;
-    }
     nsTArray<nsCOMPtr<nsIContentViewer>> array;
-    cv->AppendSubtree(array);
+    AppendSubtree(docShell, array);
     for (uint32_t i = 0, iEnd = array.Length(); i < iEnd; ++i) {
       nsCOMPtr<nsIContentViewer> cv = array[i];
       if (RefPtr<PresShell> descendantPresShell = cv->GetPresShell()) {

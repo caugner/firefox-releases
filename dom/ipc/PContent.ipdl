@@ -128,6 +128,9 @@ using JSActorMessageKind from "mozilla/dom/JSActor.h";
 using JSActorMessageMeta from "mozilla/dom/PWindowGlobal.h";
 using mozilla::PermissionDelegateHandler::DelegatedPermissionList from "mozilla/PermissionDelegateIPCUtils.h";
 using refcounted class nsILayoutHistoryState from "nsILayoutHistoryState.h";
+using class mozilla::dom::SessionHistoryInfo from "mozilla/dom/SessionHistoryEntry.h";
+using nsPoint from "mozilla/GfxMessageUtils.h";
+using struct mozilla::dom::LoadingSessionHistoryInfo from "mozilla/dom/SessionHistoryEntry.h";
 
 union ChromeRegistryItem
 {
@@ -548,6 +551,8 @@ child:
 
     async ClearImageCache(bool privateLoader, bool chrome);
 
+    async ClearStyleSheetCache(nsIPrincipal? aForPrincipal);
+
     async SetOffline(bool offline);
     async SetConnectivity(bool connectivity);
     async SetCaptivePortalState(int32_t aState);
@@ -914,6 +919,9 @@ child:
     async HistoryCommitIndexAndLength(MaybeDiscardedBrowsingContext aContext,
                                       uint32_t aIndex, uint32_t aLength,
                                       nsID aChangeID);
+
+   async DispatchLocationChangeEvent(MaybeDiscardedBrowsingContext aContext);
+
 parent:
     /**
      * This is a temporary way to pass index and length through parent process.
@@ -933,6 +941,12 @@ parent:
 
     async SessionHistoryEntryCacheKey(MaybeDiscardedBrowsingContext aContext,
                                       uint32_t aCacheKey);
+
+    async SessionHistoryEntryStoreWindowNameInContiguousEntries(MaybeDiscardedBrowsingContext aContext,
+                                                                nsString aName);
+
+    async GetLoadingSessionHistoryInfoFromParent(MaybeDiscardedBrowsingContext aContext)
+        returns (LoadingSessionHistoryInfo? aLoadingInfo, int32_t aRequestedIndex, int32_t aLength);
 
     async InitBackground(Endpoint<PBackgroundParent> aEndpoint);
 
@@ -1127,13 +1141,6 @@ parent:
     async FirstIdle();
 
     async DeviceReset();
-
-    sync KeywordToURI(nsCString keyword, bool isPrivateContext)
-        returns (nsString providerName, nsIInputStream postData, nsIURI uri);
-    sync GetFixupURIInfo(nsString uriString, uint32_t fixupflags, bool aAllowThirdPartyFixup)
-        returns (nsString providerName, nsIInputStream postData, nsIURI preferredURI);
-
-    sync NotifyKeywordSearchLoading(nsString providerName, nsString keyword);
 
     async CopyFavicon(nsIURI oldURI, nsIURI newURI, Principal aLoadingPrincipal, bool isPrivate);
 
@@ -1657,12 +1664,14 @@ parent:
      */
     async AbortOtherOrientationPendingPromises(MaybeDiscardedBrowsingContext aContext);
 
+    async HistoryReload(MaybeDiscardedBrowsingContext aContext, uint32_t aReloadFlags);
+
     async NotifyOnHistoryReload(MaybeDiscardedBrowsingContext aContext)
             returns (bool canReload, nsDocShellLoadState? loadState,
                      bool? reloadActiveEntry);
 
     async HistoryCommit(MaybeDiscardedBrowsingContext aContext,
-                        uint64_t aLoadID, nsID aChangeID);
+                        uint64_t aLoadID, nsID aChangeID, uint32_t aLoadType);
 
     async HistoryGo(MaybeDiscardedBrowsingContext aContext,
                     int32_t aOffset) returns(int32_t requestedIndex);
@@ -1673,6 +1682,22 @@ parent:
                              OriginAttributes aOriginAttributes,
                              nsID? aAgentClusterId)
       returns (BlobURLDataRequestResult aResult);
+
+    async SetActiveSessionHistoryEntryForTop(MaybeDiscardedBrowsingContext aContext,
+                                       nsPoint? previousScrollPosition,
+                                       SessionHistoryInfo info, uint32_t loadType,
+                                       nsID changeID);
+    async SetActiveSessionHistoryEntryForFrame(
+        MaybeDiscardedBrowsingContext aContext, nsPoint? previousScrollPosition,
+        SessionHistoryInfo info, int32_t childOffset, nsID changeID);
+    async ReplaceActiveSessionHistoryEntry(
+        MaybeDiscardedBrowsingContext aContext, SessionHistoryInfo info);
+
+    async RemoveDynEntriesFromActiveSessionHistoryEntry(
+        MaybeDiscardedBrowsingContext aContext);
+
+    async RemoveFromSessionHistory(
+        MaybeDiscardedBrowsingContext aContext);
 
 both:
     async ScriptError(nsString message, nsString sourceName, nsString sourceLine,
@@ -1732,6 +1757,8 @@ both:
     async SetActiveBrowsingContext(MaybeDiscardedBrowsingContext aContext);
     async UnsetActiveBrowsingContext(MaybeDiscardedBrowsingContext aContext);
     async SetFocusedElement(MaybeDiscardedBrowsingContext aContext, bool aNeedsFocus);
+    async FinalizeFocusOuter(MaybeDiscardedBrowsingContext aContext, bool aCanFocus,
+                             CallerType aCallerType);
 parent:
     async BlurToParent(MaybeDiscardedBrowsingContext aFocusedBrowsingContext,
                       MaybeDiscardedBrowsingContext aBrowsingContextToClear,

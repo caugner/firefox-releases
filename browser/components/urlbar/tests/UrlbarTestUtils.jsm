@@ -58,14 +58,31 @@ var UrlbarTestUtils = {
   },
 
   /**
+   * If tests initialize UrlbarTestUtils, they may need to call this function in
+   * their cleanup callback, or else their scope will affect subsequent tests.
+   * This is usually only required for tests outside browser/components/urlbar.
+   */
+  uninit() {
+    this._testScope = null;
+  },
+
+  /**
    * Waits to a search to be complete.
    * @param {object} win The window containing the urlbar
    * @returns {Promise} Resolved when done.
    */
   async promiseSearchComplete(win) {
-    return this.promisePopupOpen(win, () => {}).then(
-      () => win.gURLBar.lastQueryContextPromise
-    );
+    let waitForQuery = () => {
+      return this.promisePopupOpen(win, () => {}).then(
+        () => win.gURLBar.lastQueryContextPromise
+      );
+    };
+    let context = await waitForQuery();
+    if (win.gURLBar.searchMode) {
+      // Search mode may start a second query.
+      context = await waitForQuery();
+    }
+    return context;
   },
 
   /**
@@ -115,6 +132,7 @@ var UrlbarTestUtils = {
       window.gURLBar.setPageProxyState("invalid");
       window.gURLBar.startQuery();
     }
+
     return this.promiseSearchComplete(window);
   },
 
@@ -129,7 +147,7 @@ var UrlbarTestUtils = {
   async waitForAutocompleteResultAt(win, index) {
     // TODO Bug 1530338: Quantum Bar doesn't yet implement lazy results replacement.
     await this.promiseSearchComplete(win);
-    if (index >= win.gURLBar.view._rows.length) {
+    if (index >= win.gURLBar.view._rows.children.length) {
       throw new Error("Not enough results");
     }
     return win.gURLBar.view._rows.children[index];
@@ -201,7 +219,6 @@ var UrlbarTestUtils = {
         keyword: result.payload.keyword,
         query: result.payload.query,
         suggestion: result.payload.suggestion,
-        isSearchHistory: result.payload.isSearchHistory,
         inPrivateWindow: result.payload.inPrivateWindow,
         isPrivateEngine: result.payload.isPrivateEngine,
       };
@@ -406,6 +423,11 @@ var UrlbarTestUtils = {
       return;
     }
 
+    // Default to full search mode for less verbose tests.
+    if (!expectedSearchMode.hasOwnProperty("isPreview")) {
+      expectedSearchMode.isPreview = false;
+    }
+
     this.Assert.deepEqual(
       window.gURLBar.searchMode,
       expectedSearchMode,
@@ -467,7 +489,13 @@ var UrlbarTestUtils = {
 
     // If this is an engine search mode, check that all results are either
     // search results with the same engine or have the same host as the engine.
-    if (expectedSearchMode.engineName && this.isPopupOpen(window)) {
+    // Search mode preview can show other results since it is not supposed to
+    // start a query.
+    if (
+      expectedSearchMode.engineName &&
+      !expectedSearchMode.isPreview &&
+      this.isPopupOpen(window)
+    ) {
       let resultCount = this.getResultCount(window);
       for (let i = 0; i < resultCount; i++) {
         let result = await this.getDetailsOfResultAt(window, i);
@@ -494,7 +522,8 @@ var UrlbarTestUtils = {
   },
 
   /**
-   * Enters search mode by clicking a one-off.
+   * Enters search mode by clicking a one-off.  The view must already be open
+   * before you call this.
    * @param {object} window
    * @param {object} searchMode
    *   If given, the one-off matching this search mode will be clicked; it
@@ -526,6 +555,10 @@ var UrlbarTestUtils = {
       }
     }
 
+    if (!searchMode.entry) {
+      searchMode.entry = "oneoff";
+    }
+
     let oneOff = buttons.find(o =>
       searchMode.engineName
         ? o.engine.name == searchMode.engineName
@@ -549,13 +582,13 @@ var UrlbarTestUtils = {
    * @param {boolean} [waitForSearch]
    *   Whether the test should wait for a search after exiting search mode.
    *   Defaults to true.
-   * @note One and only one of `backspace` and `clickClose` should be passed
-   *       as true.
+   * @note If neither `backspace` nor `clickClose` is given, we'll default to
+   *       backspacing.
    * @note Can only be used if UrlbarTestUtils has been initialized with init().
    */
   async exitSearchMode(
     window,
-    { backspace, clickClose, waitForSearch = true }
+    { backspace, clickClose, waitForSearch = true } = {}
   ) {
     let urlbar = window.gURLBar;
     // If the Urlbar is not extended, ignore the clickClose parameter. The close
@@ -570,6 +603,10 @@ var UrlbarTestUtils = {
         urlbar.setSearchMode({});
       }
       return;
+    }
+
+    if (!backspace && !clickClose) {
+      backspace = true;
     }
 
     if (backspace) {
@@ -648,6 +685,9 @@ var UrlbarTestUtils = {
         {
           input: {
             isPrivate: false,
+            onFirstResult() {
+              return false;
+            },
             window: {
               location: {
                 href: AppConstants.BROWSER_CHROME_URL,

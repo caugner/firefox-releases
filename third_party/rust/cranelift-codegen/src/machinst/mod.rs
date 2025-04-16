@@ -133,6 +133,8 @@ pub mod adapter;
 pub use adapter::*;
 pub mod helpers;
 pub use helpers::*;
+pub mod inst_common;
+pub use inst_common::*;
 
 /// A machine instruction.
 pub trait MachInst: Clone + Debug {
@@ -280,7 +282,7 @@ pub trait MachInstEmit: MachInst {
 /// emitting a function body.
 pub trait MachInstEmitState<I: MachInst>: Default + Clone + Debug {
     /// Create a new emission state given the ABI object.
-    fn new(abi: &dyn ABIBody<I = I>) -> Self;
+    fn new(abi: &dyn ABICallee<I = I>) -> Self;
     /// Update the emission state before emitting an instruction that is a
     /// safepoint.
     fn pre_safepoint(&mut self, _stack_map: StackMap) {}

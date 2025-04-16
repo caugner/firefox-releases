@@ -14,6 +14,7 @@
 
 #include "gc/GCParallelTask.h"
 #include "gc/Heap.h"
+#include "js/AllocPolicy.h"
 #include "js/Class.h"
 #include "js/HeapAPI.h"
 #include "js/TracingAPI.h"
@@ -89,7 +90,7 @@ class NurseryDecommitTask : public GCParallelTask {
   void queueRange(size_t newCapacity, NurseryChunk& chunk,
                   const AutoLockHelperThreadState& lock);
 
-  void run() override;
+  void run(AutoLockHelperThreadState& lock) override;
   void decommitChunk(gc::Chunk* chunk);
   void decommitRange(AutoLockHelperThreadState& lock);
 

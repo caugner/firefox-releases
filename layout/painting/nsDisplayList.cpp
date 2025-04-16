@@ -38,6 +38,7 @@
 #include "mozilla/ViewportUtils.h"
 #include "nsCSSRendering.h"
 #include "nsCSSRenderingGradients.h"
+#include "nsRefreshDriver.h"
 #include "nsRegion.h"
 #include "nsStyleStructInlines.h"
 #include "nsStyleTransformMatrix.h"
@@ -174,6 +175,34 @@ void UpdateDisplayItemData(nsPaintedDisplayItem* aItem) {
 }
 
 /* static */
+already_AddRefed<ActiveScrolledRoot> ActiveScrolledRoot::CreateASRForFrame(
+    const ActiveScrolledRoot* aParent, nsIScrollableFrame* aScrollableFrame,
+    bool aIsRetained) {
+  nsIFrame* f = do_QueryFrame(aScrollableFrame);
+
+  RefPtr<ActiveScrolledRoot> asr;
+  if (aIsRetained) {
+    asr = f->GetProperty(ActiveScrolledRootCache());
+  }
+
+  if (!asr) {
+    asr = new ActiveScrolledRoot();
+
+    if (aIsRetained) {
+      RefPtr<ActiveScrolledRoot> ref = asr;
+      f->SetProperty(ActiveScrolledRootCache(), ref.forget().take());
+    }
+  }
+  asr->mParent = aParent;
+  asr->mScrollableFrame = aScrollableFrame;
+  asr->mViewId = Nothing();
+  asr->mDepth = aParent ? aParent->mDepth + 1 : 1;
+  asr->mRetained = aIsRetained;
+
+  return asr.forget();
+}
+
+/* static */
 bool ActiveScrolledRoot::IsAncestor(const ActiveScrolledRoot* aAncestor,
                                     const ActiveScrolledRoot* aDescendant) {
   if (!aAncestor) {
@@ -204,6 +233,21 @@ nsCString ActiveScrolledRoot::ToString(
     }
   }
   return std::move(str);
+}
+
+ViewID ActiveScrolledRoot::GetViewId() const {
+  if (!mViewId.isSome()) {
+    nsIContent* content = mScrollableFrame->GetScrolledFrame()->GetContent();
+    mViewId = Some(nsLayoutUtils::FindOrCreateIDFor(content));
+  }
+  return *mViewId;
+}
+
+ActiveScrolledRoot::~ActiveScrolledRoot() {
+  if (mScrollableFrame && mRetained) {
+    nsIFrame* f = do_QueryFrame(mScrollableFrame);
+    f->RemoveProperty(ActiveScrolledRootCache());
+  }
 }
 
 static uint64_t AddAnimationsForWebRender(
@@ -3508,11 +3552,9 @@ bool nsDisplayBackgroundImage::AppendBackgroundItemsToTop(
   }
 
   bool drawBackgroundColor = false;
-  // Dummy initialisation to keep Valgrind/Memcheck happy.
-  // See bug 1122375 comment 1.
+  bool drawBackgroundImage = false;
   nscolor color = NS_RGBA(0, 0, 0, 0);
   if (!nsCSSRendering::IsCanvasFrame(aFrame) && bg) {
-    bool drawBackgroundImage;
     color = nsCSSRendering::DetermineBackgroundColor(
         presContext, bgSC, aFrame, drawBackgroundImage, drawBackgroundColor);
   }
@@ -3592,7 +3634,7 @@ bool nsDisplayBackgroundImage::AppendBackgroundItemsToTop(
     return true;
   }
 
-  if (!bg) {
+  if (!bg || !drawBackgroundImage) {
     aList->AppendToTop(&bgItemList);
     return false;
   }
@@ -7097,13 +7139,10 @@ LayerState nsDisplayScrollInfoLayer::GetLayerState(
 UniquePtr<ScrollMetadata> nsDisplayScrollInfoLayer::ComputeScrollMetadata(
     LayerManager* aLayerManager,
     const ContainerLayerParameters& aContainerParameters) {
-  nsRect viewport = mScrollFrame->GetRect() - mScrollFrame->GetPosition() +
-                    mScrollFrame->GetOffsetToCrossDoc(ReferenceFrame());
-
   ScrollMetadata metadata = nsLayoutUtils::ComputeScrollMetadata(
       mScrolledFrame, mScrollFrame, mScrollFrame->GetContent(),
-      ReferenceFrame(), aLayerManager, mScrollParentId, viewport, Nothing(),
-      false, Some(aContainerParameters));
+      ReferenceFrame(), aLayerManager, mScrollParentId, mScrollFrame->GetSize(),
+      Nothing(), false, Some(aContainerParameters));
   metadata.GetMetrics().SetIsScrollInfoLayer(true);
   nsIScrollableFrame* scrollableFrame = mScrollFrame->GetScrollTargetFrame();
   if (scrollableFrame) {

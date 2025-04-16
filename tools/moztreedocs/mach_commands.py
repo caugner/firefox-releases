@@ -18,16 +18,19 @@ import uuid
 from functools import partial
 from pprint import pprint
 
+from mach.registrar import Registrar
 from mozbuild.base import MachCommandBase
 from mach.decorators import (
     Command,
     CommandArgument,
     CommandProvider,
+    SubCommand,
 )
 
 here = os.path.abspath(os.path.dirname(__file__))
 topsrcdir = os.path.abspath(os.path.dirname(os.path.dirname(here)))
 DOC_ROOT = os.path.join(topsrcdir, "docs")
+BASE_LINK = "http://gecko-docs.mozilla.org-l1.s3-website.us-west-2.amazonaws.com/"
 JSDOC_NOT_FOUND = """\
 JSDoc==3.5.5 is required to build the docs but was not found on your system.
 Please install it globally by running:
@@ -137,7 +140,7 @@ class Documentation(MachCommandBase):
         from livereload import Server
         from moztreedocs.package import create_tarball
 
-        unique_id = str(uuid.uuid1())
+        unique_id = "%s/%s" % (self.project, str(uuid.uuid1()))
 
         outdir = outdir or os.path.join(self.topobjdir, "docs")
         savedir = os.path.join(outdir, fmt)
@@ -169,13 +172,11 @@ class Documentation(MachCommandBase):
         # Upload the artifact containing the link to S3
         # This would be used by code-review to post the link to Phabricator
         if write_url is not None:
-            base_link = (
-                "http://gecko-docs.mozilla.org-l1.s3-website.us-west-2.amazonaws.com/"
-            )
-            unique_link = base_link + unique_id + "/index.html"
+            unique_link = BASE_LINK + unique_id + "/index.html"
             with open(write_url, "w") as fp:
                 fp.write(unique_link)
                 fp.flush()
+            print("Generated " + write_url)
 
         if archive:
             archive_path = os.path.join(outdir, "%s.tar.gz" % self.project)
@@ -216,9 +217,9 @@ class Documentation(MachCommandBase):
 
     def _dump_sphinx_backtrace(self):
         """
-            If there is a sphinx dump file, read and return
-            its content.
-            By default, it isn't displayed.
+        If there is a sphinx dump file, read and return
+        its content.
+        By default, it isn't displayed.
         """
         pattern = "sphinx-err-*"
         output = ""
@@ -264,7 +265,7 @@ class Documentation(MachCommandBase):
 
     def _post_process_html(self, savedir):
         """
-            Perform some operations on the generated html to fix some URL
+        Perform some operations on the generated html to fix some URL
         """
         MERMAID_VERSION = "8.4.4"
         for root, _, files in os.walk(savedir):
@@ -396,6 +397,33 @@ class Documentation(MachCommandBase):
         pprint(all_redirects, indent=1)
 
         s3_set_redirects(all_redirects)
+
+        unique_link = BASE_LINK + unique_id + "/index.html"
+        print("Uploaded documentation can be accessed here " + unique_link)
+
+    @SubCommand(
+        "doc",
+        "mach-telemetry",
+        description="Generate documentation from Glean metrics.yaml files",
+    )
+    def generate_telemetry_docs(self):
+        args = [
+            "glean_parser",
+            "translate",
+            "-f",
+            "markdown",
+            "-o",
+            os.path.join(topsrcdir, "python/mach/docs/"),
+            os.path.join(topsrcdir, "python/mach/pings.yaml"),
+            os.path.join(topsrcdir, "python/mach/metrics.yaml"),
+        ]
+        metrics_paths = [
+            handler.metrics_path
+            for handler in Registrar.command_handlers.values()
+            if handler.metrics_path is not None
+        ]
+        args.extend([os.path.join(self.topsrcdir, path) for path in set(metrics_paths)])
+        subprocess.check_output(args)
 
     def check_jsdoc(self):
         try:

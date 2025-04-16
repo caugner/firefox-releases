@@ -44,6 +44,8 @@ class ChildSHistory : public nsISupports, public nsWrapperCache {
 
   explicit ChildSHistory(BrowsingContext* aBrowsingContext);
 
+  void SetBrowsingContext(BrowsingContext* aBrowsingContext);
+
   // Create or destroy the session history implementation in the child process.
   // This can be removed once session history is stored exclusively in the
   // parent process.
@@ -67,6 +69,8 @@ class ChildSHistory : public nsISupports, public nsWrapperCache {
   void Go(int32_t aOffset, bool aRequireUserInteraction, ErrorResult& aRv);
   void AsyncGo(int32_t aOffset, bool aRequireUserInteraction);
 
+  void GotoIndex(int32_t aIndex, ErrorResult& aRv);
+
   void RemovePendingHistoryNavigations();
 
   /**
@@ -74,6 +78,10 @@ class ChildSHistory : public nsISupports, public nsWrapperCache {
    */
   void EvictLocalContentViewers();
 
+  // GetLegacySHistory and LegacySHistory have been deprecated. Don't
+  // use these, but instead handle the interaction with nsISHistory in
+  // the parent process.
+  nsISHistory* GetLegacySHistory(ErrorResult& aError);
   nsISHistory* LegacySHistory();
 
   void SetIndexAndLength(uint32_t aIndex, uint32_t aLength,

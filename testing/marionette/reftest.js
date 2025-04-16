@@ -4,34 +4,27 @@
 
 "use strict";
 
-const { OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
-const { Preferences } = ChromeUtils.import(
-  "resource://gre/modules/Preferences.jsm"
-);
+const EXPORTED_SYMBOLS = ["reftest"];
+
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 
-const { assert } = ChromeUtils.import("chrome://marionette/content/assert.js");
-const { capture } = ChromeUtils.import(
-  "chrome://marionette/content/capture.js"
-);
-const { InvalidArgumentError } = ChromeUtils.import(
-  "chrome://marionette/content/error.js"
-);
-const { Log } = ChromeUtils.import("chrome://marionette/content/log.js");
-const { print } = ChromeUtils.import("chrome://marionette/content/print.js");
+XPCOMUtils.defineLazyModuleGetters(this, {
+  E10SUtils: "resource://gre/modules/E10SUtils.jsm",
+  OS: "resource://gre/modules/osfile.jsm",
+  Preferences: "resource://gre/modules/Preferences.jsm",
 
-XPCOMUtils.defineLazyGetter(this, "logger", Log.get);
+  assert: "chrome://marionette/content/assert.js",
+  capture: "chrome://marionette/content/capture.js",
+  error: "chrome://marionette/content/error.js",
+  Log: "chrome://marionette/content/log.js",
+  navigate: "chrome://marionette/content/navigate.js",
+  print: "chrome://marionette/content/print.js",
+});
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "E10SUtils",
-  "resource://gre/modules/E10SUtils.jsm"
-);
-
-this.EXPORTED_SYMBOLS = ["reftest"];
+XPCOMUtils.defineLazyGetter(this, "logger", () => Log.get());
 
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 const XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
@@ -102,7 +95,8 @@ reftest.Runner = class {
   setup(urlCount, screenshotMode, isPrint = false) {
     this.isPrint = isPrint;
 
-    this.parentWindow = assert.open(this.driver.getCurrentWindow());
+    assert.open(this.driver.getBrowsingContext({ top: true }));
+    this.parentWindow = this.driver.getCurrentWindow();
 
     this.screenshotMode =
       SCREENSHOT_MODE[screenshotMode] || SCREENSHOT_MODE.unexpected;
@@ -132,11 +126,9 @@ reftest.Runner = class {
     if (Services.appinfo.OS == "Android") {
       logger.debug("Using current window");
       reftestWin = this.parentWindow;
-      await this.driver.listener.navigateTo({
-        commandID: this.driver.listener.activeMessageId,
-        pageTimeout: timeout,
-        url: "about:blank",
-        loadEventExpected: false,
+      await navigate.waitForNavigationCompleted(this.driver, () => {
+        const browsingContext = this.driver.getBrowsingContext();
+        navigate.navigateTo(browsingContext, "about:blank");
       });
     } else {
       logger.debug("Using separate window");
@@ -152,6 +144,10 @@ reftest.Runner = class {
 
     let found = this.driver.findWindow([reftestWin], () => true);
     await this.driver.setWindowHandle(found, true);
+
+    const url = await this.driver._getCurrentURL();
+    this.lastURL = url.href;
+    logger.debug(`loaded initial URL: ${this.lastURL}`);
 
     let browserRect = reftestWin.gBrowser.getBoundingClientRect();
     logger.debug(`new: ${browserRect.width}x${browserRect.height}`);
@@ -455,7 +451,9 @@ max-width: ${width}px; max-height: ${height}px`;
     logger.info(`Testing ${lhsUrl} ${relation} ${rhsUrl}`);
 
     if (relation !== "==" && relation != "!=") {
-      throw new InvalidArgumentError("Reftest operator should be '==' or '!='");
+      throw new error.InvalidArgumentError(
+        "Reftest operator should be '==' or '!='"
+      );
     }
 
     let lhsIter, lhsCount, rhsIter, rhsCount;
@@ -618,14 +616,14 @@ max-width: ${width}px; max-height: ${height}px`;
   }
 
   async loadTestUrl(win, url, timeout) {
+    const browsingContext = this.driver.getBrowsingContext({ top: true });
+
     logger.debug(`Starting load of ${url}`);
-    let navigateOpts = {
-      commandId: this.driver.listener.activeMessageId,
-      pageTimeout: timeout,
-    };
     if (this.lastURL === url) {
       logger.debug(`Refreshing page`);
-      await this.driver.listener.refresh(navigateOpts);
+      await navigate.waitForNavigationCompleted(this.driver, () => {
+        navigate.refresh(browsingContext);
+      });
     } else {
       // HACK: DocumentLoadListener currently doesn't know how to
       // process-switch loads in a non-tabbed <browser>. We need to manually
@@ -634,14 +632,14 @@ max-width: ${width}px; max-height: ${height}px`;
       //
       // See bug 1636169.
       this.updateBrowserRemotenessByURL(win.gBrowser, url);
+      navigate.navigateTo(browsingContext, url);
 
-      navigateOpts.url = url;
-      navigateOpts.loadEventExpected = false;
-      await this.driver.listener.navigateTo(navigateOpts);
       this.lastURL = url;
     }
 
     this.ensureFocus(win);
+
+    // TODO: Move all the wait logic into the parent process (bug 1648444)
     await this.driver.listener.reftestWait(url, this.useRemoteTabs);
   }
 

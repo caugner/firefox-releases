@@ -47,11 +47,12 @@ inline LauncherResult<nt::DataDirectoryEntry> GetImageDirectoryViaFileIo(
  * @param aRemoteExeImage HMODULE referencing the child process's executable
  *                        binary that we are touching. This value is used to
  *                        determine the base address of the binary within the
- *                        target process.
+ *                        target process.  If nullptr is passed, we use
+ *                        |aTargetProcess| to retrieve a value.
  */
 inline LauncherVoidResult RestoreImportDirectory(
     const wchar_t* aFullImagePath, const nt::PEHeaders& aLocalExeImage,
-    HANDLE aTargetProcess, HMODULE aRemoteExeImage) {
+    HANDLE aTargetProcess, HMODULE aRemoteExeImage = nullptr) {
   uint32_t importDirEntryRva;
   PIMAGE_DATA_DIRECTORY importDirEntry =
       aLocalExeImage.GetImageDirectoryEntryPtr(IMAGE_DIRECTORY_ENTRY_IMPORT,
@@ -80,6 +81,15 @@ inline LauncherVoidResult RestoreImportDirectory(
   }
 
   nt::DataDirectoryEntry toWrite = realImportDirectory.unwrap();
+
+  if (!aRemoteExeImage) {
+    LauncherResult<HMODULE> remoteImageBase =
+        nt::GetProcessExeModule(aTargetProcess);
+    if (remoteImageBase.isErr()) {
+      return remoteImageBase.propagateErr();
+    }
+    aRemoteExeImage = remoteImageBase.unwrap();
+  }
 
   void* remoteAddress =
       nt::PEHeaders::HModuleToBaseAddr<char*>(aRemoteExeImage) +

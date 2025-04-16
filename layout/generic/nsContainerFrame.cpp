@@ -301,16 +301,15 @@ const nsFrameList& nsContainerFrame::GetChildList(ChildListID aListID) const {
       return list ? *list : nsFrameList::EmptyList();
     }
     case kOverflowContainersList: {
-      nsFrameList* list = GetPropTableFrames(OverflowContainersProperty());
+      nsFrameList* list = GetOverflowContainers();
       return list ? *list : nsFrameList::EmptyList();
     }
     case kExcessOverflowContainersList: {
-      nsFrameList* list =
-          GetPropTableFrames(ExcessOverflowContainersProperty());
+      nsFrameList* list = GetExcessOverflowContainers();
       return list ? *list : nsFrameList::EmptyList();
     }
     case kBackdropList: {
-      nsFrameList* list = GetPropTableFrames(BackdropProperty());
+      nsFrameList* list = GetProperty(BackdropProperty());
       return list ? *list : nsFrameList::EmptyList();
     }
     default:
@@ -971,13 +970,13 @@ void nsContainerFrame::DoInlineIntrinsicISize(
 LogicalSize nsContainerFrame::ComputeAutoSize(
     gfxContext* aRenderingContext, WritingMode aWM, const LogicalSize& aCBSize,
     nscoord aAvailableISize, const LogicalSize& aMargin,
-    const LogicalSize& aBorder, const LogicalSize& aPadding,
-    ComputeSizeFlags aFlags) {
+    const LogicalSize& aBorderPadding, ComputeSizeFlags aFlags) {
   LogicalSize result(aWM, 0xdeadbeef, NS_UNCONSTRAINEDSIZE);
-  nscoord availBased = aAvailableISize - aMargin.ISize(aWM) -
-                       aBorder.ISize(aWM) - aPadding.ISize(aWM);
+  nscoord availBased =
+      aAvailableISize - aMargin.ISize(aWM) - aBorderPadding.ISize(aWM);
   // replaced elements always shrink-wrap
-  if ((aFlags & ComputeSizeFlags::eShrinkWrap) || IsFrameOfType(eReplaced)) {
+  if (aFlags.contains(ComputeSizeFlag::ShrinkWrap) ||
+      IsFrameOfType(eReplaced)) {
     // Only bother computing our 'auto' ISize if the result will be used.
     // It'll be used under two scenarios:
     // - If our ISize property is itself 'auto'.
@@ -1397,7 +1396,7 @@ void nsContainerFrame::ReflowOverflowContainerChildren(
 
 void nsContainerFrame::DisplayOverflowContainers(
     nsDisplayListBuilder* aBuilder, const nsDisplayListSet& aLists) {
-  nsFrameList* overflowconts = GetPropTableFrames(OverflowContainersProperty());
+  nsFrameList* overflowconts = GetOverflowContainers();
   if (overflowconts) {
     for (nsIFrame* frame : *overflowconts) {
       BuildDisplayListForChild(aBuilder, frame, aLists);
@@ -1439,9 +1438,9 @@ nsresult nsContainerFrame::StealFrame(nsIFrame* aChild) {
   if (!mFrames.ContainsFrame(aChild)) {
     nsFrameList* list = GetOverflowFrames();
     if (!list || !list->ContainsFrame(aChild)) {
-      list = GetProperty(OverflowContainersProperty());
+      list = GetOverflowContainers();
       if (!list || !list->ContainsFrame(aChild)) {
-        list = GetProperty(ExcessOverflowContainersProperty());
+        list = GetExcessOverflowContainers();
         MOZ_ASSERT(list && list->ContainsFrame(aChild),
                    "aChild isn't our child"
                    " or on a frame list not supported by StealFrame");
@@ -1580,28 +1579,6 @@ void nsContainerFrame::DeleteNextInFlowChild(nsIFrame* aNextInFlow,
   MOZ_ASSERT(!prevInFlow->GetNextInFlow(), "non null next-in-flow");
 }
 
-nsFrameList* nsContainerFrame::GetPropTableFrames(
-    FrameListPropertyDescriptor aProperty) const {
-  return GetProperty(aProperty);
-}
-
-nsFrameList* nsContainerFrame::RemovePropTableFrames(
-    FrameListPropertyDescriptor aProperty) {
-  return TakeProperty(aProperty);
-}
-
-void nsContainerFrame::SetPropTableFrames(
-    nsFrameList* aFrameList, FrameListPropertyDescriptor aProperty) {
-  MOZ_ASSERT(aProperty && aFrameList, "null ptr");
-  MOZ_ASSERT(
-      (aProperty != nsContainerFrame::OverflowContainersProperty() &&
-       aProperty != nsContainerFrame::ExcessOverflowContainersProperty()) ||
-          IsFrameOfType(nsIFrame::eCanContainOverflowContainers),
-      "this type of frame can't have overflow containers");
-  MOZ_ASSERT(!GetPropTableFrames(aProperty));
-  SetProperty(aProperty, aFrameList);
-}
-
 void nsContainerFrame::PushChildrenToOverflow(nsIFrame* aFromChild,
                                               nsIFrame* aPrevSibling) {
   MOZ_ASSERT(aFromChild, "null pointer");
@@ -1636,7 +1613,7 @@ void nsContainerFrame::PushChildren(nsIFrame* aFromChild,
     nextInFlow->mFrames.InsertFrames(nextInFlow, nullptr, tail);
   } else {
     // Add the frames to our overflow list
-    SetOverflowFrames(tail);
+    SetOverflowFrames(std::move(tail));
   }
 }
 
@@ -1752,8 +1729,7 @@ bool nsContainerFrame::PushIncompleteChildren(
     // overflowIncompleteList into that list. Otherwise, merge it into our
     // excess overflow containers list, to be drained by our next-in-flow.
     auto* nif = static_cast<nsContainerFrame*>(GetNextInFlow());
-    nsFrameList* oc =
-        nif ? nif->GetPropTableFrames(OverflowContainersProperty()) : nullptr;
+    nsFrameList* oc = nif ? nif->GetOverflowContainers() : nullptr;
     if (oc) {
       ReparentFrames(overflowIncompleteList, this, nif);
       MergeSortedFrameLists(*oc, overflowIncompleteList, GetContent());
@@ -1839,8 +1815,7 @@ void nsContainerFrame::NormalizeChildLists() {
           f = next;
         }
         if (overflowContainers->IsEmpty()) {
-          (void)TakeProperty(OverflowContainersProperty());
-          overflowContainers->Delete(PresShell());
+          DestroyOverflowContainers();
         }
         MergeSortedExcessOverflowContainers(moveToEOC);
       }
@@ -2043,7 +2018,7 @@ void nsContainerFrame::MergeSortedOverflow(nsFrameList& aList) {
   if (overflow) {
     MergeSortedFrameLists(*overflow, aList, GetContent());
   } else {
-    SetOverflowFrames(aList);
+    SetOverflowFrames(std::move(aList));
   }
 }
 
@@ -2055,12 +2030,10 @@ void nsContainerFrame::MergeSortedExcessOverflowContainers(nsFrameList& aList) {
       aList.FirstChild()->HasAnyStateBits(NS_FRAME_IS_OVERFLOW_CONTAINER),
       "this is the wrong list to put this child frame");
   MOZ_ASSERT(aList.FirstChild()->GetParent() == this);
-  nsFrameList* eoc = GetPropTableFrames(ExcessOverflowContainersProperty());
-  if (eoc) {
+  if (nsFrameList* eoc = GetExcessOverflowContainers()) {
     MergeSortedFrameLists(*eoc, aList, GetContent());
   } else {
-    SetPropTableFrames(new (PresShell()) nsFrameList(aList),
-                       ExcessOverflowContainersProperty());
+    SetExcessOverflowContainers(std::move(aList));
   }
 }
 
@@ -2246,25 +2219,22 @@ bool nsContainerFrame::DrainAndMergeSelfOverflowList() {
 
 nsFrameList* nsContainerFrame::DrainExcessOverflowContainersList(
     ChildFrameMerger aMergeFunc) {
-  nsFrameList* overflowContainers =
-      GetPropTableFrames(OverflowContainersProperty());
+  nsFrameList* overflowContainers = GetOverflowContainers();
 
   NS_ASSERTION(!(overflowContainers && GetPrevInFlow() &&
                  static_cast<nsContainerFrame*>(GetPrevInFlow())
-                     ->GetPropTableFrames(ExcessOverflowContainersProperty())),
+                     ->GetExcessOverflowContainers()),
                "conflicting overflow containers lists");
 
   if (!overflowContainers) {
-    // Drain excess from previnflow
-    nsContainerFrame* prev = (nsContainerFrame*)GetPrevInFlow();
-    if (prev) {
-      nsFrameList* excessFrames =
-          prev->RemovePropTableFrames(ExcessOverflowContainersProperty());
+    // Drain excess overflow containers from our prev-in-flow.
+    if (auto* prev = static_cast<nsContainerFrame*>(GetPrevInFlow())) {
+      AutoFrameListPtr excessFrames(PresContext(),
+                                    prev->StealExcessOverflowContainers());
       if (excessFrames) {
         excessFrames->ApplySetParent(this);
         nsContainerFrame::ReparentFrameViewList(*excessFrames, prev, this);
-        overflowContainers = excessFrames;
-        SetPropTableFrames(overflowContainers, OverflowContainersProperty());
+        overflowContainers = SetOverflowContainers(std::move(*excessFrames));
       }
     }
   }
@@ -2273,8 +2243,8 @@ nsFrameList* nsContainerFrame::DrainExcessOverflowContainersList(
   // present if our next-in-flow hasn't been reflown yet.  Move any children
   // from it that don't have a continuation in this frame to the
   // OverflowContainers list.
-  nsFrameList* selfExcessOCFrames =
-      RemovePropTableFrames(ExcessOverflowContainersProperty());
+  AutoFrameListPtr selfExcessOCFrames(PresContext(),
+                                      StealExcessOverflowContainers());
   if (selfExcessOCFrames) {
     nsFrameList toMove;
     auto child = selfExcessOCFrames->FirstChild();
@@ -2288,28 +2258,18 @@ nsFrameList* nsContainerFrame::DrainExcessOverflowContainersList(
       }
       child = next;
     }
-    if (toMove.IsEmpty()) {
-      SetPropTableFrames(selfExcessOCFrames,
-                         ExcessOverflowContainersProperty());
-    } else if (overflowContainers) {
-      aMergeFunc(*overflowContainers, toMove, this);
-      if (selfExcessOCFrames->IsEmpty()) {
-        selfExcessOCFrames->Delete(PresShell());
+
+    // If there's any remaining excess overflow containers, put them back.
+    if (selfExcessOCFrames->NotEmpty()) {
+      SetExcessOverflowContainers(std::move(*selfExcessOCFrames));
+    }
+
+    if (toMove.NotEmpty()) {
+      if (overflowContainers) {
+        aMergeFunc(*overflowContainers, toMove, this);
       } else {
-        SetPropTableFrames(selfExcessOCFrames,
-                           ExcessOverflowContainersProperty());
+        overflowContainers = SetOverflowContainers(std::move(toMove));
       }
-    } else {
-      if (selfExcessOCFrames->IsEmpty()) {
-        *selfExcessOCFrames = toMove;
-        overflowContainers = selfExcessOCFrames;
-      } else {
-        SetPropTableFrames(selfExcessOCFrames,
-                           ExcessOverflowContainersProperty());
-        auto shell = PresShell();
-        overflowContainers = new (shell) nsFrameList(toMove);
-      }
-      SetPropTableFrames(overflowContainers, OverflowContainersProperty());
     }
   }
 
@@ -2427,8 +2387,7 @@ LogicalSize nsContainerFrame::ComputeSizeWithIntrinsicDimensions(
     gfxContext* aRenderingContext, WritingMode aWM,
     const IntrinsicSize& aIntrinsicSize, const AspectRatio& aIntrinsicRatio,
     const LogicalSize& aCBSize, const LogicalSize& aMargin,
-    const LogicalSize& aBorder, const LogicalSize& aPadding,
-    ComputeSizeFlags aFlags) {
+    const LogicalSize& aBorderPadding, ComputeSizeFlags aFlags) {
   auto logicalRatio =
       aWM.IsVertical() ? aIntrinsicRatio.Inverted() : aIntrinsicRatio;
   const nsStylePosition* stylePos = StylePosition();
@@ -2521,13 +2480,12 @@ LogicalSize nsContainerFrame::ComputeSizeWithIntrinsicDimensions(
   const bool isAutoBSize =
       nsLayoutUtils::IsAutoBSize(*blockStyleCoord, aCBSize.BSize(aWM));
 
-  LogicalSize boxSizingAdjust(aWM);
-  if (stylePos->mBoxSizing == StyleBoxSizing::Border) {
-    boxSizingAdjust = aBorder + aPadding;
-  }
-  nscoord boxSizingToMarginEdgeISize = aMargin.ISize(aWM) + aBorder.ISize(aWM) +
-                                       aPadding.ISize(aWM) -
-                                       boxSizingAdjust.ISize(aWM);
+  const auto boxSizingAdjust = stylePos->mBoxSizing == StyleBoxSizing::Border
+                                   ? aBorderPadding
+                                   : LogicalSize(aWM);
+  const nscoord boxSizingToMarginEdgeISize = aMargin.ISize(aWM) +
+                                             aBorderPadding.ISize(aWM) -
+                                             boxSizingAdjust.ISize(aWM);
 
   nscoord iSize, minISize, maxISize, bSize, minBSize, maxBSize;
   enum class Stretch {
@@ -2578,15 +2536,13 @@ LogicalSize nsContainerFrame::ComputeSizeWithIntrinsicDimensions(
         }
       }
       if (stretchI != eNoStretch ||
-          (aFlags & ComputeSizeFlags::eIClampMarginBoxMinSize)) {
-        iSize =
-            std::max(nscoord(0), cbSize - aPadding.ISize(aWM) -
-                                     aBorder.ISize(aWM) - aMargin.ISize(aWM));
+          aFlags.contains(ComputeSizeFlag::IClampMarginBoxMinSize)) {
+        iSize = std::max(nscoord(0), cbSize - aBorderPadding.ISize(aWM) -
+                                         aMargin.ISize(aWM));
       }
     } else {
       // Reset this flag to avoid applying the clamping below.
-      aFlags =
-          ComputeSizeFlags(aFlags & ~ComputeSizeFlags::eIClampMarginBoxMinSize);
+      aFlags -= ComputeSizeFlag::IClampMarginBoxMinSize;
     }
   }
 
@@ -2641,15 +2597,13 @@ LogicalSize nsContainerFrame::ComputeSizeWithIntrinsicDimensions(
         }
       }
       if (stretchB != eNoStretch ||
-          (aFlags & ComputeSizeFlags::eBClampMarginBoxMinSize)) {
-        bSize =
-            std::max(nscoord(0), cbSize - aPadding.BSize(aWM) -
-                                     aBorder.BSize(aWM) - aMargin.BSize(aWM));
+          aFlags.contains(ComputeSizeFlag::BClampMarginBoxMinSize)) {
+        bSize = std::max(nscoord(0), cbSize - aBorderPadding.BSize(aWM) -
+                                         aMargin.BSize(aWM));
       }
     } else {
       // Reset this flag to avoid applying the clamping below.
-      aFlags =
-          ComputeSizeFlags(aFlags & ~ComputeSizeFlags::eBClampMarginBoxMinSize);
+      aFlags -= ComputeSizeFlag::BClampMarginBoxMinSize;
     }
   }
 
@@ -2705,7 +2659,7 @@ LogicalSize nsContainerFrame::ComputeSizeWithIntrinsicDimensions(
       // If we need to clamp the inline size to fit the CB, we use the 'stretch'
       // or 'normal' codepath.  We use the ratio-preserving 'normal' codepath
       // unless we have 'stretch' in the other axis.
-      if ((aFlags & ComputeSizeFlags::eIClampMarginBoxMinSize) &&
+      if (aFlags.contains(ComputeSizeFlag::IClampMarginBoxMinSize) &&
           stretchI != eStretch && tentISize > iSize) {
         stretchI = (stretchB == eStretch ? eStretch : eStretchPreservingRatio);
       }
@@ -2719,7 +2673,7 @@ LogicalSize nsContainerFrame::ComputeSizeWithIntrinsicDimensions(
       }
 
       // (ditto the comment about clamping the inline size above)
-      if ((aFlags & ComputeSizeFlags::eBClampMarginBoxMinSize) &&
+      if (aFlags.contains(ComputeSizeFlag::BClampMarginBoxMinSize) &&
           stretchB != eStretch && tentBSize > bSize) {
         stretchB = (stretchI == eStretch ? eStretch : eStretchPreservingRatio);
       }
@@ -2776,7 +2730,7 @@ LogicalSize nsContainerFrame::ComputeSizeWithIntrinsicDimensions(
         if (logicalRatio) {
           iSize = logicalRatio.ApplyTo(bSize);
         } else if (hasIntrinsicISize) {
-          if (!((aFlags & ComputeSizeFlags::eIClampMarginBoxMinSize) &&
+          if (!(aFlags.contains(ComputeSizeFlag::IClampMarginBoxMinSize) &&
                 intrinsicISize > iSize)) {
             iSize = intrinsicISize;
           }  // else - leave iSize as is to fill the CB
@@ -2794,7 +2748,7 @@ LogicalSize nsContainerFrame::ComputeSizeWithIntrinsicDimensions(
         if (logicalRatio) {
           bSize = logicalRatio.Inverted().ApplyTo(iSize);
         } else if (hasIntrinsicBSize) {
-          if (!((aFlags & ComputeSizeFlags::eBClampMarginBoxMinSize) &&
+          if (!(aFlags.contains(ComputeSizeFlag::BClampMarginBoxMinSize) &&
                 intrinsicBSize > bSize)) {
             bSize = intrinsicBSize;
           }  // else - leave bSize as is to fill the CB
@@ -2936,16 +2890,14 @@ void nsOverflowContinuationTracker::SetupOverflowContList() {
   nsContainerFrame* nif =
       static_cast<nsContainerFrame*>(mParent->GetNextInFlow());
   if (nif) {
-    mOverflowContList =
-        nif->GetPropTableFrames(nsContainerFrame::OverflowContainersProperty());
+    mOverflowContList = nif->GetOverflowContainers();
     if (mOverflowContList) {
       mParent = nif;
       SetUpListWalker();
     }
   }
   if (!mOverflowContList) {
-    mOverflowContList = mParent->GetPropTableFrames(
-        nsContainerFrame::ExcessOverflowContainersProperty());
+    mOverflowContList = mParent->GetExcessOverflowContainers();
     if (mOverflowContList) {
       SetUpListWalker();
     }
@@ -3048,10 +3000,14 @@ nsresult nsOverflowContinuationTracker::Insert(nsIFrame* aOverflowCont,
       aOverflowCont->AddStateBits(NS_FRAME_IS_OVERFLOW_CONTAINER);
     }
     if (!mOverflowContList) {
+      // Note: We don't use SetExcessOverflowContainers() since it requires
+      // setting a non-empty list. It's OK to manually set an empty list to
+      // ExcessOverflowContainersProperty() because we are going to insert
+      // aOverflowCont to mOverflowContList below, which guarantees an nonempty
+      // list in ExcessOverflowContainersProperty().
       mOverflowContList = new (presContext->PresShell()) nsFrameList();
-      mParent->SetPropTableFrames(
-          mOverflowContList,
-          nsContainerFrame::ExcessOverflowContainersProperty());
+      mParent->SetProperty(nsContainerFrame::ExcessOverflowContainersProperty(),
+                           mOverflowContList);
       SetUpListWalker();
     }
     if (aOverflowCont->GetParent() != mParent) {
@@ -3141,11 +3097,9 @@ void nsOverflowContinuationTracker::EndFinish(nsIFrame* aChild) {
     return;
   }
   // Forget mOverflowContList if it was deleted.
-  nsFrameList* eoc = mParent->GetProperty(
-      nsContainerFrame::ExcessOverflowContainersProperty());
+  nsFrameList* eoc = mParent->GetExcessOverflowContainers();
   if (eoc != mOverflowContList) {
-    nsFrameList* oc = static_cast<nsFrameList*>(
-        mParent->GetProperty(nsContainerFrame::OverflowContainersProperty()));
+    nsFrameList* oc = mParent->GetOverflowContainers();
     if (oc != mOverflowContList) {
       // mOverflowContList was deleted
       mPrevOverflowCont = nullptr;
@@ -3204,11 +3158,9 @@ void nsContainerFrame::SanityCheckChildListsBeforeReflow() const {
   // should be one of our children or be null.
   const auto* pif = static_cast<nsContainerFrame*>(GetPrevInFlow());
   if (pif) {
-    const nsFrameList* oc = GetPropTableFrames(OverflowContainersProperty());
-    const nsFrameList* eoc =
-        GetPropTableFrames(ExcessOverflowContainersProperty());
-    const nsFrameList* pifEOC =
-        pif->GetPropTableFrames(ExcessOverflowContainersProperty());
+    const nsFrameList* oc = GetOverflowContainers();
+    const nsFrameList* eoc = GetExcessOverflowContainers();
+    const nsFrameList* pifEOC = pif->GetExcessOverflowContainers();
     for (const nsIFrame* child : pif->GetChildList(kPrincipalList)) {
       const nsIFrame* childNIF = child->GetNextInFlow();
       MOZ_ASSERT(!childNIF || mFrames.ContainsFrame(childNIF) ||

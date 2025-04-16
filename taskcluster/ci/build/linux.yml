@@ -81,7 +81,7 @@ linux64-plain/opt:
             - linux64-cbindgen
             - linux64-dump-syms
     optimization:
-        push-interval-10: null
+        skip-unless-expanded: null
 
 linux64-fuzzing/debug:
     description: "Linux64 Fuzzing Debug"
@@ -190,6 +190,8 @@ linux64/codeql-cpp:
         symbol: linux64-cpp
         tier: 2
         kind: other
+    shipping-phase: ship
+    shipping-product: firefox
     worker-type: b-linux-xlarge
     expires-after: 4 days
     worker:
@@ -232,6 +234,14 @@ linux64/codeql-cpp:
             # the build step. Once bug 1614626 moves them to the xpcshell task,
             # this dependency can be removed.
             - linux64-fix-stacks
+    notifications:
+        subject: '{task[shipping-product]} {release_config[version]} build{release_config[build_number]}/{config[params][project]} linux64 codeql-cpp status'
+        message: '{task[shipping-product]} {release_config[version]} build{release_config[build_number]}/{config[params][project]} linux64 codeql-cpp status'
+        emails:
+            by-project:
+                mozilla-release: ["tom@mozilla.com", "freddy@mozilla.com"]
+                try: ["{config[params][owner]}"]
+                default: []
 
 
 linux64-plain/debug:
@@ -271,7 +281,7 @@ linux64-plain/debug:
             - linux64-cbindgen
             - linux64-dump-syms
     optimization:
-        push-interval-10: null
+        skip-unless-expanded: null
 
 linux64-devedition/opt:
     description: "Linux64 devedition (shippable)"
@@ -845,7 +855,7 @@ linux64-asan-fuzzing-ccov/opt:
     fetches:
         toolchain:
             - linux64-binutils
-            - linux64-clang
+            - linux64-clang-9
             - linux64-rust
             - linux64-rust-size
             - linux64-cbindgen
@@ -854,7 +864,7 @@ linux64-asan-fuzzing-ccov/opt:
             - linux64-nasm
             - linux64-node
             - linux64-lucetc
-            - wasi-sysroot
+            - wasi-sysroot-9
 
 linux64-fuzzing-ccov/opt:
     description: "Linux64 Fuzzing Opt w/ Coverage"
@@ -889,7 +899,7 @@ linux64-fuzzing-ccov/opt:
     fetches:
         toolchain:
             - linux64-binutils
-            - linux64-clang
+            - linux64-clang-9
             - linux64-gcc-7
             - linux64-cbindgen
             - linux64-dump-syms
@@ -899,7 +909,7 @@ linux64-fuzzing-ccov/opt:
             - linux64-nasm
             - linux64-node
             - linux64-lucetc
-            - wasi-sysroot
+            - wasi-sysroot-9
     optimization:
         build-fuzzing: null
 
@@ -1001,7 +1011,7 @@ linux64-asan/debug:
             # this dependency can be removed.
             - linux64-fix-stacks
     optimization:
-        push-interval-10: null
+        skip-unless-expanded: null
 
 linux64-shippable/opt:
     description: "Linux64 Shippable"
@@ -1219,7 +1229,7 @@ linux64-ccov/opt:
     fetches:
         toolchain:
             - linux64-binutils
-            - linux64-clang
+            - linux64-clang-9
             - linux64-rust
             - linux64-gcc-7
             - linux64-cbindgen
@@ -1229,7 +1239,7 @@ linux64-ccov/opt:
             - linux64-node
             - linux64-grcov
             - linux64-lucetc
-            - wasi-sysroot
+            - wasi-sysroot-9
 
 linux64-add-on-devel/opt:
     description: "Linux64 add-on-devel"
@@ -1314,7 +1324,7 @@ linux64-aarch64/opt:
             - linux64-lucetc
             - wasi-sysroot
     optimization:
-        push-interval-10: null
+        skip-unless-expanded: null
 
 linux-gcp/debug:
     description: "Linux32 Debug - built on GCP"
@@ -1365,7 +1375,7 @@ linux-gcp/debug:
             # this dependency can be removed.
             - linux64-fix-stacks
     optimization:
-        push-interval-25: null
+        skip-unless-backstop: null
 
 linux-gcp/opt:
     description: "Linux32 Opt - built on GCP"
@@ -1457,7 +1467,7 @@ linux64-gcp/debug:
             # this dependency can be removed.
             - linux64-fix-stacks
     optimization:
-        push-interval-25: null
+        skip-unless-backstop: null
 
 linux64-gcp/opt:
     description: "Linux64 Opt - built on GCP"

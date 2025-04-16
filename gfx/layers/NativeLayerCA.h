@@ -150,6 +150,8 @@ class NativeLayerRootCA : public NativeLayerRoot {
   bool mCommitPending = false;
 };
 
+class RenderSourceNLRS;
+
 class NativeLayerRootSnapshotterCA final : public NativeLayerRootSnapshotter {
  public:
   static UniquePtr<NativeLayerRootSnapshotterCA> Create(
@@ -159,16 +161,24 @@ class NativeLayerRootSnapshotterCA final : public NativeLayerRootSnapshotter {
   bool ReadbackPixels(const gfx::IntSize& aReadbackSize,
                       gfx::SurfaceFormat aReadbackFormat,
                       const Range<uint8_t>& aReadbackBuffer) override;
+  already_AddRefed<profiler_screenshots::RenderSource> GetWindowContents(
+      const gfx::IntSize& aWindowSize) override;
+  already_AddRefed<profiler_screenshots::DownscaleTarget> CreateDownscaleTarget(
+      const gfx::IntSize& aSize) override;
+  already_AddRefed<profiler_screenshots::AsyncReadbackBuffer>
+  CreateAsyncReadbackBuffer(const gfx::IntSize& aSize) override;
 
  protected:
   NativeLayerRootSnapshotterCA(NativeLayerRootCA* aLayerRoot,
                                RefPtr<gl::GLContext>&& aGL,
                                CALayer* aRootCALayer);
+  void UpdateSnapshot(const gfx::IntSize& aSize);
 
   RefPtr<NativeLayerRootCA> mLayerRoot;
   RefPtr<gl::GLContext> mGL;
-  UniquePtr<gl::MozFramebuffer>
-      mFB;  // can be null, recreated when aReadbackSize changes
+
+  // Can be null. Created and updated in UpdateSnapshot.
+  RefPtr<RenderSourceNLRS> mSnapshot;
   CARenderer* mRenderer = nullptr;  // strong
 };
 

@@ -21,6 +21,7 @@
 #include "jit/WarpBuilderShared.h"
 #include "jit/WarpSnapshot.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
+#include "vm/ArgumentsObject.h"
 
 #include "gc/ObjectKind-inl.h"
 
@@ -109,6 +110,12 @@ class MOZ_RAII WarpCacheIRTranspiler : public WarpBuilderShared {
   ObjectGroup* groupStubField(uint32_t offset) {
     return reinterpret_cast<ObjectGroup*>(readStubWord(offset));
   }
+  BaseScript* baseScriptStubField(uint32_t offset) {
+    return reinterpret_cast<BaseScript*>(readStubWord(offset));
+  }
+  const JSJitInfo* jitInfoStubField(uint32_t offset) {
+    return reinterpret_cast<const JSJitInfo*>(readStubWord(offset));
+  }
   const void* rawPointerField(uint32_t offset) {
     return reinterpret_cast<const void*>(readStubWord(offset));
   }
@@ -171,13 +178,27 @@ class MOZ_RAII WarpCacheIRTranspiler : public WarpBuilderShared {
   // (scripted function or native function with a JitEntry).
   enum class CallKind { Native, Scripted };
 
+  MOZ_MUST_USE bool updateCallInfo(MDefinition* callee, CallFlags flags);
+
   MOZ_MUST_USE bool emitCallFunction(ObjOperandId calleeId,
                                      Int32OperandId argcId, CallFlags flags,
                                      CallKind kind);
-  MOZ_MUST_USE bool emitFunApplyArgs(MDefinition* callee, CallFlags flags,
-                                     CallKind kind);
+  MOZ_MUST_USE bool emitFunApplyArgs(WrappedFunction* wrappedTarget,
+                                     CallFlags flags);
 
+  WrappedFunction* maybeWrappedFunction(MDefinition* callee, CallKind kind,
+                                        uint16_t nargs, FunctionFlags flags);
   WrappedFunction* maybeCallTarget(MDefinition* callee, CallKind kind);
+
+  bool maybeCreateThis(MDefinition* callee, CallFlags flags, CallKind kind);
+
+  MOZ_MUST_USE bool emitCallGetterResult(CallKind kind, ValOperandId receiverId,
+                                         uint32_t getterOffset, bool sameRealm,
+                                         uint32_t nargsAndFlagsOffset);
+  MOZ_MUST_USE bool emitCallSetter(CallKind kind, ObjOperandId receiverId,
+                                   uint32_t setterOffset, ValOperandId rhsId,
+                                   bool sameRealm,
+                                   uint32_t nargsAndFlagsOffset);
 
   CACHE_IR_TRANSPILER_GENERATED
 
@@ -256,12 +277,22 @@ bool WarpCacheIRTranspiler::emitGuardClass(ObjOperandId objId,
     case GuardClassKind::DataView:
       classp = &DataViewObject::class_;
       break;
+    case GuardClassKind::MappedArguments:
+      classp = &MappedArgumentsObject::class_;
+      break;
+    case GuardClassKind::UnmappedArguments:
+      classp = &UnmappedArgumentsObject::class_;
+      break;
+    case GuardClassKind::WindowProxy:
+      classp = mirGen().runtime->maybeWindowProxyClass();
+      break;
     case GuardClassKind::JSFunction:
       classp = &JSFunction::class_;
       break;
     default:
       MOZ_CRASH("not yet supported");
   }
+  MOZ_ASSERT(classp);
 
   auto* ins = MGuardToClass::New(alloc(), def, classp);
   add(ins);
@@ -409,6 +440,63 @@ bool WarpCacheIRTranspiler::emitProxySetByValue(ObjOperandId objId,
   addEffectful(ins);
 
   return resumeAfter(ins);
+}
+
+bool WarpCacheIRTranspiler::emitCallSetArrayLength(ObjOperandId objId,
+                                                   bool strict,
+                                                   ValOperandId rhsId) {
+  MDefinition* obj = getOperand(objId);
+  MDefinition* rhs = getOperand(rhsId);
+
+  auto* ins = MCallSetArrayLength::New(alloc(), obj, rhs, strict);
+  addEffectful(ins);
+
+  return resumeAfter(ins);
+}
+
+bool WarpCacheIRTranspiler::emitCallDOMGetterResult(ObjOperandId objId,
+                                                    uint32_t jitInfoOffset) {
+  MDefinition* obj = getOperand(objId);
+  const JSJitInfo* jitInfo = jitInfoStubField(jitInfoOffset);
+
+  MInstruction* ins;
+  if (jitInfo->isAlwaysInSlot) {
+    ins = MGetDOMMember::New(alloc(), jitInfo, obj, nullptr, nullptr);
+  } else {
+    // TODO(post-Warp): realms, guard operands (movable?).
+    ins = MGetDOMProperty::New(alloc(), jitInfo, DOMObjectKind::Native,
+                               (JS::Realm*)mirGen().realm->realmPtr(), obj,
+                               nullptr, nullptr);
+  }
+
+  if (!ins) {
+    return false;
+  }
+
+  if (ins->isEffectful()) {
+    addEffectful(ins);
+    pushResult(ins);
+    return resumeAfter(ins);
+  }
+
+  add(ins);
+  pushResult(ins);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitCallDOMSetter(ObjOperandId objId,
+                                              uint32_t jitInfoOffset,
+                                              ValOperandId rhsId) {
+  MDefinition* obj = getOperand(objId);
+  const JSJitInfo* jitInfo = jitInfoStubField(jitInfoOffset);
+  MDefinition* value = getOperand(rhsId);
+
+  MOZ_ASSERT(jitInfo->type() == JSJitInfo::Setter);
+  auto* set =
+      MSetDOMProperty::New(alloc(), jitInfo->setter, DOMObjectKind::Native,
+                           (JS::Realm*)mirGen().realm->realmPtr(), obj, value);
+  addEffectful(set);
+  return resumeAfter(set);
 }
 
 bool WarpCacheIRTranspiler::emitMegamorphicLoadSlotResult(ObjOperandId objId,
@@ -580,6 +668,52 @@ bool WarpCacheIRTranspiler::emitGuardSpecificFunction(
   return true;
 }
 
+bool WarpCacheIRTranspiler::emitGuardFunctionScript(
+    ObjOperandId funId, uint32_t expectedOffset, uint32_t nargsAndFlagsOffset) {
+  MDefinition* fun = getOperand(funId);
+  BaseScript* expected = baseScriptStubField(expectedOffset);
+  uint32_t nargsAndFlags = uint32StubField(nargsAndFlagsOffset);
+
+  uint16_t nargs = nargsAndFlags >> 16;
+  FunctionFlags flags = FunctionFlags(uint16_t(nargsAndFlags));
+
+  auto* ins = MGuardFunctionScript::New(alloc(), fun, expected, nargs, flags);
+  add(ins);
+
+  setOperand(funId, ins);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitGuardStringToIndex(StringOperandId strId,
+                                                   Int32OperandId resultId) {
+  MDefinition* str = getOperand(strId);
+
+  auto* ins = MGuardStringToIndex::New(alloc(), str);
+  add(ins);
+
+  return defineOperand(resultId, ins);
+}
+
+bool WarpCacheIRTranspiler::emitGuardStringToInt32(StringOperandId strId,
+                                                   Int32OperandId resultId) {
+  MDefinition* str = getOperand(strId);
+
+  auto* ins = MGuardStringToInt32::New(alloc(), str);
+  add(ins);
+
+  return defineOperand(resultId, ins);
+}
+
+bool WarpCacheIRTranspiler::emitGuardStringToNumber(StringOperandId strId,
+                                                    NumberOperandId resultId) {
+  MDefinition* str = getOperand(strId);
+
+  auto* ins = MGuardStringToDouble::New(alloc(), str);
+  add(ins);
+
+  return defineOperand(resultId, ins);
+}
+
 bool WarpCacheIRTranspiler::emitGuardNoDenseElements(ObjOperandId objId) {
   MDefinition* obj = getOperand(objId);
 
@@ -653,6 +787,16 @@ bool WarpCacheIRTranspiler::emitGuardNotClassConstructor(ObjOperandId funId) {
   add(ins);
 
   setOperand(funId, ins);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitGuardArrayIsPacked(ObjOperandId arrayId) {
+  MDefinition* array = getOperand(arrayId);
+
+  auto* ins = MGuardArrayIsPacked::New(alloc(), array);
+  add(ins);
+
+  setOperand(arrayId, ins);
   return true;
 }
 
@@ -916,6 +1060,16 @@ bool WarpCacheIRTranspiler::emitBooleanToString(BooleanOperandId inputId,
   return emitToString(inputId, resultId);
 }
 
+bool WarpCacheIRTranspiler::emitBooleanToNumber(BooleanOperandId inputId,
+                                                NumberOperandId resultId) {
+  MDefinition* input = getOperand(inputId);
+
+  auto* ins = MToDouble::New(alloc(), input);
+  add(ins);
+
+  return defineOperand(resultId, ins);
+}
+
 bool WarpCacheIRTranspiler::emitLoadInt32Result(Int32OperandId valId) {
   MDefinition* val = getOperand(valId);
   MOZ_ASSERT(val->type() == MIRType::Int32);
@@ -986,6 +1140,13 @@ bool WarpCacheIRTranspiler::emitLoadUndefined(ValOperandId resultId) {
   return defineOperand(resultId, valConst);
 }
 
+bool WarpCacheIRTranspiler::emitLoadConstantString(uint32_t strOffset,
+                                                   StringOperandId resultId) {
+  JSString* val = stringStubField(strOffset);
+  auto* valConst = constant(StringValue(val));
+  return defineOperand(resultId, valConst);
+}
+
 bool WarpCacheIRTranspiler::emitLoadEnclosingEnvironment(
     ObjOperandId objId, ObjOperandId resultId) {
   MDefinition* env = getOperand(objId);
@@ -1010,6 +1171,18 @@ bool WarpCacheIRTranspiler::emitLoadProto(ObjOperandId objId,
   add(ins);
 
   return defineOperand(resultId, ins);
+}
+
+bool WarpCacheIRTranspiler::emitLoadInstanceOfObjectResult(
+    ValOperandId lhsId, ObjOperandId protoId) {
+  MDefinition* lhs = getOperand(lhsId);
+  MDefinition* proto = getOperand(protoId);
+
+  auto* instanceOf = MInstanceOf::New(alloc(), lhs, proto);
+  addEffectful(instanceOf);
+
+  pushResult(instanceOf);
+  return resumeAfter(instanceOf);
 }
 
 bool WarpCacheIRTranspiler::emitLoadValueTag(ValOperandId valId,
@@ -1140,6 +1313,39 @@ bool WarpCacheIRTranspiler::emitLoadInt32ArrayLength(ObjOperandId objId,
   return defineOperand(resultId, length);
 }
 
+bool WarpCacheIRTranspiler::emitLoadArgumentsObjectArgResult(
+    ObjOperandId objId, Int32OperandId indexId) {
+  MDefinition* obj = getOperand(objId);
+  MDefinition* index = getOperand(indexId);
+
+  auto* load = MLoadArgumentsObjectArg::New(alloc(), obj, index);
+  add(load);
+
+  pushResult(load);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitLoadArgumentsObjectLengthResult(
+    ObjOperandId objId) {
+  MDefinition* obj = getOperand(objId);
+
+  auto* length = MArgumentsObjectLength::New(alloc(), obj);
+  add(length);
+
+  pushResult(length);
+  return true;
+}
+
+bool WarpCacheIRTranspiler::emitLoadFunctionLengthResult(ObjOperandId objId) {
+  MDefinition* obj = getOperand(objId);
+
+  auto* length = MFunctionLength::New(alloc(), obj);
+  add(length);
+
+  pushResult(length);
+  return true;
+}
+
 bool WarpCacheIRTranspiler::emitLoadTypedArrayLengthResult(
     ObjOperandId objId, uint32_t getterOffset) {
   MDefinition* obj = getOperand(objId);
@@ -1205,7 +1411,7 @@ bool WarpCacheIRTranspiler::emitLoadDenseElementResult(ObjOperandId objId,
   index = addBoundsCheck(index, length);
 
   bool needsHoleCheck = true;
-  bool loadDouble = false;  // TODO: Ion-only optimization.
+  bool loadDouble = false;  // TODO(post-Warp): Ion-only optimization.
   auto* load =
       MLoadElement::New(alloc(), elements, index, needsHoleCheck, loadDouble);
   add(load);
@@ -1324,6 +1530,18 @@ bool WarpCacheIRTranspiler::emitLoadStringCharCodeResult(
 
   pushResult(charCode);
   return true;
+}
+
+bool WarpCacheIRTranspiler::emitNewStringObjectResult(
+    uint32_t templateObjectOffset, StringOperandId strId) {
+  JSObject* templateObj = tenuredObjectStubField(templateObjectOffset);
+  MDefinition* string = getOperand(strId);
+
+  auto* obj = MNewStringObject::New(alloc(), string, templateObj);
+  addEffectful(obj);
+
+  pushResult(obj);
+  return resumeAfter(obj);
 }
 
 bool WarpCacheIRTranspiler::emitStringFromCharCodeResult(
@@ -1530,7 +1748,7 @@ bool WarpCacheIRTranspiler::emitStoreDenseElementHole(ObjOperandId objId,
   MInstruction* store;
   MStoreElementCommon* common;
   if (handleAdd) {
-    // TODO: Consider changing MStoreElementHole to match IC code after Ion.
+    // TODO(post-Warp): Consider changing MStoreElementHole to match IC code.
     auto* ins = MStoreElementHole::New(alloc(), obj, elements, index, rhs);
     store = ins;
     common = ins;
@@ -2249,11 +2467,26 @@ bool WarpCacheIRTranspiler::emitArrayPush(ObjOperandId objId,
   return resumeAfter(ins);
 }
 
+bool WarpCacheIRTranspiler::emitArrayJoinResult(ObjOperandId objId,
+                                                StringOperandId sepId) {
+  MDefinition* obj = getOperand(objId);
+  MDefinition* sep = getOperand(sepId);
+
+  // TODO(Warp): This flag only make sense for the Ion implementation. Remove it
+  // when IonBuilder is gone.
+  bool optimizeForArray = true;
+  auto* join = MArrayJoin::New(alloc(), obj, sep, optimizeForArray);
+  addEffectful(join);
+
+  pushResult(join);
+  return resumeAfter(join);
+}
+
 bool WarpCacheIRTranspiler::emitPackedArrayPopResult(ObjOperandId arrayId) {
   MDefinition* array = getOperand(arrayId);
 
-  // TODO(Warp): these flags only make sense for the Ion implementation. Remove
-  // them when IonBuilder is gone.
+  // TODO(post-Warp): these flags only make sense for the Ion implementation.
+  // Remove them when IonBuilder is gone.
   bool needsHoleCheck = true;
   bool maybeUndefined = true;
   auto* ins = MArrayPopShift::New(alloc(), array, MArrayPopShift::Pop,
@@ -2267,8 +2500,8 @@ bool WarpCacheIRTranspiler::emitPackedArrayPopResult(ObjOperandId arrayId) {
 bool WarpCacheIRTranspiler::emitPackedArrayShiftResult(ObjOperandId arrayId) {
   MDefinition* array = getOperand(arrayId);
 
-  // TODO(Warp): these flags only make sense for the Ion implementation. Remove
-  // them when IonBuilder is gone.
+  // TODO(post-Warp): these flags only make sense for the Ion implementation.
+  // Remove them when IonBuilder is gone.
   bool needsHoleCheck = true;
   bool maybeUndefined = true;
   auto* ins = MArrayPopShift::New(alloc(), array, MArrayPopShift::Shift,
@@ -2939,10 +3172,19 @@ bool WarpCacheIRTranspiler::emitLoadValueTruthyResult(ValOperandId inputId) {
   return true;
 }
 
+bool WarpCacheIRTranspiler::emitLoadWrapperTarget(ObjOperandId objId,
+                                                  ObjOperandId resultId) {
+  MDefinition* obj = getOperand(objId);
+
+  auto* ins = MLoadWrapperTarget::New(alloc(), obj);
+  add(ins);
+
+  return defineOperand(resultId, ins);
+}
+
 bool WarpCacheIRTranspiler::emitLoadArgumentSlot(ValOperandId resultId,
                                                  uint32_t slotIndex) {
-  // Reverse of GetIndexOfArgument specialized to !hasArgumentArray.
-  MOZ_ASSERT(!loc_.isSpreadOp());
+  // Reverse of GetIndexOfArgument.
 
   // Layout:
   // NewTarget | Args.. (reversed)      | ThisValue | Callee
@@ -2991,39 +3233,166 @@ bool WarpCacheIRTranspiler::emitLoadArgumentDynamicSlot(ValOperandId resultId,
   return emitLoadArgumentSlot(resultId, callInfo_->argc() + slotIndex);
 }
 
-WrappedFunction* WarpCacheIRTranspiler::maybeCallTarget(MDefinition* callee,
-                                                        CallKind kind) {
-  // CacheIR emits the following for specialized calls:
-  //     GuardSpecificFunction <callee> <func> ..
-  //     Call(Native|Scripted)Function <callee> ..
-  // We can use the <func> JSFunction object to specialize this call.
-  if (!callee->isGuardSpecificFunction()) {
-    return nullptr;
-  }
-  auto* guard = callee->toGuardSpecificFunction();
-
-  MDefinition* expectedDef = guard->expected();
-  MOZ_ASSERT(expectedDef->isConstant() || expectedDef->isNurseryObject());
+WrappedFunction* WarpCacheIRTranspiler::maybeWrappedFunction(
+    MDefinition* callee, CallKind kind, uint16_t nargs, FunctionFlags flags) {
+  MOZ_ASSERT(callee->isConstant() || callee->isNurseryObject());
 
   // If this is a native without a JitEntry, WrappedFunction needs to know the
   // target JSFunction.
   // TODO: support nursery-allocated natives with WrappedFunction, maybe by
   // storing the JSNative in the Baseline stub like flags/nargs.
-  bool isNative = guard->flags().isNativeWithoutJitEntry();
-  if (isNative && !expectedDef->isConstant()) {
+  bool isNative = flags.isNativeWithoutJitEntry();
+  if (isNative && !callee->isConstant()) {
     return nullptr;
   }
 
   JSFunction* nativeTarget = nullptr;
   if (isNative) {
-    nativeTarget = &expectedDef->toConstant()->toObject().as<JSFunction>();
+    nativeTarget = &callee->toConstant()->toObject().as<JSFunction>();
   }
-  WrappedFunction* wrappedTarget = new (alloc())
-      WrappedFunction(nativeTarget, guard->nargs(), guard->flags());
+
+  WrappedFunction* wrappedTarget =
+      new (alloc()) WrappedFunction(nativeTarget, nargs, flags);
   MOZ_ASSERT_IF(kind == CallKind::Native,
                 wrappedTarget->isNativeWithoutJitEntry());
   MOZ_ASSERT_IF(kind == CallKind::Scripted, wrappedTarget->hasJitEntry());
   return wrappedTarget;
+}
+
+WrappedFunction* WarpCacheIRTranspiler::maybeCallTarget(MDefinition* callee,
+                                                        CallKind kind) {
+  // CacheIR emits the following for specialized calls:
+  //     GuardSpecificFunction <callee> <func> ..
+  //     Call(Native|Scripted)Function <callee> ..
+  // or:
+  //     GuardClass <callee> ..
+  //     GuardFunctionScript <callee> <script> ..
+  //     CallScriptedFunction <callee> ..
+  //
+  // We can use the <func> JSFunction or <script> BaseScript to specialize this
+  // call.
+  if (callee->isGuardSpecificFunction()) {
+    auto* guard = callee->toGuardSpecificFunction();
+    return maybeWrappedFunction(guard->expected(), kind, guard->nargs(),
+                                guard->flags());
+  }
+  if (callee->isGuardFunctionScript()) {
+    MOZ_ASSERT(kind == CallKind::Scripted);
+    auto* guard = callee->toGuardFunctionScript();
+    WrappedFunction* wrappedTarget = new (alloc()) WrappedFunction(
+        /* nativeFun = */ nullptr, guard->nargs(), guard->flags());
+    MOZ_ASSERT(wrappedTarget->hasJitEntry());
+    return wrappedTarget;
+  }
+  return nullptr;
+}
+
+// If it is possible to use MCall for this call, update callInfo_ to use
+// the correct arguments. Otherwise, update the ArgFormat of callInfo_.
+bool WarpCacheIRTranspiler::updateCallInfo(MDefinition* callee,
+                                           CallFlags flags) {
+  // The transpilation will add various guards to the callee.
+  // We replace the callee referenced by the CallInfo, so that
+  // the resulting call instruction depends on these guards.
+  callInfo_->setCallee(callee);
+
+  switch (flags.getArgFormat()) {
+    case CallFlags::Standard:
+      MOZ_ASSERT(callInfo_->argFormat() == CallInfo::ArgFormat::Standard);
+      break;
+    case CallFlags::Spread:
+      MOZ_ASSERT(callInfo_->argFormat() == CallInfo::ArgFormat::Array);
+      break;
+    case CallFlags::FunCall:
+      // Note: setCallee above already changed the callee to the target
+      // function instead of the |call| function.
+      MOZ_ASSERT(!callInfo_->constructing());
+      MOZ_ASSERT(callInfo_->argFormat() == CallInfo::ArgFormat::Standard);
+
+      if (callInfo_->argc() == 0) {
+        // Special case for fun.call() with no arguments.
+        auto* undef = constant(UndefinedValue());
+        callInfo_->setThis(undef);
+      } else {
+        // The first argument for |call| is the new this value.
+        callInfo_->setThis(callInfo_->getArg(0));
+
+        // Shift down all other arguments by removing the first.
+        callInfo_->removeArg(0);
+      }
+      break;
+    case CallFlags::FunApplyArgs:
+      MOZ_ASSERT(!callInfo_->constructing());
+      MOZ_ASSERT(callInfo_->argFormat() == CallInfo::ArgFormat::Standard);
+
+      // If we are building an inlined function, we know the arguments
+      // being used.
+      if (const CallInfo* outerCallInfo = builder_->inlineCallInfo()) {
+        MDefinition* argFunc = callInfo_->thisArg();
+        MDefinition* argThis = callInfo_->getArg(0);
+
+        if (!callInfo_->replaceArgs(outerCallInfo->argv())) {
+          return false;
+        }
+        callInfo_->setCallee(argFunc);
+        callInfo_->setThis(argThis);
+      } else {
+        callInfo_->setArgFormat(CallInfo::ArgFormat::FunApplyArgs);
+      }
+      break;
+    case CallFlags::FunApplyArray: {
+      MDefinition* argFunc = callInfo_->thisArg();
+      MDefinition* argThis = callInfo_->getArg(0);
+      callInfo_->setCallee(argFunc);
+      callInfo_->setThis(argThis);
+      callInfo_->setArgFormat(CallInfo::ArgFormat::Array);
+      break;
+    }
+    default:
+      MOZ_CRASH("Unsupported arg format");
+  }
+  return true;
+}
+
+// Returns true if we are generating a call to CreateThisFromIon and
+// must check its return value.
+bool WarpCacheIRTranspiler::maybeCreateThis(MDefinition* callee,
+                                            CallFlags flags, CallKind kind) {
+  MDefinition* thisArg = callInfo_->thisArg();
+
+  if (kind == CallKind::Native) {
+    // Native functions keep the is-constructing MagicValue as |this|.
+    // If one of the arguments uses spread syntax this can be a loop phi with
+    // MIRType::Value.
+    MOZ_ASSERT(thisArg->type() == MIRType::MagicIsConstructing ||
+               thisArg->isPhi());
+    return false;
+  }
+  MOZ_ASSERT(kind == CallKind::Scripted);
+
+  if (thisArg->isCreateThisWithTemplate()) {
+    // We have already updated |this| based on MetaTwoByte. We do
+    // not need to generate a check.
+    return false;
+  }
+  if (flags.needsUninitializedThis()) {
+    MConstant* uninit = constant(MagicValue(JS_UNINITIALIZED_LEXICAL));
+    thisArg->setImplicitlyUsedUnchecked();
+    callInfo_->setThis(uninit);
+    return false;
+  }
+  // See the Native case above.
+  MOZ_ASSERT(thisArg->type() == MIRType::MagicIsConstructing ||
+             thisArg->isPhi());
+
+  MDefinition* newTarget = callInfo_->getNewTarget();
+  auto* createThis = MCreateThis::New(alloc(), callee, newTarget);
+  add(createThis);
+
+  thisArg->setImplicitlyUsedUnchecked();
+  callInfo_->setThis(createThis);
+
+  return true;
 }
 
 bool WarpCacheIRTranspiler::emitCallFunction(ObjOperandId calleeId,
@@ -3036,36 +3405,8 @@ bool WarpCacheIRTranspiler::emitCallFunction(ObjOperandId calleeId,
              static_cast<int32_t>(callInfo_->argc()));
 #endif
 
-  // The transpilation will add various guards to the callee.
-  // We replace the callee referenced by the CallInfo, so that
-  // the resulting MCall instruction depends on these guards.
-  callInfo_->setCallee(callee);
-
-  MOZ_ASSERT(flags.getArgFormat() == CallFlags::Standard ||
-             flags.getArgFormat() == CallFlags::FunCall ||
-             flags.getArgFormat() == CallFlags::FunApplyArgs);
-
-  if (flags.getArgFormat() == CallFlags::FunApplyArgs) {
-    return emitFunApplyArgs(callee, flags, kind);
-  }
-
-  if (flags.getArgFormat() == CallFlags::FunCall) {
-    MOZ_ASSERT(!callInfo_->constructing());
-
-    // Note: setCallee above already changed the callee to the target
-    // function instead of the |call| function.
-
-    if (callInfo_->argc() == 0) {
-      // Special case for fun.call() with no arguments.
-      auto* undef = constant(UndefinedValue());
-      callInfo_->setThis(undef);
-    } else {
-      // The first argument for |call| is the new this value.
-      callInfo_->setThis(callInfo_->getArg(0));
-
-      // Shift down all other arguments by removing the first.
-      callInfo_->removeArg(0);
-    }
+  if (!updateCallInfo(callee, flags)) {
+    return false;
   }
 
   WrappedFunction* wrappedTarget = maybeCallTarget(callee, kind);
@@ -3073,109 +3414,71 @@ bool WarpCacheIRTranspiler::emitCallFunction(ObjOperandId calleeId,
   bool needsThisCheck = false;
   if (callInfo_->constructing()) {
     MOZ_ASSERT(flags.isConstructing());
-
-    MDefinition* thisArg = callInfo_->thisArg();
-
-    if (kind == CallKind::Native) {
-      // Native functions keep the is-constructing MagicValue as |this|.
-      // If one of the arguments uses spread syntax this can be a loop phi with
-      // MIRType::Value.
-      MOZ_ASSERT_IF(!thisArg->isPhi(),
-                    thisArg->type() == MIRType::MagicIsConstructing);
-    } else {
-      MOZ_ASSERT(kind == CallKind::Scripted);
-
-      // TODO: if wrappedTarget->constructorNeedsUninitializedThis(), use an
-      // uninitialized-lexical constant as |this|. To do this we need to either
-      // store a new flag in the GuardSpecificFunction CacheIR/MIR instructions
-      // or we could add a new op similar to MetaTwoByte.
-
-      if (!thisArg->isCreateThisWithTemplate()) {
-        // Note: guard against Value loop phis similar to the Native case above.
-        MOZ_ASSERT_IF(!thisArg->isPhi(),
-                      thisArg->type() == MIRType::MagicIsConstructing);
-
-        MDefinition* newTarget = callInfo_->getNewTarget();
-        auto* createThis = MCreateThis::New(alloc(), callee, newTarget);
-        add(createThis);
-
-        thisArg->setImplicitlyUsedUnchecked();
-        callInfo_->setThis(createThis);
-
-        wrappedTarget = nullptr;
-        needsThisCheck = true;
-      }
+    needsThisCheck = maybeCreateThis(callee, flags, kind);
+    if (needsThisCheck) {
+      wrappedTarget = nullptr;
     }
   }
 
-  MCall* call = makeCall(*callInfo_, needsThisCheck, wrappedTarget);
-  if (!call) {
-    return false;
+  switch (callInfo_->argFormat()) {
+    case CallInfo::ArgFormat::Standard: {
+      MCall* call = makeCall(*callInfo_, needsThisCheck, wrappedTarget);
+      if (!call) {
+        return false;
+      }
+
+      if (flags.isSameRealm()) {
+        call->setNotCrossRealm();
+      }
+
+      addEffectful(call);
+      pushResult(call);
+
+      return resumeAfter(call);
+    }
+    case CallInfo::ArgFormat::Array: {
+      MInstruction* call =
+          makeSpreadCall(*callInfo_, flags.isSameRealm(), wrappedTarget);
+      if (!call) {
+        return false;
+      }
+      addEffectful(call);
+      pushResult(call);
+
+      return resumeAfter(call);
+    }
+    case CallInfo::ArgFormat::FunApplyArgs: {
+      return emitFunApplyArgs(wrappedTarget, flags);
+    }
   }
-
-  if (flags.isSameRealm()) {
-    call->setNotCrossRealm();
-  }
-
-  addEffectful(call);
-  pushResult(call);
-
-  return resumeAfter(call);
+  MOZ_CRASH("unreachable");
 }
 
-bool WarpCacheIRTranspiler::emitFunApplyArgs(MDefinition* callee,
-                                             CallFlags flags, CallKind kind) {
+bool WarpCacheIRTranspiler::emitFunApplyArgs(WrappedFunction* wrappedTarget,
+                                             CallFlags flags) {
   MOZ_ASSERT(!callInfo_->constructing());
-  WrappedFunction* wrappedTarget = maybeCallTarget(callee, kind);
+  MOZ_ASSERT(!builder_->inlineCallInfo());
 
   MDefinition* argFunc = callInfo_->thisArg();
   MDefinition* argThis = callInfo_->getArg(0);
 
-  MInstruction* result = nullptr;
+  MArgumentsLength* numArgs = MArgumentsLength::New(alloc());
+  current->add(numArgs);
 
-  // If we are building an inlined function, we know the arguments
-  // being used.
-  if (const CallInfo* outerCallInfo = builder_->inlineCallInfo()) {
-    CallInfo newCallInfo(alloc(), loc_.toRawBytecode(), /*constructing=*/false,
-                         loc_.resultIsPopped());
+  MApplyArgs* apply =
+      MApplyArgs::New(alloc(), wrappedTarget, argFunc, numArgs, argThis);
 
-    if (!newCallInfo.setArgs(outerCallInfo->argv())) {
-      return false;
-    }
-
-    newCallInfo.setCallee(argFunc);
-    newCallInfo.setThis(argThis);
-
-    bool needsThisCheck = false;
-    MCall* call = makeCall(newCallInfo, needsThisCheck, wrappedTarget);
-    if (!call) {
-      return false;
-    }
-
-    if (flags.isSameRealm()) {
-      call->setNotCrossRealm();
-    }
-    result = call;
-  } else {
-    MArgumentsLength* numArgs = MArgumentsLength::New(alloc());
-    current->add(numArgs);
-
-    MApplyArgs* apply =
-        MApplyArgs::New(alloc(), wrappedTarget, argFunc, numArgs, argThis);
-
-    if (flags.isSameRealm()) {
-      apply->setNotCrossRealm();
-    }
-    if (callInfo_->ignoresReturnValue()) {
-      apply->setIgnoresReturnValue();
-    }
-    result = apply;
+  if (flags.isSameRealm()) {
+    apply->setNotCrossRealm();
+  }
+  if (callInfo_->ignoresReturnValue()) {
+    apply->setIgnoresReturnValue();
   }
 
-  addEffectful(result);
-  pushResult(result);
+  addEffectful(apply);
+  pushResult(apply);
 
-  return resumeAfter(result);
+  return resumeAfter(apply);
 }
 
 #ifndef JS_SIMULATOR
@@ -3206,14 +3509,136 @@ bool WarpCacheIRTranspiler::emitCallInlinedFunction(ObjOperandId calleeId,
                                                     uint32_t icScriptOffset,
                                                     CallFlags flags) {
   if (callInfo_->isInlined()) {
-    // We are transpiling to generate the correct guards. Code for the inlined
-    // function itself will be generated in WarpBuilder::buildInlinedCall.
+    // We are transpiling to generate the correct guards. We also
+    // update the CallInfo to use the correct arguments. Code for the
+    // inlined function itself will be generated in
+    // WarpBuilder::buildInlinedCall.
+    MDefinition* callee = getOperand(calleeId);
+    if (!updateCallInfo(callee, flags)) {
+      return false;
+    }
+    if (callInfo_->constructing()) {
+      MOZ_ASSERT(flags.isConstructing());
+
+      // We call maybeCreateThis to update |this|, but inlined constructors
+      // never need a VM call. CallIRGenerator::getThisForScripted ensures that
+      // we don't attach a specialized stub unless we have a template object or
+      // know that the constructor needs uninitialized this.
+      MOZ_ALWAYS_FALSE(maybeCreateThis(callee, flags, CallKind::Scripted));
+      mozilla::DebugOnly<MDefinition*> thisArg = callInfo_->thisArg();
+      MOZ_ASSERT(thisArg->isCreateThisWithTemplate() ||
+                 thisArg->type() == MIRType::MagicUninitializedLexical);
+    }
+
+    switch (callInfo_->argFormat()) {
+      case CallInfo::ArgFormat::Standard:
+        break;
+      default:
+        MOZ_CRASH("Unsupported arg format");
+    }
     return true;
   }
   return emitCallFunction(calleeId, argcId, flags, CallKind::Scripted);
 }
 
-// TODO: rename the MetaTwoByte op when IonBuilder is gone.
+bool WarpCacheIRTranspiler::emitCallGetterResult(CallKind kind,
+                                                 ValOperandId receiverId,
+                                                 uint32_t getterOffset,
+                                                 bool sameRealm,
+                                                 uint32_t nargsAndFlagsOffset) {
+  MDefinition* receiver = getOperand(receiverId);
+  MDefinition* getter = objectStubField(getterOffset);
+  uint32_t nargsAndFlags = uint32StubField(nargsAndFlagsOffset);
+
+  uint16_t nargs = nargsAndFlags >> 16;
+  FunctionFlags flags = FunctionFlags(uint16_t(nargsAndFlags));
+  WrappedFunction* wrappedTarget =
+      maybeWrappedFunction(getter, kind, nargs, flags);
+
+  jsbytecode* pc = loc_.toRawBytecode();
+  bool ignoresRval = BytecodeIsPopped(pc);
+  CallInfo callInfo(alloc(), pc, /* constructing = */ false, ignoresRval);
+  callInfo.initForGetterCall(getter, receiver);
+
+  MCall* call = makeCall(callInfo, /* needsThisCheck = */ false, wrappedTarget);
+  if (!call) {
+    return false;
+  }
+
+  if (sameRealm) {
+    call->setNotCrossRealm();
+  }
+
+  addEffectful(call);
+  pushResult(call);
+
+  return resumeAfter(call);
+}
+
+bool WarpCacheIRTranspiler::emitCallScriptedGetterResult(
+    ValOperandId receiverId, uint32_t getterOffset, bool sameRealm,
+    uint32_t nargsAndFlagsOffset) {
+  return emitCallGetterResult(CallKind::Scripted, receiverId, getterOffset,
+                              sameRealm, nargsAndFlagsOffset);
+}
+
+bool WarpCacheIRTranspiler::emitCallNativeGetterResult(
+    ValOperandId receiverId, uint32_t getterOffset, bool sameRealm,
+    uint32_t nargsAndFlagsOffset) {
+  return emitCallGetterResult(CallKind::Native, receiverId, getterOffset,
+                              sameRealm, nargsAndFlagsOffset);
+}
+
+bool WarpCacheIRTranspiler::emitCallSetter(CallKind kind,
+                                           ObjOperandId receiverId,
+                                           uint32_t setterOffset,
+                                           ValOperandId rhsId, bool sameRealm,
+                                           uint32_t nargsAndFlagsOffset) {
+  MDefinition* receiver = getOperand(receiverId);
+  MDefinition* setter = objectStubField(setterOffset);
+  MDefinition* rhs = getOperand(rhsId);
+  uint32_t nargsAndFlags = uint32StubField(nargsAndFlagsOffset);
+
+  uint16_t nargs = nargsAndFlags >> 16;
+  FunctionFlags flags = FunctionFlags(uint16_t(nargsAndFlags));
+  WrappedFunction* wrappedTarget =
+      maybeWrappedFunction(setter, kind, nargs, flags);
+
+  jsbytecode* pc = loc_.toRawBytecode();
+  CallInfo callInfo(alloc(), pc, /* constructing = */ false,
+                    /* ignoresReturnValue = */ true);
+  callInfo.initForSetterCall(setter, receiver, rhs);
+
+  MCall* call = makeCall(callInfo, /* needsThisCheck = */ false, wrappedTarget);
+  if (!call) {
+    return false;
+  }
+
+  if (sameRealm) {
+    call->setNotCrossRealm();
+  }
+
+  addEffectful(call);
+  return resumeAfter(call);
+}
+
+bool WarpCacheIRTranspiler::emitCallScriptedSetter(
+    ObjOperandId receiverId, uint32_t setterOffset, ValOperandId rhsId,
+    bool sameRealm, uint32_t nargsAndFlagsOffset) {
+  return emitCallSetter(CallKind::Scripted, receiverId, setterOffset, rhsId,
+                        sameRealm, nargsAndFlagsOffset);
+}
+
+bool WarpCacheIRTranspiler::emitCallNativeSetter(ObjOperandId receiverId,
+                                                 uint32_t setterOffset,
+                                                 ValOperandId rhsId,
+                                                 bool sameRealm,
+                                                 uint32_t nargsAndFlagsOffset) {
+  return emitCallSetter(CallKind::Native, receiverId, setterOffset, rhsId,
+                        sameRealm, nargsAndFlagsOffset);
+}
+
+// TODO(post-Warp): rename the MetaTwoByte op when IonBuilder is gone.
 bool WarpCacheIRTranspiler::emitMetaTwoByte(MetaTwoByteKind kind,
                                             uint32_t functionObjectOffset,
                                             uint32_t templateObjectOffset) {

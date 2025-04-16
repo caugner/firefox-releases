@@ -553,6 +553,16 @@ function handleRequest(req, res) {
     res.setHeader("Cache-Control", "no-cache");
     res.setHeader("Alt-Svc", "h3-27=" + req.headers["x-altsvc"]);
   }
+  // for use with test_http3.js
+  else if (u.pathname === "/http3-test2") {
+    res.setHeader("Cache-Control", "no-cache");
+    res.setHeader(
+      "Alt-Svc",
+      "h2=foo2.example.com:8000,h3-27=" +
+        req.headers["x-altsvc"] +
+        ",h3-29=foo2.example.com:8443"
+    );
+  }
   // for use with test_trr.js
   else if (u.pathname === "/dns-cname") {
     // asking for cname.example.com
@@ -914,9 +924,6 @@ function handleRequest(req, res) {
             values: [
               { key: "alpn", value: "h2" },
               { key: "port", value: serverPort },
-              { key: "ipv4hint", value: "1.2.3.4" },
-              { key: "echconfig", value: "123..." },
-              { key: "ipv6hint", value: "::1" },
               { key: 30, value: "somelargestring" },
             ],
           },
@@ -930,6 +937,46 @@ function handleRequest(req, res) {
           data: "127.0.0.1",
         });
       }
+
+      let buf = dnsPacket.encode({
+        type: "response",
+        id: packet.id,
+        flags: dnsPacket.RECURSION_DESIRED,
+        questions: packet.questions,
+        answers,
+      });
+
+      res.setHeader("Content-Type", "application/dns-message");
+      res.setHeader("Content-Length", buf.length);
+      res.writeHead(200);
+      res.write(buf);
+      res.end("");
+    });
+    return;
+  } else if (u.pathname === "/httpssvc_use_iphint") {
+    let payload = Buffer.from("");
+    req.on("data", function receiveData(chunk) {
+      payload = Buffer.concat([payload, chunk]);
+    });
+    req.on("end", function finishedData() {
+      let packet = dnsPacket.decode(payload);
+      let answers = [];
+      answers.push({
+        name: packet.questions[0].name,
+        type: "HTTPS",
+        ttl: 55,
+        class: "IN",
+        flush: false,
+        data: {
+          priority: 1,
+          name: ".",
+          values: [
+            { key: "alpn", value: "h2" },
+            { key: "port", value: serverPort },
+            { key: "ipv4hint", value: "127.0.0.1" },
+          ],
+        },
+      });
 
       let buf = dnsPacket.encode({
         type: "response",

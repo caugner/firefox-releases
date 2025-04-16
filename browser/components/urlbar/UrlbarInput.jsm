@@ -12,18 +12,21 @@ const { XPCOMUtils } = ChromeUtils.import(
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   AppConstants: "resource://gre/modules/AppConstants.jsm",
+  BrowserUsageTelemetry: "resource:///modules/BrowserUsageTelemetry.jsm",
   BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
   ExtensionSearchHandler: "resource://gre/modules/ExtensionSearchHandler.jsm",
   ObjectUtils: "resource://gre/modules/ObjectUtils.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
   ReaderMode: "resource://gre/modules/ReaderMode.jsm",
   PartnerLinkAttribution: "resource:///modules/PartnerLinkAttribution.jsm",
+  SearchUtils: "resource://gre/modules/SearchUtils.jsm",
   Services: "resource://gre/modules/Services.jsm",
   UrlbarController: "resource:///modules/UrlbarController.jsm",
   UrlbarEventBufferer: "resource:///modules/UrlbarEventBufferer.jsm",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.jsm",
   UrlbarProvidersManager: "resource:///modules/UrlbarProvidersManager.jsm",
   UrlbarQueryContext: "resource:///modules/UrlbarUtils.jsm",
+  UrlbarSearchUtils: "resource:///modules/UrlbarSearchUtils.jsm",
   UrlbarTokenizer: "resource:///modules/UrlbarTokenizer.jsm",
   UrlbarUtils: "resource:///modules/UrlbarUtils.jsm",
   UrlbarValueFormatter: "resource:///modules/UrlbarValueFormatter.jsm",
@@ -108,7 +111,11 @@ class UrlbarInput {
     this._untrimmedValue = "";
     this._searchModesByBrowser = new WeakMap();
 
-    UrlbarPrefs.addObserver(this);
+    this.QueryInterface = ChromeUtils.generateQI([
+      "nsIObserver",
+      "nsISupportsWeakReference",
+    ]);
+    this._addObservers();
 
     // This exists only for tests.
     this._enableAutofillPlaceholder = true;
@@ -399,51 +406,61 @@ class UrlbarInput {
   }
 
   /**
-   * Handles an event which would cause a url or text to be opened.
+   * Handles an event which might open text or a URL. If the event requires
+   * doing so, handleCommand forwards it to handleNavigation.
    *
    * @param {Event} [event] The event triggering the open.
-   * @param {string} [openWhere] Where we expect the result to be opened.
-   * @param {object} [openParams]
-   *   The parameters related to where the result will be opened.
-   * @param {object} [triggeringPrincipal]
-   *   The principal that the action was triggered from.
    */
-  handleCommand(event, openWhere, openParams = {}, triggeringPrincipal = null) {
+  handleCommand(event = null) {
     let isMouseEvent = event instanceof this.window.MouseEvent;
     if (isMouseEvent && event.button == 2) {
       // Do nothing for right clicks.
       return;
     }
 
-    let element = this.view.selectedElement;
-    let result = this.view.getResultFromElement(element);
-
     // Determine whether to use the selected one-off search button.  In
     // one-off search buttons parlance, "selected" means that the button
     // has been navigated to via the keyboard.  So we want to use it if
     // the triggering event is not a mouse click -- i.e., it's a Return
     // key -- or if the one-off was mouse-clicked.
-    let selectedOneOff;
     if (this.view.isOpen) {
-      selectedOneOff = this.view.oneOffSearchButtons.selectedButton;
-      if (selectedOneOff && isMouseEvent && event.target != selectedOneOff) {
-        selectedOneOff = null;
-      }
-      if (
-        selectedOneOff == this.view.oneOffSearchButtons.settingsButtonCompact
-      ) {
-        this.controller.engagementEvent.discard();
-        selectedOneOff.doCommand();
-        return;
-      }
-      if (selectedOneOff && this.view.oneOffsRefresh) {
+      let selectedOneOff = this.view.oneOffSearchButtons.selectedButton;
+      if (selectedOneOff && (!isMouseEvent || event.target == selectedOneOff)) {
         this.view.oneOffSearchButtons.handleSearchCommand(event, {
           engineName: selectedOneOff.engine?.name,
           source: selectedOneOff.source,
+          entry: "oneoff",
         });
         return;
       }
     }
+
+    this.handleNavigation({ event });
+  }
+
+  /**
+   * Handles an event which would cause a URL or text to be opened.
+   *
+   * @param {Event} [event]
+   *   The event triggering the open.
+   * @param {object} [oneOffParams]
+   *   Optional. Pass if this navigation was triggered by a one-off. Practically
+   *   speaking, UrlbarSearchOneOffs passes this when the user holds certain key
+   *   modifiers while picking a one-off. In those cases, we do an immediate
+   *   search using the one-off's engine instead of entering search mode.
+   * @param {string} oneOffParams.openWhere
+   *   Where we expect the result to be opened.
+   * @param {object} oneOffParams.openParams
+   *   The parameters related to where the result will be opened.
+   * @param {Node} oneOffParams.engine
+   *   The selected one-off's engine.
+   * @param {object} [triggeringPrincipal]
+   *   The principal that the action was triggered from.
+   */
+  handleNavigation({ event, oneOffParams, triggeringPrincipal }) {
+    let element = this.view.selectedElement;
+    let result = this.view.getResultFromElement(element);
+    let openParams = oneOffParams?.openParams || {};
 
     // Use the selected element if we have one; this is usually the case
     // when the view is open.
@@ -453,7 +470,7 @@ class UrlbarInput {
       result.payload.inPrivateWindow;
     let selectedPrivateEngineResult =
       selectedPrivateResult && result.payload.isPrivateEngine;
-    if (element && (!selectedOneOff || selectedPrivateEngineResult)) {
+    if (element && (!oneOffParams?.engine || selectedPrivateEngineResult)) {
       this.pickElement(element, event);
       return;
     }
@@ -461,7 +478,7 @@ class UrlbarInput {
     let url;
     let selType = this.controller.engagementEvent.typeFromElement(element);
     let typedValue = this.value;
-    if (selectedOneOff) {
+    if (oneOffParams?.engine) {
       selType = "oneoff";
       typedValue = this._lastSearchString;
       // If there's a selected one-off button then load a search using
@@ -471,15 +488,15 @@ class UrlbarInput {
         (result && (result.payload.suggestion || result.payload.query)) ||
         this._lastSearchString;
       [url, openParams.postData] = UrlbarUtils.getSearchQueryUrl(
-        selectedOneOff.engine,
+        oneOffParams.engine,
         searchString
       );
-      this._recordSearch(selectedOneOff.engine, event, { url });
+      this._recordSearch(oneOffParams.engine, event, { url });
 
       UrlbarUtils.addToFormHistory(
         this,
         searchString,
-        selectedOneOff.engine.name
+        oneOffParams.engine.name
       ).catch(Cu.reportError);
     } else {
       // Use the current value if we don't have a UrlbarResult e.g. because the
@@ -492,12 +509,23 @@ class UrlbarInput {
       return;
     }
 
+    // When the user hits enter in a local search mode and there's no selected
+    // result or one-off, don't do anything.
+    if (
+      this.searchMode &&
+      !this.searchMode.engineName &&
+      !result &&
+      !oneOffParams
+    ) {
+      return;
+    }
+
     this.controller.recordSelectedResult(
       event,
       result || this.view.selectedResult
     );
 
-    let where = openWhere || this._whereToOpen(event);
+    let where = oneOffParams?.openWhere || this._whereToOpen(event);
     if (selectedPrivateResult) {
       where = "window";
       openParams.private = true;
@@ -715,17 +743,20 @@ class UrlbarInput {
       }
       case UrlbarUtils.RESULT_TYPE.SEARCH: {
         if (result.payload.keywordOffer) {
-          this.controller.engagementEvent.record(event, {
-            searchString: this._lastSearchString,
-            selIndex,
-            selType: "keywordoffer",
-          });
-
           let searchModeParams = this._searchModeForResult(result);
           if (searchModeParams) {
             this.setSearchMode(searchModeParams);
             this.search("");
           } else {
+            // We only record an engagement event if update2 is disabled.
+            // Otherwise, keywordoffers enter search mode, which is a
+            // continuation of the same engagement.
+            this.controller.engagementEvent.record(event, {
+              searchString: this._lastSearchString,
+              selIndex,
+              selType: "keywordoffer",
+            });
+
             // The user confirmed a token alias, so just move the caret
             // to the end of it. Because there's a trailing space in the value,
             // the user can directly start typing a query string at that point.
@@ -906,11 +937,15 @@ class UrlbarInput {
 
   /**
    * Called by the view when moving through results with the keyboard, and when
-   * picking a result.
+   * picking a result.  This sets the input value to the value of the result and
+   * invalidates the pageproxystate.  It also sets the result that is associated
+   * with the current input value.  If you need to set this result but don't
+   * want to also set the input value, then use setResultForCurrentValue.
    *
    * @param {UrlbarResult} [result]
    *   The result that was selected or picked, null if no result was selected.
-   * @param {Event} [event] The event that picked the result.
+   * @param {Event} [event]
+   *   The event that picked the result.
    * @returns {boolean}
    *   Whether the value has been canonized
    */
@@ -921,6 +956,15 @@ class UrlbarInput {
     // when opening Top Sites on a loaded page, it wouldn't happen. To avoid
     // confusing the user, we always enforce it when a result changes our value.
     this.setPageProxyState("invalid", true);
+
+    // A previous result may have previewed search mode. If we don't expect that
+    // we might stay in a search mode of some kind, exit it now.
+    if (
+      this.searchMode?.isPreview &&
+      result?.payload.keywordOffer != UrlbarUtils.KEYWORD_OFFER.SHOW
+    ) {
+      this.setSearchMode({});
+    }
 
     if (!result) {
       // This happens when there's no selection, for example when moving to the
@@ -941,6 +985,20 @@ class UrlbarInput {
       } else if (result.autofill) {
         let { value, selectionStart, selectionEnd } = result.autofill;
         this._autofillValue(value, selectionStart, selectionEnd);
+      } else if (
+        result.payload.keywordOffer == UrlbarUtils.KEYWORD_OFFER.SHOW
+      ) {
+        // Enter search mode without starting a query. This will just preview
+        // search mode.
+        let enteredSearchMode = this.maybePromoteKeywordToSearchMode({
+          result,
+          checkValue: false,
+          startQuery: false,
+        });
+        if (!enteredSearchMode) {
+          this._setValue(this._getValueFromResult(result), true);
+          this.setSearchMode({});
+        }
       } else {
         // If the url is trimmed but it's invalid (for example it has an unknown
         // single word host, or an unknown domain suffix), trimming
@@ -961,7 +1019,7 @@ class UrlbarInput {
         this._setValue(this._getValueFromResult(result), allowTrim);
       }
     }
-    this._resultForCurrentValue = result;
+    this.setResultForCurrentValue(result);
 
     // The value setter clobbers the actiontype attribute, so update this after
     // that.
@@ -980,6 +1038,21 @@ class UrlbarInput {
   }
 
   /**
+   * The input keeps track of the result associated with the current input
+   * value.  This result can be set by calling either setValueFromResult or this
+   * method.  Use this method when you need to set the result without also
+   * setting the input value.  This can be the case when either the selection is
+   * cleared and no other result becomes selected, or when the result is the
+   * heuristic and we don't want to modify the value the user is typing.
+   *
+   * @param {UrlbarResult} result
+   *   The result to associate with the current input value.
+   */
+  setResultForCurrentValue(result) {
+    this._resultForCurrentValue = result;
+  }
+
+  /**
    * Called by the controller when the first result of a new search is received.
    * If it's an autofill result, then it may need to be autofilled, subject to a
    * few restrictions.
@@ -987,7 +1060,7 @@ class UrlbarInput {
    * @param {UrlbarResult} result
    *   The first result.
    */
-  autofillFirstResult(result) {
+  _autofillFirstResult(result) {
     if (!result.autofill) {
       return;
     }
@@ -1015,29 +1088,45 @@ class UrlbarInput {
   }
 
   /**
-   * Invoked by the view when the first result is received.
-   * @param {UrlbarResult} firstResult The first result received.
+   * Invoked by the controller when the first result is received.
+   *
+   * @param {UrlbarResult} firstResult
+   *   The first result received.
+   * @returns {boolean}
+   *   True if this method canceled the query and started a new one.  False
+   *   otherwise.
    */
   onFirstResult(firstResult) {
+    // If the heuristic result has a keyword but isn't a keyword offer, we may
+    // need to enter search mode.
+    if (
+      firstResult.heuristic &&
+      firstResult.payload.keyword &&
+      !firstResult.payload.keywordOffer &&
+      this.maybePromoteKeywordToSearchMode({
+        result: firstResult,
+        entry: "typed",
+        checkValue: false,
+      })
+    ) {
+      return true;
+    }
+
     // To prevent selection flickering, we apply autofill on input through a
     // placeholder, without waiting for results. But, if the first result is
     // not an autofill one, the autofill prediction was wrong and we should
     // restore the original user typed string.
-    if (
+    if (firstResult.autofill) {
+      this._autofillFirstResult(firstResult);
+    } else if (
       this._autofillPlaceholder &&
-      !firstResult.autofill &&
       // Avoid clobbering added spaces (for token aliases, for example).
       !this.value.endsWith(" ")
     ) {
       this._setValue(this.window.gBrowser.userTypedValue, false);
     }
 
-    // Heuristic tip results do not set the Urlbar value.
-    if (firstResult.type == UrlbarUtils.RESULT_TYPE.TIP) {
-      this._resultForCurrentValue = null;
-    } else if (firstResult.heuristic) {
-      this._resultForCurrentValue = firstResult;
-    }
+    return false;
   }
 
   /**
@@ -1110,6 +1199,7 @@ class UrlbarInput {
     };
 
     if (this.searchMode) {
+      this.promoteSearchMode();
       options.searchMode = this.searchMode;
       if (this.searchMode.source) {
         options.sources = [this.searchMode.source];
@@ -1163,6 +1253,35 @@ class UrlbarInput {
   }
 
   /**
+   * Starts a search with a given alias. If update2 is enabled, search mode is
+   * entered. Otherwise, this just calls search().
+   * @param {string} alias
+   *   A search engine alias.
+   * @param {string} entry
+   *   A string describing the caller. Should be a value from
+   *   UrlbarUtils.SEARCH_MODE_ENTRY.
+   * @param {string} [value]
+   *   The input's value will be set to this value, and the search will
+   *   use it as its query.
+   */
+  searchWithAlias(alias, entry, value = "") {
+    alias = alias.trim();
+    if (UrlbarPrefs.get("update2")) {
+      // Enter search mode.
+      let engine = Services.search.getEngineByAlias(alias);
+      if (engine) {
+        this.setSearchMode({ engineName: engine.name, entry });
+        this.search(value);
+      } else {
+        this.search(`${alias} ${value}`);
+      }
+    } else {
+      // Pass the provided text to the Urlbar. Prepend the @engine shortcut.
+      this.search(`${alias} ${value}`);
+    }
+  }
+
+  /**
    * Focus without the focus styles.
    * This is used by Activity Stream and about:privatebrowsing for search hand-off.
    */
@@ -1196,10 +1315,27 @@ class UrlbarInput {
    *   The name of the search engine to restrict to.
    * @param {UrlbarUtils.RESULT_SOURCE} source
    *   A result source to restrict to.
+   * @param {string} entry
+   *   How search mode was entered. This is recorded in event telemetry. One of
+   *   the values in UrlbarUtils.SEARCH_MODE_ENTRY.
+   * @param {boolean} [isPreview]
+   *   If true, we will preview search mode. Search mode preview does not record
+   *   telemetry and has slighly different UI behavior. The preview is exited in
+   *   favor of full search mode when a query is executed. False should be
+   *   passed if the caller needs to enter search mode but expects it will not
+   *   be interacted with right away. Defaults to true.
    */
-  setSearchMode({ engineName, source }) {
-    if (!UrlbarPrefs.get("update2")) {
-      // Exit search mode.
+  setSearchMode({ engineName, source, entry, isPreview = true }) {
+    // Exit search mode if update2 is disabled or the passed-in engine is
+    // invalid or hidden.
+    let engine;
+    if (engineName) {
+      engine = Services.search.getEngineByName(engineName);
+    }
+    if (
+      !UrlbarPrefs.get("update2") ||
+      (engineName && (!engine || engine.hidden))
+    ) {
       engineName = null;
       source = null;
     }
@@ -1231,6 +1367,7 @@ class UrlbarInput {
         // discussion.
         this.searchMode.source = UrlbarUtils.RESULT_SOURCE.SEARCH;
       }
+      // Set text content for the search mode indicator.
       this._searchModeIndicatorTitle.textContent = engineName;
       this._searchModeLabel.textContent = engineName;
       this.document.l10n.setAttributes(
@@ -1265,20 +1402,49 @@ class UrlbarInput {
     }
 
     if (this.searchMode) {
+      if (!UrlbarUtils.SEARCH_MODE_ENTRY.has(entry)) {
+        // If we see this value showing up in telemetry, we should review
+        // search mode's entry points.
+        this.searchMode.entry = "other";
+      } else {
+        this.searchMode.entry = entry;
+      }
+
+      this.searchMode.isPreview = true;
+      if (!isPreview) {
+        this.promoteSearchMode();
+      }
       this.toggleAttribute("searchmode", true);
+      // Clear autofill.
+      if (this._autofillPlaceholder && this.window.gBrowser.userTypedValue) {
+        this.value = this.window.gBrowser.userTypedValue;
+      }
       // Search mode should only be active when pageproxystate is invalid.
       if (this.getAttribute("pageproxystate") == "valid") {
         this.value = "";
         this.setPageProxyState("invalid", true);
       }
-      this._searchModesByBrowser.set(
-        this.window.gBrowser.selectedBrowser,
-        this.searchMode
-      );
     } else {
       this.removeAttribute("searchmode");
       this._searchModesByBrowser.delete(this.window.gBrowser.selectedBrowser);
     }
+  }
+
+  /**
+   * Sets search mode for a specific browser instance.
+   *
+   * @param {object} searchMode
+   *   A search mode object. See setSearchMode documentation.
+   * @param {Browser} browser
+   *   The browser for which to set search mode.
+   */
+  setSearchModeForBrowser(searchMode, browser) {
+    if (browser == this.window.gBrowser.selectedBrowser) {
+      this.setSearchMode(searchMode);
+      return;
+    }
+
+    this._searchModesByBrowser.set(browser, searchMode);
   }
 
   /**
@@ -1292,11 +1458,44 @@ class UrlbarInput {
       // shortcut to honor historical behaviour.
       this.setSearchMode({
         source: UrlbarUtils.RESULT_SOURCE.SEARCH,
-        engineName: Services.search.defaultEngine.name,
+        engineName: UrlbarSearchUtils.getDefaultEngine(this.isPrivate).name,
+        entry: "shortcut",
       });
       this.search("");
     } else {
       this.search(UrlbarTokenizer.RESTRICT.SEARCH);
+    }
+  }
+
+  /**
+   * Promotes the current search mode from preview mode to full search mode.
+   */
+  promoteSearchMode() {
+    if (!this.searchMode.isPreview) {
+      return;
+    }
+
+    this.searchMode.isPreview = false;
+    let previousSearchMode = this._searchModesByBrowser.get(
+      this.window.gBrowser.selectedBrowser
+    );
+
+    if (ObjectUtils.deepEqual(previousSearchMode, this.searchMode)) {
+      // If we already have an exact match of this.searchMode in the cache, then
+      // we are restoring search mode for this tab. There is no need to
+      // overwrite _searchModesByBrowser or record telemetry again.
+      return;
+    }
+
+    this._searchModesByBrowser.set(
+      this.window.gBrowser.selectedBrowser,
+      this.searchMode
+    );
+
+    try {
+      BrowserUsageTelemetry.recordSearchMode(this.searchMode);
+    } catch (ex) {
+      Cu.reportError(ex);
     }
   }
 
@@ -1458,7 +1657,71 @@ class UrlbarInput {
     this._afterTabSelectAndFocusChange();
   }
 
+  /**
+   * Enters search mode and starts a new search if appropriate for the given
+   * result.  See also _searchModeForResult.
+   *
+   * @param {string} entry
+   *   The search mode entry point. See setSearchMode documentation for details.
+   * @param {UrlbarResult} [result]
+   *   The result to promote. Defaults to the currently selected result.
+   * @param {boolean} [checkValue]
+   *   If true, the trimmed input value must equal the result's keyword in order
+   *   to enter search mode.
+   * @param {boolean} [startQuery]
+   *   If true, start a query after entering search mode. Defaults to true.
+   * @returns {boolean}
+   *   True if we entered search mode and false if not.
+   */
+  maybePromoteKeywordToSearchMode({
+    entry,
+    result = this._resultForCurrentValue,
+    checkValue = true,
+    startQuery = true,
+  }) {
+    if (
+      !result ||
+      (checkValue && this.value.trim() != result.payload.keyword?.trim())
+    ) {
+      return false;
+    }
+
+    let searchMode = this._searchModeForResult(result, entry);
+    if (!searchMode) {
+      return false;
+    }
+
+    this.setSearchMode(searchMode);
+    this._setValue(result.payload.query?.trimStart() || "", false);
+    if (startQuery) {
+      this.startQuery({ allowAutofill: false });
+    }
+    return true;
+  }
+
+  observe(subject, topic, data) {
+    switch (topic) {
+      case SearchUtils.TOPIC_ENGINE_MODIFIED: {
+        subject.QueryInterface(Ci.nsISearchEngine);
+        switch (data) {
+          case SearchUtils.MODIFIED_TYPE.CHANGED:
+          case SearchUtils.MODIFIED_TYPE.REMOVED:
+            if (this.searchMode?.engineName == subject.name) {
+              // We exit search mode if the current search mode engine was removed.
+              this.setSearchMode(this.searchMode);
+            }
+            break;
+        }
+        break;
+      }
+    }
+  }
+
   // Private methods below.
+  _addObservers() {
+    UrlbarPrefs.addObserver(this);
+    Services.obs.addObserver(this, SearchUtils.TOPIC_ENGINE_MODIFIED, true);
+  }
 
   _getURIFixupInfo(searchString) {
     let flags =
@@ -1608,7 +1871,11 @@ class UrlbarInput {
    *   Whether autofill should be allowed in the new search.
    */
   _maybeAutofillOnInput(value) {
-    let allowAutofill = this.selectionEnd == value.length && !this.searchMode;
+    // We allow autofill in local but not remote search modes.
+    let allowAutofill =
+      this.selectionEnd == value.length &&
+      !this.searchMode?.engineName &&
+      this.searchMode?.source != UrlbarUtils.RESULT_SOURCE.SEARCH;
 
     // Determine whether we can autofill the placeholder.  The placeholder is a
     // value that we autofill now, when the search starts and before we wait on
@@ -1847,7 +2114,12 @@ class UrlbarInput {
 
     this.window.BrowserSearch.recordSearchInTelemetry(
       engine,
-      "urlbar",
+      // Without checking !isOneOff, we might record the string
+      // oneoff_urlbar-searchmode in the SEARCH_COUNTS probe (in addition to
+      // oneoff_urlbar and oneoff_searchbar). The extra information is not
+      // necessary; the intent is the same regardless of whether the user is
+      // in search mode when they do a key-modified click/enter on a one-off.
+      this.searchMode && !isOneOff ? "urlbar-searchmode" : "urlbar",
       details
     );
   }
@@ -2121,6 +2393,7 @@ class UrlbarInput {
 
       this.select();
       this.window.goDoCommand("cmd_paste");
+      this.setResultForCurrentValue(null);
       this.handleCommand();
 
       this._suppressStartQuery = false;
@@ -2164,26 +2437,63 @@ class UrlbarInput {
    * selected.
    *
    * @param {UrlbarResult} result
+   * @param {string} [entry]
+   *   If provided, this will be recorded as the entry point into search mode.
+   *   See setSearchMode() documentation for details.
    * @returns {object} A search mode object. Null if search mode should not be
    *   entered. See setSearchMode documentation for details.
    */
-  _searchModeForResult(result) {
+  _searchModeForResult(result, entry = null) {
     if (!UrlbarPrefs.get("update2")) {
       return null;
     }
 
-    // If result.originalEngine is set, then the user is Alt+Tabbing through the
-    // one-offs, so the keyword doesn't match the engine.
-    if (
-      result &&
-      result.payload.keywordOffer &&
-      (!result.payload.originalEngine ||
-        result.payload.engine == result.payload.originalEngine)
-    ) {
-      return { engineName: result.payload.engine };
+    // Search mode is determined by the result's keyword.
+    if (!result.payload.keyword) {
+      return null;
     }
 
-    return null;
+    let searchMode = null;
+    switch (result.payload.keyword) {
+      case UrlbarTokenizer.RESTRICT.BOOKMARK:
+        searchMode = { source: UrlbarUtils.RESULT_SOURCE.BOOKMARKS };
+        break;
+      case UrlbarTokenizer.RESTRICT.HISTORY:
+        searchMode = { source: UrlbarUtils.RESULT_SOURCE.HISTORY };
+        break;
+      case UrlbarTokenizer.RESTRICT.OPENPAGE:
+        searchMode = { source: UrlbarUtils.RESULT_SOURCE.TABS };
+        break;
+      case UrlbarTokenizer.RESTRICT.SEARCH:
+        searchMode = {
+          engineName: UrlbarSearchUtils.getDefaultEngine(this.isPrivate).name,
+        };
+        break;
+      default:
+        // If result.originalEngine is set, then the user is Alt+Tabbing
+        // through the one-offs, so the keyword doesn't match the engine.
+        if (
+          result.payload.engine &&
+          (!result.payload.originalEngine ||
+            result.payload.engine == result.payload.originalEngine)
+        ) {
+          searchMode = { engineName: result.payload.engine };
+        }
+        break;
+    }
+
+    if (searchMode) {
+      if (entry) {
+        searchMode.entry = entry;
+      } else {
+        searchMode.entry =
+          result.providerName == "UrlbarProviderTopSites"
+            ? "topsites_urlbar"
+            : "keywordoffer";
+      }
+    }
+
+    return searchMode;
   }
 
   /**
@@ -2205,8 +2515,15 @@ class UrlbarInput {
 
   _on_command(event) {
     // Something is executing a command, likely causing a focus change. This
-    // should not be recorded as an abandonment.
-    this.controller.engagementEvent.discard();
+    // should not be recorded as an abandonment. If the user is entering search
+    // mode from a one-off, then they are in the same engagement and we should
+    // not discard.
+    if (
+      !event.target.classList.contains("searchbar-engine-one-off-item") ||
+      this.searchMode?.entry != "oneoff"
+    ) {
+      this.controller.engagementEvent.discard();
+    }
   }
 
   _on_blur(event) {
@@ -2233,6 +2550,12 @@ class UrlbarInput {
       this.value = this._focusUntrimmedValue;
     }
     this._focusUntrimmedValue = null;
+
+    // We exit previewed search mode on blur since the result previewing it is
+    // implictly unselected.
+    if (this.searchMode?.isPreview) {
+      this.setSearchMode({});
+    }
 
     this.formatValue();
     this._resetSearchState();
@@ -2415,19 +2738,6 @@ class UrlbarInput {
   }
 
   _on_input(event) {
-    // We enter search mode when space is typed if there is a selected keyword
-    // offer result.
-    let enteredSearchMode = false;
-    if (event.data == " ") {
-      let result = this.view.selectedResult;
-      let searchMode = this._searchModeForResult(result);
-      if (searchMode && this.value.trim() == result.payload.keyword.trim()) {
-        this.setSearchMode(searchMode);
-        this.value = "";
-        enteredSearchMode = true;
-      }
-    }
-
     let value = this.value;
     this.valueIsTyped = true;
     this._untrimmedValue = value;
@@ -2462,10 +2772,9 @@ class UrlbarInput {
 
     let canShowTopSites =
       !this.isPrivate && UrlbarPrefs.get("suggest.topsites");
-
     if (!this.view.isOpen) {
       this.view.clear();
-    } else if (!value && !canShowTopSites && !enteredSearchMode) {
+    } else if (!value && !canShowTopSites) {
       this.view.clear();
       if (!this.searchMode) {
         this.view.close();
@@ -2708,7 +3017,7 @@ class UrlbarInput {
       // To simplify tracking of events, register an initial event for event
       // telemetry, to replace the missing input event.
       this.controller.engagementEvent.start(event);
-      this.handleCommand(null, undefined, undefined, principal);
+      this.handleNavigation({ triggeringPrincipal: principal });
       // For safety reasons, in the drop case we don't want to immediately show
       // the the dropped value, instead we want to keep showing the current page
       // url until an onLocationChange happens.

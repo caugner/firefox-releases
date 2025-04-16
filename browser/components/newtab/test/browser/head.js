@@ -2,6 +2,11 @@
 
 ChromeUtils.defineModuleGetter(
   this,
+  "ObjectUtils",
+  "resource://gre/modules/ObjectUtils.jsm"
+);
+ChromeUtils.defineModuleGetter(
+  this,
   "PlacesTestUtils",
   "resource://testing-common/PlacesTestUtils.jsm"
 );
@@ -65,6 +70,17 @@ async function waitForPreloaded(browser) {
   if (readyState !== "complete") {
     await BrowserTestUtils.browserLoaded(browser);
   }
+}
+
+/**
+ * Helper function to navigate and wait for page to load
+ * https://searchfox.org/mozilla-central/rev/b2716c233e9b4398fc5923cbe150e7f83c7c6c5b/testing/mochitest/BrowserTestUtils/BrowserTestUtils.jsm#383
+ */
+// eslint-disable-next-line no-unused-vars
+async function waitForUrlLoad(url) {
+  let browser = gBrowser.selectedBrowser;
+  await BrowserTestUtils.loadURI(browser, url);
+  await BrowserTestUtils.browserLoaded(browser, false, url);
 }
 
 /**

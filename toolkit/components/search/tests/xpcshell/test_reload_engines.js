@@ -151,7 +151,7 @@ add_task(async function setup() {
   );
 
   SearchTestUtils.useMockIdleService();
-  await useTestEngines("data", null, CONFIG);
+  await SearchTestUtils.useTestEngines("data", null, CONFIG);
   await AddonTestUtils.promiseStartupManager();
 });
 
@@ -293,8 +293,8 @@ add_task(async function test_config_updated_engine_changes() {
   );
 
   Assert.equal(
-    Services.prefs.getBoolPref("browser.search.useDBForOrder", false),
+    Services.search.wrappedJSObject._settings.getAttribute("useSavedOrder"),
     false,
-    "Should not have set the useDBForOrder preference"
+    "Should not have set the useSavedOrder preference"
   );
 });

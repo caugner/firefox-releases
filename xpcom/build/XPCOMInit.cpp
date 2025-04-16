@@ -12,7 +12,6 @@
 #include "mozilla/AppShutdown.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/Poison.h"
-#include "mozilla/RemoteDecoderManagerChild.h"
 #include "mozilla/SharedThreadPool.h"
 #include "mozilla/TaskController.h"
 #include "mozilla/XPCOM.h"
@@ -631,7 +630,6 @@ nsresult ShutdownXPCOM(nsIServiceManager* aServMgr) {
     // are triggered by the NS_XPCOM_SHUTDOWN_OBSERVER_ID notification.
     NS_ProcessPendingEvents(thread);
     gfxPlatform::ShutdownLayersIPC();
-    mozilla::RemoteDecoderManagerChild::Shutdown();
 
     if (observerService) {
       mozilla::KillClearOnShutdown(ShutdownPhase::ShutdownThreads);
@@ -728,7 +726,7 @@ nsresult ShutdownXPCOM(nsIServiceManager* aServMgr) {
 
   mozilla::scache::StartupCache::DeleteSingleton();
 
-  PROFILER_ADD_MARKER("Shutdown xpcom", OTHER);
+  PROFILER_MARKER_UNTYPED("Shutdown xpcom", OTHER);
 
   // Shutdown xpcom. This will release all loaders and cause others holding
   // a refcount to the component manager to release it.

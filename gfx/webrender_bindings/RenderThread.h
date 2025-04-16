@@ -20,8 +20,8 @@
 #include "mozilla/webrender/webrender_ffi.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/webrender/WebRenderTypes.h"
+#include "mozilla/layers/CompositionRecorder.h"
 #include "mozilla/layers/SynchronousTask.h"
-#include "mozilla/layers/WebRenderCompositionRecorder.h"
 #include "mozilla/VsyncDispatcher.h"
 
 #include <list>
@@ -177,6 +177,9 @@ class RenderThread final {
   void WakeUp(wr::WindowId aWindowId);
 
   /// Automatically forwarded to the render thread.
+  void SetClearColor(wr::WindowId aWindowId, wr::ColorF aColor);
+
+  /// Automatically forwarded to the render thread.
   void PipelineSizeChanged(wr::WindowId aWindowId, uint64_t aPipelineId,
                            float aWidth, float aHeight);
 
@@ -207,8 +210,10 @@ class RenderThread final {
   /// Can be called from any thread.
   void NotifyNotUsed(uint64_t aExternalImageId);
 
-  /// Can only be called from the render thread.
-  void NofityForUse(uint64_t aExternalImageId);
+  /// Can be called from any thread.
+  void NotifyForUse(uint64_t aExternalImageId);
+
+  void HandleRenderTextureOps();
 
   /// Can only be called from the render thread.
   void UnregisterExternalImageDuringShutdown(uint64_t aExternalImageId);
@@ -250,6 +255,7 @@ class RenderThread final {
   }
 
   /// Can only be called from the render thread.
+  gl::GLContext* SharedGL(nsACString& aError);
   gl::GLContext* SharedGL();
   void ClearSharedGL();
   RefPtr<layers::SurfacePool> SharedSurfacePool();
@@ -263,21 +269,21 @@ class RenderThread final {
   void SimulateDeviceReset();
 
   /// Can only be called from the render thread.
+  void NotifyWebRenderError(WebRenderError aError);
+
+  /// Can only be called from the render thread.
   void HandleWebRenderError(WebRenderError aError);
   /// Can only be called from the render thread.
   bool IsHandlingWebRenderError();
-
-  /// Can only be called from the render thread.
-  void HandlePrepareForUse();
 
   /// Can only be called from the render thread.
   bool SyncObjectNeeded();
 
   size_t RendererCount();
 
-  void SetCompositionRecorderForWindow(
-      wr::WindowId aWindowId,
-      UniquePtr<layers::WebRenderCompositionRecorder> aCompositionRecorder);
+  void BeginRecordingForWindow(wr::WindowId aWindowId,
+                               const TimeStamp& aRecordingStart,
+                               wr::PipelineId aRootPipelineId);
 
   void WriteCollectedFramesForWindow(wr::WindowId aWindowId);
 
@@ -287,6 +293,12 @@ class RenderThread final {
   static void MaybeEnableGLDebugMessage(gl::GLContext* aGLContext);
 
  private:
+  enum class RenderTextureOp {
+    PrepareForUse,
+    NotifyForUse,
+    NotifyNotUsed,
+  };
+
   explicit RenderThread(base::Thread* aThread);
 
   void DeferredRenderTextureHostDestroy();
@@ -295,6 +307,8 @@ class RenderThread final {
 
   void DoAccumulateMemoryReport(MemoryReport,
                                 const RefPtr<MemoryReportPromise::Private>&);
+
+  void AddRenderTextureOp(RenderTextureOp aOp, uint64_t aExternalImageId);
 
   ~RenderThread();
 
@@ -313,8 +327,6 @@ class RenderThread final {
   RefPtr<layers::SurfacePool> mSurfacePool;
 
   std::map<wr::WindowId, UniquePtr<RendererOGL>> mRenderers;
-  std::map<wr::WindowId, UniquePtr<layers::WebRenderCompositionRecorder>>
-      mCompositionRecorders;
 
   struct PendingFrameInfo {
     TimeStamp mStartTime;
@@ -337,10 +349,9 @@ class RenderThread final {
   std::unordered_map<uint64_t, RefPtr<RenderTextureHost>> mRenderTextures;
   std::unordered_map<uint64_t, RefPtr<RenderTextureHost>>
       mSyncObjectNeededRenderTextures;
-  // Hold RenderTextureHosts that are waiting for handling PrepareForUse().
-  // It is for ensuring that PrepareForUse() is called before
-  // RenderTextureHost::Lock().
-  std::list<RefPtr<RenderTextureHost>> mRenderTexturesPrepareForUse;
+  std::list<std::pair<RenderTextureOp, RefPtr<RenderTextureHost>>>
+      mRenderTextureOps;
+
   // Used to remove all RenderTextureHost that are going to be removed by
   // a deferred callback and remove them right away without waiting for the
   // callback. On device reset we have to remove all GL related resources right

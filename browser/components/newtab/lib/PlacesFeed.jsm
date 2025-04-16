@@ -310,6 +310,15 @@ class PlacesFeed {
 
     const win = action._target.browser.ownerGlobal;
     win.openLinkIn(urlToOpen, where || win.whereToOpenLink(event), params);
+
+    // If there's an original URL e.g. using the unprocessed %YYYYMMDDHH% tag,
+    // add a visit for that so it may become a frecent top site.
+    if (action.data.original_url) {
+      PlacesUtils.history.insert({
+        url: action.data.original_url,
+        visits: [{ transition: PlacesUtils.history.TRANSITION_TYPED }],
+      });
+    }
   }
 
   async saveToPocket(site, browser) {
@@ -367,7 +376,10 @@ class PlacesFeed {
   }
 
   fillSearchTopSiteTerm({ _target, data }) {
-    _target.browser.ownerGlobal.gURLBar.search(`${data.label} `);
+    _target.browser.ownerGlobal.gURLBar.searchWithAlias(
+      data.label,
+      "topsites_newtab"
+    );
   }
 
   _getSearchPrefix(isPrivateWindow) {
@@ -391,8 +403,7 @@ class PlacesFeed {
     if (!data || !data.text) {
       urlBar.setHiddenFocus();
     } else {
-      // Pass the provided text to the awesomebar. Prepend the @engine shortcut.
-      urlBar.search(`${searchAlias}${data.text}`);
+      urlBar.searchWithAlias(searchAlias, "handoff", data.text);
       isFirstChange = false;
     }
 
@@ -403,7 +414,7 @@ class PlacesFeed {
       if (isFirstChange) {
         isFirstChange = false;
         urlBar.removeHiddenFocus();
-        urlBar.search(searchAlias);
+        urlBar.searchWithAlias(searchAlias, "handoff");
         this.store.dispatch(
           ac.OnlyToOneContent({ type: at.HIDE_SEARCH }, meta.fromTarget)
         );

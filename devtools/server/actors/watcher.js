@@ -3,9 +3,9 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 "use strict";
-
 const protocol = require("devtools/shared/protocol");
 const { watcherSpec } = require("devtools/shared/specs/watcher");
+const Services = require("Services");
 
 const Resources = require("devtools/server/actors/resources/index");
 const {
@@ -82,6 +82,11 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
   },
 
   form() {
+    const enableServerWatcher = Services.prefs.getBoolPref(
+      "devtools.testing.enableServerWatcherSupport",
+      false
+    );
+
     const hasBrowserElement = !!this.browserElement;
 
     return {
@@ -110,6 +115,10 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
           [Resources.TYPES.DOCUMENT_EVENT]: hasBrowserElement,
           [Resources.TYPES.ERROR_MESSAGE]: hasBrowserElement,
           [Resources.TYPES.PLATFORM_MESSAGE]: true,
+          [Resources.TYPES.NETWORK_EVENT]:
+            enableServerWatcher && hasBrowserElement,
+          [Resources.TYPES.STYLESHEET]:
+            enableServerWatcher && hasBrowserElement,
         },
       },
     };
@@ -206,15 +215,26 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
    *        It may contain actor IDs, actor forms, to be manually marshalled by the client.
    */
   notifyResourceAvailable(resources) {
-    this.emit("resource-available-form", resources);
+    this._emitResourcesForm("resource-available-form", resources);
   },
 
   notifyResourceDestroyed(resources) {
-    this.emit("resource-destroyed-form", resources);
+    this._emitResourcesForm("resource-destroyed-form", resources);
   },
 
   notifyResourceUpdated(resources) {
-    this.emit("resource-updated-form", resources);
+    this._emitResourcesForm("resource-updated-form", resources);
+  },
+
+  /**
+   * Wrapper around emit for resource forms.
+   */
+  _emitResourcesForm(name, resources) {
+    if (resources.length === 0) {
+      // Don't try to emit if the resources array is empty.
+      return;
+    }
+    this.emit(name, resources);
   },
 
   /**
@@ -228,7 +248,7 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
   async watchResources(resourceTypes) {
     // First process resources which have to be listened from the parent process
     // (the watcher actor always runs in the parent process)
-    Resources.watchResources(
+    await Resources.watchResources(
       this,
       Resources.getParentProcessResourceTypes(resourceTypes)
     );
@@ -257,9 +277,10 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
         targetType
       );
       const targetHelperModule = TARGET_HELPERS[targetType];
-      await targetHelperModule.watchResources({
+      await targetHelperModule.addWatcherDataEntry({
         watcher: this,
-        resourceTypes: targetResourceTypes,
+        type: "resources",
+        entries: targetResourceTypes,
       });
     }
 
@@ -340,9 +361,10 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
           targetType
         );
         const targetHelperModule = TARGET_HELPERS[targetType];
-        targetHelperModule.unwatchResources({
+        targetHelperModule.removeWatcherDataEntry({
           watcher: this,
-          resourceTypes: targetResourceTypes,
+          type: "resources",
+          entries: targetResourceTypes,
         });
       }
     }

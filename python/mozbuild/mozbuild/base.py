@@ -375,10 +375,6 @@ class MozbuildObject(ProcessExecutionMixin):
         return self.config_environment.defines
 
     @property
-    def non_global_defines(self):
-        return self.config_environment.non_global_defines
-
-    @property
     def substs(self):
         return self.config_environment.substs
 
@@ -843,23 +839,6 @@ class MozbuildObject(ProcessExecutionMixin):
     def _set_log_level(self, verbose):
         self.log_manager.terminal_handler.setLevel(logging.INFO if not verbose else logging.DEBUG)
 
-    def ensure_pipenv(self):
-        self.activate_virtualenv()
-        pipenv = os.path.join(self.virtualenv_manager.bin_path, 'pipenv')
-        if not os.path.exists(pipenv + '.exe' if self._is_windows() else pipenv):
-            for package in ['certifi', 'pipenv', 'six', 'virtualenv', 'virtualenv-clone']:
-                path = os.path.normpath(os.path.join(
-                    self.topsrcdir, 'third_party/python', package))
-                self.virtualenv_manager.install_pip_package(path, vendored=True)
-
-    def activate_pipenv(self, workon_home, pipfile=None, populate=False,
-                        python=None):
-        if pipfile is not None and not os.path.exists(pipfile):
-            raise Exception('Pipfile not found: %s.' % pipfile)
-        self.ensure_pipenv()
-        self.virtualenv_manager.activate_pipenv(workon_home, pipfile, populate,
-                                                python)
-
     def _ensure_zstd(self):
         try:
             import zstandard  # noqa: F401
@@ -875,7 +854,7 @@ class MachCommandBase(MozbuildObject):
     without having to change everything that inherits from it.
     """
 
-    def __init__(self, context, virtualenv_name=None):
+    def __init__(self, context, virtualenv_name=None, metrics=None):
         # Attempt to discover topobjdir through environment detection, as it is
         # more reliable than mozconfig when cwd is inside an objdir.
         topsrcdir = context.topdir
@@ -922,6 +901,7 @@ class MachCommandBase(MozbuildObject):
             virtualenv_name=virtualenv_name)
 
         self._mach_context = context
+        self.metrics = metrics
 
         # Incur mozconfig processing so we have unified error handling for
         # errors. Otherwise, the exceptions could bubble back to mach's error

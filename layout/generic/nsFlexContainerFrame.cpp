@@ -1397,7 +1397,7 @@ FlexItem* nsFlexContainerFrame::GenerateFlexItemForChild(
 // Indicates whether the cross-size property is set to something definite,
 // for the purpose of intrinsic ratio calculations.
 // The logic here should be similar to the logic for isAutoISize/isAutoBSize
-// in nsIFrame::ComputeSizeWithIntrinsicDimensions().
+// in nsContainerFrame::ComputeSizeWithIntrinsicDimensions().
 static bool IsCrossSizeDefinite(const ReflowInput& aItemReflowInput,
                                 const FlexboxAxisTracker& aAxisTracker) {
   const nsStylePosition* pos = aItemReflowInput.mStylePosition;
@@ -1477,6 +1477,9 @@ static nscoord MainSizeFromAspectRatio(nscoord aCrossSize,
 // The caller is responsible for computing & considering the min-content size
 // in combination with the partially-resolved value that this function returns.
 //
+// Basically, this function gets the minimum from the specified size suggestion
+// and the transferred size suggestion.
+//
 // Spec reference: http://dev.w3.org/csswg/css-flexbox/#min-size-auto
 static nscoord PartiallyResolveAutoMinSize(
     const FlexItem& aFlexItem, const ReflowInput& aItemReflowInput,
@@ -1484,10 +1487,9 @@ static nscoord PartiallyResolveAutoMinSize(
   MOZ_ASSERT(aFlexItem.NeedsMinSizeAutoResolution(),
              "only call for FlexItems that need min-size auto resolution");
 
-  nscoord minMainSize = nscoord_MAX;  // Intentionally huge; we'll shrink it
-                                      // from here, w/ std::min().
+  nscoord specifiedSizeSuggestion = nscoord_MAX;
 
-  // We need the smallest of:
+  // Compute the specified size suggestion, which is the minimum of:
   // * the used flex-basis, if the computed flex-basis was 'auto':
   if (aItemReflowInput.mStylePosition->mFlexBasis.IsAuto() &&
       aFlexItem.FlexBaseSize() != NS_UNCONSTRAINEDSIZE) {
@@ -1495,15 +1497,16 @@ static nscoord PartiallyResolveAutoMinSize(
     // resolved. This is OK, because the caller is responsible for computing
     // the min-content height and min()'ing it with the value we return, which
     // is equivalent to what would happen if we min()'d that at this point.
-    minMainSize = std::min(minMainSize, aFlexItem.FlexBaseSize());
+    specifiedSizeSuggestion =
+        std::min(specifiedSizeSuggestion, aFlexItem.FlexBaseSize());
   }
 
-  // * the computed max-width (max-height), if that value is definite:
+  // * clamped by its max main size property if it’s definite:
   nscoord maxSize = GET_MAIN_COMPONENT_LOGICAL(
       aAxisTracker, aFlexItem.GetWritingMode(),
       aItemReflowInput.ComputedMaxISize(), aItemReflowInput.ComputedMaxBSize());
   if (maxSize != NS_UNCONSTRAINEDSIZE) {
-    minMainSize = std::min(minMainSize, maxSize);
+    specifiedSizeSuggestion = std::min(specifiedSizeSuggestion, maxSize);
   }
 
   // * if the item has no intrinsic aspect ratio, its min-content size:
@@ -1512,18 +1515,18 @@ static nscoord PartiallyResolveAutoMinSize(
   // * if the item has an intrinsic aspect ratio, the width (height) calculated
   //   from the aspect ratio and any definite size constraints in the opposite
   //   dimension.
+  nscoord transferredSizeSuggestion = nscoord_MAX;
   if (aFlexItem.IntrinsicRatio()) {
     // We have a usable aspect ratio. (not going to divide by 0)
     const bool useMinSizeIfCrossSizeIsIndefinite = true;
     nscoord crossSizeToUseWithRatio = CrossSizeToUseWithRatio(
         aFlexItem, aItemReflowInput, useMinSizeIfCrossSizeIsIndefinite,
         aAxisTracker);
-    nscoord minMainSizeFromRatio = MainSizeFromAspectRatio(
+    transferredSizeSuggestion = MainSizeFromAspectRatio(
         crossSizeToUseWithRatio, aFlexItem.IntrinsicRatio(), aAxisTracker);
-    minMainSize = std::min(minMainSize, minMainSizeFromRatio);
   }
 
-  return minMainSize;
+  return std::min(specifiedSizeSuggestion, transferredSizeSuggestion);
 }
 
 // Resolves flex-basis:auto, using the given intrinsic ratio and the flex
@@ -1960,7 +1963,7 @@ nscoord nsFlexContainerFrame::MeasureFlexItemContentBSize(
   availSize.BSize(wm) = NS_UNCONSTRAINEDSIZE;
   ReflowInput childRIForMeasuringBSize(PresContext(), aParentReflowInput,
                                        aFlexItem.Frame(), availSize, Nothing(),
-                                       ReflowInput::CALLER_WILL_INIT);
+                                       ReflowInput::InitFlag::CallerWillInit);
   childRIForMeasuringBSize.mFlags.mIsFlexContainerMeasuringBSize = true;
   childRIForMeasuringBSize.mFlags.mInsideLineClamp = GetLineClampValue() != 0;
   childRIForMeasuringBSize.mFlags.mApplyLineClamp =
@@ -2383,7 +2386,7 @@ bool FlexItem::NeedsFinalReflow(const nscoord aAvailableBSizeForItem) const {
   // Let's check for each condition that would still require us to reflow:
   if (mFrame->IsSubtreeDirty()) {
     FLEX_LOG(
-        "[perf] Flex item %p needed a final reflow due to its subtree"
+        "[perf] Flex item %p needed a final reflow due to its subtree "
         "being dirty",
         mFrame);
     return true;
@@ -4499,7 +4502,7 @@ void nsFlexContainerFrame::Reflow(nsPresContext* aPresContext,
 
 // Class to let us temporarily provide an override value for the the main-size
 // CSS property ('width' or 'height') on a flex item, for use in
-// nsIFrame::ComputeSizeWithIntrinsicDimensions.
+// nsContainerFrame::ComputeSizeWithIntrinsicDimensions.
 // (We could use this overridden size more broadly, too, but it's probably
 // better to avoid property-table accesses.  So, where possible, we communicate
 // the resolved main-size to the child via modifying its reflow input directly,

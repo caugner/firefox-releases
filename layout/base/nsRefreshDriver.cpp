@@ -33,6 +33,7 @@
 #include "mozilla/AutoRestore.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/DebugOnly.h"
+#include "mozilla/InputTaskManager.h"
 #include "mozilla/IntegerRange.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/dom/FontTableURIProtocolHandler.h"
@@ -563,6 +564,12 @@ class VsyncRefreshDriverTimer : public RefreshDriverTimer {
         }
         mPendingParentProcessVsync = true;
       }
+
+      if (NS_IsMainThread()) {
+        // This clears the input handling start time.
+        InputTaskManager::Get()->SetInputHandlingStartTime(TimeStamp());
+      }
+
       nsCOMPtr<nsIRunnable> vsyncEvent = new ParentProcessVsyncNotifier(this);
       NS_DispatchToMainThread(vsyncEvent);
       return true;
@@ -1399,7 +1406,7 @@ void nsRefreshDriver::EnsureTimerStarted(EnsureTimerStartedFlags aFlags) {
 
 #ifdef MOZ_GECKO_PROFILER
   if (!mRefreshTimerStartedCause) {
-    mRefreshTimerStartedCause = profiler_get_backtrace();
+    mRefreshTimerStartedCause = profiler_capture_backtrace();
   }
 #endif
 
@@ -1706,7 +1713,7 @@ void nsRefreshDriver::RunFullscreenSteps() {
   }
 }
 
-void nsRefreshDriver::UpdateIntersectionObservations() {
+void nsRefreshDriver::UpdateIntersectionObservations(TimeStamp aNowTime) {
   AutoTArray<RefPtr<Document>, 32> documents;
 
   if (mPresContext->Document()->HasIntersectionObservers()) {
@@ -1720,7 +1727,7 @@ void nsRefreshDriver::UpdateIntersectionObservations() {
 
   for (uint32_t i = 0; i < documents.Length(); ++i) {
     Document* doc = documents[i];
-    doc->UpdateIntersectionObservations();
+    doc->UpdateIntersectionObservations(aNowTime);
     doc->ScheduleIntersectionObserverNotification();
   }
 
@@ -1815,17 +1822,8 @@ void nsRefreshDriver::RunFrameRequestCallbacks(TimeStamp aNowTime) {
           docCallbacks.mDocument->GetInnerWindow();
       DOMHighResTimeStamp timeStamp = 0;
       if (innerWindow) {
-        mozilla::dom::Performance* perf = innerWindow->GetPerformance();
-        if (perf) {
-          timeStamp = perf->GetDOMTiming()->TimeStampToDOMHighRes(aNowTime);
-          // 0 is an inappropriate mixin for this this area; however CSS
-          // Animations needs to have it's Time Reduction Logic refactored, so
-          // it's currently only clamping for RFP mode. RFP mode gives a much
-          // lower time precision, so we accept the security leak here for now
-          if (!perf->IsSystemPrincipal()) {
-            timeStamp =
-                nsRFPService::ReduceTimePrecisionAsMSecsRFPOnly(timeStamp, 0);
-          }
+        if (Performance* perf = innerWindow->GetPerformance()) {
+          timeStamp = perf->TimeStampToDOMHighResForRendering(aNowTime);
         }
         // else window is partially torn down already
       }
@@ -1940,7 +1938,7 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
     // We're currently suspended waiting for earlier Tick's to
     // be completed (on the Compositor). Mark that we missed the paint
     // and keep waiting.
-    PROFILER_ADD_MARKER("nsRefreshDriver::Tick waiting for paint", LAYOUT);
+    PROFILER_MARKER_UNTYPED("nsRefreshDriver::Tick waiting for paint", LAYOUT);
     return;
   }
 
@@ -1990,9 +1988,12 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
     AppendTickReasonsToString(tickReasons, profilerStr);
   }
 #endif
-  AUTO_PROFILER_TEXT_MARKER_DOCSHELL_CAUSE(
-      "RefreshDriverTick", profilerStr, GRAPHICS, GetDocShell(mPresContext),
-      std::move(mRefreshTimerStartedCause));
+  AUTO_PROFILER_MARKER_TEXT(
+      "RefreshDriverTick",
+      GRAPHICS.WithOptions(
+          MarkerStack::TakeBacktrace(std::move(mRefreshTimerStartedCause)),
+          MarkerInnerWindowIdFromDocShell(GetDocShell(mPresContext))),
+      profilerStr);
 
   mResizeSuppressed = false;
 
@@ -2182,7 +2183,7 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
   }
 #endif
 
-  UpdateIntersectionObservations();
+  UpdateIntersectionObservations(aNowTime);
 
   /*
    * Perform notification to imgIRequests subscribed to listen
@@ -2251,9 +2252,10 @@ void nsRefreshDriver::Tick(VsyncId aId, TimeStamp aNowTime) {
       transactionId.AppendInt((uint64_t)mNextTransactionId);
     }
 #endif
-    AUTO_PROFILER_TEXT_MARKER_CAUSE("ViewManagerFlush", transactionId, GRAPHICS,
-                                    Nothing(),
-                                    std::move(mViewManagerFlushCause));
+    AUTO_PROFILER_MARKER_TEXT("ViewManagerFlush",
+                              GRAPHICS.WithOptions(MarkerStack::TakeBacktrace(
+                                  std::move(mViewManagerFlushCause))),
+                              transactionId);
 
     RefPtr<TimelineConsumers> timelines = TimelineConsumers::Get();
 
@@ -2592,7 +2594,7 @@ void nsRefreshDriver::ScheduleViewManagerFlush() {
                "Should only schedule view manager flush on root prescontexts");
   mViewManagerFlushIsPending = true;
   if (!mViewManagerFlushCause) {
-    mViewManagerFlushCause = profiler_get_backtrace();
+    mViewManagerFlushCause = profiler_capture_backtrace();
   }
   mHasScheduleFlush = true;
   EnsureTimerStarted(eNeverAdjustTimer);

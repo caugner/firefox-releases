@@ -158,11 +158,6 @@ XPCOMUtils.defineLazyScriptGetter(
 );
 XPCOMUtils.defineLazyScriptGetter(
   this,
-  "DefaultBrowserNotificationOnNewTabPage",
-  "chrome://browser/content/browser-defaultBrowserNotificationOnNewTabPage.js"
-);
-XPCOMUtils.defineLazyScriptGetter(
-  this,
   ["PointerLock", "FullScreen"],
   "chrome://browser/content/browser-fullScreenAndPointerLock.js"
 );
@@ -1871,7 +1866,6 @@ var gBrowserInit = {
     BrowserSearch.init();
     BrowserPageActions.init();
     gAccessibilityServiceIndicator.init();
-    AccessibilityRefreshBlocker.init();
     if (gToolbarKeyNavEnabled) {
       ToolbarKeyboardNavigator.init();
     }
@@ -2092,8 +2086,35 @@ var gBrowserInit = {
       }
     }
 
-    if (!Services.policies.isAllowed("hideShowMenuBar")) {
-      document.getElementById("toolbar-menubar").removeAttribute("toolbarname");
+    if (Services.policies.status === Services.policies.ACTIVE) {
+      if (!Services.policies.isAllowed("hideShowMenuBar")) {
+        document
+          .getElementById("toolbar-menubar")
+          .removeAttribute("toolbarname");
+      }
+      let policies = Services.policies.getActivePolicies();
+      if ("ManagedBookmarks" in policies) {
+        let managedBookmarks = policies.ManagedBookmarks;
+        let children = managedBookmarks.filter(
+          child => !("toplevel_name" in child)
+        );
+        if (children.length) {
+          let managedBookmarksButton = document.getElementById(
+            "managed-bookmarks"
+          );
+          let toplevel = managedBookmarks.find(
+            element => "toplevel_name" in element
+          );
+          if (toplevel) {
+            managedBookmarksButton.setAttribute(
+              "label",
+              toplevel.toplevel_name
+            );
+            managedBookmarksButton.removeAttribute("data-l10n-id");
+          }
+          managedBookmarksButton.hidden = false;
+        }
+      }
     }
 
     CaptivePortalWatcher.delayedStartup();
@@ -2456,8 +2477,6 @@ var gBrowserInit = {
     DownloadsButton.uninit();
 
     gAccessibilityServiceIndicator.uninit();
-
-    AccessibilityRefreshBlocker.uninit();
 
     if (gToolbarKeyNavEnabled) {
       ToolbarKeyboardNavigator.uninit();
@@ -4116,9 +4135,11 @@ const BrowserSearch = {
     if (delayUpdate && !gURLBar.value) {
       // Delays changing the URL Bar placeholder until the user is not going to be
       // seeing it, e.g. when there is a value entered in the bar, or if there is
-      // a tab switch to a tab which has a url loaded.
+      // a tab switch to a tab which has a url loaded. We delay the update until
+      // the user is out of search mode since an alternative placeholder is used
+      // in search mode.
       let placeholderUpdateListener = () => {
-        if (gURLBar.value) {
+        if (gURLBar.value && !gURLBar.searchMode) {
           // By the time the user has switched, they may have changed the engine
           // again, so we need to call this function again but with the
           // new engine name.
@@ -5794,50 +5815,6 @@ var CombinedStopReload = {
     if (this._timer) {
       clearTimeout(this._timer);
       this._timer = 0;
-    }
-  },
-};
-
-// This helper only cares about loading the frame
-// script if the pref is seen as true.
-// After the frame script is loaded, it takes over
-// the responsibility of watching the pref and
-// enabling/disabling itself.
-const AccessibilityRefreshBlocker = {
-  PREF: "accessibility.blockautorefresh",
-
-  init() {
-    if (Services.prefs.getBoolPref(this.PREF)) {
-      this.loadFrameScript();
-    } else {
-      Services.prefs.addObserver(this.PREF, this);
-    }
-  },
-
-  uninit() {
-    Services.prefs.removeObserver(this.PREF, this);
-  },
-
-  observe(aSubject, aTopic, aPrefName) {
-    if (
-      aTopic == "nsPref:changed" &&
-      aPrefName == this.PREF &&
-      Services.prefs.getBoolPref(this.PREF)
-    ) {
-      this.loadFrameScript();
-      Services.prefs.removeObserver(this.PREF, this);
-    }
-  },
-
-  loadFrameScript() {
-    if (!this._loaded) {
-      this._loaded = true;
-      let mm = window.getGroupMessageManager("browsers");
-      mm.loadFrameScript(
-        "chrome://browser/content/content-refreshblocker.js",
-        true,
-        true
-      );
     }
   },
 };
@@ -8934,32 +8911,59 @@ class TabDialogBox {
   /**
    * Open a dialog on tab level.
    * @param {String} aURL - URL of the dialog to load in the tab box.
-   * @param {String} [aFeatures] - Comma separated list of window features.
-   * @param {*} [aParams] - Parameters to pass to dialog window.
-   * @param {Object} [aOpenOptions] - Parameters to pass to dialog open method.
+   * @param {Object} [aOptions]
+   * @param {String} [aOptions.features] - Comma separated list of window
+   * features.
+   * @param {Boolean} [aOptions.allowDuplicateDialogs] - Whether to allow
+   * showing multiple dialogs with aURL at the same time. If false calls for
+   * duplicate dialogs will be dropped.
+   * @param {String} [aOptions.sizeTo] - Pass "available" to stretch dialog to
+   * roughly content size.
+   * @param {Boolean} [aOptions.keepOpenSameOriginNav] - By default dialogs are
+   * aborted on any navigation.
+   * Set to true to keep the dialog open for same origin navigation.
    * @returns {Promise} - Resolves once the dialog has been closed.
    */
-  open(aURL, aFeatures = null, aParams = null, aOpenOptions = {}) {
+  open(
+    aURL,
+    {
+      features = null,
+      allowDuplicateDialogs = true,
+      sizeTo,
+      keepOpenSameOriginNav,
+    } = {},
+    ...aParams
+  ) {
     return new Promise(resolve => {
       if (!this._dialogManager.hasDialogs) {
         this._onFirstDialogOpen();
       }
 
+      let closingCallback = () => {
+        if (!this._dialogManager.hasDialogs) {
+          this._onLastDialogClose();
+        }
+      };
+
       // Open dialog and resolve once it has been closed
-      this._dialogManager.open(
+      let dialog = this._dialogManager.open(
         aURL,
-        aFeatures,
-        aParams,
-        // Closing
-        () => {
-          if (!this._dialogManager.hasDialogs) {
-            this._onLastDialogClose();
-          }
+        {
+          features,
+          allowDuplicateDialogs,
+          sizeTo,
+          closingCallback,
+          closedCallback: resolve,
         },
-        // Resolve on closed callback
-        resolve,
-        aOpenOptions
+        ...aParams
       );
+
+      // Marking the dialog externally, instead of passing it as an option.
+      // The SubDialog(Manager) does not care about navigation.
+      // dialog can be null here if allowDuplicateDialogs = false.
+      if (dialog) {
+        dialog._keepOpenSameOriginNav = keepOpenSameOriginNav;
+      }
     });
   }
 
@@ -8967,8 +8971,11 @@ class TabDialogBox {
     // Hide PopupNotifications to prevent them from covering up dialogs.
     this.browser.setAttribute("tabDialogShowing", true);
     UpdatePopupNotificationsVisibility();
+
     // Register listeners
+    this._lastPrincipal = this.browser.contentPrincipal;
     this.browser.addProgressListener(this, Ci.nsIWebProgress.NOTIFY_LOCATION);
+
     this.tab?.addEventListener("TabClose", this);
   }
 
@@ -8976,8 +8983,11 @@ class TabDialogBox {
     // Show PopupNotifications again.
     this.browser.removeAttribute("tabDialogShowing");
     UpdatePopupNotificationsVisibility();
+
     // Clean up listeners
     this.browser.removeProgressListener(this);
+    this._lastPrincipal = null;
+
     this.tab?.removeEventListener("TabClose", this);
   }
 
@@ -8989,7 +8999,7 @@ class TabDialogBox {
   }
 
   abortAllDialogs() {
-    this._dialogManager.abortAll();
+    this._dialogManager.abortDialogs();
   }
 
   focus() {
@@ -9007,7 +9017,23 @@ class TabDialogBox {
     ) {
       return;
     }
-    this.abortAllDialogs();
+
+    // Dialogs can be exempt from closing on same origin location change.
+    let filterFn;
+
+    // Test for same origin location change
+    if (
+      this._lastPrincipal?.isSameOrigin(
+        aLocation,
+        this.browser.browsingContext.usePrivateBrowsing
+      )
+    ) {
+      filterFn = dialog => !dialog._keepOpenSameOriginNav;
+    }
+
+    this._lastPrincipal = this.browser.contentPrincipal;
+
+    this._dialogManager.abortDialogs(filterFn);
   }
 
   get tab() {
@@ -9020,6 +9046,10 @@ class TabDialogBox {
       throw new Error("Stale dialog box! The associated browser is gone.");
     }
     return browser;
+  }
+
+  getManager() {
+    return this._dialogManager;
   }
 }
 

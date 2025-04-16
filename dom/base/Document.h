@@ -3,6 +3,7 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+
 #ifndef mozilla_dom_Document_h___
 #define mozilla_dom_Document_h___
 
@@ -54,7 +55,8 @@
 #include "mozilla/SegmentedVector.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/UniquePtr.h"
-#include <bitset>  // for member
+#include <bitset>                // for member
+#include "js/friend/DOMProxy.h"  // JS::ExpandoAndGeneration
 
 // XXX We need to include this here to ensure that DefaultDeleter for Servo
 // types is specialized before the template is instantiated. Probably, this
@@ -1156,6 +1158,10 @@ class Document : public nsINode,
 
   nsIBFCacheEntry* GetBFCacheEntry() const { return mBFCacheEntry; }
 
+  // Removes this document from the BFCache, if it is cached, and returns
+  // true if it was.
+  bool RemoveFromBFCacheSync();
+
   /**
    * Return the parent document of this document. Will return null
    * unless this document is within a compound document and has a
@@ -1240,8 +1246,6 @@ class Document : public nsINode,
 
   // Returns a ViewportMetaData for this document.
   ViewportMetaData GetViewportMetaData() const;
-
-  void UpdateForScrollAnchorAdjustment(nscoord aLength);
 
   /**
    * True iff this doc will ignore manual character encoding overrides.
@@ -1458,6 +1462,8 @@ class Document : public nsINode,
   PreloadService& Preloads() { return mPreloadService; }
 
   bool HasThirdPartyChannel();
+
+  bool ShouldIncludeInTelemetry(bool aAllowExtensionURIs);
 
  protected:
   friend class nsUnblockOnloadEvent;
@@ -2710,6 +2716,13 @@ class Document : public nsINode,
   }
 
   /**
+   * Some clipboard commands are unconditionally enabled on some documents, so
+   * as to always dispatch copy / paste events even though you'd normally not be
+   * able to copy.
+   */
+  bool AreClipboardCommandsUnconditionallyEnabled() const;
+
+  /**
    * Note a ChannelEventQueue which has been suspended on the document's behalf
    * to prevent XHRs from running content scripts while event handling is
    * suppressed. The document is responsible for resuming the queue after
@@ -2817,9 +2830,14 @@ class Document : public nsINode,
    * and replace the cloned resources).
    *
    * @param aCloneContainer The container for the clone document.
+   * @param aContentViewer The viewer for the clone document. Must be the viewer
+   *                       of aCloneContainer, but callers must have a reference
+   *                       to it already and ensure it's not null.
+   * @param aOutHasInProcessPrintCallbacks Self-descriptive.
    */
-  virtual already_AddRefed<Document> CreateStaticClone(
-      nsIDocShell* aCloneContainer);
+  already_AddRefed<Document> CreateStaticClone(
+      nsIDocShell* aCloneContainer, nsIContentViewer* aContentViewer,
+      bool* aOutHasInProcessPrintCallbacks);
 
   /**
    * If this document is a static clone, this returns the original
@@ -3630,7 +3648,7 @@ class Document : public nsINode,
     return !mIntersectionObservers.IsEmpty();
   }
 
-  void UpdateIntersectionObservations();
+  void UpdateIntersectionObservations(TimeStamp aNowTime);
   void ScheduleIntersectionObserverNotification();
   MOZ_CAN_RUN_SCRIPT void NotifyIntersectionObservers();
 
@@ -3922,7 +3940,6 @@ class Document : public nsINode,
     RefPtr<nsFrameLoaderOwner> mElement;
     RefPtr<nsFrameLoader> mStaticCloneOf;
   };
-  nsTArray<PendingFrameStaticClone> TakePendingFrameStaticClones();
   void AddPendingFrameStaticClone(nsFrameLoaderOwner* aElement,
                                   nsFrameLoader* aStaticCloneOf);
 
@@ -4909,9 +4926,6 @@ class Document : public nsINode,
 
   nsCString mScrollToRef;
 
-  nscoord mScrollAnchorAdjustmentLength;
-  int32_t mScrollAnchorAdjustmentCount;
-
   // Weak reference to the scope object (aka the script global object)
   // that, unlike mScriptGlobalObject, is never unset once set. This
   // is a weak reference to avoid leaks due to circular references.
@@ -5080,7 +5094,7 @@ class Document : public nsINode,
 
  public:
   // Needs to be public because the bindings code pokes at it.
-  js::ExpandoAndGeneration mExpandoAndGeneration;
+  JS::ExpandoAndGeneration mExpandoAndGeneration;
 
   bool HasPendingInitialTranslation();
 

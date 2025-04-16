@@ -15,6 +15,7 @@ const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 XPCOMUtils.defineLazyModuleGetters(this, {
+  ObjectUtils: "resource://gre/modules/ObjectUtils.jsm",
   PlacesUtils: "resource://gre/modules/PlacesUtils.jsm",
   SkippableTimer: "resource:///modules/UrlbarUtils.jsm",
   UrlbarMuxer: "resource:///modules/UrlbarUtils.jsm",
@@ -199,15 +200,10 @@ class ProvidersManager {
     // search string.
     let restrictToken = updateSourcesIfEmpty(queryContext);
     if (restrictToken) {
-      queryContext.shouldFilterRestrictionTokens = true;
+      queryContext.restrictToken = restrictToken;
       // If the restriction token has an equivalent source, then set it as
       // restrictSource.
-      let restrictType = Object.entries(UrlbarTokenizer.RESTRICT).find(
-        e => e[1] == restrictToken.value
-      )?.[0];
-      if (
-        ["SEARCH", "HISTORY", "OPENPAGE", "BOOKMARK"].includes(restrictType)
-      ) {
+      if (UrlbarTokenizer.SEARCH_MODE_RESTRICT.has(restrictToken.value)) {
         queryContext.restrictSource = queryContext.sources[0];
       }
     }
@@ -490,12 +486,15 @@ class Query {
       return;
     }
 
-    // When in search mode and the search string is empty, don't allow heuristic
-    // results since they don't make sense.
+    // In search mode, don't allow heuristic results in the following cases
+    // since they don't make sense:
+    //   * When the search string is empty, or
+    //   * In local search mode, except for autofill results
     if (
       result.heuristic &&
-      !this.context.trimmedSearchString &&
-      this.context.searchMode
+      this.context.searchMode &&
+      (!this.context.trimmedSearchString ||
+        (!this.context.searchMode.engineName && !result.autofill))
     ) {
       return;
     }
@@ -528,9 +527,6 @@ class Query {
     result.providerName = provider.name;
     result.providerType = provider.type;
     this.context.results.push(result);
-    if (result.heuristic) {
-      this.context.allHeuristicResults.push(result);
-    }
 
     this._notifyResultsFromProvider(provider);
   }
@@ -608,6 +604,12 @@ class Query {
         break;
       }
     }
+
+    this.context.firstResultChanged = !ObjectUtils.deepEqual(
+      this.context.firstResult,
+      this.context.results[0]
+    );
+    this.context.firstResult = this.context.results[0];
 
     if (this.controller) {
       this.controller.receiveResults(this.context);

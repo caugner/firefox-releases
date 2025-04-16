@@ -15,8 +15,10 @@
 
 #include "BaseProfiler.h"
 #include "BaseProfilerMarkerPayload.h"
+#include "mozilla/BaseProfilerMarkers.h"
 #include "platform.h"
 #include "ProfileBuffer.h"
+#include "ProfilerBacktrace.h"
 
 namespace mozilla {
 namespace baseprofiler {
@@ -205,9 +207,8 @@ UniqueJSONStrings::UniqueJSONStrings(const UniqueJSONStrings& aOther) {
       mStringHashToIndexMap.putNewInfallible(iter.get().key(),
                                              iter.get().value());
     }
-    UniquePtr<char[]> stringTableJSON =
-        aOther.mStringTableWriter.ChunkedWriteFunc()->CopyData();
-    mStringTableWriter.Splice(stringTableJSON.get());
+    mStringTableWriter.CopyAndSplice(
+        aOther.mStringTableWriter.ChunkedWriteFunc());
   }
 }
 
@@ -221,7 +222,7 @@ uint32_t UniqueJSONStrings::GetOrAddIndex(const char* aStr) {
   }
 
   MOZ_RELEASE_ASSERT(mStringHashToIndexMap.add(entry, hash, count));
-  mStringTableWriter.StringElement(aStr);
+  mStringTableWriter.StringElement(MakeStringSpan(aStr));
   return count;
 }
 
@@ -276,12 +277,12 @@ uint32_t UniqueStacks::GetOrAddFrameIndex(const FrameKey& aFrame) {
 
 void UniqueStacks::SpliceFrameTableElements(SpliceableJSONWriter& aWriter) {
   mFrameTableWriter.EndBareList();
-  aWriter.TakeAndSplice(mFrameTableWriter.ChunkedWriteFunc());
+  aWriter.TakeAndSplice(mFrameTableWriter.TakeChunkedWriteFunc());
 }
 
 void UniqueStacks::SpliceStackTableElements(SpliceableJSONWriter& aWriter) {
   mStackTableWriter.EndBareList();
-  aWriter.TakeAndSplice(mStackTableWriter.ChunkedWriteFunc());
+  aWriter.TakeAndSplice(mStackTableWriter.TakeChunkedWriteFunc());
 }
 
 void UniqueStacks::StreamStack(const StackKey& aStack) {
@@ -337,9 +338,8 @@ struct CStringWriteFunc : public JSONWriteFunc {
   std::string& mBuffer;  // The struct must not outlive this buffer
   explicit CStringWriteFunc(std::string& aBuffer) : mBuffer(aBuffer) {}
 
-  void Write(const char* aStr) override { mBuffer += aStr; }
-  void Write(const char* aStr, size_t aLen) override {
-    mBuffer.append(aStr, 0, aLen);
+  void Write(const Span<const char>& aStr) override {
+    mBuffer.append(aStr.data(), aStr.size());
   }
 };
 
@@ -813,33 +813,61 @@ void ProfileBuffer::StreamMarkersToJSON(SpliceableJSONWriter& aWriter,
     MOZ_ASSERT(static_cast<ProfileBufferEntry::KindUnderlyingType>(type) <
                static_cast<ProfileBufferEntry::KindUnderlyingType>(
                    ProfileBufferEntry::Kind::MODERN_LIMIT));
-    if (type == ProfileBufferEntry::Kind::MarkerData &&
-        aER.ReadObject<int>() == aThreadId) {
-      // Schema:
-      //   [name, time, category, data]
-
-      aWriter.StartArrayElement();
-      {
-        std::string name = aER.ReadObject<std::string>();
-        const ProfilingCategoryPairInfo& info = GetProfilingCategoryPairInfo(
-            static_cast<ProfilingCategoryPair>(aER.ReadObject<uint32_t>()));
-        auto payload = aER.ReadObject<UniquePtr<ProfilerMarkerPayload>>();
-        double time = aER.ReadObject<double>();
-        MOZ_ASSERT(aER.RemainingBytes() == 0);
-
-        aUniqueStacks.mUniqueStrings->WriteElement(aWriter, name.c_str());
-        aWriter.DoubleElement(time);
-        aWriter.IntElement(unsigned(info.mCategory));
-        if (payload) {
-          aWriter.StartObjectElement(SpliceableJSONWriter::SingleLineStyle);
-          { payload->StreamPayload(aWriter, aProcessStartTime, aUniqueStacks); }
-          aWriter.EndObject();
+    // Code should *break* from the switch if the entry was not fully read.
+    // Code should *return* from the switch if the entry was fully read.
+    switch (type) {
+      case ProfileBufferEntry::Kind::MarkerData:
+        if (aER.ReadObject<int>() != aThreadId) {
+          break;
         }
-      }
-      aWriter.EndArray();
-    } else {
-      aER.SetRemainingBytes(0);
+        // Schema:
+        //   [name, time, category, data]
+        aWriter.StartArrayElement();
+        {
+          std::string name = aER.ReadObject<std::string>();
+          const ProfilingCategoryPairInfo& info = GetProfilingCategoryPairInfo(
+              static_cast<ProfilingCategoryPair>(aER.ReadObject<uint32_t>()));
+          auto payload = aER.ReadObject<UniquePtr<ProfilerMarkerPayload>>();
+          double time = aER.ReadObject<double>();
+          MOZ_ASSERT(aER.RemainingBytes() == 0);
+
+          aUniqueStacks.mUniqueStrings->WriteElement(aWriter, name.c_str());
+          aWriter.DoubleElement(time);
+          aWriter.IntElement(unsigned(info.mCategory));
+          if (payload) {
+            aWriter.StartObjectElement(SpliceableJSONWriter::SingleLineStyle);
+            {
+              payload->StreamPayload(aWriter, aProcessStartTime, aUniqueStacks);
+            }
+            aWriter.EndObject();
+          }
+        }
+        aWriter.EndArray();
+        return;
+
+      case ProfileBufferEntry::Kind::Marker:
+        if (::mozilla::base_profiler_markers_detail::
+                DeserializeAfterKindAndStream(
+                    aER, aWriter, aThreadId,
+                    [&](const mozilla::ProfilerString8View& aName) {
+                      aUniqueStacks.mUniqueStrings->WriteElement(
+                          aWriter, aName.String().c_str());
+                    },
+                    [&](ProfileChunkedBuffer& aChunkedBuffer) {
+                      ProfilerBacktrace backtrace("", aThreadId,
+                                                  &aChunkedBuffer);
+                      backtrace.StreamJSON(
+                          aWriter, TimeStamp::ProcessCreation(), aUniqueStacks);
+                    })) {
+          return;
+        }
+        break;
+
+      default:
+        break;
     }
+
+    aER.SetRemainingBytes(0);
   });
 }
 
@@ -1091,9 +1119,11 @@ void ProfileBuffer::StreamCountersToJSON(SpliceableJSONWriter& aWriter,
           static_cast<const BaseProfilerCount*>(iter.get().key());
 
       aWriter.Start();
-      aWriter.StringProperty("name", base_counter->mLabel);
-      aWriter.StringProperty("category", base_counter->mCategory);
-      aWriter.StringProperty("description", base_counter->mDescription);
+      aWriter.StringProperty("name", MakeStringSpan(base_counter->mLabel));
+      aWriter.StringProperty("category",
+                             MakeStringSpan(base_counter->mCategory));
+      aWriter.StringProperty("description",
+                             MakeStringSpan(base_counter->mDescription));
 
       aWriter.StartArrayProperty("sample_groups");
       for (auto counter_iter = counter.iter(); !counter_iter.done();
@@ -1169,7 +1199,7 @@ static void AddPausedRange(SpliceableJSONWriter& aWriter, const char* aReason,
   } else {
     aWriter.NullProperty("endTime");
   }
-  aWriter.StringProperty("reason", aReason);
+  aWriter.StringProperty("reason", MakeStringSpan(aReason));
   aWriter.End();
 }
 

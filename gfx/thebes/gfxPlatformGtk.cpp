@@ -206,10 +206,10 @@ static const char kFontWenQuanYiMicroHei[] = "WenQuanYi Micro Hei";
 static const char kFontNanumGothic[] = "NanumGothic";
 static const char kFontSymbola[] = "Symbola";
 
-void gfxPlatformGtk::GetCommonFallbackFonts(uint32_t aCh, uint32_t aNextCh,
-                                            Script aRunScript,
+void gfxPlatformGtk::GetCommonFallbackFonts(uint32_t aCh, Script aRunScript,
+                                            eFontPresentation aPresentation,
                                             nsTArray<const char*>& aFontList) {
-  if (ShouldPreferEmojiFont(aCh, aNextCh)) {
+  if (PrefersColor(aPresentation)) {
     aFontList.AppendElement(kFontTwemojiMozilla);
   }
 
@@ -686,11 +686,20 @@ already_AddRefed<gfx::VsyncSource> gfxPlatformGtk::CreateHardwareVsyncSource() {
   }
 #  endif
 
-  // Only use GLX vsync when the OpenGL compositor is being used.
+  // Only use GLX vsync when the OpenGL compositor / WebRedner is being used.
   // The extra cost of initializing a GLX context while blocking the main
   // thread is not worth it when using basic composition.
+  //
+  // Don't call gl::sGLXLibrary.SupportsVideoSync() when EGL is used.
+  // NVIDIA drivers refuse to use EGL GL context when GLX was initialized first
+  // and fail silently.
   if (gfxConfig::IsEnabled(Feature::HW_COMPOSITING)) {
-    if (gl::sGLXLibrary.SupportsVideoSync()) {
+    bool useGlxVsync = false;
+    // Nvidia doesn't support GLX at the same time as EGL.
+    if (!gfxVars::UseEGL()) {
+      useGlxVsync = gl::sGLXLibrary.SupportsVideoSync();
+    }
+    if (useGlxVsync) {
       RefPtr<VsyncSource> vsyncSource = new GtkVsyncSource();
       VsyncSource::Display& display = vsyncSource->GetGlobalDisplay();
       if (!static_cast<GtkVsyncSource::GLXDisplay&>(display).Setup()) {

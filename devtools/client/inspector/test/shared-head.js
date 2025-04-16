@@ -36,6 +36,12 @@ var openInspector = async function(hostType) {
   }
 
   const testActor = await getTestActor(toolbox);
+  // Override the highligher getter with a method to return the active box model
+  // highlighter. Adaptation for multi-process scenarios where there can be multiple
+  // highlighters, one per process.
+  testActor.highlighter = () => {
+    return inspector.highlighters.getActiveHighlighter("BoxModelHighlighter");
+  };
 
   return { toolbox, inspector, testActor };
 };
@@ -145,18 +151,6 @@ function openChangesView() {
  */
 function openLayoutView() {
   return openInspectorSidebarTab("layoutview").then(data => {
-    // The actual highligher show/hide methods are mocked in box model tests.
-    // The highlighter is tested in devtools/inspector/test.
-    function mockHighlighter({ highlighter }) {
-      highlighter.showBoxModel = function() {
-        return promise.resolve();
-      };
-      highlighter.hideBoxModel = function() {
-        return promise.resolve();
-      };
-    }
-    mockHighlighter(data.inspector);
-
     return {
       toolbox: data.toolbox,
       inspector: data.inspector,
@@ -527,34 +521,6 @@ function getRuleViewSelector(view, selectorText) {
   const rule = getRuleViewRule(view, selectorText);
   return rule.querySelector(".ruleview-selector, .ruleview-selector-matched");
 }
-
-/**
- * Get a reference to the selectorhighlighter icon DOM element corresponding to
- * a given selector in the rule-view
- *
- * @param {CssRuleView} view
- *        The instance of the rule-view panel
- * @param {String} selectorText
- *        The selector in the rule-view to look for
- * @param {Number} index
- *        If there are more than 1 rule with the same selector, use this index
- *        to determine which one should be retrieved. Defaults to 0
- * @return {DOMNode} The selectorhighlighter icon DOM element
- */
-var getRuleViewSelectorHighlighterIcon = async function(
-  view,
-  selectorText,
-  index = 0
-) {
-  const rule = getRuleViewRule(view, selectorText, index);
-
-  const editor = rule._ruleEditor;
-  if (!editor.uniqueSelector) {
-    await once(editor, "selector-icon-created");
-  }
-
-  return rule.querySelector(".ruleview-selectorhighlighter");
-};
 
 /**
  * Get a rule-link from the rule-view given its index

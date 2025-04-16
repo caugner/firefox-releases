@@ -66,6 +66,14 @@ template <typename R, typename RArgMapper, typename Func, typename... Args>
 Result<R, nsresult> ToResultInvokeInternal(const Func& aFunc,
                                            const RArgMapper& aRArgMapper,
                                            Args&&... aArgs) {
+  // XXX Thereotically, if R is a pointer to a non-refcounted type, this might
+  // be a non-owning pointer, but unless we find a case where this actually is
+  // relevant, it's safe to forbid any raw pointer result.
+  static_assert(
+      !std::is_pointer_v<R>,
+      "Raw pointer results are not supported, please specify a smart pointer "
+      "result type explicitly, so that getter_AddRefs is used");
+
   R res;
   nsresult rv = aFunc(std::forward<Args>(aArgs)..., aRArgMapper(res));
   if (NS_FAILED(rv)) {
@@ -186,14 +194,18 @@ auto ToResultInvokeMemberFunction(T& aObj, const Func& aFunc, Args&&... aArgs) {
 
 // For use in MOZ_TO_RESULT_INVOKE.
 template <typename T>
-auto DerefHelper(const T&) -> T;
+auto DerefHelper(const T&) -> T&;
+
+template <typename T>
+auto DerefHelper(T*) -> T&;
 
 template <template <class> class SmartPtr, typename T,
           typename = decltype(*std::declval<const SmartPtr<T>>())>
-auto DerefHelper(const SmartPtr<T>&) -> T;
+auto DerefHelper(const SmartPtr<T>&) -> T&;
 
 template <typename T>
-using DerefedType = decltype(DerefHelper(std::declval<T>()));
+using DerefedType =
+    std::remove_reference_t<decltype(DerefHelper(std::declval<const T&>()))>;
 }  // namespace detail
 
 template <typename T, typename U, typename... XArgs, typename... Args,
@@ -293,8 +305,9 @@ auto ToResultInvoke(const SmartPtr<const T>& aObj,
 #endif
 
 // Macro version of ToResultInvoke for member functions. The macro has the
-// advantage of not requiring spelling out the type name, at the expense of
-// having a non-standard syntax. It can be used like this:
+// advantage of not requiring spelling out the member function's declarator type
+// name, at the expense of having a non-standard syntax. It can be used like
+// this:
 //
 //     nsCOMPtr<nsIFile> file;
 //     auto existsOrErr = MOZ_TO_RESULT_INVOKE(file, Exists);
@@ -302,6 +315,19 @@ auto ToResultInvoke(const SmartPtr<const T>& aObj,
   ::mozilla::ToResultInvoke(                                             \
       (obj), &::mozilla::detail::DerefedType<decltype(obj)>::methodname, \
       ##__VA_ARGS__)
+
+// Macro version of ToResultInvoke for member functions, where the result type
+// does not match the output parameter type. The macro has the advantage of not
+// requiring spelling out the member function's declarator type name, at the
+// expense of having a non-standard syntax. It can be used like this:
+//
+//     nsCOMPtr<nsIFile> file;
+//     auto existsOrErr = MOZ_TO_RESULT_INVOKE(nsCOMPtr<nsIFile>, file, Clone);
+#define MOZ_TO_RESULT_INVOKE_TYPED(resultType, obj, methodname, ...)   \
+  ::mozilla::ToResultInvoke<resultType>(                               \
+      ::std::mem_fn(                                                   \
+          &::mozilla::detail::DerefedType<decltype(obj)>::methodname), \
+      (obj), ##__VA_ARGS__)
 
 }  // namespace mozilla
 

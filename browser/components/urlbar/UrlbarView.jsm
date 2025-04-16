@@ -372,6 +372,7 @@ class UrlbarView {
   clear() {
     this._rows.textContent = "";
     this.panel.setAttribute("noresults", "true");
+    this._selectElement(null, { updateInput: false });
   }
 
   /**
@@ -558,9 +559,6 @@ class UrlbarView {
             UrlbarTokenizer.RESTRICT.SEARCH ||
             queryContext.trimmedSearchString.length != 1)
       );
-
-      // Notify the input, so it can make adjustments based on the first result.
-      this.input.onFirstResult(firstResult);
     }
 
     if (
@@ -1380,8 +1378,11 @@ class UrlbarView {
     this._setAccessibleFocus(setAccessibleFocus && item);
     this._selectedElement = item;
 
+    let result = item?.closest(".urlbarView-row")?.result;
     if (updateInput) {
-      this.input.setValueFromResult(item?.result);
+      this.input.setValueFromResult(result);
+    } else {
+      this.input.setResultForCurrentValue(result);
     }
   }
 
@@ -1718,7 +1719,9 @@ class UrlbarView {
       if (
         result.type != UrlbarUtils.RESULT_TYPE.SEARCH ||
         (!result.heuristic &&
-          (!result.payload.suggestion || result.payload.isSearchHistory) &&
+          (!result.payload.suggestion ||
+            (result.type == UrlbarUtils.RESULT_TYPE.SEARCH &&
+              result.source == UrlbarUtils.RESULT_SOURCE.HISTORY)) &&
           (!result.payload.inPrivateWindow || result.payload.isPrivateEngine))
       ) {
         continue;

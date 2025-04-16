@@ -10,6 +10,7 @@
 // profiler internals.
 
 #include "GeckoProfiler.h"
+#include "mozilla/ProfilerMarkerTypes.h"
 #include "platform.h"
 #include "ProfileBuffer.h"
 #include "ProfilerMarkerPayload.h"
@@ -522,7 +523,7 @@ TEST(GeckoProfiler, Pause)
 
   // Check that we are writing markers while not paused.
   info1 = profiler_get_buffer_info();
-  PROFILER_ADD_MARKER("Not paused", OTHER);
+  PROFILER_MARKER_UNTYPED("Not paused", OTHER);
   info2 = profiler_get_buffer_info();
   ASSERT_TRUE(info1->mRangeEnd != info2->mRangeEnd);
 
@@ -539,9 +540,12 @@ TEST(GeckoProfiler, Pause)
 
   // Check that we are now writing markers while paused.
   info1 = profiler_get_buffer_info();
-  PROFILER_ADD_MARKER("Paused", OTHER);
+  PROFILER_MARKER_UNTYPED("Paused", OTHER);
   info2 = profiler_get_buffer_info();
   ASSERT_TRUE(info1->mRangeEnd == info2->mRangeEnd);
+  PROFILER_MARKER_UNTYPED("Paused v2", OTHER);
+  Maybe<ProfilerBufferInfo> info3 = profiler_get_buffer_info();
+  ASSERT_TRUE(info2->mRangeEnd == info3->mRangeEnd);
 
   profiler_resume();
 
@@ -617,8 +621,9 @@ void GTestMarkerPayload::StreamPayload(SpliceableJSONWriter& aWriter,
                                        UniqueStacks& aUniqueStacks) const {
   StreamCommonProps("gtest", aWriter, aStartTime, aUniqueStacks);
   char buf[64];
-  SprintfLiteral(buf, "gtest-%d", mN);
-  aWriter.IntProperty(buf, mN);
+  int written = SprintfLiteral(buf, "gtest-%d", mN);
+  ASSERT_GT(written, 0);
+  aWriter.IntProperty(mozilla::Span<const char>(buf, size_t(written)), mN);
   ++sNumStreamed;
 }
 
@@ -645,10 +650,10 @@ TEST(GeckoProfiler, Markers)
 
   { AUTO_PROFILER_TRACING_MARKER("C", "auto tracing", OTHER); }
 
-  PROFILER_ADD_MARKER("M1", OTHER);
+  PROFILER_MARKER_UNTYPED("M1", OTHER);
   PROFILER_ADD_MARKER_WITH_PAYLOAD("M2", OTHER, TracingMarkerPayload,
                                    ("C", TRACING_EVENT, ts0));
-  PROFILER_ADD_MARKER("M3", OTHER);
+  PROFILER_MARKER_UNTYPED("M3", OTHER);
   PROFILER_ADD_MARKER_WITH_PAYLOAD(
       "M4", OTHER, TracingMarkerPayload,
       ("C", TRACING_EVENT, ts0, mozilla::Nothing(), profiler_get_backtrace()));
@@ -697,6 +702,22 @@ TEST(GeckoProfiler, Markers)
   ASSERT_EQ(longstrCut[kMax - 1], 'c');
   longstrCut[kMax - 1] = '\0';
 
+  // Test basic markers 2.0.
+  MOZ_RELEASE_ASSERT(
+      profiler_add_marker<>("default-templated markers 2.0 with empty options",
+                            geckoprofiler::category::OTHER));
+
+  PROFILER_MARKER_UNTYPED("default-templated markers 2.0 with option",
+                          OTHER.WithOptions(MarkerStack::TakeBacktrace(
+                              profiler_capture_backtrace())));
+
+  PROFILER_MARKER("explicitly-default-templated markers 2.0 with empty options",
+                  OTHER, NoPayload);
+
+  MOZ_RELEASE_ASSERT(profiler_add_marker<::geckoprofiler::markers::NoPayload>(
+      "explicitly-default-templated markers 2.0 with option",
+      geckoprofiler::category::OTHER));
+
   // Used in markers below.
   TimeStamp ts1 = TimeStamp::NowUnfuzzed();
 
@@ -717,15 +738,23 @@ TEST(GeckoProfiler, Markers)
       "FileIOMarkerPayload marker", OTHER, FileIOMarkerPayload,
       ("operation", "source", "filename", ts1, ts2, nullptr));
 
+  MOZ_RELEASE_ASSERT(profiler_add_marker<geckoprofiler::markers::FileIO>(
+      "FileIOMarkerPayload marker 2.0",
+      geckoprofiler::category::OTHER.WithOptions(
+          MarkerTiming::Interval(ts1, ts2)),
+      "operation", "source", "filename", MarkerThreadId{}));
+
   PROFILER_ADD_MARKER_WITH_PAYLOAD(
       "FileIOMarkerPayload marker off-MT", OTHER, FileIOMarkerPayload,
       ("operation2", "source2", "filename2", ts1, ts2, nullptr, Some(123)));
 
-  // Other markers in alphabetical order of payload class names.
+  MOZ_RELEASE_ASSERT(profiler_add_marker<geckoprofiler::markers::FileIO>(
+      "FileIOMarkerPayload marker 2.0 off-MT",
+      geckoprofiler::category::OTHER.WithOptions(
+          MarkerTiming::Interval(ts1, ts2)),
+      "operation2", "source2", "filename2", MarkerThreadId{123}));
 
-  PROFILER_ADD_MARKER_WITH_PAYLOAD(
-      "DOMEventMarkerPayload marker", OTHER, DOMEventMarkerPayload,
-      (u"dom event"_ns, ts1, "category", TRACING_EVENT, mozilla::Nothing()));
+  // Other markers in alphabetical order of payload class names.
 
   {
     const char gcMajorJSON[] = "42";
@@ -829,6 +858,37 @@ TEST(GeckoProfiler, Markers)
        mozilla::ipc::MessageDirection::eSending,
        mozilla::ipc::MessagePhase::Endpoint, false, ts1));
 
+  MOZ_RELEASE_ASSERT(profiler_add_marker<geckoprofiler::markers::Tracing>(
+      "Tracing", geckoprofiler::category::OTHER, "category"));
+
+  MOZ_RELEASE_ASSERT(
+      profiler_add_marker<geckoprofiler::markers::UserTimingMark>(
+          "UserTimingMark", geckoprofiler::category::OTHER, "mark name"));
+
+  MOZ_RELEASE_ASSERT(
+      profiler_add_marker<geckoprofiler::markers::UserTimingMeasure>(
+          "UserTimingMeasure", geckoprofiler::category::OTHER, "measure name",
+          Some(mozilla::ProfilerString8View("start")),
+          Some(mozilla::ProfilerString8View("end"))));
+
+  MOZ_RELEASE_ASSERT(profiler_add_marker<geckoprofiler::markers::Hang>(
+      "Hang", geckoprofiler::category::OTHER));
+
+  MOZ_RELEASE_ASSERT(profiler_add_marker<geckoprofiler::markers::LongTask>(
+      "LongTask", geckoprofiler::category::OTHER));
+
+  MOZ_RELEASE_ASSERT(profiler_add_marker<geckoprofiler::markers::Text>(
+      "Text", geckoprofiler::category::OTHER, "Text text"));
+
+  MOZ_RELEASE_ASSERT(profiler_add_marker<geckoprofiler::markers::Log>(
+      "Log", geckoprofiler::category::OTHER, "module", "log text"));
+
+  MOZ_RELEASE_ASSERT(profiler_add_marker<geckoprofiler::markers::MediaSample>(
+      "MediaSample", geckoprofiler::category::OTHER, 123, 456));
+
+  MOZ_RELEASE_ASSERT(profiler_add_marker<geckoprofiler::markers::Budget>(
+      "Budget", geckoprofiler::category::OTHER));
+
   SpliceableChunkedJSONWriter w;
   w.Start();
   EXPECT_TRUE(::profiler_stream_json_for_this_process(w));
@@ -842,7 +902,7 @@ TEST(GeckoProfiler, Markers)
   EXPECT_EQ(GTestMarkerPayload::sNumStreamed, 0 + 10);
   EXPECT_EQ(GTestMarkerPayload::sNumDestroyed, 10 + 10);
 
-  UniquePtr<char[]> profile = w.ChunkedWriteFunc()->CopyData();
+  UniquePtr<char[]> profile = w.ChunkedWriteFunc().CopyData();
   ASSERT_TRUE(!!profile.get());
 
   // Expected markers, in order.
@@ -867,9 +927,14 @@ TEST(GeckoProfiler, Markers)
     S_M5_gtest7,
     S_M5_gtest8,
     S_M5_gtest9,
+    S_Markers2DefaultEmptyOptions,
+    S_Markers2DefaultWithOptions,
+    S_Markers2ExplicitDefaultEmptyOptions,
+    S_Markers2ExplicitDefaultWithOptions,
     S_FileIOMarkerPayload,
+    S_FileIOMarker2,
     S_FileIOMarkerPayloadOffMT,
-    S_DOMEventMarkerPayload,
+    S_FileIOMarker2OffMT,
     S_GCMajorMarkerPayload,
     S_GCMinorMarkerPayload,
     S_GCSliceMarkerPayload,
@@ -1074,6 +1139,24 @@ TEST(GeckoProfiler, Markers)
               } else if (nameString == "M3") {
                 ASSERT_EQ(state, S_M3);
                 state = State(state + 1);
+              } else if (nameString ==
+                         "default-templated markers 2.0 with empty options") {
+                EXPECT_EQ(state, S_Markers2DefaultEmptyOptions);
+                state = State(S_Markers2DefaultEmptyOptions + 1);
+              } else if (nameString ==
+                         "default-templated markers 2.0 with option") {
+                EXPECT_EQ(state, S_Markers2DefaultWithOptions);
+                state = State(S_Markers2DefaultWithOptions + 1);
+              } else if (nameString ==
+                         "explicitly-default-templated markers 2.0 with empty "
+                         "options") {
+                EXPECT_EQ(state, S_Markers2ExplicitDefaultEmptyOptions);
+                state = State(S_Markers2ExplicitDefaultEmptyOptions + 1);
+              } else if (nameString ==
+                         "explicitly-default-templated markers 2.0 with "
+                         "option") {
+                EXPECT_EQ(state, S_Markers2ExplicitDefaultWithOptions);
+                state = State(S_Markers2ExplicitDefaultWithOptions + 1);
               }
             } else {
               // root.threads[0].markers.data[i] is an array with 6 elements,
@@ -1207,6 +1290,17 @@ TEST(GeckoProfiler, Markers)
                 EXPECT_EQ_JSON(payload["filename"], String, "filename");
                 EXPECT_FALSE(payload.isMember("threadId"));
 
+              } else if (nameString == "FileIOMarkerPayload marker 2.0") {
+                EXPECT_EQ(state, S_FileIOMarker2);
+                state = State(S_FileIOMarker2 + 1);
+                EXPECT_EQ(typeString, "FileIO");
+                EXPECT_TIMING_INTERVAL_AT(ts1Double, ts2Double);
+                EXPECT_TRUE(payload["stack"].isNull());
+                EXPECT_EQ_JSON(payload["operation"], String, "operation");
+                EXPECT_EQ_JSON(payload["source"], String, "source");
+                EXPECT_EQ_JSON(payload["filename"], String, "filename");
+                EXPECT_FALSE(payload.isMember("threadId"));
+
               } else if (nameString == "FileIOMarkerPayload marker off-MT") {
                 EXPECT_EQ(state, S_FileIOMarkerPayloadOffMT);
                 state = State(S_FileIOMarkerPayloadOffMT + 1);
@@ -1218,15 +1312,17 @@ TEST(GeckoProfiler, Markers)
                 EXPECT_EQ_JSON(payload["filename"], String, "filename2");
                 EXPECT_EQ_JSON(payload["threadId"], Int, 123);
 
-              } else if (nameString == "DOMEventMarkerPayload marker") {
-                EXPECT_EQ(state, S_DOMEventMarkerPayload);
-                state = State(S_DOMEventMarkerPayload + 1);
-                EXPECT_EQ(typeString, "tracing");
+              } else if (nameString ==
+                         "FileIOMarkerPayload marker 2.0 off-MT") {
+                EXPECT_EQ(state, S_FileIOMarker2OffMT);
+                state = State(S_FileIOMarker2OffMT + 1);
+                EXPECT_EQ(typeString, "FileIO");
+                EXPECT_TIMING_INTERVAL_AT(ts1Double, ts2Double);
                 EXPECT_TRUE(payload["stack"].isNull());
-                EXPECT_EQ_JSON(payload["category"], String, "category");
-                EXPECT_TRUE(payload["interval"].isNull());
-                EXPECT_EQ_JSON(payload["timeStamp"], Double, ts1Double);
-                EXPECT_EQ_JSON(payload["eventType"], String, "dom event");
+                EXPECT_EQ_JSON(payload["operation"], String, "operation2");
+                EXPECT_EQ_JSON(payload["source"], String, "source2");
+                EXPECT_EQ_JSON(payload["filename"], String, "filename2");
+                EXPECT_EQ_JSON(payload["threadId"], Int, 123);
 
               } else if (nameString == "GCMajorMarkerPayload marker") {
                 EXPECT_EQ(state, S_GCMajorMarkerPayload);
@@ -1548,7 +1644,7 @@ TEST(GeckoProfiler, Counters)
   SpliceableChunkedJSONWriter w;
   ASSERT_TRUE(::profiler_stream_json_for_this_process(w));
 
-  UniquePtr<char[]> profile = w.ChunkedWriteFunc()->CopyData();
+  UniquePtr<char[]> profile = w.ChunkedWriteFunc().CopyData();
 
   // counter name and description should appear as is.
   ASSERT_TRUE(strstr(profile.get(), COUNTER_NAME));
@@ -1561,7 +1657,7 @@ TEST(GeckoProfiler, Counters)
 
   ASSERT_TRUE(::profiler_stream_json_for_this_process(w));
 
-  profile = w.ChunkedWriteFunc()->CopyData();
+  profile = w.ChunkedWriteFunc().CopyData();
   ASSERT_TRUE(strstr(profile.get(), COUNTER_NAME));
   ASSERT_TRUE(strstr(profile.get(), COUNTER_DESCRIPTION));
   ASSERT_TRUE(strstr(profile.get(), COUNTER_NAME2));
@@ -1648,7 +1744,7 @@ TEST(GeckoProfiler, StreamJSONForThisProcess)
   ASSERT_TRUE(::profiler_stream_json_for_this_process(w));
   w.End();
 
-  UniquePtr<char[]> profile = w.ChunkedWriteFunc()->CopyData();
+  UniquePtr<char[]> profile = w.ChunkedWriteFunc().CopyData();
 
   JSONOutputCheck(profile.get());
 
@@ -1685,7 +1781,7 @@ TEST(GeckoProfiler, StreamJSONForThisProcessThreaded)
           }),
       NS_DISPATCH_SYNC);
 
-  UniquePtr<char[]> profile = w.ChunkedWriteFunc()->CopyData();
+  UniquePtr<char[]> profile = w.ChunkedWriteFunc().CopyData();
 
   JSONOutputCheck(profile.get());
 
@@ -1919,7 +2015,7 @@ TEST(GeckoProfiler, BaseProfilerHandOff)
   // Add at least a marker, which should go straight into the buffer.
   Maybe<baseprofiler::ProfilerBufferInfo> info0 =
       baseprofiler::profiler_get_buffer_info();
-  BASE_PROFILER_ADD_MARKER("Marker from base profiler", OTHER);
+  BASE_PROFILER_MARKER_UNTYPED("Marker from base profiler", OTHER);
   Maybe<baseprofiler::ProfilerBufferInfo> info1 =
       baseprofiler::profiler_get_buffer_info();
   ASSERT_GT(info1->mRangeEnd, info0->mRangeEnd);

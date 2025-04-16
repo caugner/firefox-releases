@@ -8,6 +8,7 @@
 
 #include "BuildConstants.h"
 #include "ipc/KnowsCompositor.h"
+#include "mozilla/gfx/gfxVars.h"
 #include "mozilla/StaticPrefs_webgl.h"
 #include "nsICanvasRenderingContextInternal.h"
 #include "PersistentBufferProvider.h"
@@ -51,7 +52,7 @@ std::shared_ptr<BorrowedSourceSurface> CanvasRenderer::BorrowSnapshot(
     const bool requireAlphaPremult) const {
   const auto context = mData.GetContext();
   if (!context) return nullptr;
-  const auto& provider = context->GetBufferProvider();
+  RefPtr<PersistentBufferProvider> provider = context->GetBufferProvider();
 
   RefPtr<gfx::SourceSurface> ss;
 
@@ -59,6 +60,7 @@ std::shared_ptr<BorrowedSourceSurface> CanvasRenderer::BorrowSnapshot(
     ss = provider->BorrowSnapshot();
   }
   if (!ss) {
+    provider = nullptr;
     ss = context->GetFrontBufferSnapshot(requireAlphaPremult);
   }
   if (!ss) return nullptr;
@@ -116,6 +118,9 @@ TextureType TexTypeForWebgl(KnowsCompositor* const knowsCompositor) {
     return TextureType::X11;
   }
   if (kIsAndroid) {
+    if (gfx::gfxVars::UseAHardwareBufferSharedSurface()) {
+      return TextureType::AndroidHardwareBuffer;
+    }
     if (StaticPrefs::webgl_enable_surface_texture()) {
       return TextureType::AndroidNativeWindow;
     }

@@ -12,8 +12,8 @@ use api::{PropertyBinding, ReferenceFrameKind, ScrollFrameDisplayItem, ScrollSen
 use api::{Shadow, SpaceAndClipInfo, SpatialId, StickyFrameDisplayItem, ImageMask, ItemTag};
 use api::{ClipMode, PrimitiveKeyKind, TransformStyle, YuvColorSpace, ColorRange, YuvData, TempFilterData};
 use api::{ReferenceTransformBinding, Rotation};
-use api::image_tiling::simplify_repeated_primitive;
 use api::units::*;
+use crate::image_tiling::simplify_repeated_primitive;
 use crate::clip::{ClipChainId, ClipRegion, ClipItemKey, ClipStore, ClipItemKeyKind};
 use crate::clip::{ClipInternData, ClipNodeKind, ClipInstance};
 use crate::spatial_tree::{ROOT_SPATIAL_NODE_INDEX, SpatialTree, SpatialNodeIndex};
@@ -208,7 +208,7 @@ impl CompositeOps {
 bitflags! {
     /// Slice flags
     pub struct SliceFlags : u8 {
-        /// Slice created by a cluster that has ClusterFlags::SCROLLBAR_CONTAINER
+        /// Slice created by a prim that has PrimitiveFlags::IS_SCROLLBAR_CONTAINER
         const IS_SCROLLBAR = 1;
     }
 }
@@ -2322,7 +2322,7 @@ impl<'a> SceneBuilder<'a> {
                         // blur radius is 0, the code in Picture::prepare_for_render will
                         // detect this and mark the picture to be drawn directly into the
                         // parent picture, which avoids an intermediate surface and blur.
-                        let blur_filter = Filter::Blur(std_deviation);
+                        let blur_filter = Filter::Blur(std_deviation, std_deviation);
                         let composite_mode = if blur_filter.is_noop() {
                             None
                         } else {

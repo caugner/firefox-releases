@@ -60,6 +60,7 @@
 
 #include "mozilla/AppShutdown.h"
 #include "mozilla/AutoRestore.h"
+#include "mozilla/EarlyBlankWindow.h"
 #include "mozilla/Logging.h"
 #include "mozilla/MathAlgorithms.h"
 #include "mozilla/MiscEvents.h"
@@ -600,6 +601,7 @@ nsWindow::nsWindow(bool aIsChildWindow)
   mMouseInDraggableArea = false;
   mDestroyCalled = false;
   mIsEarlyBlankWindow = false;
+  mWasPreXulSkeletonUI = false;
   mResizable = false;
   mHasTaskbarIconBeenCreated = false;
   mMouseTransparent = false;
@@ -889,9 +891,22 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
       aInitData->mWindowType == eWindowType_plugin_ipc_content) {
     style |= WS_DISABLED;
   }
-  mWnd = ::CreateWindowExW(extendedStyle, className, L"", style, aRect.X(),
-                           aRect.Y(), aRect.Width(), GetHeight(aRect.Height()),
-                           parent, nullptr, nsToolkit::mDllInstance, nullptr);
+
+  if (aInitData->mWindowType == eWindowType_toplevel && !aParent) {
+    mWnd = ConsumeEarlyBlankWindowHandle();
+    if (mWnd) {
+      mWasPreXulSkeletonUI = true;
+      ::SetWindowLongPtrW(mWnd, GWL_STYLE, style);
+      ::SetWindowLongPtrW(mWnd, GWL_EXSTYLE, extendedStyle);
+    }
+  }
+
+  if (!mWnd) {
+    mWnd =
+        ::CreateWindowExW(extendedStyle, className, L"", style, aRect.X(),
+                          aRect.Y(), aRect.Width(), GetHeight(aRect.Height()),
+                          parent, nullptr, nsToolkit::mDllInstance, nullptr);
+  }
 
   if (!mWnd) {
     NS_WARNING("nsWindow CreateWindowEx failed.");
@@ -4555,8 +4570,9 @@ bool nsWindow::DispatchMouseEvent(EventMessage aEventMessage, WPARAM wParam,
       }
       break;
     case eMouseExitFromWidget:
-      event.mExitFrom = IsTopLevelMouseExit(mWnd) ? WidgetMouseEvent::eTopLevel
-                                                  : WidgetMouseEvent::eChild;
+      event.mExitFrom =
+          Some(IsTopLevelMouseExit(mWnd) ? WidgetMouseEvent::eTopLevel
+                                         : WidgetMouseEvent::eChild);
       break;
     default:
       break;
@@ -8658,6 +8674,12 @@ void nsWindow::GetCompositorWidgetInitData(
 
 bool nsWindow::SynchronouslyRepaintOnResize() {
   return !gfxWindowsPlatform::GetPlatform()->DwmCompositionEnabled();
+}
+
+void nsWindow::MaybeDispatchInitialFocusEvent() {
+  if (mWasPreXulSkeletonUI && ::GetActiveWindow() == mWnd) {
+    DispatchFocusToTopLevelWindow(true);
+  }
 }
 
 already_AddRefed<nsIWidget> nsIWidget::CreateTopLevelWindow() {

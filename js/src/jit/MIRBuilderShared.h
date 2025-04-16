@@ -123,6 +123,19 @@ class MOZ_STACK_CLASS CallInfo {
   bool apply_;
 
  public:
+  // For some argument formats (normal calls, FunCall, FunApplyArgs in an
+  // inlined function) we can shuffle around definitions in the CallInfo
+  // and use a normal MCall. For others, we need to use a specialized call.
+  enum class ArgFormat {
+    Standard,
+    Array,
+    FunApplyArgs,
+  };
+
+ private:
+  ArgFormat argFormat_ = ArgFormat::Standard;
+
+ public:
   CallInfo(TempAllocator& alloc, jsbytecode* pc, bool constructing,
            bool ignoresReturnValue)
       : args_(alloc),
@@ -171,6 +184,40 @@ class MOZ_STACK_CLASS CallInfo {
     setCallee(current->pop());
 
     return true;
+  }
+
+  void initForSpreadCall(MBasicBlock* current) {
+    MOZ_ASSERT(args_.empty());
+
+    if (constructing()) {
+      setNewTarget(current->pop());
+    }
+
+    // Spread calls have one argument, an Array object containing the args.
+    static_assert(decltype(args_)::InlineLength >= 1,
+                  "Appending one argument should be infallible");
+    MOZ_ALWAYS_TRUE(args_.append(current->pop()));
+
+    // Get |this| and |callee|
+    setThis(current->pop());
+    setCallee(current->pop());
+
+    argFormat_ = ArgFormat::Array;
+  }
+
+  void initForGetterCall(MDefinition* callee, MDefinition* thisVal) {
+    MOZ_ASSERT(args_.empty());
+    setCallee(callee);
+    setThis(thisVal);
+  }
+  void initForSetterCall(MDefinition* callee, MDefinition* thisVal,
+                         MDefinition* rhs) {
+    MOZ_ASSERT(args_.empty());
+    setCallee(callee);
+    setThis(thisVal);
+    static_assert(decltype(args_)::InlineLength >= 1,
+                  "Appending one argument should be infallible");
+    MOZ_ALWAYS_TRUE(args_.append(rhs));
   }
 
   // Before doing any pop to the stack, capture whatever flows into the
@@ -230,6 +277,10 @@ class MOZ_STACK_CLASS CallInfo {
   MOZ_MUST_USE bool setArgs(const MDefinitionVector& args) {
     MOZ_ASSERT(args_.empty());
     return args_.appendAll(args);
+  }
+  MOZ_MUST_USE bool replaceArgs(const MDefinitionVector& args) {
+    args_.clear();
+    return setArgs(args);
   }
 
   MDefinitionVector& argv() { return args_; }
@@ -304,6 +355,16 @@ class MOZ_STACK_CLASS CallInfo {
   void setImplicitlyUsedUnchecked() {
     auto setFlag = [](MDefinition* def) { def->setImplicitlyUsedUnchecked(); };
     forEachCallOperand(setFlag);
+  }
+
+  ArgFormat argFormat() const { return argFormat_; }
+  void setArgFormat(ArgFormat argFormat) { argFormat_ = argFormat; }
+
+  MDefinition* arrayArg() const {
+    MOZ_ASSERT(argFormat_ == ArgFormat::Array);
+    MOZ_ASSERT_IF(!apply_, argc() == 1 + uint32_t(constructing_));
+    MOZ_ASSERT_IF(apply_, argc() == 2 && !constructing_);
+    return getArg(argc() - 1 - constructing_);
   }
 };
 

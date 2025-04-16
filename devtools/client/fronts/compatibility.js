@@ -32,9 +32,35 @@ class CompatibilityFront extends FrontClassWithSpec(compatibilitySpec) {
     }
   }
 
-  // Update the object given a form representation off the wire.
-  form(json) {
-    this.actorID = json.actor;
+  /*
+   * Backwards compatibility wrapper for getCSSDeclarationBlockIssues.
+   * This can be removed once FF82 hits the release channel
+   */
+  async _getTraits() {
+    if (!this._traits) {
+      try {
+        // From FF82+, getTraits() is supported
+        const { traits } = await super.getTraits();
+        this._traits = traits;
+      } catch (e) {
+        this._traits = {};
+      }
+    }
+
+    return this._traits;
+  }
+
+  /*
+   * Backwards compatibility wrapper for getCSSDeclarationBlockIssues.
+   * This can be removed once FF82 hits the release channel
+   */
+  async getCSSDeclarationBlockIssues(declarationBlock, targetBrowsers) {
+    const traits = await this._getTraits();
+    if (!traits.declarationBlockIssueComputationEnabled) {
+      return [];
+    }
+
+    return super.getCSSDeclarationBlockIssues(declarationBlock, targetBrowsers);
   }
 }
 

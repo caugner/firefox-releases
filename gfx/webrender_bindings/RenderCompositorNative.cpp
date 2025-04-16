@@ -9,6 +9,7 @@
 #include "GLContext.h"
 #include "GLContextProvider.h"
 #include "mozilla/gfx/gfxVars.h"
+#include "mozilla/layers/CompositionRecorder.h"
 #include "mozilla/layers/SurfacePool.h"
 #include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/webrender/RenderThread.h"
@@ -20,6 +21,36 @@
 
 namespace mozilla {
 namespace wr {
+
+class RenderCompositorRecordedFrame final : public layers::RecordedFrame {
+ public:
+  RenderCompositorRecordedFrame(
+      const TimeStamp& aTimeStamp,
+      RefPtr<layers::profiler_screenshots::AsyncReadbackBuffer>&& aBuffer)
+      : RecordedFrame(aTimeStamp), mBuffer(aBuffer) {}
+
+  virtual already_AddRefed<gfx::DataSourceSurface> GetSourceSurface() override {
+    if (mSurface) {
+      return do_AddRef(mSurface);
+    }
+
+    gfx::IntSize size = mBuffer->Size();
+    mSurface = gfx::Factory::CreateDataSourceSurface(
+        size, gfx::SurfaceFormat::B8G8R8A8,
+        /* aZero = */ false);
+
+    if (!mBuffer->MapAndCopyInto(mSurface, size)) {
+      mSurface = nullptr;
+      return nullptr;
+    }
+
+    return do_AddRef(mSurface);
+  }
+
+ private:
+  RefPtr<layers::profiler_screenshots::AsyncReadbackBuffer> mBuffer;
+  RefPtr<gfx::DataSourceSurface> mSurface;
+};
 
 RenderCompositorNative::RenderCompositorNative(
     RefPtr<widget::CompositorWidget>&& aWidget, gl::GLContext* aGL)
@@ -35,6 +66,7 @@ RenderCompositorNative::RenderCompositorNative(
 }
 
 RenderCompositorNative::~RenderCompositorNative() {
+  mProfilerScreenshotGrabber.Destroy();
   mNativeLayerRoot->SetLayers({});
   mNativeLayerForEntireWindow = nullptr;
   mNativeLayerRootSnapshotter = nullptr;
@@ -106,6 +138,10 @@ bool RenderCompositorNative::MaybeReadback(
   MOZ_RELEASE_ASSERT(aReadbackFormat == wr::ImageFormat::BGRA8);
   if (!mNativeLayerRootSnapshotter) {
     mNativeLayerRootSnapshotter = mNativeLayerRoot->CreateSnapshotter();
+
+    if (!mNativeLayerRootSnapshotter) {
+      return false;
+    }
   }
   bool success = mNativeLayerRootSnapshotter->ReadbackPixels(
       aReadbackSize, gfx::SurfaceFormat::B8G8R8A8, aReadbackBuffer);
@@ -121,6 +157,77 @@ bool RenderCompositorNative::MaybeReadback(
   return success;
 }
 
+bool RenderCompositorNative::MaybeRecordFrame(
+    layers::CompositionRecorder& aRecorder) {
+  if (!ShouldUseNativeCompositor()) {
+    return false;
+  }
+
+  if (!mNativeLayerRootSnapshotter) {
+    mNativeLayerRootSnapshotter = mNativeLayerRoot->CreateSnapshotter();
+  }
+
+  if (!mNativeLayerRootSnapshotter) {
+    return true;
+  }
+
+  gfx::IntSize size = GetBufferSize().ToUnknownSize();
+  RefPtr<layers::profiler_screenshots::RenderSource> snapshot =
+      mNativeLayerRootSnapshotter->GetWindowContents(size);
+  if (!snapshot) {
+    return true;
+  }
+
+  RefPtr<layers::profiler_screenshots::AsyncReadbackBuffer> buffer =
+      mNativeLayerRootSnapshotter->CreateAsyncReadbackBuffer(size);
+  buffer->CopyFrom(snapshot);
+
+  RefPtr<layers::RecordedFrame> frame =
+      new RenderCompositorRecordedFrame(TimeStamp::Now(), std::move(buffer));
+  aRecorder.RecordFrame(frame);
+
+  // GetWindowContents might have changed the current context. Make sure our
+  // context is current again.
+  MakeCurrent();
+  return true;
+}
+
+bool RenderCompositorNative::MaybeGrabScreenshot(
+    const gfx::IntSize& aWindowSize) {
+  if (!ShouldUseNativeCompositor()) {
+    return false;
+  }
+
+  if (!mNativeLayerRootSnapshotter) {
+    mNativeLayerRootSnapshotter = mNativeLayerRoot->CreateSnapshotter();
+  }
+
+  if (mNativeLayerRootSnapshotter) {
+    mProfilerScreenshotGrabber.MaybeGrabScreenshot(*mNativeLayerRootSnapshotter,
+                                                   aWindowSize);
+
+    // MaybeGrabScreenshot might have changed the current context. Make sure our
+    // context is current again.
+    MakeCurrent();
+  }
+
+  return true;
+}
+
+bool RenderCompositorNative::MaybeProcessScreenshotQueue() {
+  if (!ShouldUseNativeCompositor()) {
+    return false;
+  }
+
+  mProfilerScreenshotGrabber.MaybeProcessQueue();
+
+  // MaybeProcessQueue might have changed the current context. Make sure our
+  // context is current again.
+  MakeCurrent();
+
+  return true;
+}
+
 uint32_t RenderCompositorNative::GetMaxUpdateRects() {
   if (ShouldUseNativeCompositor() &&
       StaticPrefs::gfx_webrender_compositor_max_update_rects_AtStartup() > 0) {
@@ -131,7 +238,7 @@ uint32_t RenderCompositorNative::GetMaxUpdateRects() {
 
 void RenderCompositorNative::CompositorBeginFrame() {
   mAddedLayers.Clear();
-  mAddedPixelCount = 0;
+  mAddedTilePixelCount = 0;
   mAddedClippedPixelCount = 0;
   mBeginFrameTimeStamp = TimeStamp::NowUnfuzzed();
   mSurfacePoolHandle->OnBeginFrame();
@@ -146,19 +253,19 @@ void RenderCompositorNative::CompositorEndFrame() {
     for (const auto& it : mSurfaces) {
       nativeLayerCount += int(it.second.mNativeLayers.size());
     }
-    profiler_add_text_marker(
+    PROFILER_MARKER_TEXT(
         "WR OS Compositor frame",
+        GRAPHICS.WithOptions(
+            MarkerTiming::IntervalUntilNowFrom(mBeginFrameTimeStamp)),
         nsPrintfCString("%d%% painting, %d%% overdraw, %d used "
                         "layers (%d%% memory) + %d unused layers (%d%% memory)",
                         int(mDrawnPixelCount * 100 / windowPixelCount),
                         int(mAddedClippedPixelCount * 100 / windowPixelCount),
                         int(mAddedLayers.Length()),
-                        int(mAddedPixelCount * 100 / windowPixelCount),
+                        int(mAddedTilePixelCount * 100 / windowPixelCount),
                         int(nativeLayerCount - mAddedLayers.Length()),
-                        int((mTotalPixelCount - mAddedPixelCount) * 100 /
-                            windowPixelCount)),
-        JS::ProfilingCategoryPair::GRAPHICS, mBeginFrameTimeStamp,
-        TimeStamp::NowUnfuzzed());
+                        int((mTotalTilePixelCount - mAddedTilePixelCount) *
+                            100 / windowPixelCount)));
   }
 #endif
   mDrawnPixelCount = 0;
@@ -236,8 +343,10 @@ void RenderCompositorNative::DestroySurface(NativeSurfaceId aId) {
   MOZ_RELEASE_ASSERT(surfaceCursor != mSurfaces.end());
 
   Surface& surface = surfaceCursor->second;
-  for (const auto& iter : surface.mNativeLayers) {
-    mTotalPixelCount -= gfx::IntRect({}, iter.second->GetSize()).Area();
+  if (!surface.mIsExternal) {
+    for (const auto& iter : surface.mNativeLayers) {
+      mTotalTilePixelCount -= gfx::IntRect({}, iter.second->GetSize()).Area();
+    }
   }
 
   mSurfaces.erase(surfaceCursor);
@@ -253,7 +362,7 @@ void RenderCompositorNative::CreateTile(wr::NativeSurfaceId aId, int aX,
   RefPtr<layers::NativeLayer> layer = mNativeLayerRoot->CreateLayer(
       surface.TileSize(), surface.mIsOpaque, mSurfacePoolHandle);
   surface.mNativeLayers.insert({TileKey(aX, aY), layer});
-  mTotalPixelCount += gfx::IntRect({}, layer->GetSize()).Area();
+  mTotalTilePixelCount += gfx::IntRect({}, layer->GetSize()).Area();
 }
 
 void RenderCompositorNative::DestroyTile(wr::NativeSurfaceId aId, int aX,
@@ -267,7 +376,7 @@ void RenderCompositorNative::DestroyTile(wr::NativeSurfaceId aId, int aX,
   MOZ_RELEASE_ASSERT(layerCursor != surface.mNativeLayers.end());
   RefPtr<layers::NativeLayer> layer = std::move(layerCursor->second);
   surface.mNativeLayers.erase(layerCursor);
-  mTotalPixelCount -= gfx::IntRect({}, layer->GetSize()).Area();
+  mTotalTilePixelCount -= gfx::IntRect({}, layer->GetSize()).Area();
 
   // If the layer is currently present in mNativeLayerRoot, it will be destroyed
   // once CompositorEndFrame() replaces mNativeLayerRoot's layers and drops that
@@ -316,9 +425,13 @@ void RenderCompositorNative::AddSurface(
     layer->SetSamplingFilter(ToSamplingFilter(aImageRendering));
     mAddedLayers.AppendElement(layer);
 
-    mAddedPixelCount += layerSize.width * layerSize.height;
+    if (!surface.mIsExternal) {
+      mAddedTilePixelCount += layerSize.width * layerSize.height;
+    }
+    gfx::Rect r = transform.TransformBounds(
+        gfx::Rect(layer->CurrentSurfaceDisplayRect()));
     gfx::IntRect visibleRect =
-        clipRect.Intersect(layer->CurrentSurfaceDisplayRect() + layerPosition);
+        clipRect.Intersect(RoundedToInt(r) + layerPosition);
     mAddedClippedPixelCount += visibleRect.Area();
   }
 }
@@ -334,7 +447,7 @@ CompositorCapabilities RenderCompositorNative::GetCompositorCapabilities() {
 
 /* static */
 UniquePtr<RenderCompositor> RenderCompositorNativeOGL::Create(
-    RefPtr<widget::CompositorWidget>&& aWidget) {
+    RefPtr<widget::CompositorWidget>&& aWidget, nsACString& aError) {
   RefPtr<gl::GLContext> gl = RenderThread::Get()->SharedGL();
   if (!gl) {
     gl = gl::GLContextProvider::CreateForCompositorWidget(
@@ -451,7 +564,7 @@ void RenderCompositorNativeOGL::Unbind() {
 
 /* static */
 UniquePtr<RenderCompositor> RenderCompositorNativeSWGL::Create(
-    RefPtr<widget::CompositorWidget>&& aWidget) {
+    RefPtr<widget::CompositorWidget>&& aWidget, nsACString& aError) {
   void* ctx = wr_swgl_create_context();
   if (!ctx) {
     gfxCriticalNote << "Failed SWGL context creation for WebRender";

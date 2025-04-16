@@ -9,10 +9,11 @@ extern crate log;
 
 extern crate bitreader;
 extern crate byteorder;
+extern crate fallible_collections;
 extern crate num_traits;
 use bitreader::{BitReader, ReadInto};
 use byteorder::{ReadBytesExt, WriteBytesExt};
-use fallible::TryRead as _;
+use fallible_collections::TryRead;
 use num_traits::Num;
 use std::convert::{TryFrom, TryInto as _};
 use std::io::Cursor;
@@ -24,8 +25,6 @@ mod macros;
 
 mod boxes;
 use boxes::{BoxType, FourCC};
-
-mod fallible;
 
 // Unit tests.
 #[cfg(test)]
@@ -58,7 +57,7 @@ impl ToU64 for usize {
 
 /// A trait to indicate a type can be infallibly converted to `usize`.
 /// This should only be implemented for infallible conversions, so only unsigned types are valid.
-trait ToUsize {
+pub trait ToUsize {
     fn to_usize(self) -> usize;
 }
 
@@ -119,14 +118,10 @@ impl<'a, T: Read> Read for OffsetReader<'a, T> {
     }
 }
 
-// TODO: all the functions that rely on the mp4parse_fallible feature need to
-// be updated when Rust supports fallible memory allocation in raw_vec.
-// See https://github.com/mozilla/mp4parse-rust/issues/146
-
-pub type TryVec<T> = fallible::TryVec<T>;
-pub type TryString = TryVec<u8>;
-pub type TryHashMap<K, V> = fallible::TryHashMap<K, V>;
-pub type TryBox<T> = fallible::TryBox<T>;
+pub type TryVec<T> = fallible_collections::TryVec<T>;
+pub type TryString = fallible_collections::TryVec<u8>;
+pub type TryHashMap<K, V> = fallible_collections::TryHashMap<K, V>;
+pub type TryBox<T> = fallible_collections::TryBox<T>;
 
 // To ensure we don't use stdlib allocating types by accident
 #[allow(dead_code)]
@@ -202,6 +197,12 @@ impl From<Error> for std::io::Error {
             _ => std::io::ErrorKind::Other,
         };
         Self::new(kind, err)
+    }
+}
+
+impl From<fallible_collections::TryReserveError> for Error {
+    fn from(_: fallible_collections::TryReserveError) -> Error {
+        Error::OutOfMemory
     }
 }
 
@@ -975,16 +976,16 @@ pub struct TrackTimeScale<T: Num>(pub T, pub usize);
 /// A time to be scaled by the track's local (mdhd) timescale.
 /// Members are time in scale units and the track id.
 #[derive(Debug, Copy, Clone, PartialEq)]
-pub struct TrackScaledTime<T: Num>(pub T, pub usize);
+pub struct TrackScaledTime<T>(pub T, pub usize);
 
 impl<T> std::ops::Add for TrackScaledTime<T>
 where
-    T: Num,
+    T: num_traits::CheckedAdd,
 {
-    type Output = TrackScaledTime<T>;
+    type Output = Option<Self>;
 
-    fn add(self, other: TrackScaledTime<T>) -> TrackScaledTime<T> {
-        TrackScaledTime::<T>(self.0 + other.0, self.1)
+    fn add(self, other: TrackScaledTime<T>) -> Self::Output {
+        self.0.checked_add(&other.0).map(|sum| Self(sum, self.1))
     }
 }
 
@@ -1047,6 +1048,12 @@ impl<'a, T: Read> BoxIter<'a, T> {
 impl<'a, T: Read> Read for BMFFBox<'a, T> {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         self.content.read(buf)
+    }
+}
+
+impl<'a, T: Read> TryRead for BMFFBox<'a, T> {
+    fn try_read_to_end(&mut self, buf: &mut TryVec<u8>) -> std::io::Result<usize> {
+        fallible_collections::try_read_up_to(self, self.bytes_left(), buf)
     }
 }
 
@@ -1318,7 +1325,11 @@ pub fn read_avif<T: Read>(f: &mut T, context: &mut AvifContext) -> Result<()> {
 
     context.primary_item = primary_item_extents_data.concat()?;
 
-    Ok(())
+    if primary_item_extents_data.iter().any(TryVec::is_empty) {
+        Err(Error::InvalidData("Primary item data incomplete"))
+    } else {
+        Ok(())
+    }
 }
 
 /// Parse a metadata box in the context of an AVIF
@@ -1455,7 +1466,7 @@ struct U32BE(u32);
 impl std::fmt::Display for U32BE {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match std::str::from_utf8(&self.0.to_be_bytes()) {
-            Ok(s) => write!(f, "{}", s),
+            Ok(s) => f.write_str(s),
             Err(_) => write!(f, "{:x?}", self.0),
         }
     }
@@ -1953,6 +1964,7 @@ fn read_stbl<T: Read>(f: &mut BMFFBox<T>, track: &mut Track) -> Result<()> {
 }
 
 /// Parse an ftyp box.
+/// See ISO 14496-12:2015 § 4.3
 fn read_ftyp<T: Read>(src: &mut BMFFBox<T>) -> Result<FileTypeBox> {
     let major = be_u32(src)?;
     let minor = be_u32(src)?;
@@ -1962,7 +1974,7 @@ fn read_ftyp<T: Read>(src: &mut BMFFBox<T>) -> Result<FileTypeBox> {
     }
     // Is a brand_count of zero valid?
     let brand_count = bytes_left / 4;
-    let mut brands = TryVec::new();
+    let mut brands = TryVec::with_capacity(brand_count.try_into()?)?;
     for _ in 0..brand_count {
         brands.push(be_u32(src)?.into())?;
     }
@@ -2058,10 +2070,11 @@ fn read_tkhd<T: Read>(src: &mut BMFFBox<T>) -> Result<TrackHeaderBox> {
 }
 
 /// Parse a elst box.
+/// See ISO 14496-12:2015 § 8.6.6
 fn read_elst<T: Read>(src: &mut BMFFBox<T>) -> Result<EditListBox> {
     let (version, _) = read_fullbox_extra(src)?;
     let edit_count = be_u32_with_limit(src)?;
-    let mut edits = TryVec::new();
+    let mut edits = TryVec::with_capacity(edit_count.to_usize())?;
     for _ in 0..edit_count {
         let (segment_duration, media_time) = match version {
             1 => {
@@ -2133,10 +2146,11 @@ fn read_mdhd<T: Read>(src: &mut BMFFBox<T>) -> Result<MediaHeaderBox> {
 }
 
 /// Parse a stco box.
+/// See ISO 14496-12:2015 § 8.7.5
 fn read_stco<T: Read>(src: &mut BMFFBox<T>) -> Result<ChunkOffsetBox> {
     let (_, _) = read_fullbox_extra(src)?;
     let offset_count = be_u32_with_limit(src)?;
-    let mut offsets = TryVec::new();
+    let mut offsets = TryVec::with_capacity(offset_count.to_usize())?;
     for _ in 0..offset_count {
         offsets.push(be_u32(src)?.into())?;
     }
@@ -2148,10 +2162,11 @@ fn read_stco<T: Read>(src: &mut BMFFBox<T>) -> Result<ChunkOffsetBox> {
 }
 
 /// Parse a co64 box.
+/// See ISO 14496-12:2015 § 8.7.5
 fn read_co64<T: Read>(src: &mut BMFFBox<T>) -> Result<ChunkOffsetBox> {
     let (_, _) = read_fullbox_extra(src)?;
     let offset_count = be_u32_with_limit(src)?;
-    let mut offsets = TryVec::new();
+    let mut offsets = TryVec::with_capacity(offset_count.to_usize())?;
     for _ in 0..offset_count {
         offsets.push(be_u64(src)?)?;
     }
@@ -2163,10 +2178,11 @@ fn read_co64<T: Read>(src: &mut BMFFBox<T>) -> Result<ChunkOffsetBox> {
 }
 
 /// Parse a stss box.
+/// See ISO 14496-12:2015 § 8.6.2
 fn read_stss<T: Read>(src: &mut BMFFBox<T>) -> Result<SyncSampleBox> {
     let (_, _) = read_fullbox_extra(src)?;
     let sample_count = be_u32_with_limit(src)?;
-    let mut samples = TryVec::new();
+    let mut samples = TryVec::with_capacity(sample_count.to_usize())?;
     for _ in 0..sample_count {
         samples.push(be_u32(src)?)?;
     }
@@ -2178,10 +2194,11 @@ fn read_stss<T: Read>(src: &mut BMFFBox<T>) -> Result<SyncSampleBox> {
 }
 
 /// Parse a stsc box.
+/// See ISO 14496-12:2015 § 8.7.4
 fn read_stsc<T: Read>(src: &mut BMFFBox<T>) -> Result<SampleToChunkBox> {
     let (_, _) = read_fullbox_extra(src)?;
     let sample_count = be_u32_with_limit(src)?;
-    let mut samples = TryVec::new();
+    let mut samples = TryVec::with_capacity(sample_count.to_usize())?;
     for _ in 0..sample_count {
         let first_chunk = be_u32(src)?;
         let samples_per_chunk = be_u32_with_limit(src)?;
@@ -2199,16 +2216,23 @@ fn read_stsc<T: Read>(src: &mut BMFFBox<T>) -> Result<SampleToChunkBox> {
     Ok(SampleToChunkBox { samples })
 }
 
+/// Parse a Composition Time to Sample Box
+/// See ISO 14496-12:2015 § 8.6.1.3
 fn read_ctts<T: Read>(src: &mut BMFFBox<T>) -> Result<CompositionOffsetBox> {
     let (version, _) = read_fullbox_extra(src)?;
 
-    let counts = u64::from(be_u32_with_limit(src)?);
+    let counts = be_u32_with_limit(src)?;
 
-    if src.bytes_left() < counts.checked_mul(8).expect("counts -> bytes overflow") {
+    if src.bytes_left()
+        < counts
+            .checked_mul(8)
+            .expect("counts -> bytes overflow")
+            .into()
+    {
         return Err(Error::InvalidData("insufficient data in 'ctts' box"));
     }
 
-    let mut offsets = TryVec::new();
+    let mut offsets = TryVec::with_capacity(counts.to_usize())?;
     for _ in 0..counts {
         let (sample_count, time_offset) = match version {
             // According to spec, Version0 shoule be used when version == 0;
@@ -2235,12 +2259,14 @@ fn read_ctts<T: Read>(src: &mut BMFFBox<T>) -> Result<CompositionOffsetBox> {
 }
 
 /// Parse a stsz box.
+/// See ISO 14496-12:2015 § 8.7.3.2
 fn read_stsz<T: Read>(src: &mut BMFFBox<T>) -> Result<SampleSizeBox> {
     let (_, _) = read_fullbox_extra(src)?;
     let sample_size = be_u32(src)?;
     let sample_count = be_u32_with_limit(src)?;
     let mut sample_sizes = TryVec::new();
     if sample_size == 0 {
+        sample_sizes.reserve(sample_count.to_usize())?;
         for _ in 0..sample_count {
             sample_sizes.push(be_u32(src)?)?;
         }
@@ -2256,10 +2282,11 @@ fn read_stsz<T: Read>(src: &mut BMFFBox<T>) -> Result<SampleSizeBox> {
 }
 
 /// Parse a stts box.
+/// See ISO 14496-12:2015 § 8.6.1.2
 fn read_stts<T: Read>(src: &mut BMFFBox<T>) -> Result<TimeToSampleBox> {
     let (_, _) = read_fullbox_extra(src)?;
     let sample_count = be_u32_with_limit(src)?;
-    let mut samples = TryVec::new();
+    let mut samples = TryVec::with_capacity(sample_count.to_usize())?;
     for _ in 0..sample_count {
         let sample_count = be_u32_with_limit(src)?;
         let sample_delta = be_u32(src)?;
@@ -2421,7 +2448,7 @@ fn find_descriptor(data: &[u8], esds: &mut ES_Descriptor) -> Result<()> {
         let des = &mut Cursor::new(remains);
         let tag = des.read_u8()?;
 
-        // See ISO 14496-1:2010 § 8.3.3 for interpreting size of exandable classes
+        // See ISO 14496-1:2010 § 8.3.3 for interpreting size of expandable classes
 
         let mut end: u32 = 0; // It's u8 without declaration type that is incorrect.
                               // MSB of extend_or_len indicates more bytes, up to 4 bytes.
@@ -2627,7 +2654,11 @@ fn read_ds_descriptor(data: &[u8], esds: &mut ES_Descriptor) -> Result<()> {
             esds.extended_audio_object_type = extended_audio_object_type;
             esds.audio_sample_rate = Some(sample_frequency_value);
             esds.audio_channel_count = Some(channel_counts);
-            assert!(esds.decoder_specific_data.is_empty());
+            if !esds.decoder_specific_data.is_empty() {
+                return Err(Error::InvalidData(
+                    "There can be only one DecSpecificInfoTag descriptor",
+                ));
+            }
             esds.decoder_specific_data.extend_from_slice(data)?;
 
             Ok(())
@@ -2695,6 +2726,7 @@ fn read_es_descriptor(data: &[u8], esds: &mut ES_Descriptor) -> Result<()> {
     Ok(())
 }
 
+/// See ISO 14496-14:2010 § 6.7.2
 fn read_esds<T: Read>(src: &mut BMFFBox<T>) -> Result<ES_Descriptor> {
     let (_, _) = read_fullbox_extra(src)?;
 
@@ -2709,6 +2741,7 @@ fn read_esds<T: Read>(src: &mut BMFFBox<T>) -> Result<ES_Descriptor> {
 }
 
 /// Parse `FLACSpecificBox`.
+/// See https://github.com/xiph/flac/blob/master/doc/isoflac.txt §  3.3.2
 fn read_dfla<T: Read>(src: &mut BMFFBox<T>) -> Result<FLACSpecificBox> {
     let (version, flags) = read_fullbox_extra(src)?;
     if version != 0 {
@@ -3135,6 +3168,7 @@ fn read_audio_sample_entry<T: Read>(src: &mut BMFFBox<T>) -> Result<SampleEntry>
 
 /// Parse a stsd box.
 /// See ISO 14496-12:2015 § 8.5.2
+/// See ISO 14496-14:2010 § 6.7.2
 fn read_stsd<T: Read>(src: &mut BMFFBox<T>, track: &mut Track) -> Result<SampleDescriptionBox> {
     let (_, _) = read_fullbox_extra(src)?;
 

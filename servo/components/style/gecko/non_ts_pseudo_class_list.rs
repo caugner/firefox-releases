@@ -58,7 +58,6 @@ macro_rules! apply_non_ts_list {
                 ("-moz-focusring", MozFocusRing, IN_FOCUSRING_STATE, _),
                 ("-moz-broken", MozBroken, IN_BROKEN_STATE, _),
                 ("-moz-loading", MozLoading, IN_LOADING_STATE, _),
-                ("-moz-suppressed", MozSuppressed, IN_SUPPRESSED_STATE, PSEUDO_CLASS_ENABLED_IN_UA_SHEETS_AND_CHROME),
                 ("-moz-has-dir-attr", MozHasDirAttr, IN_HAS_DIR_ATTR_STATE, PSEUDO_CLASS_ENABLED_IN_UA_SHEETS),
                 ("-moz-dir-attr-ltr", MozDirAttrLTR, IN_HAS_DIR_ATTR_LTR_STATE, PSEUDO_CLASS_ENABLED_IN_UA_SHEETS),
                 ("-moz-dir-attr-rtl", MozDirAttrRTL, IN_HAS_DIR_ATTR_RTL_STATE, PSEUDO_CLASS_ENABLED_IN_UA_SHEETS),
@@ -92,13 +91,10 @@ macro_rules! apply_non_ts_list {
                 ("-moz-meter-sub-optimum", MozMeterSubOptimum, IN_SUB_OPTIMUM_STATE, _),
                 ("-moz-meter-sub-sub-optimum", MozMeterSubSubOptimum, IN_SUB_SUB_OPTIMUM_STATE, _),
 
-                ("-moz-user-disabled", MozUserDisabled, IN_USER_DISABLED_STATE, PSEUDO_CLASS_ENABLED_IN_UA_SHEETS_AND_CHROME),
-
                 ("-moz-first-node", MozFirstNode, _, _),
                 ("-moz-last-node", MozLastNode, _, _),
                 ("-moz-only-whitespace", MozOnlyWhitespace, _, _),
                 ("-moz-native-anonymous", MozNativeAnonymous, _, PSEUDO_CLASS_ENABLED_IN_UA_SHEETS),
-                ("-moz-native-anonymous-no-specificity", MozNativeAnonymousNoSpecificity, _, PSEUDO_CLASS_ENABLED_IN_UA_SHEETS),
                 ("-moz-use-shadow-tree-root", MozUseShadowTreeRoot, _, PSEUDO_CLASS_ENABLED_IN_UA_SHEETS),
                 ("-moz-is-html", MozIsHTML, _, _),
                 ("-moz-placeholder", MozPlaceholder, _, _),

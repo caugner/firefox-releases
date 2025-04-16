@@ -333,6 +333,12 @@ class AsyncPanZoomController {
   void FlushActiveCheckerboardReport();
 
   /**
+   * See documentation on corresponding method in APZPublicUtils.h
+   */
+  static gfx::IntSize GetDisplayportAlignmentMultiplier(
+      const ScreenSize& aBaseSize);
+
+  /**
    * Recalculates the displayport. Ideally, this should paint an area bigger
    * than the composite-to dimensions so that when you scroll down, you don't
    * checkerboard immediately. This includes a bunch of logic, including
@@ -539,6 +545,9 @@ class AsyncPanZoomController {
   // Returns true when the metrics have changed and were updated.
   bool UpdateRootFrameMetricsIfChanged(GeckoViewMetrics& aMetrics);
 
+  // Returns the cached current frame time.
+  SampleTime GetFrameTime() const;
+
  private:
   // Get whether the horizontal content of the honoured target of auto-dir
   // scrolling starts from right to left. If you don't know of auto-dir
@@ -549,9 +558,6 @@ class AsyncPanZoomController {
  protected:
   // Protected destructor, to discourage deletion outside of Release():
   virtual ~AsyncPanZoomController();
-
-  // Returns the cached current frame time.
-  SampleTime GetFrameTime() const;
 
   /**
    * Helper method for touches beginning. Sets everything up for panning and any
@@ -1239,7 +1245,9 @@ class AsyncPanZoomController {
     ANIMATING_ZOOM,       /* animated zoom to a new rect */
     OVERSCROLL_ANIMATION, /* Spring-based animation used to relieve overscroll
                              once the finger is lifted. */
-    SMOOTH_SCROLL,        /* Smooth scrolling to destination. Used by
+    SMOOTH_SCROLL,        /* Smooth scrolling to destination, with physics
+                             controlled by prefs specific to the scroll origin. */
+    SMOOTHMSD_SCROLL,     /* SmoothMSD scrolling to destination. Used by
                              CSSOM-View smooth scroll-behavior */
     WHEEL_SCROLL,    /* Smooth scrolling to a destination for a wheel event. */
     KEYBOARD_SCROLL, /* Smooth scrolling to a destination for a keyboard event.
@@ -1370,7 +1378,7 @@ class AsyncPanZoomController {
   friend class AndroidFlingPhysics;
   friend class DesktopFlingPhysics;
   friend class OverscrollAnimation;
-  friend class SmoothScrollAnimation;
+  friend class SmoothMsdScrollAnimation;
   friend class GenericScrollAnimation;
   friend class WheelScrollAnimation;
   friend class KeyboardScrollAnimation;
@@ -1401,7 +1409,14 @@ class AsyncPanZoomController {
   // Start an overscroll animation with the given initial velocity.
   void StartOverscrollAnimation(const ParentLayerPoint& aVelocity);
 
-  void SmoothScrollTo(const CSSPoint& aDestination);
+  // Start a smooth-scrolling animation to the given destination, with physics
+  // based on the prefs for the indicated origin.
+  void SmoothScrollTo(const CSSPoint& aDestination,
+                      const ScrollOrigin& aOrigin);
+
+  // Start a smooth-scrolling animation to the given destination, with MSD
+  // physics that is suited for scroll-snapping.
+  void SmoothMsdScrollTo(const CSSPoint& aDestination);
 
   // Returns whether overscroll is allowed during an event.
   bool AllowScrollHandoffInCurrentBlock() const;

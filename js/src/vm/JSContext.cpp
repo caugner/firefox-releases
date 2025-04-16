@@ -63,7 +63,7 @@
 #include "vm/BytecodeUtil.h"  // JSDVG_IGNORE_STACK
 #include "vm/ErrorObject.h"
 #include "vm/ErrorReporting.h"
-#include "vm/HelperThreads.h"
+#include "vm/HelperThreadState.h"
 #include "vm/Iteration.h"
 #include "vm/JSAtom.h"
 #include "vm/JSFunction.h"
@@ -84,6 +84,15 @@ using namespace js;
 
 using mozilla::DebugOnly;
 using mozilla::PodArrayZero;
+
+#ifdef DEBUG
+JSContext* js::MaybeGetJSContext() {
+  if (!TlsContext.init()) {
+    return nullptr;
+  }
+  return TlsContext.get();
+}
+#endif
 
 bool js::AutoCycleDetector::init() {
   MOZ_ASSERT(cyclic);
@@ -880,7 +889,7 @@ mozilla::GenericErrorResult<JS::Error&> JSContext::alreadyReportedError() {
 
 JSContext::JSContext(JSRuntime* runtime, const JS::ContextOptions& options)
     : runtime_(runtime),
-      kind_(ContextKind::HelperThread),
+      kind_(ContextKind::Uninitialized),
       nurserySuppressions_(this),
       options_(this, options),
       freeLists_(this, nullptr),
@@ -967,7 +976,7 @@ JSContext::JSContext(JSRuntime* runtime, const JS::ContextOptions& options)
 JSContext::~JSContext() {
   // Clear the ContextKind first, so that ProtectedData checks will allow us to
   // destroy this context even if the runtime is already gone.
-  kind_ = ContextKind::HelperThread;
+  kind_ = ContextKind::Uninitialized;
 
   /* Free the stuff hanging off of cx. */
   MOZ_ASSERT(!resolvingList);
@@ -997,13 +1006,20 @@ JSContext::~JSContext() {
   TlsContext.set(nullptr);
 }
 
-void JSContext::setHelperThread(AutoLockHelperThreadState& locked) {
+void JSContext::setHelperThread(const AutoLockHelperThreadState& locked) {
+  MOZ_ASSERT(isHelperThreadContext());
   MOZ_ASSERT_IF(!JSRuntime::hasLiveRuntimes(), !TlsContext.get());
+  MOZ_ASSERT(currentThread_ == ThreadId());
+
   TlsContext.set(this);
   currentThread_ = ThreadId::ThisThreadId();
 }
 
-void JSContext::clearHelperThread(AutoLockHelperThreadState& locked) {
+void JSContext::clearHelperThread(const AutoLockHelperThreadState& locked) {
+  MOZ_ASSERT(isHelperThreadContext());
+  MOZ_ASSERT(TlsContext.get() == this);
+  MOZ_ASSERT(currentThread_ == ThreadId::ThisThreadId());
+
   currentThread_ = ThreadId();
   TlsContext.set(nullptr);
 }
@@ -1197,12 +1213,6 @@ void AutoEnterOOMUnsafeRegion::crash(size_t size, const char* reason) {
   }
   crash(reason);
 }
-
-AutoKeepAtoms::AutoKeepAtoms(JSContext* cx) : cx(cx) {
-  cx->zone()->keepAtoms();
-}
-
-AutoKeepAtoms::~AutoKeepAtoms() { cx->zone()->releaseAtoms(); };
 
 void ExternalValueArray::trace(JSTracer* trc) {
   if (Value* vp = begin()) {

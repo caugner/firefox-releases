@@ -10,18 +10,15 @@ const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 
-const { element } = ChromeUtils.import(
-  "chrome://marionette/content/element.js"
-);
-const { error, NoSuchFrameError } = ChromeUtils.import(
-  "chrome://marionette/content/error.js"
-);
-const { evaluate } = ChromeUtils.import(
-  "chrome://marionette/content/evaluate.js"
-);
-const { Log } = ChromeUtils.import("chrome://marionette/content/log.js");
+XPCOMUtils.defineLazyModuleGetters(this, {
+  atom: "chrome://marionette/content/atom.js",
+  element: "chrome://marionette/content/element.js",
+  error: "chrome://marionette/content/error.js",
+  evaluate: "chrome://marionette/content/evaluate.js",
+  Log: "chrome://marionette/content/log.js",
+});
 
-XPCOMUtils.defineLazyGetter(this, "logger", Log.get);
+XPCOMUtils.defineLazyGetter(this, "logger", () => Log.get());
 
 class MarionetteFrameChild extends JSWindowActorChild {
   constructor() {
@@ -85,6 +82,15 @@ class MarionetteFrameChild extends JSWindowActorChild {
           break;
         case "MarionetteFrameParent:getElementProperty":
           result = await this.getElementProperty(data);
+          break;
+        case "MarionetteFrameParent:getElementTagName":
+          result = await this.getElementTagName(data);
+          break;
+        case "MarionetteFrameParent:getElementText":
+          result = await this.getElementText(data);
+          break;
+        case "MarionetteFrameParent:getElementValueOfCssProperty":
+          result = await this.getElementValueOfCssProperty(data);
           break;
         case "MarionetteFrameParent:switchToFrame":
           result = await this.switchToFrame(data);
@@ -173,6 +179,35 @@ class MarionetteFrameChild extends JSWindowActorChild {
   }
 
   /**
+   * Get the tagName for the given element.
+   */
+  async getElementTagName(options = {}) {
+    const { webEl } = options;
+    const el = this.seenEls.get(webEl);
+    return el.tagName.toLowerCase();
+  }
+
+  /**
+   * Get the text content for the given element.
+   */
+  async getElementText(options = {}) {
+    const { webEl } = options;
+    const el = this.seenEls.get(webEl);
+    return atom.getElementText(el, this.content);
+  }
+
+  /**
+   * Get the value of a css property for the given element.
+   */
+  async getElementValueOfCssProperty(options = {}) {
+    const { name, webEl } = options;
+    const el = this.seenEls.get(webEl);
+
+    const style = this.content.getComputedStyle(el);
+    return style.getPropertyValue(name);
+  }
+
+  /**
    * Switch to the specified frame.
    *
    * @param {Object=} options
@@ -192,7 +227,9 @@ class MarionetteFrameChild extends JSWindowActorChild {
       browsingContext = this.browsingContext.top;
     } else if (typeof id == "number") {
       if (id < 0 || id >= childContexts.length) {
-        throw new NoSuchFrameError(`Unable to locate frame with index: ${id}`);
+        throw new error.NoSuchFrameError(
+          `Unable to locate frame with index: ${id}`
+        );
       }
       browsingContext = childContexts[id];
       this.seenEls.add(browsingContext.embedderElement);
@@ -202,7 +239,9 @@ class MarionetteFrameChild extends JSWindowActorChild {
         return context.embedderElement === frameElement;
       });
       if (!context) {
-        throw new NoSuchFrameError(`Unable to locate frame for element: ${id}`);
+        throw new error.NoSuchFrameError(
+          `Unable to locate frame for element: ${id}`
+        );
       }
       browsingContext = context;
     }

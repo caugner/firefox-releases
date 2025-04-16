@@ -16,6 +16,8 @@
 #include "mozilla/UniquePtr.h"
 #include "nsTArray.h"
 
+#include <unordered_map>
+
 namespace mozilla {
 
 class InputData;
@@ -144,6 +146,11 @@ class InputQueue {
 
   InputBlockState* GetBlockForId(uint64_t aInputBlockId);
 
+  using InputBlockCallback =
+      std::function<void(uint64_t aInputBlockId, bool aHandledByRootApzc)>;
+  void AddInputBlockCallback(uint64_t aInputBlockId,
+                             InputBlockCallback&& aCallback);
+
  private:
   ~InputQueue();
 
@@ -170,9 +177,10 @@ class InputQueue {
                                    CancelAnimationFlags aExtraFlags = Default);
 
   /**
-   * If we need to wait for a content response, schedule that now.
+   * If we need to wait for a content response, schedule that now. Returns true
+   * if the timeout was scheduled, false otherwise.
    */
-  void MaybeRequestContentResponse(
+  bool MaybeRequestContentResponse(
       const RefPtr<AsyncPanZoomController>& aTarget,
       CancelableBlockState* aBlock);
 
@@ -215,6 +223,7 @@ class InputQueue {
   void ScheduleMainThreadTimeout(const RefPtr<AsyncPanZoomController>& aTarget,
                                  CancelableBlockState* aBlock);
   void MainThreadTimeout(uint64_t aInputBlockId);
+  void MaybeLongTapTimeout(uint64_t aInputBlockId);
   void ProcessQueue();
   bool CanDiscardBlock(InputBlockState* aBlock);
   void UpdateActiveApzc(const RefPtr<AsyncPanZoomController>& aNewActive);
@@ -248,6 +257,12 @@ class InputQueue {
   // Temporarily stores a timeout task that needs to be run as soon as
   // as the event that triggered it has been queued.
   RefPtr<Runnable> mImmediateTimeout;
+
+  // Maps input block ids to callbacks that will be invoked when the input block
+  // is ready for handling.
+  using InputBlockCallbackMap =
+      std::unordered_map<uint64_t, InputBlockCallback>;
+  InputBlockCallbackMap mInputBlockCallbacks;
 };
 
 }  // namespace layers

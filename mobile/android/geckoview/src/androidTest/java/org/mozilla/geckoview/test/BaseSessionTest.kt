@@ -26,6 +26,7 @@ import kotlin.reflect.KClass
  */
 open class BaseSessionTest(noErrorCollector: Boolean = false) {
     companion object {
+        const val RESUBMIT_CONFIRM = "/assets/www/resubmit.html"
         const val BEFORE_UNLOAD = "/assets/www/beforeunload.html"
         const val CLICK_TO_RELOAD_HTML_PATH = "/assets/www/clickToReload.html"
         const val CONTENT_CRASH_URL = "about:crashcontent"
@@ -74,6 +75,8 @@ open class BaseSessionTest(noErrorCollector: Boolean = false) {
         const val IFRAME_UNKNOWN_PROTOCOL = "/assets/www/iframe_unknown_protocol.html"
         const val MEDIA_SESSION_DOM1_PATH = "/assets/www/media_session_dom1.html"
         const val MEDIA_SESSION_DEFAULT1_PATH = "/assets/www/media_session_default1.html"
+        const val TOUCH_HTML_PATH = "/assets/www/touch.html"
+
         const val TEST_ENDPOINT = GeckoSessionTestRule.TEST_ENDPOINT
     }
 
@@ -108,10 +111,6 @@ open class BaseSessionTest(noErrorCollector: Boolean = false) {
     inline fun GeckoSession.toParcel(lambda: (Parcel) -> Unit) {
         val parcel = Parcel.obtain()
         try {
-            // Bug 1650108: Remove this
-            @Suppress("DEPRECATION")
-            this.writeToParcel(parcel, 0)
-
             val pos = parcel.dataPosition()
             parcel.setDataPosition(0)
 

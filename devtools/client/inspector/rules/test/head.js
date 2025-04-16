@@ -578,16 +578,64 @@ function waitForStyleModification(inspector) {
 }
 
 /**
- * Click on the selector icon
- * @param {DOMNode} icon
- * @param {CSSRuleView} view
+ * Click on the icon next to the selector of a CSS rule in the Rules view
+ * to toggle the selector highlighter. If a selector highlighter is not already visible
+ * for the given selector, wait for it to be shown. Otherwise, wait for it to be hidden.
+ *
+ * @param {CssRuleView} view
+ *        The instance of the Rules view
+ * @param {String} selectorText
+ *        The selector of the CSS rule to look for
+ * @param {Number} index
+ *        If there are more CSS rules with the same selector, use this index
+ *        to determine which one should be retrieved. Defaults to 0 (first)
  */
-async function clickSelectorIcon(icon, view) {
-  const onToggled = view.once("ruleview-selectorhighlighter-toggled");
-  EventUtils.synthesizeMouseAtCenter(icon, {}, view.styleWindow);
-  await onToggled;
-}
+async function clickSelectorIcon(view, selectorText, index = 0) {
+  const { inspector } = view;
+  const rule = getRuleViewRule(view, selectorText, index);
 
+  // The icon element is created in response to an async operation.
+  // Wait until the expected node shows up in the DOM. (Bug 1664511)
+  info(`Waiting for icon to be available for selector: ${selectorText}`);
+  const icon = await waitFor(() => {
+    return rule.querySelector(".js-toggle-selector-highlighter");
+  });
+
+  // Grab the actual selector associated with the matched icon.
+  // For inline styles, the CSS rule with the "element" selector actually points to
+  // a generated unique selector, for example: "div:nth-child(1)".
+  // The selector highlighter is invoked with this unique selector.
+  // Continuing to use selectorText ("element") would fail some of the checks below.
+  const selector = icon.dataset.selector;
+
+  const {
+    waitForHighlighterTypeShown,
+    waitForHighlighterTypeHidden,
+  } = getHighlighterTestHelpers(inspector);
+
+  // If there is an active selector highlighter, get its configuration options.
+  // Will be undefined if there isn't an active selector highlighter.
+  const options = inspector.highlighters.getOptionsForActiveHighlighter(
+    inspector.highlighters.TYPES.SELECTOR
+  );
+
+  // If there is already a highlighter visible for this selector,
+  // wait for hidden event. Otherwise, wait for shown event.
+  const waitForEvent =
+    options?.selector === selector
+      ? waitForHighlighterTypeHidden(inspector.highlighters.TYPES.SELECTOR)
+      : waitForHighlighterTypeShown(inspector.highlighters.TYPES.SELECTOR);
+
+  // Boolean flag whether we waited for a highlighter shown event
+  const waitedForShown = options?.selector !== selector;
+
+  info(`Click the icon for selector: ${selectorText}`);
+  EventUtils.synthesizeMouseAtCenter(icon, {}, view.styleWindow);
+
+  // Promise resolves with event data from either highlighter shown or hidden event.
+  const data = await waitForEvent;
+  return { ...data, isShown: waitedForShown };
+}
 /**
  * Toggle one of the checkboxes inside the class-panel. Resolved after the DOM mutation
  * has been recorded.
@@ -667,6 +715,8 @@ async function openEyedropper(view, swatch) {
  *        The rule-view instance.
  * @param {Number} ruleIndex
  *        The index we expect the rule to have in the rule-view.
+ * @param {boolean} addCompatibilityData
+ *        Optional argument to add compatibility dat with the property data
  *
  * @returns A map containing stringified property declarations e.g.
  *          [
@@ -683,15 +733,24 @@ async function openEyedropper(view, swatch) {
  *            ...
  *          ]
  */
-function getPropertiesForRuleIndex(view, ruleIndex) {
+function getPropertiesForRuleIndex(
+  view,
+  ruleIndex,
+  addCompatibilityData = false
+) {
   const declaration = new Map();
   const ruleEditor = getRuleViewRuleEditor(view, ruleIndex);
 
   for (const currProp of ruleEditor.rule.textProps) {
     const icon = currProp.editor.unusedState;
     const unused = currProp.editor.element.classList.contains("unused");
-    const compatibilityData = currProp.isCompatible();
-    const compatibilityIcon = currProp.editor.compatibilityState;
+
+    let compatibilityData;
+    let compatibilityIcon;
+    if (addCompatibilityData) {
+      compatibilityData = currProp.isCompatible();
+      compatibilityIcon = currProp.editor.compatibilityState;
+    }
 
     declaration.set(`${currProp.name}:${currProp.value}`, {
       propertyName: currProp.name,
@@ -700,9 +759,13 @@ function getPropertiesForRuleIndex(view, ruleIndex) {
       data: currProp.isUsed(),
       warning: unused,
       used: !unused,
-      isCompatible: compatibilityData.then(data => data.isCompatible),
-      compatibilityData,
-      compatibilityIcon,
+      ...(addCompatibilityData
+        ? {
+            isCompatible: compatibilityData.then(data => data.isCompatible),
+            compatibilityData,
+            compatibilityIcon,
+          }
+        : {}),
     });
   }
 
@@ -822,11 +885,15 @@ async function checkDeclarationCompatibility(
   declaration,
   expected
 ) {
-  const declarations = getPropertiesForRuleIndex(view, ruleIndex);
+  const declarations = getPropertiesForRuleIndex(view, ruleIndex, true);
   const [[name, value]] = Object.entries(declaration);
   const dec = `${name}:${value}`;
   const { isCompatible, compatibilityData } = declarations.get(dec);
   const compatibilityStatus = await isCompatible;
+  // Await on compatibilityData even if the rule is
+  // compatible. Otherwise, the test browser may close
+  // while waiting for the response from the compatibility actor.
+  const messageId = (await compatibilityData).msgId;
 
   is(
     !expected,
@@ -834,10 +901,9 @@ async function checkDeclarationCompatibility(
     `"${dec}" has the correct compatibility status in the payload`
   );
 
-  if (expected) {
-    const messageId = (await compatibilityData).msgId;
-    is(messageId, expected, `"${dec}" has expected message ID`);
+  is(messageId, expected, `"${dec}" has expected message ID`);
 
+  if (expected) {
     await checkInteractiveTooltip(
       view,
       "compatibility-tooltip",
@@ -909,7 +975,11 @@ function checkDeclarationIsActive(view, ruleIndex, declaration) {
  */
 async function checkInteractiveTooltip(view, type, ruleIndex, declaration) {
   // Get the declaration
-  const declarations = getPropertiesForRuleIndex(view, ruleIndex);
+  const declarations = getPropertiesForRuleIndex(
+    view,
+    ruleIndex,
+    type === "compatibility-tooltip"
+  );
   const [[name, value]] = Object.entries(declaration);
   const dec = `${name}:${value}`;
 

@@ -306,13 +306,6 @@ static nsresult EnsureSettingsHasPrinterNameSet(
   // Mac doesn't support retrieving a printer list.
   return NS_OK;
 #else
-#  if defined(MOZ_X11)
-  // On Linux, last-used printer name should be requested on the parent side.
-  // Unless we are in the parent, we ignore this function
-  if (!XRE_IsParentProcess()) {
-    return NS_OK;
-  }
-#  endif
   NS_ENSURE_ARG_POINTER(aPrintSettings);
 
   // See if aPrintSettings already has a printer
@@ -545,12 +538,10 @@ nsresult nsPrintJob::DoCommonPrint(bool aIsPrintPreview,
     // clear mPtrPreview so that code will use mPtr until that happens.
     mPrtPreview = nullptr;
 
-    // ensures docShell tree navigation in frozen
     SetIsPrintPreview(true);
   } else {
     mProgressDialogIsShown = false;
 
-    // ensures docShell tree navigation in frozen
     SetIsPrinting(true);
   }
 
@@ -646,31 +637,32 @@ nsresult nsPrintJob::DoCommonPrint(bool aIsPrintPreview,
     NS_ENSURE_SUCCESS(rv, rv);
   }
 
+  bool printSilently = false;
+  printData->mPrintSettings->GetPrintSilent(&printSilently);
+  if (StaticPrefs::print_always_print_silent()) {
+    printSilently = true;
+  }
+
+  if (mIsDoingPrinting && printSilently) {
+    Telemetry::ScalarAdd(Telemetry::ScalarID::PRINTING_SILENT_PRINT, 1);
+  }
+
   // If printing via parent we still call ShowPrintDialog even for print preview
   // because we use that to retrieve the print settings from the printer.
   // The dialog is not shown, but this means we don't need to access the printer
   // driver from the child, which causes sandboxing issues.
   if (!mIsCreatingPrintPreview || printingViaParent) {
-    bool printSilentOnSettings = false;
-    printData->mPrintSettings->GetPrintSilent(&printSilentOnSettings);
-
-    bool printSilently =
-        printSilentOnSettings || StaticPrefs::print_always_print_silent();
-
     // The new print UI does not need to enter ShowPrintDialog below to spin
     // the event loop and fetch real printer settings from the parent process,
     // since it always passes complete print settings. (In fact, trying to
     // fetch them from the parent can cause crashes.) Here we check for that
     // case so that we can avoid calling ShowPrintDialog below. To err on the
-    // safe side, we exclude the old UI and non-frontend callers
-    // (Extensions.tabs.saveAsPDF()) which set `printSilent` on the settings
-    // object.
-    // We should remove the exception for tabx.saveAsPDF soon:
-    //   https://bugzilla.mozilla.org/show_bug.cgi?id=1662222
-    // Slightly longer term we'll remove the old print UI, and even change the
-    // check for `isInitializedFromPrinter` to a MOZ_DIAGNOSTIC_ASSERT.
+    // safe side, we exclude the old UI.
+    //
+    // TODO: We should MOZ_DIAGNOSTIC_ASSERT that GetIsInitializedFromPrinter
+    // returns true.
     bool settingsAreComplete = false;
-    if (StaticPrefs::print_tab_modal_enabled() && !printSilentOnSettings) {
+    if (StaticPrefs::print_tab_modal_enabled()) {
       printData->mPrintSettings->GetIsInitializedFromPrinter(
           &settingsAreComplete);
     }
@@ -690,9 +682,7 @@ nsresult nsPrintJob::DoCommonPrint(bool aIsPrintPreview,
           domWin = aDoc->GetOriginalDocument()->GetWindow();
           NS_ENSURE_TRUE(domWin, NS_ERROR_FAILURE);
 
-          if (printSilently) {
-            Telemetry::ScalarAdd(Telemetry::ScalarID::PRINTING_SILENT_PRINT, 1);
-          } else {
+          if (!printSilently) {
             if (mCreatedForPrintPreview) {
               Telemetry::ScalarAdd(
                   Telemetry::ScalarID::PRINTING_DIALOG_OPENED_VIA_PREVIEW, 1);
@@ -1499,6 +1489,10 @@ nsresult nsPrintJob::InitPrintDocConstruction(bool aHandleError) {
   // So, we should grab it with local variable.
   RefPtr<nsPrintData> printData = mPrt;
 
+  if (NS_WARN_IF(!printData)) {
+    return NS_ERROR_FAILURE;
+  }
+
   // Attach progressListener to catch network requests.
   mDidLoadDataForPrinting = false;
 
@@ -1803,19 +1797,12 @@ nsresult nsPrintJob::ReflowPrintObject(const UniquePtr<nsPrintObject>& aPO) {
   nsPresContext::nsPresContextType type =
       mIsCreatingPrintPreview ? nsPresContext::eContext_PrintPreview
                               : nsPresContext::eContext_Print;
-  nsView* parentView = aPO->mParent && aPO->mParent->PrintingIsEnabled()
-                           ? nullptr
-                           : GetParentViewForRoot();
-  aPO->mPresContext = parentView ? new nsPresContext(aPO->mDocument, type)
-                                 : new nsRootPresContext(aPO->mDocument, type);
+  const bool shouldBeRoot =
+      (!aPO->mParent || !aPO->mParent->PrintingIsEnabled()) &&
+      !GetParentViewForRoot();
+  aPO->mPresContext = shouldBeRoot ? new nsRootPresContext(aPO->mDocument, type)
+                                   : new nsPresContext(aPO->mDocument, type);
   aPO->mPresContext->SetPrintSettings(printData->mPrintSettings);
-
-  // set the presentation context to the value in the print settings
-  bool printBGColors;
-  printData->mPrintSettings->GetPrintBGColors(&printBGColors);
-  aPO->mPresContext->SetBackgroundColorDraw(printBGColors);
-  printData->mPrintSettings->GetPrintBGImages(&printBGColors);
-  aPO->mPresContext->SetBackgroundImageDraw(printBGColors);
 
   // init it with the DC
   MOZ_TRY(aPO->mPresContext->Init(printData->mPrintDC));
@@ -2124,9 +2111,39 @@ nsresult nsPrintJob::DoPrint(const UniquePtr<nsPrintObject>& aPO) {
       return NS_ERROR_FAILURE;
     }
 
+    // For telemetry, get paper size being used; convert the dimensions to
+    // points and ensure they reflect portrait orientation.
+    nsIPrintSettings* settings = printData->mPrintSettings;
+    double paperWidth, paperHeight;
+    settings->GetPaperWidth(&paperWidth);
+    settings->GetPaperHeight(&paperHeight);
+    int16_t sizeUnit;
+    settings->GetPaperSizeUnit(&sizeUnit);
+    switch (sizeUnit) {
+      case nsIPrintSettings::kPaperSizeInches:
+        paperWidth *= 72.0;
+        paperHeight *= 72.0;
+        break;
+      case nsIPrintSettings::kPaperSizeMillimeters:
+        paperWidth *= 72.0 / 25.4;
+        paperHeight *= 72.0 / 25.4;
+        break;
+      default:
+        MOZ_ASSERT_UNREACHABLE("unknown paper size unit");
+        break;
+    }
+    if (paperWidth > paperHeight) {
+      std::swap(paperWidth, paperHeight);
+    }
+    // Use the paper size to build a Telemetry Scalar key.
+    nsString key;
+    key.AppendInt(int32_t(NS_round(paperWidth)));
+    key.Append(u"x");
+    key.AppendInt(int32_t(NS_round(paperHeight)));
+    Telemetry::ScalarAdd(Telemetry::ScalarID::PRINTING_PAPER_SIZE, key, 1);
+
     mPageSeqFrame = seqFrame;
-    seqFrame->StartPrint(poPresContext, printData->mPrintSettings, docTitleStr,
-                         docURLStr);
+    seqFrame->StartPrint(poPresContext, settings, docTitleStr, docURLStr);
 
     // Schedule Page to Print
     PR_PL(("Scheduling Print of PO: %p (%s) \n", aPO.get(),
@@ -2334,11 +2351,6 @@ void nsPrintJob::SetIsPrinting(bool aIsPrinting) {
   mIsDoingPrinting = aIsPrinting;
   if (aIsPrinting) {
     mHasEverPrinted = true;
-  }
-  // Calling SetIsPrinting while in print preview confuses the document viewer
-  // This is safe because we prevent exiting print preview while printing
-  if (!mCreatedForPrintPreview && mDocViewerPrint) {
-    mDocViewerPrint->SetIsPrinting(aIsPrinting);
   }
   if (mPrt && aIsPrinting) {
     mPrt->mPreparingForPrint = true;
@@ -2944,8 +2956,8 @@ static void GetDocTitleAndURL(const UniquePtr<nsPrintObject>& aPO,
   nsAutoString docTitleStr;
   nsAutoString docURLStr;
   GetDocumentTitleAndURL(aPO->mDocument, docTitleStr, docURLStr);
-  aDocStr = NS_ConvertUTF16toUTF8(docTitleStr);
-  aURLStr = NS_ConvertUTF16toUTF8(docURLStr);
+  CopyUTF16toUTF8(docTitleStr, aDocStr);
+  CopyUTF16toUTF8(docURLStr, aURLStr);
 }
 
 //-------------------------------------------------------------

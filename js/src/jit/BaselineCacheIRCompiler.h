@@ -65,7 +65,9 @@ class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
   void pushFunApplyArgs(Register argcReg, Register calleeReg, Register scratch,
                         Register scratch2, bool isJitCall);
   void createThis(Register argcReg, Register calleeReg, Register scratch,
-                  CallFlags flags);
+                  CallFlags flags, LiveGeneralRegisterSet liveNonGCRegs);
+  template <typename T>
+  void storeThis(const T& newThis, Register argcReg, CallFlags flags);
   void updateReturnValue();
 
   enum class NativeCallType { Native, ClassHook };
@@ -73,14 +75,6 @@ class MOZ_RAII BaselineCacheIRCompiler : public CacheIRCompiler {
                             Int32OperandId argcId, CallFlags flags,
                             mozilla::Maybe<bool> ignoresReturnValue,
                             mozilla::Maybe<uint32_t> targetOffset);
-
-  MOZ_MUST_USE bool emitCallScriptedGetterResultShared(
-      TypedOrValueRegister receiver, uint32_t getterOffset, bool sameRealm);
-
-  template <typename T, typename CallVM>
-  MOZ_MUST_USE bool emitCallNativeGetterResultShared(T receiver,
-                                                     uint32_t getterOffset,
-                                                     const CallVM& emitCallVM);
 
   enum class StringCode { CodeUnit, CodePoint };
   bool emitStringFromCodeResult(Int32OperandId codeId, StringCode stringCode);

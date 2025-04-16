@@ -32,8 +32,9 @@
 #include "jit/IonAnalysis.h"
 #include "jit/Jit.h"
 #include "js/CharacterEncoding.h"
-#include "js/friend/StackLimits.h"  // js::CheckRecursionLimit
-#include "js/friend/WindowProxy.h"  // js::IsWindowProxy
+#include "js/experimental/JitInfo.h"  // JSJitInfo
+#include "js/friend/StackLimits.h"    // js::CheckRecursionLimit
+#include "js/friend/WindowProxy.h"    // js::IsWindowProxy
 #include "util/CheckedArithmetic.h"
 #include "util/StringBuffer.h"
 #include "vm/AsyncFunction.h"
@@ -970,7 +971,7 @@ JSType js::TypeOfValue(const Value& v) {
       break;
   }
 
-  MOZ_CRASH("unexpected type");
+  ReportBadValueTypeAndCrash(v);
 }
 
 bool js::CheckClassHeritageOperation(JSContext* cx, HandleValue heritage) {

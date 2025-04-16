@@ -92,6 +92,34 @@ let JSPROCESSACTORS = {
       ],
     },
   },
+
+  RefreshBlockerObserver: {
+    child: {
+      moduleURI: "resource:///actors/RefreshBlockerChild.jsm",
+      observers: [
+        "webnavigation-create",
+        "chrome-webnavigation-create",
+        "webnavigation-destroy",
+        "chrome-webnavigation-destroy",
+      ],
+    },
+
+    enablePreference: "accessibility.blockautorefresh",
+    onPreferenceChanged: (prefName, prevValue, isEnabled) => {
+      BrowserWindowTracker.orderedWindows.forEach(win => {
+        for (let browser of win.gBrowser.browsers) {
+          try {
+            browser.sendMessageToActor(
+              "PreferenceChanged",
+              { isEnabled },
+              "RefreshBlocker",
+              "all"
+            );
+          } catch (ex) {}
+        }
+      });
+    },
+  },
 };
 
 /**
@@ -147,10 +175,15 @@ let JSWINDOWACTORS = {
   },
 
   AboutNewTab: {
+    parent: {
+      moduleURI: "resource:///actors/AboutNewTabParent.jsm",
+    },
     child: {
       moduleURI: "resource:///actors/AboutNewTabChild.jsm",
       events: {
         DOMContentLoaded: {},
+        pageshow: {},
+        visibilitychange: {},
       },
     },
     // The wildcard on about:newtab is for the ?endpoint query parameter
@@ -247,6 +280,7 @@ let JSWINDOWACTORS = {
       },
     },
     matches: ["about:welcome"],
+    remoteTypes: ["privilegedabout"],
 
     // See Bug 1618306
     // Remove this preference check when we turn on separate about:welcome for all users.
@@ -349,6 +383,20 @@ let JSWINDOWACTORS = {
     allFrames: true,
   },
 
+  DecoderDoctor: {
+    parent: {
+      moduleURI: "resource:///actors/DecoderDoctorParent.jsm",
+    },
+
+    child: {
+      moduleURI: "resource:///actors/DecoderDoctorChild.jsm",
+      observers: ["decoder-doctor-notification"],
+    },
+
+    messageManagerGroups: ["browsers"],
+    allFrames: true,
+  },
+
   DOMFullscreen: {
     parent: {
       moduleURI: "resource:///actors/DOMFullscreenParent.jsm",
@@ -379,6 +427,7 @@ let JSWINDOWACTORS = {
       observers: ["mediakeys-request"],
     },
 
+    messageManagerGroups: ["browsers"],
     allFrames: true,
   },
 
@@ -512,6 +561,18 @@ let JSWINDOWACTORS = {
     },
     includeChrome: true,
     allFrames: true,
+  },
+
+  RefreshBlocker: {
+    parent: {
+      moduleURI: "resource:///actors/RefreshBlockerParent.jsm",
+    },
+    child: {
+      moduleURI: "resource:///actors/RefreshBlockerChild.jsm",
+    },
+
+    messageManagerGroups: ["browsers"],
+    enablePreference: "accessibility.blockautorefresh",
   },
 
   SearchTelemetry: {
@@ -724,6 +785,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   Normandy: "resource://normandy/Normandy.jsm",
   ObjectUtils: "resource://gre/modules/ObjectUtils.jsm",
   OS: "resource://gre/modules/osfile.jsm",
+  OsEnvironment: "resource://gre/modules/OsEnvironment.jsm",
   PageActions: "resource:///modules/PageActions.jsm",
   PageThumbs: "resource://gre/modules/PageThumbs.jsm",
   PdfJs: "resource://pdf.js/PdfJs.jsm",
@@ -744,7 +806,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   SearchTelemetry: "resource:///modules/SearchTelemetry.jsm",
   SessionStartup: "resource:///modules/sessionstore/SessionStartup.jsm",
   SessionStore: "resource:///modules/sessionstore/SessionStore.jsm",
-  ShellService: "resource:///modules/ShellService.jsm",
   TabCrashHandler: "resource:///modules/ContentCrashHandlers.jsm",
   TabUnloader: "resource:///modules/TabUnloader.jsm",
   TRRRacer: "resource:///modules/TRRPerformance.jsm",
@@ -1298,18 +1359,18 @@ BrowserGlue.prototype = {
 
     AddonManager.maybeInstallBuiltinAddon(
       "firefox-compact-light@mozilla.org",
-      "1.0",
-      "resource:///modules/themes/light/"
+      "1.1",
+      "resource://builtin-themes/light/"
     );
     AddonManager.maybeInstallBuiltinAddon(
       "firefox-compact-dark@mozilla.org",
-      "1.0",
-      "resource:///modules/themes/dark/"
+      "1.1",
+      "resource://builtin-themes/dark/"
     );
     AddonManager.maybeInstallBuiltinAddon(
       "firefox-alpenglow@mozilla.org",
-      "1.0",
-      "resource:///modules/themes/alpenglow/"
+      "1.1",
+      "resource://builtin-themes/alpenglow/"
     );
 
     if (AppConstants.MOZ_NORMANDY) {
@@ -2131,14 +2192,14 @@ BrowserGlue.prototype = {
     _checkHTTPSOnlyPBMPref();
   },
 
-  _monitorPioneerPref() {
-    const PREF_PIONEER_ID = "toolkit.telemetry.pioneerId";
+  _monitorIonPref() {
+    const PREF_ION_ID = "toolkit.telemetry.pioneerId";
 
-    const _checkPioneerPref = async () => {
+    const _checkIonPref = async () => {
       for (let win of Services.wm.getEnumerator("navigator:browser")) {
         win.document.getElementById(
-          "pioneer-button"
-        ).hidden = !Services.prefs.getStringPref(PREF_PIONEER_ID, null);
+          "ion-button"
+        ).hidden = !Services.prefs.getStringPref(PREF_ION_ID, null);
       }
     };
 
@@ -2146,32 +2207,29 @@ BrowserGlue.prototype = {
       onOpenWindow(xulWindow) {
         const win = xulWindow.docShell.domWindow;
         win.addEventListener("load", () => {
-          const pioneerButton = win.document.getElementById("pioneer-button");
-          if (pioneerButton) {
-            pioneerButton.hidden = !Services.prefs.getStringPref(
-              PREF_PIONEER_ID,
-              null
-            );
+          const ionButton = win.document.getElementById("ion-button");
+          if (ionButton) {
+            ionButton.hidden = !Services.prefs.getStringPref(PREF_ION_ID, null);
           }
         });
       },
       onCloseWindow() {},
     };
 
-    Services.prefs.addObserver(PREF_PIONEER_ID, _checkPioneerPref);
+    Services.prefs.addObserver(PREF_ION_ID, _checkIonPref);
     Services.wm.addListener(windowListener);
-    _checkPioneerPref();
+    _checkIonPref();
   },
 
-  _monitorPioneerStudies() {
+  _monitorIonStudies() {
     const STUDY_ADDON_COLLECTION_KEY = "pioneer-study-addons-v1";
-    const PREF_PIONEER_NEW_STUDIES_AVAILABLE =
+    const PREF_ION_NEW_STUDIES_AVAILABLE =
       "toolkit.telemetry.pioneer-new-studies-available";
 
     const _badgeIcon = async () => {
       for (let win of Services.wm.getEnumerator("navigator:browser")) {
         win.document
-          .getElementById("pioneer-button")
+          .getElementById("ion-button")
           .querySelector(".toolbarbutton-badge")
           .classList.add("feature-callout");
       }
@@ -2181,14 +2239,11 @@ BrowserGlue.prototype = {
       onOpenWindow(xulWindow) {
         const win = xulWindow.docShell.domWindow;
         win.addEventListener("load", () => {
-          const pioneerButton = win.document.getElementById("pioneer-button");
-          if (pioneerButton) {
-            const badge = pioneerButton.querySelector(".toolbarbutton-badge");
+          const ionButton = win.document.getElementById("ion-button");
+          if (ionButton) {
+            const badge = ionButton.querySelector(".toolbarbutton-badge");
             if (
-              Services.prefs.getBoolPref(
-                PREF_PIONEER_NEW_STUDIES_AVAILABLE,
-                false
-              )
+              Services.prefs.getBoolPref(PREF_ION_NEW_STUDIES_AVAILABLE, false)
             ) {
               badge.classList.add("feature-callout");
             } else {
@@ -2201,15 +2256,15 @@ BrowserGlue.prototype = {
     };
 
     // Update all open windows if the pref changes.
-    Services.prefs.addObserver(PREF_PIONEER_NEW_STUDIES_AVAILABLE, _badgeIcon);
+    Services.prefs.addObserver(PREF_ION_NEW_STUDIES_AVAILABLE, _badgeIcon);
 
     // Badge any currently-open windows.
-    if (Services.prefs.getBoolPref(PREF_PIONEER_NEW_STUDIES_AVAILABLE, false)) {
+    if (Services.prefs.getBoolPref(PREF_ION_NEW_STUDIES_AVAILABLE, false)) {
       _badgeIcon();
     }
 
     RemoteSettings(STUDY_ADDON_COLLECTION_KEY).on("sync", async event => {
-      Services.prefs.setBoolPref(PREF_PIONEER_NEW_STUDIES_AVAILABLE, true);
+      Services.prefs.setBoolPref(PREF_ION_NEW_STUDIES_AVAILABLE, true);
     });
 
     // When a new window opens, check if we need to badge the icon.
@@ -2306,8 +2361,8 @@ BrowserGlue.prototype = {
     this._monitorScreenshotsPref();
     this._monitorWebcompatReporterPref();
     this._monitorHTTPSOnlyPref();
-    this._monitorPioneerPref();
-    this._monitorPioneerStudies();
+    this._monitorIonPref();
+    this._monitorIonStudies();
 
     let pService = Cc["@mozilla.org/toolkit/profile-service;1"].getService(
       Ci.nsIToolkitProfileService
@@ -2541,6 +2596,17 @@ BrowserGlue.prototype = {
         },
       },
 
+      // FOG doesn't need to be initialized _too_ early because it has a
+      // pre-init buffer.
+      {
+        task: () => {
+          let FOG = Cc["@mozilla.org/toolkit/glean;1"].createInstance(
+            Ci.nsIFOG
+          );
+          FOG.initializeFOG();
+        },
+      },
+
       // Marionette needs to be initialized as very last step
       {
         task: () => {
@@ -2644,6 +2710,8 @@ BrowserGlue.prototype = {
       },
 
       () => BrowserUsageTelemetry.reportProfileCount(),
+
+      () => OsEnvironment.reportAllowedAppSources(),
     ];
 
     for (let task of idleTasks) {
@@ -3169,7 +3237,7 @@ BrowserGlue.prototype = {
   _migrateUI: function BG__migrateUI() {
     // Use an increasing number to keep track of the current migration state.
     // Completely unrelated to the current Firefox release number.
-    const UI_VERSION = 96;
+    const UI_VERSION = 97;
     const BROWSER_DOCURL = AppConstants.BROWSER_CHROME_URL;
 
     if (!Services.prefs.prefHasUserValue("browser.migration.version")) {
@@ -3757,6 +3825,46 @@ BrowserGlue.prototype = {
       Services.prefs.clearUserPref(oldPrefName);
     }
 
+    if (currentUIVersion < 97) {
+      let userCustomizedWheelMax = Services.prefs.prefHasUserValue(
+        "general.smoothScroll.mouseWheel.durationMaxMS"
+      );
+      let userCustomizedWheelMin = Services.prefs.prefHasUserValue(
+        "general.smoothScroll.mouseWheel.durationMinMS"
+      );
+
+      if (!userCustomizedWheelMin && !userCustomizedWheelMax) {
+        // If the user has an existing profile but hasn't customized the wheel
+        // animation duration, indicate that they need to be migrated to the new
+        // values by setting their "migration complete" percentage to 0.
+        Services.prefs.setIntPref(
+          "general.smoothScroll.mouseWheel.migrationPercent",
+          0
+        );
+      } else if (userCustomizedWheelMin && !userCustomizedWheelMax) {
+        // If they customized just one of the two, save the old value for the
+        // other one as well, because the two values go hand-in-hand and we
+        // don't want to move just one to a new value and leave the other one
+        // at a customized value. In both of these cases, we leave the "migration
+        // complete" percentage at 100, because they have customized this and
+        // don't need any further migration.
+        Services.prefs.setIntPref(
+          "general.smoothScroll.mouseWheel.durationMaxMS",
+          400
+        );
+      } else if (!userCustomizedWheelMin && userCustomizedWheelMax) {
+        // Same as above case, but for the other pref.
+        Services.prefs.setIntPref(
+          "general.smoothScroll.mouseWheel.durationMinMS",
+          200
+        );
+      } else {
+        // The last remaining case is if they customized both values, in which
+        // case also we leave the "migration complete" percentage at 100, as no
+        // further migration is needed.
+      }
+    }
+
     // Update the migration version.
     Services.prefs.setIntPref("browser.migration.version", UI_VERSION);
   },
@@ -3764,14 +3872,17 @@ BrowserGlue.prototype = {
   _maybeShowDefaultBrowserPrompt() {
     DefaultBrowserCheck.willCheckDefaultBrowser(/* isStartupCheck */ true).then(
       async willPrompt => {
-        let win = BrowserWindowTracker.getTopWindow();
-        if (!willPrompt) {
-          // If we're not showing the modal prompt, maybe we
-          // still want to show the passive notification bar.
-          await win.DefaultBrowserNotificationOnNewTabPage.init();
-          return;
+        let { DefaultBrowserNotification } = ChromeUtils.import(
+          "resource:///actors/AboutNewTabParent.jsm",
+          {}
+        );
+        if (willPrompt) {
+          // Prevent the related notification from appearing and
+          // show the modal prompt.
+          DefaultBrowserNotification.notifyModalDisplayed();
+          let win = BrowserWindowTracker.getTopWindow();
+          DefaultBrowserCheck.prompt(win);
         }
-        DefaultBrowserCheck.prompt(win);
       }
     );
   },
@@ -4593,9 +4704,9 @@ var DefaultBrowserCheck = {
       shouldAsk
     );
     if (rv == 0) {
-      ShellService.setAsDefault();
+      win.getShellService().setAsDefault();
     } else if (!shouldAsk.value) {
-      ShellService.shouldCheckDefaultBrowser = false;
+      win.getShellService().shouldCheckDefaultBrowser = false;
     }
 
     try {
@@ -4615,14 +4726,17 @@ var DefaultBrowserCheck = {
    * @returns {boolean} True if the default browser check prompt will be shown.
    */
   async willCheckDefaultBrowser(isStartupCheck) {
+    let win = BrowserWindowTracker.getTopWindow();
+    let shellService = win.getShellService();
+
     // Perform default browser checking.
-    if (!ShellService) {
+    if (!shellService) {
       return false;
     }
 
     let shouldCheck =
       !AppConstants.DEBUG &&
-      ShellService.shouldCheckDefaultBrowser &&
+      shellService.shouldCheckDefaultBrowser &&
       !Services.prefs.getBoolPref(
         "browser.defaultbrowser.notificationbar",
         false
@@ -4659,7 +4773,7 @@ var DefaultBrowserCheck = {
     let isDefault = false;
     let isDefaultError = false;
     try {
-      isDefault = ShellService.isDefaultBrowser(isStartupCheck, false);
+      isDefault = shellService.isDefaultBrowser(isStartupCheck, false);
     } catch (ex) {
       isDefaultError = true;
     }

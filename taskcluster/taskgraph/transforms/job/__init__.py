@@ -53,7 +53,9 @@ job_description_schema = Schema({
     Optional('attributes'): task_description_schema['attributes'],
     Optional('job-from'): task_description_schema['job-from'],
     Optional('dependencies'): task_description_schema['dependencies'],
+    Optional('if-dependencies'): task_description_schema['if-dependencies'],
     Optional('soft-dependencies'): task_description_schema['soft-dependencies'],
+    Optional('if-dependencies'): task_description_schema['if-dependencies'],
     Optional('requires'): task_description_schema['requires'],
     Optional('expires-after'): task_description_schema['expires-after'],
     Optional('routes'): task_description_schema['routes'],
@@ -355,8 +357,8 @@ def make_task_description(config, jobs):
     import_sibling_modules(exceptions=('common.py',))
 
     for job in jobs:
-        # always-optimized tasks never execute, so have no workdir
-        if job['run']['using'] != 'always-optimized':
+        # only docker-worker uses a fixed absolute path to find directories
+        if job['worker']['implementation'] == 'docker-worker':
             job['run'].setdefault('workdir', '/builds/worker')
 
         taskdesc = copy.deepcopy(job)
@@ -364,6 +366,7 @@ def make_task_description(config, jobs):
         # fill in some empty defaults to make run implementations easier
         taskdesc.setdefault('attributes', {})
         taskdesc.setdefault('dependencies', {})
+        taskdesc.setdefault('if-dependencies', [])
         taskdesc.setdefault('soft-dependencies', [])
         taskdesc.setdefault('routes', [])
         taskdesc.setdefault('scopes', [])

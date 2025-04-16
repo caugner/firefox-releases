@@ -10,6 +10,7 @@
 #include "HttpConnectionMgrParent.h"
 #include "AltSvcTransactionParent.h"
 #include "mozilla/net/HttpTransactionParent.h"
+#include "mozilla/net/WebSocketConnectionParent.h"
 #include "nsHttpConnectionInfo.h"
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsISpeculativeConnect.h"
@@ -240,8 +241,12 @@ nsresult HttpConnectionMgrParent::VerifyTraffic() {
   return NS_OK;
 }
 
-void HttpConnectionMgrParent::BlacklistSpdy(const nsHttpConnectionInfo* ci) {
-  MOZ_ASSERT_UNREACHABLE("BlacklistSpdy should not be called");
+void HttpConnectionMgrParent::ExcludeHttp2(const nsHttpConnectionInfo* ci) {
+  MOZ_ASSERT_UNREACHABLE("ExcludeHttp2 should not be called");
+}
+
+void HttpConnectionMgrParent::ExcludeHttp3(const nsHttpConnectionInfo* ci) {
+  MOZ_ASSERT_UNREACHABLE("ExcludeHttp3 should not be called");
 }
 
 nsresult HttpConnectionMgrParent::ClearConnectionHistory() {
@@ -252,8 +257,13 @@ nsresult HttpConnectionMgrParent::ClearConnectionHistory() {
 
 nsresult HttpConnectionMgrParent::CompleteUpgrade(
     HttpTransactionShell* aTrans, nsIHttpUpgradeListener* aUpgradeListener) {
-  // TODO: fix this in bug 1497249
-  return NS_ERROR_NOT_IMPLEMENTED;
+  MOZ_ASSERT(aTrans->AsHttpTransactionParent());
+
+  RefPtr<WebSocketConnectionParent> wsConnParent =
+      new WebSocketConnectionParent(aUpgradeListener);
+  Unused << SendPWebSocketConnectionConstructor(
+      wsConnParent, aTrans->AsHttpTransactionParent());
+  return NS_OK;
 }
 
 nsHttpConnectionMgr* HttpConnectionMgrParent::AsHttpConnectionMgr() {

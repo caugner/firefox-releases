@@ -68,6 +68,7 @@
 #include "nsPluginFrame.h"
 #include "nsWrapperCacheInlines.h"
 #include "nsDOMJSUtils.h"
+#include "js/Object.h"  // JS::GetClass
 
 #include "nsWidgetsCID.h"
 #include "nsContentCID.h"
@@ -1273,10 +1274,6 @@ EventStates nsObjectLoadingContent::ObjectState() const {
       return EventStates();
     case eType_Null:
       switch (mFallbackType) {
-        case eFallbackSuppressed:
-          return NS_EVENT_STATE_SUPPRESSED;
-        case eFallbackUserDisabled:
-          return NS_EVENT_STATE_USERDISABLED;
         case eFallbackClickToPlay:
         case eFallbackClickToPlayQuiet:
           return NS_EVENT_STATE_TYPE_CLICK_TO_PLAY;
@@ -2041,15 +2038,11 @@ nsresult nsObjectLoadingContent::LoadObject(bool aNotify, bool aForceLoad,
       return NS_OK;
     }
 
-    // Load denied, switch to fallback and set disabled/suppressed if applicable
+    // Load denied, switch to fallback and set disabled if applicable
     if (!allowLoad) {
       LOG(("OBJLC [%p]: Load denied by policy", this));
       mType = eType_Null;
-      if (contentPolicy == nsIContentPolicy::REJECT_TYPE) {
-        fallbackType = eFallbackUserDisabled;
-      } else {
-        fallbackType = eFallbackSuppressed;
-      }
+      fallbackType = eFallbackDisabled;
     }
   }
 
@@ -2415,8 +2408,7 @@ nsresult nsObjectLoadingContent::OpenChannel() {
     loadInfo->SetCSPToInherit(cspToInherit);
   }
 
-  if (DocumentChannel::CanUseDocumentChannel(
-          mURI, nsIWebNavigation::LOAD_FLAGS_NONE)) {
+  if (DocumentChannel::CanUseDocumentChannel(mURI)) {
     // --- Create LoadState
     RefPtr<nsDocShellLoadState> loadState = new nsDocShellLoadState(mURI);
     loadState->SetPrincipalToInherit(thisContent->NodePrincipal());
@@ -3213,7 +3205,7 @@ bool nsObjectLoadingContent::ShouldPlay(FallbackType& aReason) {
     documentClassification = ownerDoc->DocumentFlashClassification();
   }
   if (documentClassification == FlashClassification::Denied) {
-    aReason = eFallbackSuppressed;
+    aReason = eFallbackDisabled;
     return false;
   }
 
@@ -3506,7 +3498,7 @@ void nsObjectLoadingContent::SetupProtoChain(JSContext* aCx,
     return;
   }
 
-  if (pi_proto && js::GetObjectClass(pi_proto) != js::ObjectClassPtr) {
+  if (pi_proto && JS::GetClass(pi_proto) != js::ObjectClassPtr) {
     // The plugin wrapper has a proto that's not Object.prototype, set
     // 'pi.__proto__.__proto__' to the original 'this.__proto__'
     if (pi_proto != my_proto && !::JS_SetPrototype(aCx, pi_proto, my_proto)) {

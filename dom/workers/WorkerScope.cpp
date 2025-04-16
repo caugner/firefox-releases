@@ -354,15 +354,15 @@ void WorkerGlobalScope::ImportScripts(JSContext* aCx,
     if (profiler_can_accept_markers()) {
       const uint32_t urlCount = aScriptURLs.Length();
       if (urlCount) {
-        urls = NS_ConvertUTF16toUTF8(aScriptURLs[0]);
+        CopyUTF16toUTF8(aScriptURLs[0], urls);
         for (uint32_t index = 1; index < urlCount; index++) {
           urls.AppendLiteral(",");
           urls.Append(NS_ConvertUTF16toUTF8(aScriptURLs[index]));
         }
       }
     }
-    AUTO_PROFILER_TEXT_MARKER_CAUSE("ImportScripts", urls, JS, Nothing(),
-                                    profiler_get_backtrace());
+    AUTO_PROFILER_MARKER_TEXT("ImportScripts",
+                              JS.WithOptions(MarkerStack::Capture()), urls);
 #endif
     workerinternals::Load(mWorkerPrivate, std::move(stack), aScriptURLs,
                           WorkerScript, aRv);

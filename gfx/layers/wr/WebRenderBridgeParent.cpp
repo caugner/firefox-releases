@@ -87,8 +87,10 @@ void gecko_profiler_add_text_marker(const char* name, const char* text_bytes,
   if (profiler_thread_is_being_profiled()) {
     auto now = mozilla::TimeStamp::NowUnfuzzed();
     auto start = now - mozilla::TimeDuration::FromMicroseconds(microseconds);
-    profiler_add_text_marker(name, nsDependentCSubstring(text_bytes, text_len),
-                             JS::ProfilingCategoryPair::GRAPHICS, start, now);
+    PROFILER_MARKER_TEXT(
+        mozilla::ProfilerString8View::WrapNullTerminatedString(name),
+        GRAPHICS.WithOptions(mozilla::MarkerTiming::Interval(start, now)),
+        mozilla::ProfilerString8View(text_bytes, text_len));
   }
 #endif
 }
@@ -365,13 +367,15 @@ WebRenderBridgeParent::WebRenderBridgeParent(
   UpdateQualitySettings();
 }
 
-WebRenderBridgeParent::WebRenderBridgeParent(const wr::PipelineId& aPipelineId)
+WebRenderBridgeParent::WebRenderBridgeParent(const wr::PipelineId& aPipelineId,
+                                             nsCString&& aError)
     : mCompositorBridge(nullptr),
       mPipelineId(aPipelineId),
       mChildLayersObserverEpoch{0},
       mParentLayersObserverEpoch{0},
       mWrEpoch{0},
       mIdNamespace{0},
+      mInitError(aError),
       mPaused(false),
       mDestroyed(true),
       mReceivedDisplayList(false),
@@ -384,17 +388,23 @@ WebRenderBridgeParent::~WebRenderBridgeParent() {}
 
 /* static */
 WebRenderBridgeParent* WebRenderBridgeParent::CreateDestroyed(
-    const wr::PipelineId& aPipelineId) {
-  return new WebRenderBridgeParent(aPipelineId);
+    const wr::PipelineId& aPipelineId, nsCString&& aError) {
+  return new WebRenderBridgeParent(aPipelineId, std::move(aError));
 }
 
 mozilla::ipc::IPCResult WebRenderBridgeParent::RecvEnsureConnected(
     TextureFactoryIdentifier* aTextureFactoryIdentifier,
-    MaybeIdNamespace* aMaybeIdNamespace) {
+    MaybeIdNamespace* aMaybeIdNamespace, nsCString* aError) {
   if (mDestroyed) {
     *aTextureFactoryIdentifier =
         TextureFactoryIdentifier(LayersBackend::LAYERS_NONE);
     *aMaybeIdNamespace = Nothing();
+    if (mInitError.IsEmpty()) {
+      // Got destroyed after we initialized but before the handshake finished?
+      aError->AssignLiteral("FEATURE_FAILURE_WEBRENDER_INITIALIZE_RACE");
+    } else {
+      *aError = std::move(mInitError);
+    }
     return IPC_OK();
   }
 
@@ -880,9 +890,8 @@ bool WebRenderBridgeParent::IsRootWebRenderBridgeParent() const {
   return !!mWidget;
 }
 
-void WebRenderBridgeParent::SetCompositionRecorder(
-    UniquePtr<layers::WebRenderCompositionRecorder> aRecorder) {
-  mApi->SetCompositionRecorder(std::move(aRecorder));
+void WebRenderBridgeParent::BeginRecording(const TimeStamp& aRecordingStart) {
+  mApi->BeginRecording(aRecordingStart, mPipelineId);
 }
 
 RefPtr<wr::WebRenderAPI::WriteCollectedFramesPromise>
@@ -1855,7 +1864,8 @@ mozilla::ipc::IPCResult WebRenderBridgeParent::RecvSetConfirmedTargetAPZC(
   if (mDestroyed) {
     return IPC_OK();
   }
-  mCompositorBridge->SetConfirmedTargetAPZC(GetLayersId(), aBlockId, aTargets);
+  mCompositorBridge->SetConfirmedTargetAPZC(GetLayersId(), aBlockId,
+                                            std::move(aTargets));
   return IPC_OK();
 }
 
@@ -1981,12 +1991,8 @@ void WebRenderBridgeParent::CompositeToTarget(VsyncId aId,
   if (mPaused || !mReceivedDisplayList) {
     ResetPreviousSampleTime();
     mCompositionOpportunityId = mCompositionOpportunityId.Next();
-#ifdef MOZ_GECKO_PRFOILER
-    TimeStamp now = TimeStamp::Now();
-    PROFILER_ADD_TEXT_MARKER("SkippedComposite",
-                             mPaused ? "Paused"_ns : "No display list"_ns,
-                             JS::ProfilingCategoryPair::GRAPHICS, now, now);
-#endif  // MOZ_GECKO_PRFOILER
+    PROFILER_MARKER_TEXT("SkippedComposite", GRAPHICS,
+                         mPaused ? "Paused"_ns : "No display list"_ns);
     return;
   }
 
@@ -2005,11 +2011,8 @@ void WebRenderBridgeParent::CompositeToTarget(VsyncId aId,
       }
     }
 
-#ifdef MOZ_GECKO_PROFILER
-    TimeStamp now = TimeStamp::Now();
-    PROFILER_ADD_TEXT_MARKER("SkippedComposite", "Too many pending frames"_ns,
-                             JS::ProfilingCategoryPair::GRAPHICS, now, now);
-#endif  // MOZ_GECKO_PROFILER
+    PROFILER_MARKER_TEXT("SkippedComposite", GRAPHICS,
+                         "Too many pending frames");
     return;
   }
 
@@ -2034,10 +2037,10 @@ void WebRenderBridgeParent::MaybeGenerateFrame(VsyncId aId,
   if (CompositorBridgeParent* cbp = GetRootCompositorBridgeParent()) {
     // Skip WR render during paused state.
     if (cbp->IsPaused()) {
-      TimeStamp now = TimeStamp::Now();
-      PROFILER_ADD_TEXT_MARKER("SkippedComposite",
-                               "CompositorBridgeParent is paused"_ns,
-                               JS::ProfilingCategoryPair::GRAPHICS, now, now);
+      TimeStamp now = TimeStamp::NowUnfuzzed();
+      PROFILER_MARKER_TEXT("SkippedComposite",
+                           GRAPHICS.WithOptions(MarkerTiming::InstantAt(now)),
+                           "CompositorBridgeParent is paused");
       cbp->NotifyPipelineRendered(mPipelineId, mWrEpoch, VsyncId(), now, now,
                                   now);
       return;
@@ -2071,9 +2074,9 @@ void WebRenderBridgeParent::MaybeGenerateFrame(VsyncId aId,
 
   if (!generateFrame) {
     // Could skip generating frame now.
-    PROFILER_ADD_TEXT_MARKER("SkippedComposite",
-                             "No reason to generate frame"_ns,
-                             JS::ProfilingCategoryPair::GRAPHICS, start, start);
+    PROFILER_MARKER_TEXT("SkippedComposite",
+                         GRAPHICS.WithOptions(MarkerTiming::InstantAt(start)),
+                         "No reason to generate frame");
     ResetPreviousSampleTime();
     return;
   }
@@ -2284,6 +2287,16 @@ void WebRenderBridgeParent::FlushRendering(bool aWaitForPresent) {
   if (aWaitForPresent) {
     FlushFramePresentation();
   }
+}
+
+void WebRenderBridgeParent::SetClearColor(const gfx::DeviceColor& aColor) {
+  MOZ_ASSERT(IsRootWebRenderBridgeParent());
+
+  if (!IsRootWebRenderBridgeParent() || mDestroyed) {
+    return;
+  }
+
+  mApi->SetClearColor(aColor);
 }
 
 void WebRenderBridgeParent::Pause() {

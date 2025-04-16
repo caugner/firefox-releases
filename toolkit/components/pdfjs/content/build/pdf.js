@@ -335,8 +335,8 @@ var _text_layer = __w_pdfjs_require__(20);
 
 var _svg = __w_pdfjs_require__(21);
 
-const pdfjsVersion = '2.6.324';
-const pdfjsBuild = 'eb3654e27';
+const pdfjsVersion = '2.7.69';
+const pdfjsBuild = '26ae7ba2a';
 ;
 
 /***/ }),
@@ -864,7 +864,6 @@ exports.isNum = isNum;
 exports.isString = isString;
 exports.isSameOrigin = isSameOrigin;
 exports.createValidAbsoluteUrl = createValidAbsoluteUrl;
-exports.parseXFAPath = parseXFAPath;
 exports.removeNullCharacters = removeNullCharacters;
 exports.setVerbosityLevel = setVerbosityLevel;
 exports.shadow = shadow;
@@ -1621,8 +1620,8 @@ function isArrayEqual(arr1, arr2) {
   });
 }
 
-function getModificationDate(date = new Date(Date.now())) {
-  const buffer = [date.getUTCFullYear().toString(), (date.getUTCMonth() + 1).toString().padStart(2, "0"), (date.getUTCDate() + 1).toString().padStart(2, "0"), date.getUTCHours().toString().padStart(2, "0"), date.getUTCMinutes().toString().padStart(2, "0"), date.getUTCSeconds().toString().padStart(2, "0")];
+function getModificationDate(date = new Date()) {
+  const buffer = [date.getUTCFullYear().toString(), (date.getUTCMonth() + 1).toString().padStart(2, "0"), date.getUTCDate().toString().padStart(2, "0"), date.getUTCHours().toString().padStart(2, "0"), date.getUTCMinutes().toString().padStart(2, "0"), date.getUTCSeconds().toString().padStart(2, "0")];
   return buffer.join("");
 }
 
@@ -1677,26 +1676,6 @@ const createObjectURL = function createObjectURLClosure() {
 }();
 
 exports.createObjectURL = createObjectURL;
-
-function parseXFAPath(path) {
-  const positionPattern = /(.+)\[([0-9]+)\]$/;
-  return path.split(".").map(component => {
-    const m = component.match(positionPattern);
-
-    if (m) {
-      return {
-        name: m[1],
-        pos: parseInt(m[2], 10)
-      };
-    }
-
-    return {
-      name: component,
-      pos: 0
-    };
-  });
-}
-
 const XMLEntities = {
   0x3c: "&lt;",
   0x3e: "&gt;",
@@ -1993,7 +1972,7 @@ function _fetchDocument(worker, source, pdfDataRangeTransport, docId) {
 
   return worker.messageHandler.sendWithPromise("GetDocRequest", {
     docId,
-    apiVersion: '2.6.324',
+    apiVersion: '2.7.69',
     source: {
       data: source.data,
       url: source.url,
@@ -3918,9 +3897,9 @@ const InternalRenderTask = function InternalRenderTaskClosure() {
   return InternalRenderTask;
 }();
 
-const version = '2.6.324';
+const version = '2.7.69';
 exports.version = version;
-const build = 'eb3654e27';
+const build = '26ae7ba2a';
 exports.build = build;
 
 /***/ }),
@@ -5159,8 +5138,8 @@ var CanvasGraphics = function CanvasGraphicsClosure() {
       }
     },
     endDrawing: function CanvasGraphics_endDrawing() {
-      if (this.current.activeSMask !== null) {
-        this.endSMaskGroup();
+      while (this.stateStack.length || this.current.activeSMask !== null) {
+        this.restore();
       }
 
       this.ctx.restore();
@@ -5320,7 +5299,7 @@ var CanvasGraphics = function CanvasGraphicsClosure() {
       groupCtx.clearRect(0, 0, groupCtx.canvas.width, groupCtx.canvas.height);
       groupCtx.restore();
     },
-    resumeSMaskGroup: function CanvasGraphics_endSMaskGroup() {
+    resumeSMaskGroup: function CanvasGraphics_resumeSMaskGroup() {
       var groupCtx = this.current.resumeSMaskCtx;
       var currentCtx = this.ctx;
       this.ctx = groupCtx;
@@ -5360,6 +5339,8 @@ var CanvasGraphics = function CanvasGraphicsClosure() {
         this.ctx.restore();
         this.pendingClip = null;
         this._cachedGetSinglePixelWidth = null;
+      } else {
+        this.current.activeSMask = null;
       }
     },
     transform: function CanvasGraphics_transform(a, b, c, d, e, f) {
@@ -8209,7 +8190,8 @@ class OptionalContentConfig {
   constructor(data) {
     this.name = null;
     this.creator = null;
-    this.groups = new Map();
+    this._order = null;
+    this._groups = new Map();
 
     if (data === null) {
       return;
@@ -8217,34 +8199,35 @@ class OptionalContentConfig {
 
     this.name = data.name;
     this.creator = data.creator;
+    this._order = data.order;
 
     for (const group of data.groups) {
-      this.groups.set(group.id, new OptionalContentGroup(group.name, group.intent));
+      this._groups.set(group.id, new OptionalContentGroup(group.name, group.intent));
     }
 
     if (data.baseState === "OFF") {
-      for (const group of this.groups) {
+      for (const group of this._groups) {
         group.visible = false;
       }
     }
 
     for (const on of data.on) {
-      this.groups.get(on).visible = true;
+      this._groups.get(on).visible = true;
     }
 
     for (const off of data.off) {
-      this.groups.get(off).visible = false;
+      this._groups.get(off).visible = false;
     }
   }
 
   isVisible(group) {
     if (group.type === "OCG") {
-      if (!this.groups.has(group.id)) {
+      if (!this._groups.has(group.id)) {
         (0, _util.warn)(`Optional content group not found: ${group.id}`);
         return true;
       }
 
-      return this.groups.get(group.id).visible;
+      return this._groups.get(group.id).visible;
     } else if (group.type === "OCMD") {
       if (group.expression) {
         (0, _util.warn)("Visibility expression not supported yet.");
@@ -8252,12 +8235,12 @@ class OptionalContentConfig {
 
       if (!group.policy || group.policy === "AnyOn") {
         for (const id of group.ids) {
-          if (!this.groups.has(id)) {
+          if (!this._groups.has(id)) {
             (0, _util.warn)(`Optional content group not found: ${id}`);
             return true;
           }
 
-          if (this.groups.get(id).visible) {
+          if (this._groups.get(id).visible) {
             return true;
           }
         }
@@ -8265,12 +8248,12 @@ class OptionalContentConfig {
         return false;
       } else if (group.policy === "AllOn") {
         for (const id of group.ids) {
-          if (!this.groups.has(id)) {
+          if (!this._groups.has(id)) {
             (0, _util.warn)(`Optional content group not found: ${id}`);
             return true;
           }
 
-          if (!this.groups.get(id).visible) {
+          if (!this._groups.get(id).visible) {
             return false;
           }
         }
@@ -8278,12 +8261,12 @@ class OptionalContentConfig {
         return true;
       } else if (group.policy === "AnyOff") {
         for (const id of group.ids) {
-          if (!this.groups.has(id)) {
+          if (!this._groups.has(id)) {
             (0, _util.warn)(`Optional content group not found: ${id}`);
             return true;
           }
 
-          if (!this.groups.get(id).visible) {
+          if (!this._groups.get(id).visible) {
             return true;
           }
         }
@@ -8291,12 +8274,12 @@ class OptionalContentConfig {
         return false;
       } else if (group.policy === "AllOff") {
         for (const id of group.ids) {
-          if (!this.groups.has(id)) {
+          if (!this._groups.has(id)) {
             (0, _util.warn)(`Optional content group not found: ${id}`);
             return true;
           }
 
-          if (this.groups.get(id).visible) {
+          if (this._groups.get(id).visible) {
             return false;
           }
         }
@@ -8310,6 +8293,39 @@ class OptionalContentConfig {
 
     (0, _util.warn)(`Unknown group type ${group.type}.`);
     return true;
+  }
+
+  setVisibility(id, visible = true) {
+    if (!this._groups.has(id)) {
+      (0, _util.warn)(`Optional content group not found: ${id}`);
+      return;
+    }
+
+    this._groups.get(id).visible = !!visible;
+  }
+
+  getOrder() {
+    if (!this._groups.size) {
+      return null;
+    }
+
+    if (this._order) {
+      return this._order.slice();
+    }
+
+    return Array.from(this._groups.keys());
+  }
+
+  getGroups() {
+    if (!this._groups.size) {
+      return null;
+    }
+
+    return Object.fromEntries(this._groups);
+  }
+
+  getGroup(id) {
+    return this._groups.get(id) || null;
   }
 
 }
@@ -9459,6 +9475,9 @@ class TextWidgetAnnotationElement extends WidgetAnnotationElement {
 
       element.addEventListener("input", function (event) {
         storage.setValue(id, event.target.value);
+      });
+      element.addEventListener("blur", function (event) {
+        event.target.setSelectionRange(0, 0);
       });
       element.disabled = this.data.readOnly;
       element.name = this.data.fieldName;

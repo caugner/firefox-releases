@@ -88,8 +88,10 @@ struct SVCB {
   Maybe<uint16_t> GetPort() const;
   bool NoDefaultAlpn() const;
   Maybe<nsCString> GetAlpn(bool aNoHttp2, bool aNoHttp3) const;
+  void GetIPHints(CopyableTArray<mozilla::net::NetAddr>& aAddresses) const;
   uint16_t mSvcFieldPriority = 0;
   nsCString mSvcDomainName;
+  bool mHasIPHints = false;
   CopyableTArray<SvcFieldValue> mSvcFieldValue;
 };
 
@@ -118,7 +120,10 @@ class DNSHTTPSSVCRecordBase {
   virtual ~DNSHTTPSSVCRecordBase() = default;
 
   already_AddRefed<nsISVCBRecord> GetServiceModeRecordInternal(
-      bool aNoHttp2, bool aNoHttp3, const nsTArray<SVCB>& aRecords);
+      bool aNoHttp2, bool aNoHttp3, const nsTArray<SVCB>& aRecords,
+      bool& aRecordsAllExcluded);
+
+  bool HasIPAddressesInternal(const nsTArray<SVCB>& aRecords);
 
   // The owner name of this HTTPS RR.
   nsCString mHost;

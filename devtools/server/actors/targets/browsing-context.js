@@ -306,6 +306,18 @@ const browsingContextTargetPrototype = {
     TargetActorRegistry.registerTargetActor(this);
   },
 
+  addWatcherDataEntry(type, entries) {
+    if (type == "resources") {
+      this.watchTargetResources(entries);
+    }
+  },
+
+  removeWatcherDataEntry(type, entries) {
+    if (type == "resources") {
+      this.unwatchTargetResources(entries);
+    }
+  },
+
   /**
    * These two methods will create and destroy resource watchers
    * for each resource type. This will end up calling `notifyResourceAvailable`
@@ -345,8 +357,9 @@ const browsingContextTargetPrototype = {
    * Wrapper around emit for resource forms to bail early after destroy.
    */
   _emitResourcesForm(name, resources) {
-    if (this.isDestroyed()) {
-      // Don't try to emit if the actor was destroyed.
+    if (resources.length === 0 || this.isDestroyed()) {
+      // Don't try to emit if the resources array is empty or the actor was
+      // destroyed.
       return;
     }
     this.emit(name, resources);

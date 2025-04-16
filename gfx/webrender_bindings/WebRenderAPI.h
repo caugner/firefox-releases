@@ -16,7 +16,7 @@
 #include "mozilla/layers/IpcResourceUpdateQueue.h"
 #include "mozilla/layers/ScrollableLayerGuid.h"
 #include "mozilla/layers/SyncObject.h"
-#include "mozilla/layers/WebRenderCompositionRecorder.h"
+#include "mozilla/layers/CompositionRecorder.h"
 #include "mozilla/Range.h"
 #include "mozilla/TimeStamp.h"
 #include "mozilla/webrender/webrender_ffi.h"
@@ -231,7 +231,8 @@ class WebRenderAPI final {
   static already_AddRefed<WebRenderAPI> Create(
       layers::CompositorBridgeParent* aBridge,
       RefPtr<widget::CompositorWidget>&& aWidget,
-      const wr::WrWindowId& aWindowId, LayoutDeviceIntSize aSize);
+      const wr::WrWindowId& aWindowId, LayoutDeviceIntSize aSize,
+      nsACString& aError);
 
   already_AddRefed<WebRenderAPI> Clone();
 
@@ -256,6 +257,8 @@ class WebRenderAPI final {
   void EnableMultithreading(bool aEnable);
   void SetBatchingLookback(uint32_t aCount);
 
+  void SetClearColor(const gfx::DeviceColor& aColor);
+
   void Pause();
   bool Resume();
 
@@ -276,22 +279,22 @@ class WebRenderAPI final {
 
   void ToggleCaptureSequence();
 
-  void SetCompositionRecorder(
-      UniquePtr<layers::WebRenderCompositionRecorder> aRecorder);
+  void BeginRecording(const TimeStamp& aRecordingStart,
+                      wr::PipelineId aRootPipelineId);
 
   typedef MozPromise<bool, nsresult, true> WriteCollectedFramesPromise;
   typedef MozPromise<layers::CollectedFrames, nsresult, true>
       GetCollectedFramesPromise;
 
   /**
-   * Write the frames collected by the |WebRenderCompositionRecorder| to disk.
+   * Write the frames collected since the call to BeginRecording() to disk.
    *
    * If there is not currently a recorder, this is a no-op.
    */
   RefPtr<WriteCollectedFramesPromise> WriteCollectedFrames();
 
   /**
-   * Return the frames collected by the |WebRenderCompositionRecorder| encoded
+   * Return the frames collected since the call to BeginRecording() encoded
    * as data URIs.
    *
    * If there is not currently a recorder, this is a no-op and the promise will

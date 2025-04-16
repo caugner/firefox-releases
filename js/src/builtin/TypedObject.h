@@ -13,7 +13,8 @@
 #include "gc/Allocator.h"
 #include "gc/WeakMap.h"
 #include "js/Conversions.h"
-#include "js/ScalarType.h"  // js::Scalar::Type
+#include "js/experimental/JitInfo.h"  // JSJitInfo
+#include "js/ScalarType.h"            // js::Scalar::Type
 #include "vm/ArrayBufferObject.h"
 #include "vm/JSObject.h"
 
@@ -178,11 +179,11 @@ class TypeDescr : public NativeObject {
   MOZ_MUST_USE bool hasProperty(const JSAtomState& names, jsid id);
 
   // Type descriptors may contain a list of their references for use during
-  // scanning. Marking code is optimized to use this list to mark inline
-  // typed objects, rather than the slower trace hook. This list is only
-  // specified when (a) the descriptor is short enough that it can fit in an
-  // InlineTypedObject, and (b) the descriptor contains at least one
-  // reference. Otherwise its value is undefined.
+  // scanning. Typed object trace hooks can use this to call an optimized
+  // marking path that doesn't need to dispatch on the tracer kind for each
+  // edge. This list is only specified when (a) the descriptor is short enough
+  // that it can fit in an InlineTypedObject, and (b) the descriptor contains at
+  // least one reference. Otherwise its value is undefined.
   //
   // The list is three consecutive arrays of uint32_t offsets, preceded by a
   // header consisting of the length of each array. The arrays store offsets of
@@ -635,9 +636,7 @@ class TypedObject : public JSObject {
   // callee here is the type descriptor.
   static MOZ_MUST_USE bool construct(JSContext* cx, unsigned argc, Value* vp);
 
-  Shape** addressOfShapeFromGC() {
-    return shape_.unsafeUnbarrieredForTracing();
-  }
+  Shape** addressOfShapeFromGC() { return shape_.unbarrieredAddress(); }
 };
 
 using HandleTypedObject = Handle<TypedObject*>;
@@ -749,8 +748,6 @@ class InlineTypedObject : public TypedObject {
   uint8_t* inlineTypedMem(const JS::AutoRequireNoGC&) const {
     return inlineTypedMem();
   }
-
-  uint8_t* inlineTypedMemForGC() const { return inlineTypedMem(); }
 
   static void obj_trace(JSTracer* trace, JSObject* object);
   static size_t obj_moved(JSObject* dst, JSObject* src);

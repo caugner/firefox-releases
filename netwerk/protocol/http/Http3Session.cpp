@@ -20,6 +20,7 @@
 #include "nsThreadUtils.h"
 #include "QuicSocketControl.h"
 #include "SSLServerCertVerification.h"
+#include "SSLTokensCache.h"
 #include "HttpConnectionUDP.h"
 #include "sslerr.h"
 
@@ -63,7 +64,8 @@ Http3Session::Http3Session()
       mIsClosedByNeqo(false),
       mError(NS_OK),
       mSocketError(NS_OK),
-      mBeforeConnectedError(false) {
+      mBeforeConnectedError(false),
+      mTimerActive(false) {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
   LOG(("Http3Session::Http3Session [this=%p]", this));
 
@@ -96,7 +98,7 @@ nsresult Http3Session::Init(const nsACString& aOrigin,
     return NS_ERROR_FAILURE;
   }
   char buf[kIPv6CStrBufSize];
-  NetAddrToString(&selfAddr, buf, kIPv6CStrBufSize);
+  selfAddr.ToStringBuffer(buf, kIPv6CStrBufSize);
 
   nsAutoCString selfAddrStr;
   if (selfAddr.raw.family == AF_INET6) {
@@ -117,7 +119,7 @@ nsresult Http3Session::Init(const nsACString& aOrigin,
     LOG3(("Http3Session::Init GetPeerAddr failed [this=%p]", this));
     return NS_ERROR_FAILURE;
   }
-  NetAddrToString(&peerAddr, buf, kIPv6CStrBufSize);
+  peerAddr.ToStringBuffer(buf, kIPv6CStrBufSize);
 
   nsAutoCString peerAddrStr;
   if (peerAddr.raw.family == AF_INET6) {
@@ -141,10 +143,40 @@ nsresult Http3Session::Init(const nsACString& aOrigin,
        gHttpHandler->DefaultQpackTableSize(),
        gHttpHandler->DefaultHttp3MaxBlockedStreams(), this));
 
-  return NeqoHttp3Conn::Init(aOrigin, aAlpnToken, selfAddrStr, peerAddrStr,
-                             gHttpHandler->DefaultQpackTableSize(),
-                             gHttpHandler->DefaultHttp3MaxBlockedStreams(),
-                             getter_AddRefs(mHttp3Connection));
+  nsresult rv =
+      NeqoHttp3Conn::Init(aOrigin, aAlpnToken, selfAddrStr, peerAddrStr,
+                          gHttpHandler->DefaultQpackTableSize(),
+                          gHttpHandler->DefaultHttp3MaxBlockedStreams(),
+                          getter_AddRefs(mHttp3Connection));
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  nsAutoCString peerId;
+  mSocketControl->GetPeerId(peerId);
+  nsTArray<uint8_t> token;
+  if (NS_SUCCEEDED(SSLTokensCache::Get(peerId, token))) {
+    LOG(("Found a resumption token in the cache."));
+    mHttp3Connection->SetResumptionToken(token);
+    if (mHttp3Connection->IsZeroRtt()) {
+      LOG(("Can send ZeroRtt data"));
+      RefPtr<Http3Session> self(this);
+      mState = ZERORTT;
+      // Let the nsHttpConnectionMgr know that the connection can accept
+      // transactions.
+      // We need to dispatch the following function to this thread so that
+      // it is executed after the current function. At this point a
+      // Http3Session is still being initialized and ReportHttp3Connection
+      // will try to dispatch transaction on this session therefore it
+      // needs to be executed after the initializationg is done.
+      DebugOnly<nsresult> rv = NS_DispatchToCurrentThread(
+          NS_NewRunnableFunction("Http3Session::ReportHttp3Connection",
+                                 [self]() { self->ReportHttp3Connection(); }));
+      NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                           "NS_DispatchToCurrentThread failed");
+    }
+  }
+  return NS_OK;
 }
 
 // Shutdown the http3session and close all transactions.
@@ -347,11 +379,10 @@ nsresult Http3Session::ProcessEvents(uint32_t count) {
                static_cast<uint32_t>(rv)));
           return rv;
         }
-
         break;
       }
       case Http3Event::Tag::DataWritable:
-        MOZ_ASSERT(mState == CONNECTED);
+        MOZ_ASSERT(CanSandData());
         LOG(("Http3Session::ProcessEvents - DataWritable"));
         if (mReadyForWriteButBlocked.RemoveElement(
                 event.data_writable.stream_id)) {
@@ -404,14 +435,38 @@ nsresult Http3Session::ProcessEvents(uint32_t count) {
           CallCertVerification();
         }
         break;
-      case Http3Event::Tag::ConnectionConnected:
+      case Http3Event::Tag::ZeroRttRejected:
+        LOG(("Http3Session::ProcessEvents - ZeroRttRejected"));
+        if (mState == ZERORTT) {
+          mState = INITIALIZING;
+          Finish0Rtt(true);
+        }
+        break;
+      case Http3Event::Tag::ConnectionConnected: {
         LOG(("Http3Session::ProcessEvents - ConnectionConnected"));
+        bool was0RTT = mState == ZERORTT;
         mState = CONNECTED;
         SetSecInfo();
         mSocketControl->HandshakeCompleted();
-        gHttpHandler->ConnMgr()->ReportHttp3Connection(mSegmentReaderWriter);
-        MaybeResumeSend();
-        break;
+        if (was0RTT) {
+          Finish0Rtt(false);
+        }
+        nsTArray<uint8_t> token;
+        mHttp3Connection->GetResumptionToken(token);
+        if (!token.IsEmpty()) {
+          LOG(("Got a resumption token"));
+          nsAutoCString peerId;
+          mSocketControl->GetPeerId(peerId);
+          if (NS_FAILED(
+                  // Bug 1660080 tto get the proper expiration time for a token.
+                  SSLTokensCache::Put(peerId, token.Elements(), token.Length(),
+                                      mSocketControl, 1))) {
+            LOG(("Adding resumption token failed"));
+          }
+        }
+
+        ReportHttp3Connection();
+      } break;
       case Http3Event::Tag::GoawayReceived:
         LOG(("Http3Session::ProcessEvents - GoawayReceived"));
         MOZ_ASSERT(!mGoawayReceived);
@@ -512,6 +567,9 @@ nsresult Http3Session::ProcessOutput() {
 // properly and close the connection.
 nsresult Http3Session::ProcessOutputAndEvents() {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
+  // ProcessOutput could fire another timer. Need to unset the flag before that.
+  mTimerActive = false;
+
   nsresult rv = ProcessOutput();
   if (NS_FAILED(rv)) {
     return rv;
@@ -521,11 +579,27 @@ nsresult Http3Session::ProcessOutputAndEvents() {
 
 void Http3Session::SetupTimer(uint64_t aTimeout) {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
+  // UINT64_MAX indicated a no-op from neqo, which only happens when a
+  // connection is in or going to be Closed state.
+  if (aTimeout == UINT64_MAX) {
+    return;
+  }
 
   LOG(("Http3Session::SetupTimer to %" PRIu64 "ms [this=%p].", aTimeout, this));
+
+  if (mTimerActive && mTimer) {
+    LOG(
+        ("  -- Previous timer has not fired. Update the delay instead of "
+         "re-initializing the timer"));
+    mTimer->SetDelay(aTimeout);
+    return;
+  }
+
   if (!mTimer) {
     mTimer = NS_NewTimer();
   }
+
+  mTimerActive = true;
 
   if (!mTimer ||
       NS_FAILED(mTimer->InitWithNamedFuncCallback(
@@ -572,13 +646,25 @@ bool Http3Session::AddStream(nsAHttpTransaction* aHttpTransaction,
   Http3Stream* stream = new Http3Stream(aHttpTransaction, this);
   mStreamTransactionHash.Put(aHttpTransaction, RefPtr{stream});
 
+  if (mState == ZERORTT) {
+    if (!stream->Do0RTT()) {
+      LOG(("Http3Session %p will not get early data from Http3Stream %p", this,
+           stream));
+      if (!mCannotDo0RTTStreams.Contains(stream)) {
+        mCannotDo0RTTStreams.AppendElement(stream);
+      }
+      return true;
+    } else {
+      m0RTTStreams.AppendElement(stream);
+    }
+  }
   StreamReadyToWrite(stream);
 
   return true;
 }
 
 bool Http3Session::CanReuse() {
-  return (mState == CONNECTED) && !(mGoawayReceived || mShouldClose);
+  return CanSandData() && !(mGoawayReceived || mShouldClose);
 }
 
 void Http3Session::QueueStream(Http3Stream* stream) {
@@ -647,6 +733,13 @@ nsresult Http3Session::TryActivating(
     LOG3(("Http3Session::TryActivating %p stream=%p already queued.\n", this,
           aStream));
     return NS_BASE_STREAM_WOULD_BLOCK;
+  }
+
+  if (mState == ZERORTT) {
+    if (!aStream->Do0RTT()) {
+      MOZ_ASSERT(!mCannotDo0RTTStreams.Contains(aStream));
+      return NS_BASE_STREAM_WOULD_BLOCK;
+    }
   }
 
   nsresult rv = mHttp3Connection->Fetch(aMethod, aScheme, aAuthorityHeader,
@@ -780,10 +873,7 @@ nsresult Http3Session::ReadSegmentsAgain(nsAHttpSegmentReader* reader,
   Http3Stream* stream = nullptr;
 
   // Step 1)
-  while (
-      (mState ==
-       CONNECTED) &&  // Do not send transaction data untill we are connected.
-      (stream = mReadyForWrite.PopFront())) {
+  while (CanSandData() && (stream = mReadyForWrite.PopFront())) {
     LOG(
         ("Http3Session::ReadSegmentsAgain call ReadSegments from stream=%p "
          "[this=%p]",
@@ -854,13 +944,13 @@ nsresult Http3Session::ReadSegmentsAgain(nsAHttpSegmentReader* reader,
 void Http3Session::StreamReadyToWrite(Http3Stream* aStream) {
   MOZ_ASSERT(aStream);
   mReadyForWrite.Push(aStream);
-  if ((mState == CONNECTED) && mConnection) {
+  if (CanSandData() && mConnection) {
     Unused << mConnection->ResumeSend();
   }
 }
 
 void Http3Session::MaybeResumeSend() {
-  if ((mReadyForWrite.GetSize() > 0) && (mState == CONNECTED) && mConnection) {
+  if ((mReadyForWrite.GetSize() > 0) && CanSandData() && mConnection) {
     Unused << mConnection->ResumeSend();
   }
 }
@@ -1243,8 +1333,7 @@ bool Http3Session::JoinConnection(const nsACString& hostname, int32_t port) {
 bool Http3Session::RealJoinConnection(const nsACString& hostname, int32_t port,
                                       bool justKidding) {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
-  if (!mConnection || (mState != CONNECTED) || mShouldClose ||
-      mGoawayReceived) {
+  if (!mConnection || !CanSandData() || mShouldClose || mGoawayReceived) {
     return false;
   }
 
@@ -1346,7 +1435,7 @@ void Http3Session::CallCertVerification() {
 void Http3Session::Authenticated(int32_t aError) {
   LOG(("Http3Session::Authenticated error=0x%" PRIx32 " [this=%p].", aError,
        this));
-  if (mState == INITIALIZING) {
+  if ((mState == INITIALIZING) || (mState == ZERORTT)) {
     if (psm::IsNSSErrorCode(aError)) {
       mError = psm::GetXPCOMFromNSSError(aError);
       LOG(("Http3Session::Authenticated psm-error=0x%" PRIx32 " [this=%p].",
@@ -1422,6 +1511,40 @@ void Http3Session::CloseConnectionTelemetry(CloseError& aError, bool aClosing) {
   // connection, this will map to "closing" key and 37 in the graph.
   Telemetry::Accumulate(Telemetry::HTTP3_CONNECTTION_CLOSE_CODE,
                         aClosing ? "closing"_ns : "closed"_ns, value);
+}
+
+void Http3Session::Finish0Rtt(bool aRestart) {
+  for (size_t i = 0; i < m0RTTStreams.Length(); ++i) {
+    if (m0RTTStreams[i]) {
+      if (aRestart) {
+        // When we need ot restart transactions remove them from all lists.
+        if (m0RTTStreams[i]->HasStreamId()) {
+          mStreamIdHash.Remove(m0RTTStreams[i]->StreamId());
+        }
+        RemoveStreamFromQueues(m0RTTStreams[i]);
+        // The stream is ready to write again.
+        mReadyForWrite.Push(m0RTTStreams[i]);
+      }
+      m0RTTStreams[i]->Finish0RTT(aRestart);
+    }
+  }
+
+  for (size_t i = 0; i < mCannotDo0RTTStreams.Length(); ++i) {
+    if (mCannotDo0RTTStreams[i]) {
+      mReadyForWrite.Push(mCannotDo0RTTStreams[i]);
+    }
+  }
+  m0RTTStreams.Clear();
+  mCannotDo0RTTStreams.Clear();
+  MaybeResumeSend();
+}
+
+void Http3Session::ReportHttp3Connection() {
+  if (CanSandData() && !mHttp3ConnectionReported) {
+    mHttp3ConnectionReported = true;
+    gHttpHandler->ConnMgr()->ReportHttp3Connection(mSegmentReaderWriter);
+    MaybeResumeSend();
+  }
 }
 
 }  // namespace net

@@ -72,7 +72,7 @@ class nsDNSRecord : public nsIDNSAddrRecord {
   NS_DECL_NSIDNSADDRRECORD
 
   explicit nsDNSRecord(nsHostRecord* hostRecord)
-      : mIter(nullptr), mIterGenCnt(-1), mDone(false) {
+      : mIterGenCnt(-1), mDone(false) {
     mHostRecord = do_QueryObject(hostRecord);
   }
 
@@ -80,7 +80,21 @@ class nsDNSRecord : public nsIDNSAddrRecord {
   virtual ~nsDNSRecord() = default;
 
   RefPtr<AddrHostRecord> mHostRecord;
-  NetAddrElement* mIter;
+  // Since mIter is holding a weak reference to the NetAddr array we must
+  // make sure it is not released. So we also keep a RefPtr to the AddrInfo
+  // which is immutable.
+  RefPtr<AddrInfo> mAddrInfo;
+  nsTArray<NetAddr>::const_iterator mIter;
+  const NetAddr* iter() {
+    if (!mIter.GetArray()) {
+      return nullptr;
+    }
+    if (mIter.GetArray()->end() == mIter) {
+      return nullptr;
+    }
+    return &*mIter;
+  }
+
   int mIterGenCnt;  // the generation count of
                     // mHostRecord->addr_info when we
                     // start iterating
@@ -104,10 +118,10 @@ nsDNSRecord::GetCanonicalName(nsACString& result) {
     return NS_OK;
   }
 
-  if (mHostRecord->addr_info->mCanonicalName.IsEmpty()) {
-    result = mHostRecord->addr_info->mHostName;
+  if (mHostRecord->addr_info->CanonicalHostname().IsEmpty()) {
+    result = mHostRecord->addr_info->Hostname();
   } else {
-    result = mHostRecord->addr_info->mCanonicalName;
+    result = mHostRecord->addr_info->CanonicalHostname();
   }
   return NS_OK;
 }
@@ -155,36 +169,42 @@ nsDNSRecord::GetNextAddr(uint16_t port, NetAddr* addr) {
   if (mHostRecord->addr_info) {
     if (mIterGenCnt != mHostRecord->addr_info_gencnt) {
       // mHostRecord->addr_info has changed, restart the iteration.
-      mIter = nullptr;
+      mIter = nsTArray<NetAddr>::const_iterator();
       mIterGenCnt = mHostRecord->addr_info_gencnt;
+      // Make sure to hold a RefPtr to the AddrInfo so we can iterate through
+      // the NetAddr array.
+      mAddrInfo = mHostRecord->addr_info;
     }
 
-    bool startedFresh = !mIter;
+    bool startedFresh = !iter();
 
     do {
-      if (!mIter) {
-        mIter = mHostRecord->addr_info->mAddresses.getFirst();
+      if (!iter()) {
+        mIter = mAddrInfo->Addresses().begin();
       } else {
-        mIter = mIter->getNext();
+        mIter++;
       }
-    } while (mIter && mHostRecord->Blacklisted(&mIter->mAddress));
+    } while (iter() && mHostRecord->Blacklisted(iter()));
 
-    if (!mIter && startedFresh) {
+    if (!iter() && startedFresh) {
       // If everything was blacklisted we want to reset the blacklist (and
       // likely relearn it) and return the first address. That is better
       // than nothing.
       mHostRecord->ResetBlacklist();
-      mIter = mHostRecord->addr_info->mAddresses.getFirst();
+      mIter = mAddrInfo->Addresses().begin();
     }
 
-    if (mIter) {
-      memcpy(addr, &mIter->mAddress, sizeof(NetAddr));
+    if (iter()) {
+      *addr = *mIter;
     }
 
     mHostRecord->addr_info_lock.Unlock();
 
-    if (!mIter) {
+    if (!iter()) {
       mDone = true;
+      mIter = nsTArray<NetAddr>::const_iterator();
+      mAddrInfo = nullptr;
+      mIterGenCnt = -1;
       return NS_ERROR_NOT_AVAILABLE;
     }
   } else {
@@ -219,13 +239,11 @@ nsDNSRecord::GetAddresses(nsTArray<NetAddr>& aAddressArray) {
 
   mHostRecord->addr_info_lock.Lock();
   if (mHostRecord->addr_info) {
-    for (NetAddrElement* iter = mHostRecord->addr_info->mAddresses.getFirst();
-         iter; iter = iter->getNext()) {
-      if (mHostRecord->Blacklisted(&iter->mAddress)) {
+    for (const auto& address : mHostRecord->addr_info->Addresses()) {
+      if (mHostRecord->Blacklisted(&address)) {
         continue;
       }
-      NetAddr* addr = aAddressArray.AppendElement(NetAddr());
-      memcpy(addr, &iter->mAddress, sizeof(NetAddr));
+      NetAddr* addr = aAddressArray.AppendElement(address);
       if (addr->raw.family == AF_INET) {
         addr->inet.port = 0;
       } else if (addr->raw.family == AF_INET6) {
@@ -254,7 +272,9 @@ NS_IMETHODIMP
 nsDNSRecord::GetScriptableNextAddr(uint16_t port, nsINetAddr** result) {
   NetAddr addr;
   nsresult rv = GetNextAddr(port, &addr);
-  if (NS_FAILED(rv)) return rv;
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
 
   RefPtr<nsNetAddr> netaddr = new nsNetAddr(&addr);
   netaddr.forget(result);
@@ -266,10 +286,12 @@ NS_IMETHODIMP
 nsDNSRecord::GetNextAddrAsString(nsACString& result) {
   NetAddr addr;
   nsresult rv = GetNextAddr(0, &addr);
-  if (NS_FAILED(rv)) return rv;
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
 
   char buf[kIPv6CStrBufSize];
-  if (NetAddrToString(&addr, buf, sizeof(buf))) {
+  if (addr.ToStringBuffer(buf, sizeof(buf))) {
     result.Assign(buf);
     return NS_OK;
   }
@@ -284,7 +306,7 @@ nsDNSRecord::HasMore(bool* result) {
     return NS_OK;
   }
 
-  NetAddrElement* iterCopy = mIter;
+  nsTArray<NetAddr>::const_iterator iterCopy = mIter;
   int iterGenCntCopy = mIterGenCnt;
 
   NetAddr addr;
@@ -299,7 +321,7 @@ nsDNSRecord::HasMore(bool* result) {
 
 NS_IMETHODIMP
 nsDNSRecord::Rewind() {
-  mIter = nullptr;
+  mIter = nsTArray<NetAddr>::const_iterator();
   mIterGenCnt = -1;
   mDone = false;
   return NS_OK;
@@ -316,8 +338,8 @@ nsDNSRecord::ReportUnusable(uint16_t aPort) {
   // ignore the report.
 
   if (mHostRecord->addr_info && mIterGenCnt == mHostRecord->addr_info_gencnt &&
-      mIter) {
-    mHostRecord->ReportUnusable(&mIter->mAddress);
+      iter()) {
+    mHostRecord->ReportUnusable(iter());
   }
 
   return NS_OK;
@@ -372,6 +394,16 @@ NS_IMETHODIMP
 nsDNSByTypeRecord::GetServiceModeRecord(bool aNoHttp2, bool aNoHttp3,
                                         nsISVCBRecord** aRecord) {
   return mHostRecord->GetServiceModeRecord(aNoHttp2, aNoHttp3, aRecord);
+}
+
+NS_IMETHODIMP
+nsDNSByTypeRecord::GetHasIPAddresses(bool* aResult) {
+  return mHostRecord->GetHasIPAddresses(aResult);
+}
+
+NS_IMETHODIMP
+nsDNSByTypeRecord::GetAllRecordsExcluded(bool* aResult) {
+  return mHostRecord->GetAllRecordsExcluded(aResult);
 }
 
 NS_IMETHODIMP
@@ -906,8 +938,9 @@ nsresult nsDNSService::AsyncResolveInternal(
   {
     MutexAutoLock lock(mLock);
 
-    if (mDisablePrefetch && (flags & RESOLVE_SPECULATE))
+    if (mDisablePrefetch && (flags & RESOLVE_SPECULATE)) {
       return NS_ERROR_DNS_LOOKUP_QUEUE_FULL;
+    }
 
     res = mResolver;
     idn = mIDN;
@@ -918,7 +951,9 @@ nsresult nsDNSService::AsyncResolveInternal(
     NS_DispatchToMainThread(new NotifyDNSResolution(aHostname));
   }
 
-  if (!res) return NS_ERROR_OFFLINE;
+  if (!res) {
+    return NS_ERROR_OFFLINE;
+  }
 
   if ((type != RESOLVE_TYPE_DEFAULT) && (type != RESOLVE_TYPE_TXT) &&
       (type != RESOLVE_TYPE_HTTPSSVC)) {
@@ -960,7 +995,9 @@ nsresult nsDNSService::AsyncResolveInternal(
   RefPtr<nsDNSAsyncRequest> req =
       new nsDNSAsyncRequest(res, hostname, DNSResolverInfo::URL(aResolver),
                             type, aOriginAttributes, listener, flags, af);
-  if (!req) return NS_ERROR_OUT_OF_MEMORY;
+  if (!req) {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
 
   rv = res->ResolveHost(req->mHost, DNSResolverInfo::URL(aResolver), type,
                         req->mOriginAttributes, flags, af, req);
@@ -980,14 +1017,17 @@ nsresult nsDNSService::CancelAsyncResolveInternal(
   {
     MutexAutoLock lock(mLock);
 
-    if (mDisablePrefetch && (aFlags & RESOLVE_SPECULATE))
+    if (mDisablePrefetch && (aFlags & RESOLVE_SPECULATE)) {
       return NS_ERROR_DNS_LOOKUP_QUEUE_FULL;
+    }
 
     res = mResolver;
     idn = mIDN;
     localDomain = mLocalDomains.GetEntry(aHostname);
   }
-  if (!res) return NS_ERROR_OFFLINE;
+  if (!res) {
+    return NS_ERROR_OFFLINE;
+  }
 
   nsCString hostname;
   nsresult rv = PreprocessHostname(localDomain, aHostname, idn, hostname);
@@ -1148,7 +1188,9 @@ nsresult nsDNSService::ResolveInternal(
   //
 
   PRMonitor* mon = PR_NewMonitor();
-  if (!mon) return NS_ERROR_OUT_OF_MEMORY;
+  if (!mon) {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
 
   PR_EnterMonitor(mon);
   RefPtr<nsDNSSyncRequest> syncReq = new nsDNSSyncRequest(mon);
@@ -1226,7 +1268,9 @@ nsDNSService::Observe(nsISupports* subject, const char* topic,
 }
 
 uint16_t nsDNSService::GetAFForLookup(const nsACString& host, uint32_t flags) {
-  if (mDisableIPv6 || (flags & RESOLVE_DISABLE_IPV6)) return PR_AF_INET;
+  if (mDisableIPv6 || (flags & RESOLVE_DISABLE_IPV6)) {
+    return PR_AF_INET;
+  }
 
   MutexAutoLock lock(mLock);
 
@@ -1246,11 +1290,15 @@ uint16_t nsDNSService::GetAFForLookup(const nsACString& host, uint32_t flags) {
 
     do {
       // skip any whitespace
-      while (*domain == ' ' || *domain == '\t') ++domain;
+      while (*domain == ' ' || *domain == '\t') {
+        ++domain;
+      }
 
       // find end of this domain in the string
       end = strchr(domain, ',');
-      if (!end) end = domainEnd;
+      if (!end) {
+        end = domainEnd;
+      }
 
       // to see if the hostname is in the domain, check if the domain
       // matches the end of the hostname.
@@ -1272,7 +1320,9 @@ uint16_t nsDNSService::GetAFForLookup(const nsACString& host, uint32_t flags) {
     } while (*end);
   }
 
-  if ((af != PR_AF_INET) && (flags & RESOLVE_DISABLE_IPV4)) af = PR_AF_INET6;
+  if ((af != PR_AF_INET) && (flags & RESOLVE_DISABLE_IPV4)) {
+    af = PR_AF_INET6;
+  }
 
   return af;
 }

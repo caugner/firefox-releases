@@ -173,6 +173,13 @@ class FunctionFlags {
 
   bool isConstructor() const { return hasFlags(CONSTRUCTOR); }
 
+  bool isNonBuiltinConstructor() const {
+    // Note: keep this in sync with emitGuardFunctionIsNonBuiltinCtor in
+    // CacheIRCompiler.cpp.
+    return hasFlags(BASESCRIPT) && hasFlags(CONSTRUCTOR) &&
+           !hasFlags(SELF_HOSTED);
+  }
+
   /* Possible attributes of a native function: */
   bool isAsmJSNative() const {
     MOZ_ASSERT_IF(kind() == AsmJS, isNative());
@@ -322,6 +329,10 @@ class FunctionFlags {
       flags |= WASM_JIT_ENTRY;
     }
     return flags;
+  }
+
+  static FunctionFlags clearMutableflags(FunctionFlags flags) {
+    return FunctionFlags(flags.toRaw() & ~FunctionFlags::MUTABLE_FLAGS);
   }
 };
 

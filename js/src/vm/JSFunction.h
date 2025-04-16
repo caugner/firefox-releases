@@ -20,6 +20,8 @@
 #include "vm/JSObject.h"
 #include "vm/JSScript.h"
 
+class JSJitInfo;
+
 namespace js {
 
 class FunctionExtended;
@@ -60,12 +62,16 @@ class JSFunction : public js::NativeObject {
     class {
       friend class JSFunction;
       js::Native func_; /* native method pointer or null */
+      // Warning: this |extra| union MUST NOT store a value that could be a
+      // valid BaseScript* pointer! JIT guards depend on this.
       union {
         // Information about this function to be used by the JIT, only
         // used if isBuiltinNative(); use the accessor!
         const JSJitInfo* jitInfo_;
-        // for wasm/asm.js without a jit entry
-        size_t wasmFuncIndex_;
+        // For wasm/asm.js without a jit entry. Always has the low bit set to
+        // ensure it's never identical to a BaseScript* pointer. See warning
+        // above.
+        uintptr_t taggedWasmFuncIndex_;
         // for wasm that has been given a jit entry
         void** wasmJitEntry_;
       } extra;
@@ -172,6 +178,10 @@ class JSFunction : public js::NativeObject {
   bool isNative() const { return flags_.isNative(); }
 
   bool isConstructor() const { return flags_.isConstructor(); }
+
+  bool isNonBuiltinConstructor() const {
+    return flags_.isNonBuiltinConstructor();
+  }
 
   /* Possible attributes of a native function: */
   bool isAsmJSNative() const { return flags_.isAsmJSNative(); }
@@ -571,13 +581,15 @@ class JSFunction : public js::NativeObject {
   void setWasmFuncIndex(uint32_t funcIndex) {
     MOZ_ASSERT(isWasm() || isAsmJSNative());
     MOZ_ASSERT(!isWasmWithJitEntry());
-    MOZ_ASSERT(!u.native.extra.wasmFuncIndex_);
-    u.native.extra.wasmFuncIndex_ = funcIndex;
+    MOZ_ASSERT(!u.native.extra.taggedWasmFuncIndex_);
+    // See wasmFuncIndex_ comment for why we set the low bit.
+    u.native.extra.taggedWasmFuncIndex_ = (uintptr_t(funcIndex) << 1) | 1;
   }
   uint32_t wasmFuncIndex() const {
     MOZ_ASSERT(isWasm() || isAsmJSNative());
     MOZ_ASSERT(!isWasmWithJitEntry());
-    return u.native.extra.wasmFuncIndex_;
+    MOZ_ASSERT(u.native.extra.taggedWasmFuncIndex_ & 1);
+    return u.native.extra.taggedWasmFuncIndex_ >> 1;
   }
   void setWasmJitEntry(void** entry) {
     MOZ_ASSERT(*entry);
@@ -805,6 +817,10 @@ class FunctionExtended : public JSFunction {
 
   static const unsigned METHOD_HOMEOBJECT_SLOT = 0;
 
+  // Stores the length for bound functions, so the .length property doesn't need
+  // to be resolved eagerly.
+  static const unsigned BOUND_FUNCTION_LENGTH_SLOT = 1;
+
   // Exported asm.js/wasm functions store their WasmInstanceObject in the
   // first slot.
   static const unsigned WASM_INSTANCE_SLOT = 0;
@@ -826,6 +842,9 @@ class FunctionExtended : public JSFunction {
   }
   static inline size_t offsetOfMethodHomeObjectSlot() {
     return offsetOfExtendedSlot(METHOD_HOMEOBJECT_SLOT);
+  }
+  static inline size_t offsetOfBoundFunctionLengthSlot() {
+    return offsetOfExtendedSlot(BOUND_FUNCTION_LENGTH_SLOT);
   }
 
  private:

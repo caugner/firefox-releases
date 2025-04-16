@@ -34,6 +34,7 @@
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_fission.h"
 #include "mozilla/StaticPrefs_media.h"
+#include "mozilla/SharedStyleSheetCache.h"
 #include "mozilla/TelemetryIPC.h"
 #include "mozilla/RemoteDecoderManagerChild.h"
 #include "mozilla/devtools/HeapSnapshotTempFileHelperChild.h"
@@ -949,12 +950,13 @@ nsresult ContentChild::ProvideWindowCommon(
   MOZ_ALWAYS_SUCCEEDS(browsingContext->SetRemoteSubframes(useRemoteSubframes));
   MOZ_ALWAYS_SUCCEEDS(browsingContext->SetOriginAttributes(
       aOpenWindowInfo->GetOriginAttributes()));
-  browsingContext->EnsureAttached();
 
-  browsingContext->SetPendingInitialization(true);
+  browsingContext->InitPendingInitialization(true);
   auto unsetPending = MakeScopeExit([browsingContext]() {
-    browsingContext->SetPendingInitialization(false);
+    Unused << browsingContext->SetPendingInitialization(false);
   });
+
+  browsingContext->EnsureAttached();
 
   // The initial about:blank document we generate within the nsDocShell will
   // almost certainly be replaced at some point. Unfortunately, getting the
@@ -1072,6 +1074,7 @@ nsresult ContentChild::ProvideWindowCommon(
       MOZ_DIAGNOSTIC_ASSERT(browsingContext->GetOpenerId() == 0);
     } else {
       MOZ_DIAGNOSTIC_ASSERT(browsingContext->HadOriginalOpener());
+      MOZ_DIAGNOSTIC_ASSERT(browsingContext->GetOpenerId() == parent->Id());
     }
 
     // Unfortunately we don't get a window unless we've shown the frame.  That's
@@ -1259,7 +1262,10 @@ void ContentChild::InitXPCOM(
 
   ClientManager::Startup();
 
-  RemoteWorkerService::Initialize();
+  // RemoteWorkerService will be initialized in RecvRemoteType, to avoid to
+  // register it to the RemoteWorkerManager while it is still a prealloc
+  // remoteType and defer it to the point the child process is assigned a.
+  // actual remoteType.
 
   nsCOMPtr<nsIConsoleService> svc(do_GetService(NS_CONSOLESERVICE_CONTRACTID));
   if (!svc) {
@@ -2059,6 +2065,13 @@ mozilla::ipc::IPCResult ContentChild::RecvRegisterChromeItem(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult ContentChild::RecvClearStyleSheetCache(
+    const Maybe<RefPtr<nsIPrincipal>>& aForPrincipal) {
+  nsIPrincipal* prin = aForPrincipal ? aForPrincipal.value().get() : nullptr;
+  SharedStyleSheetCache::Clear(prin);
+  return IPC_OK();
+}
+
 mozilla::ipc::IPCResult ContentChild::RecvClearImageCache(
     const bool& privateLoader, const bool& chrome) {
   imgLoader* loader = privateLoader ? imgLoader::PrivateBrowsingLoader()
@@ -2615,6 +2628,13 @@ mozilla::ipc::IPCResult ContentChild::RecvRemoteType(
   // Use the prefix to avoid URIs from Fission isolated processes.
   CrashReporter::AnnotateCrashReport(CrashReporter::Annotation::RemoteType,
                                      remoteTypePrefix);
+
+  // Defer RemoteWorkerService initialization until the child process does
+  // receive its specific remoteType and can become actionable for the
+  // RemoteWorkerManager in the parent process.
+  if (mRemoteType != PREALLOC_REMOTE_TYPE) {
+    RemoteWorkerService::Initialize();
+  }
 
   return IPC_OK();
 }
@@ -3885,6 +3905,22 @@ mozilla::ipc::IPCResult ContentChild::RecvSetFocusedElement(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult ContentChild::RecvFinalizeFocusOuter(
+    const MaybeDiscarded<BrowsingContext>& aContext, bool aCanFocus,
+    CallerType aCallerType) {
+  if (aContext.IsNullOrDiscarded()) {
+    MOZ_LOG(BrowsingContext::GetLog(), LogLevel::Debug,
+            ("ChildIPC: Trying to send a message to dead or detached context"));
+    return IPC_OK();
+  }
+
+  if (Element* frame = aContext.get()->GetEmbedderElement()) {
+    nsContentUtils::RequestFrameFocus(*frame, aCanFocus, aCallerType);
+  }
+
+  return IPC_OK();
+}
+
 mozilla::ipc::IPCResult ContentChild::RecvBlurToChild(
     const MaybeDiscarded<BrowsingContext>& aFocusedBrowsingContext,
     const MaybeDiscarded<BrowsingContext>& aBrowsingContextToClear,
@@ -4169,6 +4205,14 @@ mozilla::ipc::IPCResult ContentChild::RecvHistoryCommitIndexAndLength(
     if (shistory) {
       shistory->SetIndexAndLength(aIndex, aLength, aChangeID);
     }
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentChild::RecvDispatchLocationChangeEvent(
+    const MaybeDiscarded<BrowsingContext>& aContext) {
+  if (!aContext.IsNullOrDiscarded() && aContext.get()->GetDocShell()) {
+    aContext.get()->GetDocShell()->DispatchLocationChangeEvent();
   }
   return IPC_OK();
 }

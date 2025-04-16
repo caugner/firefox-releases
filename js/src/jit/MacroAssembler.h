@@ -11,8 +11,6 @@
 #include "mozilla/MacroForEach.h"
 #include "mozilla/MathAlgorithms.h"
 
-#include "vm/Realm.h"
-
 #if defined(JS_CODEGEN_X86)
 #  include "jit/x86/MacroAssembler-x86.h"
 #elif defined(JS_CODEGEN_X64)
@@ -38,9 +36,6 @@
 #include "jit/VMFunctions.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "util/Memory.h"
-#include "vm/ProxyObject.h"
-#include "vm/Shape.h"
-#include "vm/TypedArrayObject.h"
 
 // [SMDOC] MacroAssembler multi-platform overview
 //
@@ -208,6 +203,9 @@
 #endif
 
 namespace js {
+
+class TypedArrayObject;
+
 namespace jit {
 
 // Defined in JitFrames.h
@@ -3414,6 +3412,9 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void guardSpecificAtom(Register str, JSAtom* atom, Register scratch,
                          const LiveRegisterSet& volatileRegs, Label* fail);
 
+  void guardStringToInt32(Register str, Register output, Register scratch,
+                          LiveRegisterSet volatileRegs, Label* fail);
+
   void loadWasmTlsRegFromFrame(Register dest = WasmTlsReg);
 
   template <typename T>
@@ -3626,6 +3627,12 @@ class MacroAssembler : public MacroAssemblerSpecific {
   void packedArrayShift(Register array, ValueOperand output, Register temp1,
                         Register temp2, LiveRegisterSet volatileRegs,
                         Label* fail);
+
+  void loadArgumentsObjectElement(Register obj, Register index,
+                                  ValueOperand output, Register temp,
+                                  Label* fail);
+
+  void loadArgumentsObjectLength(Register obj, Register output, Label* fail);
 
   void typedArrayElementShift(Register obj, Register output);
   void branchIfClassIsNotTypedArray(Register clasp, Label* notTypedArray);
@@ -3868,6 +3875,8 @@ class MacroAssembler : public MacroAssemblerSpecific {
  public:
   void loadJitCodeRaw(Register func, Register dest);
   void loadJitCodeNoArgCheck(Register func, Register dest);
+  void loadBaselineJitCodeRaw(Register func, Register dest,
+                              Label* failure = nullptr);
 
   void loadBaselineFramePtr(Register framePtr, Register dest);
 

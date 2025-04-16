@@ -12,7 +12,7 @@ job-defaults:
             default: null
     variants:
         by-test-platform:
-            linux.*64/debug: ['fission']
+            linux.*64/debug: ['fission', 'socketprocess_networking']
             default: ['fission']
     run-on-projects: built-projects
     fission-run-on-projects:
@@ -55,6 +55,10 @@ mochitest-plain:
     schedules-component: mochitest-plain
     loopback-video: true
     tier: default
+    virtualization:
+        by-test-platform:
+            windows10-64.*: hardware
+            default: virtual
     variants:
         by-test-platform:
             linux1804-64/opt: ['fission-xorigin']
@@ -228,7 +232,10 @@ mochitest-plain-gpu:
     fission-run-on-projects: []
     fission-tier: 2
     tier: default
-    virtualization: virtual-with-gpu
+    virtualization:
+        by-test-platform:
+            windows10-64.*: hardware
+            default: virtual-with-gpu
     e10s: true
     mozharness:
         mochitest-flavor: plain
@@ -249,7 +256,10 @@ mochitest-chrome-gpu:
     fission-run-on-projects: []
     fission-tier: 2
     tier: default
-    virtualization: virtual-with-gpu
+    virtualization:
+        by-test-platform:
+            windows10-64.*: hardware
+            default: virtual-with-gpu
     e10s: true
     run-on-projects:
         by-test-platform:
@@ -284,6 +294,7 @@ mochitest-media:
     variants:
         by-test-platform:
             android.*: ['socketprocess']
+            macosx.*64-ccov/.*: []
             default: ['fission', 'socketprocess', 'webgl-ipc']
     loopback-video: true
     instance-size: large
@@ -385,6 +396,7 @@ mochitest-webgl1-ext:
     variants:
         by-test-platform:
             android.*: []
+            macosx.*64-ccov/.*: []
             default: ['webgl-ipc']
     chunks:
         by-test-platform:
@@ -441,6 +453,7 @@ mochitest-webgl2-ext:
     variants:
         by-test-platform:
             android.*: []
+            macosx.*64-ccov/.*: []
             default: ['webgl-ipc']
     chunks: 4
     e10s: true

@@ -154,7 +154,6 @@ EXPORTS.mozilla.layers += [
     'composite/AsyncCompositionManager.h',
     'composite/CanvasLayerComposite.h',
     'composite/ColorLayerComposite.h',
-    'composite/CompositorScreenshotGrabber.h',
     'composite/ContainerLayerComposite.h',
     'composite/ContentHost.h',
     'composite/Diagnostics.h',
@@ -250,6 +249,7 @@ EXPORTS.mozilla.layers += [
     'RepaintRequest.h',
     'RotatedBuffer.h',
     'SampleTime.h',
+    'ScreenshotGrabber.h',
     'ScrollableLayerGuid.h',
     'ShareableCanvasRenderer.h',
     'SourceSurfaceSharedData.h',
@@ -274,7 +274,6 @@ EXPORTS.mozilla.layers += [
     'wr/WebRenderBridgeParent.h',
     'wr/WebRenderCanvasRenderer.h',
     'wr/WebRenderCommandBuilder.h',
-    'wr/WebRenderCompositionRecorder.h',
     'wr/WebRenderDrawEventRecorder.h',
     'wr/WebRenderImageHost.h',
     'wr/WebRenderLayerManager.h',
@@ -381,6 +380,8 @@ UNIFIED_SOURCES += [
     'apz/src/QueuedInput.cpp',
     'apz/src/SampledAPZCState.cpp',
     'apz/src/SimpleVelocityTracker.cpp',
+    'apz/src/SmoothMsdScrollAnimation.cpp',
+    'apz/src/SmoothScrollAnimation.cpp',
     'apz/src/WheelScrollAnimation.cpp',
     'apz/testutil/APZTestData.cpp',
     'apz/util/ActiveElementManager.cpp',
@@ -433,7 +434,6 @@ UNIFIED_SOURCES += [
     'composite/CanvasLayerComposite.cpp',
     'composite/ColorLayerComposite.cpp',
     'composite/CompositableHost.cpp',
-    'composite/CompositorScreenshotGrabber.cpp',
     'composite/ContainerLayerComposite.cpp',
     'composite/ContentHost.cpp',
     'composite/Diagnostics.cpp',
@@ -529,6 +529,7 @@ UNIFIED_SOURCES += [
     'RenderTrace.cpp',
     'RotatedBuffer.cpp',
     'SampleTime.cpp',
+    'ScreenshotGrabber.cpp',
     'ShareableCanvasRenderer.cpp',
     'SourceSurfaceSharedData.cpp',
     'SourceSurfaceVolatileData.cpp',
@@ -548,7 +549,6 @@ UNIFIED_SOURCES += [
     'wr/WebRenderBridgeParent.cpp',
     'wr/WebRenderCanvasRenderer.cpp',
     'wr/WebRenderCommandBuilder.cpp',
-    'wr/WebRenderCompositionRecorder.cpp',
     'wr/WebRenderDrawEventRecorder.cpp',
     'wr/WebRenderImageHost.cpp',
     'wr/WebRenderLayerManager.cpp',
@@ -571,6 +571,7 @@ SOURCES += [
 
 DEFINES['GOOGLE_PROTOBUF_NO_RTTI'] = True
 DEFINES['GOOGLE_PROTOBUF_NO_STATIC_INITIALIZER'] = True
+DEFINES['MOZ_APP_VERSION'] = CONFIG['MOZ_APP_VERSION']
 
 if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'cocoa':
     SOURCES += [

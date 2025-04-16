@@ -32,6 +32,7 @@
 #include "js/Conversions.h"
 #include "js/Printf.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
+#include "vm/ArgumentsObject.h"
 #include "vm/ArrayBufferViewObject.h"
 #include "vm/FunctionFlags.h"  // js::FunctionFlags
 #include "vm/TraceLogging.h"
@@ -667,7 +668,7 @@ void MacroAssembler::nurseryAllocateObject(Register result, Register temp,
   // with the nursery's end will always fail in such cases.
   CompileZone* zone = GetJitContext()->realm()->zone();
   size_t thingSize = gc::Arena::thingSize(allocKind);
-  size_t totalSize = thingSize + nDynamicSlots * sizeof(HeapSlot);
+  size_t totalSize = thingSize + ObjectSlots::allocSize(nDynamicSlots);
   MOZ_ASSERT(totalSize < INT32_MAX);
   MOZ_ASSERT(totalSize % gc::CellAlignBytes == 0);
 
@@ -676,7 +677,13 @@ void MacroAssembler::nurseryAllocateObject(Register result, Register temp,
       zone->addressOfNurseryCurrentEnd(), JS::TraceKind::Object, totalSize);
 
   if (nDynamicSlots) {
-    computeEffectiveAddress(Address(result, thingSize), temp);
+    store32(Imm32(nDynamicSlots),
+            Address(result, thingSize + ObjectSlots::offsetOfCapacity()));
+    store32(
+        Imm32(0),
+        Address(result, thingSize + ObjectSlots::offsetOfDictionarySlotSpan()));
+    computeEffectiveAddress(
+        Address(result, thingSize + ObjectSlots::offsetOfSlots()), temp);
     storePtr(temp, Address(result, NativeObject::offsetOfSlots()));
   }
 }
@@ -1208,7 +1215,8 @@ void MacroAssembler::initGCThing(Register obj, Register temp,
     // If the object has dynamic slots, the slots member has already been
     // filled in.
     if (!ntemplate.hasDynamicSlots()) {
-      storePtr(ImmPtr(nullptr), Address(obj, NativeObject::offsetOfSlots()));
+      storePtr(ImmPtr(emptyObjectSlots),
+               Address(obj, NativeObject::offsetOfSlots()));
     }
 
     if (ntemplate.denseElementsAreCopyOnWrite()) {
@@ -1922,6 +1930,55 @@ void MacroAssembler::guardSpecificAtom(Register str, JSAtom* atom,
   bind(&done);
 }
 
+void MacroAssembler::guardStringToInt32(Register str, Register output,
+                                        Register scratch,
+                                        LiveRegisterSet volatileRegs,
+                                        Label* fail) {
+  Label vmCall, done;
+  // Use indexed value as fast path if possible.
+  loadStringIndexValue(str, output, &vmCall);
+  jump(&done);
+  {
+    bind(&vmCall);
+
+    // Reserve stack for holding the result value of the call.
+    reserveStack(sizeof(int32_t));
+    moveStackPtrTo(output);
+
+    volatileRegs.takeUnchecked(scratch);
+    if (output.volatile_()) {
+      volatileRegs.addUnchecked(output);
+    }
+    PushRegsInMask(volatileRegs);
+
+    setupUnalignedABICall(scratch);
+    loadJSContext(scratch);
+    passABIArg(scratch);
+    passABIArg(str);
+    passABIArg(output);
+    callWithABI(JS_FUNC_TO_DATA_PTR(void*, GetInt32FromStringPure));
+    mov(ReturnReg, scratch);
+
+    PopRegsInMask(volatileRegs);
+
+    Label ok;
+    branchIfTrueBool(scratch, &ok);
+    {
+      // OOM path, recovered by GetInt32FromStringPure.
+      //
+      // Use addToStackPtr instead of freeStack as freeStack tracks stack height
+      // flow-insensitively, and using it twice would confuse the stack height
+      // tracking.
+      addToStackPtr(Imm32(sizeof(int32_t)));
+      jump(fail);
+    }
+    bind(&ok);
+    load32(Address(output, 0), output);
+    freeStack(sizeof(int32_t));
+  }
+  bind(&done);
+}
+
 void MacroAssembler::generateBailoutTail(Register scratch,
                                          Register bailoutInfo) {
   loadJSContext(scratch);
@@ -2055,6 +2112,28 @@ void MacroAssembler::loadJitCodeNoArgCheck(Register func, Register dest) {
   }
 #endif
   loadPtr(Address(dest, JitScript::offsetOfJitCodeSkipArgCheck()), dest);
+}
+
+void MacroAssembler::loadBaselineJitCodeRaw(Register func, Register dest,
+                                            Label* failure) {
+  // Load JitScript
+  loadPtr(Address(func, JSFunction::offsetOfScript()), dest);
+  if (failure) {
+    branchIfScriptHasNoJitScript(dest, failure);
+  }
+  loadJitScript(dest, dest);
+
+  // Load BaselineScript
+  loadPtr(Address(dest, JitScript::offsetOfBaselineScript()), dest);
+  if (failure) {
+    static_assert(BaselineDisabledScript == 0x1);
+    branchPtr(Assembler::BelowOrEqual, dest, ImmWord(BaselineDisabledScript),
+              failure);
+  }
+
+  // Load Baseline jitcode
+  loadPtr(Address(dest, BaselineScript::offsetOfMethod()), dest);
+  loadPtr(Address(dest, JitCode::offsetOfCode()), dest);
 }
 
 void MacroAssembler::loadBaselineFramePtr(Register framePtr, Register dest) {
@@ -3382,10 +3461,9 @@ void MacroAssembler::loadFunctionLength(Register func, Register funFlags,
   bind(&isBound);
   {
     // Load the length property of a bound function.
-    Address boundLength(
-        func, FunctionExtended::offsetOfExtendedSlot(BOUND_FUN_LENGTH_SLOT));
-    branchTestInt32(Assembler::NotEqual, boundLength, slowPath);
-    unboxInt32(boundLength, output);
+    Address boundLength(func,
+                        FunctionExtended::offsetOfBoundFunctionLengthSlot());
+    fallibleUnboxInt32(boundLength, output, slowPath);
     jump(&lengthLoaded);
   }
   bind(&isInterpreted);
@@ -4114,6 +4192,49 @@ void MacroAssembler::packedArrayShift(Register array, ValueOperand output,
   store32(temp2, initLengthAddr);
 
   bind(&done);
+}
+
+void MacroAssembler::loadArgumentsObjectElement(Register obj, Register index,
+                                                ValueOperand output,
+                                                Register temp, Label* fail) {
+  Register temp2 = output.scratchReg();
+
+  // Get initial length value.
+  unboxInt32(Address(obj, ArgumentsObject::getInitialLengthSlotOffset()), temp);
+
+  // Ensure no overridden elements.
+  branchTest32(Assembler::NonZero, temp,
+               Imm32(ArgumentsObject::ELEMENT_OVERRIDDEN_BIT), fail);
+
+  // Bounds check.
+  rshift32(Imm32(ArgumentsObject::PACKED_BITS_COUNT), temp);
+  spectreBoundsCheck32(index, temp, temp2, fail);
+
+  // Load ArgumentsData.
+  loadPrivate(Address(obj, ArgumentsObject::getDataSlotOffset()), temp);
+
+  // Fail if we have a RareArgumentsData (elements were deleted).
+  branchPtr(Assembler::NotEqual,
+            Address(temp, offsetof(ArgumentsData, rareData)), ImmWord(0), fail);
+
+  // Guard the argument is not a FORWARD_TO_CALL_SLOT MagicValue.
+  BaseValueIndex argValue(temp, index, ArgumentsData::offsetOfArgs());
+  branchTestMagic(Assembler::Equal, argValue, fail);
+  loadValue(argValue, output);
+}
+
+void MacroAssembler::loadArgumentsObjectLength(Register obj, Register output,
+                                               Label* fail) {
+  // Get initial length value.
+  unboxInt32(Address(obj, ArgumentsObject::getInitialLengthSlotOffset()),
+             output);
+
+  // Test if length has been overridden.
+  branchTest32(Assembler::NonZero, output,
+               Imm32(ArgumentsObject::LENGTH_OVERRIDDEN_BIT), fail);
+
+  // Shift out arguments length and return it.
+  rshift32(Imm32(ArgumentsObject::PACKED_BITS_COUNT), output);
 }
 
 static constexpr bool ValidateShiftRange(Scalar::Type from, Scalar::Type to) {

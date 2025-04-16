@@ -248,8 +248,6 @@ registerCleanupFunction(() => {
   Services.obs.removeObserver(ConsoleObserver, "console-api-log-event");
 });
 
-var waitForTime = DevToolsUtils.waitForTime;
-
 function loadFrameScriptUtils(browser = gBrowser.selectedBrowser) {
   let mm = browser.messageManager;
   const frameURL =
@@ -653,6 +651,66 @@ function synthesizeKeyShortcut(key, target) {
   EventUtils.synthesizeKey(shortcut.key || "", keyEvent, target);
 }
 
+var waitForTime = DevToolsUtils.waitForTime;
+
+/**
+ * Wait for a tick.
+ * @return {Promise}
+ */
+function waitForTick() {
+  return new Promise(resolve => DevToolsUtils.executeSoon(resolve));
+}
+
+/**
+ * This shouldn't be used in the tests, but is useful when writing new tests or
+ * debugging existing tests in order to introduce delays in the test steps
+ *
+ * @param {Number} ms
+ *        The time to wait
+ * @return A promise that resolves when the time is passed
+ */
+function wait(ms) {
+  return new Promise(resolve => {
+    setTimeout(resolve, ms);
+    info("Waiting " + ms / 1000 + " seconds.");
+  });
+}
+
+/**
+ * Wait for a predicate to return a result.
+ *
+ * @param function condition
+ *        Invoked once in a while until it returns a truthy value. This should be an
+ *        idempotent function, since we have to run it a second time after it returns
+ *        true in order to return the value.
+ * @param string message [optional]
+ *        A message to output if the condition fails.
+ * @param number interval [optional]
+ *        How often the predicate is invoked, in milliseconds.
+ * @return object
+ *         A promise that is resolved with the result of the condition.
+ */
+async function waitFor(condition, message = "", interval = 10, maxTries = 500) {
+  try {
+    const value = await BrowserTestUtils.waitForCondition(
+      condition,
+      message,
+      interval,
+      maxTries
+    );
+    return value;
+  } catch (e) {
+    const errorMessage =
+      "Failed waitFor(): " +
+      message +
+      "\n" +
+      "Failed condition: " +
+      condition +
+      "\n";
+    throw new Error(errorMessage);
+  }
+}
+
 /**
  * Wait for eventName on target to be delivered a number of times.
  *
@@ -762,29 +820,6 @@ function once(target, eventName, useCapture = false) {
 function loadHelperScript(filePath) {
   const testDir = gTestPath.substr(0, gTestPath.lastIndexOf("/"));
   Services.scriptloader.loadSubScript(testDir + "/" + filePath, this);
-}
-
-/**
- * Wait for a tick.
- * @return {Promise}
- */
-function waitForTick() {
-  return new Promise(resolve => DevToolsUtils.executeSoon(resolve));
-}
-
-/**
- * This shouldn't be used in the tests, but is useful when writing new tests or
- * debugging existing tests in order to introduce delays in the test steps
- *
- * @param {Number} ms
- *        The time to wait
- * @return A promise that resolves when the time is passed
- */
-function wait(ms) {
-  return new Promise(resolve => {
-    setTimeout(resolve, ms);
-    info("Waiting " + ms / 1000 + " seconds.");
-  });
 }
 
 /**
@@ -1146,18 +1181,34 @@ function getCurrentTestFilePath() {
  *        The ResourceWatcher instance that should emit the expected resource.
  * @param {String} resourceType
  *        One of ResourceWatcher.TYPES, type of the expected resource.
+ * @param {Object} additional options
+ *        - {Boolean} ignoreExistingResources: ignore existing resources or not.
+ *        - {Function} predicate: if provided, will wait until a resource makes
+ *          predicate(resource) return true.
  * @return {Object}
  *         - resource {Object} the resource itself
  *         - targetFront {TargetFront} the target which owns the resource
  */
-function waitForResourceOnce(resourceWatcher, resourceType) {
+function waitForNextResource(
+  resourceWatcher,
+  resourceType,
+  { ignoreExistingResources = false, predicate } = {}
+) {
+  // If no predicate was provided, convert to boolean to avoid resolving for
+  // empty `resources` arrays.
+  predicate = predicate || (resource => !!resource);
+
   return new Promise(resolve => {
-    const onAvailable = ({ targetFront, resource }) => {
-      resolve({ targetFront, resource });
-      resourceWatcher.unwatchResources([resourceType], { onAvailable });
+    const onAvailable = resources => {
+      const matchingResource = resources.find(resource => predicate(resource));
+      if (matchingResource) {
+        resolve(matchingResource);
+        resourceWatcher.unwatchResources([resourceType], { onAvailable });
+      }
     };
+
     resourceWatcher.watchResources([resourceType], {
-      ignoreExistingResources: true,
+      ignoreExistingResources,
       onAvailable,
     });
   });

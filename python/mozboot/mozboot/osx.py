@@ -17,6 +17,7 @@ except ImportError:
 from distutils.version import StrictVersion
 
 from mozboot.base import BaseBootstrapper
+from mozfile import which
 
 HOMEBREW_BOOTSTRAP = 'https://raw.githubusercontent.com/Homebrew/install/master/install'
 XCODE_APP_STORE = 'macappstore://itunes.apple.com/app/id497799835?mt=12'
@@ -197,18 +198,19 @@ class OSXBootstrapper(BaseBootstrapper):
                   "It will be installed with %s" % self.package_manager)
         getattr(self, 'ensure_%s_system_packages' % self.package_manager)(not hg_modern)
 
-    def install_browser_packages(self):
+    def install_browser_packages(self, mozconfig_builder):
         getattr(self, 'ensure_%s_browser_packages' % self.package_manager)()
 
-    def install_browser_artifact_mode_packages(self):
+    def install_browser_artifact_mode_packages(self, mozconfig_builder):
         getattr(self, 'ensure_%s_browser_packages' % self.package_manager)(artifact_mode=True)
 
-    def install_mobile_android_packages(self):
-        getattr(self, 'ensure_%s_mobile_android_packages' % self.package_manager)()
-
-    def install_mobile_android_artifact_mode_packages(self):
+    def install_mobile_android_packages(self, mozconfig_builder):
         getattr(self, 'ensure_%s_mobile_android_packages' %
-                self.package_manager)(artifact_mode=True)
+                self.package_manager)(mozconfig_builder)
+
+    def install_mobile_android_artifact_mode_packages(self, mozconfig_builder):
+        getattr(self, 'ensure_%s_mobile_android_packages' %
+                self.package_manager)(mozconfig_builder, artifact_mode=True)
 
     def generate_mobile_android_mozconfig(self):
         return getattr(self, 'generate_%s_mobile_android_mozconfig' %
@@ -232,7 +234,7 @@ class OSXBootstrapper(BaseBootstrapper):
         # developer preview releases of Xcode, which can be installed into
         # paths like /Applications/Xcode5-DP6.app.
         elif self.os_version >= StrictVersion('10.7'):
-            select = self.which('xcode-select')
+            select = which('xcode-select')
             try:
                 output = subprocess.check_output([select, '--print-path'],
                                                  stderr=subprocess.STDOUT)
@@ -261,7 +263,7 @@ class OSXBootstrapper(BaseBootstrapper):
                                              stderr=subprocess.STDOUT)
         except subprocess.CalledProcessError as e:
             if b'license' in e.output:
-                xcodebuild = self.which('xcodebuild')
+                xcodebuild = which('xcodebuild')
                 try:
                     subprocess.check_output([xcodebuild, '-license'],
                                             stderr=subprocess.STDOUT)
@@ -298,7 +300,7 @@ class OSXBootstrapper(BaseBootstrapper):
 
     def _ensure_homebrew_found(self):
         if not hasattr(self, 'brew'):
-            self.brew = self.which('brew')
+            self.brew = which('brew')
         # Earlier code that checks for valid package managers ensures
         # which('brew') is found.
         assert self.brew is not None
@@ -367,7 +369,7 @@ class OSXBootstrapper(BaseBootstrapper):
         ]
         self._ensure_homebrew_packages(packages)
 
-    def ensure_homebrew_mobile_android_packages(self, artifact_mode=False):
+    def ensure_homebrew_mobile_android_packages(self, mozconfig_builder, artifact_mode=False):
         # Multi-part process:
         # 1. System packages.
         # 2. Android SDK. Android NDK only if we are not in artifact mode. Android packages.
@@ -392,7 +394,7 @@ class OSXBootstrapper(BaseBootstrapper):
         # Prefer homebrew's java binary by putting it on the path first.
         os.environ['PATH'] = \
             '{}{}{}'.format(JAVA_PATH, os.pathsep, os.environ['PATH'])
-        self.ensure_java()
+        self.ensure_java(mozconfig_builder)
         from mozboot import android
 
         android.ensure_android('macosx', artifact_mode=artifact_mode,
@@ -403,7 +405,7 @@ class OSXBootstrapper(BaseBootstrapper):
         return android.generate_mozconfig('macosx', artifact_mode=artifact_mode)
 
     def _ensure_macports_packages(self, packages):
-        self.port = self.which('port')
+        self.port = which('port')
         assert self.port is not None
 
         installed = set(
@@ -450,7 +452,7 @@ class OSXBootstrapper(BaseBootstrapper):
 
         self._ensure_macports_packages(packages)
 
-    def ensure_macports_mobile_android_packages(self, artifact_mode=False):
+    def ensure_macports_mobile_android_packages(self, mozconfig_builder, artifact_mode=False):
         # Multi-part process:
         # 1. System packages.
         # 2. Android SDK. Android NDK only if we are not in artifact mode. Android packages.
@@ -467,7 +469,7 @@ class OSXBootstrapper(BaseBootstrapper):
                             'GeckoView/Firefox for Android.')
 
         # 2. Android pieces.
-        self.ensure_java()
+        self.ensure_java(mozconfig_builder)
         from mozboot import android
         android.ensure_android('macosx', artifact_mode=artifact_mode,
                                no_interactive=self.no_interactive)
@@ -484,7 +486,7 @@ class OSXBootstrapper(BaseBootstrapper):
         '''
         installed = []
         for name, cmd in PACKAGE_MANAGER.items():
-            if self.which(cmd) is not None:
+            if which(cmd) is not None:
                 installed.append(name)
 
         active_name, active_cmd = None, None
@@ -510,7 +512,7 @@ class OSXBootstrapper(BaseBootstrapper):
         # /usr/bin. If it doesn't come before /usr/bin, we'll pick up system
         # packages before package manager installed packages and the build may
         # break.
-        p = self.which(active_cmd)
+        p = which(active_cmd)
         if not p:
             print(PACKAGE_MANAGER_BIN_MISSING % active_cmd)
             sys.exit(1)

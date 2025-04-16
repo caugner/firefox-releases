@@ -83,6 +83,7 @@
 #include "nsURLHelper.h"
 #include "mozilla/RemoteLazyInputStreamChild.h"
 #include "mozilla/RemoteLazyInputStreamUtils.h"
+#include "mozilla/net/SFVService.h"
 
 namespace mozilla {
 namespace net {
@@ -239,6 +240,7 @@ HttpBaseChannel::HttpBaseChannel()
       mDisableAltDataCache(false),
       mForceMainDocumentChannel(false),
       mPendingInputStreamLengthOperation(false),
+      mListenerRequiresContentConversion(false),
       mHasCrossOriginOpenerPolicyMismatch(0) {
   this->mSelfAddr.inet = {};
   this->mPeerAddr.inet = {};
@@ -657,6 +659,15 @@ HttpBaseChannel::SetContentCharset(const nsACString& aContentCharset) {
 
 NS_IMETHODIMP
 HttpBaseChannel::GetContentDisposition(uint32_t* aContentDisposition) {
+  // See bug 1658877. If mContentDispositionHint is already
+  // DISPOSITION_ATTACHMENT, it means this channel is created from a
+  // download attribute. In this case, we should prefer the value from the
+  // download attribute rather than the value in content disposition header.
+  if (mContentDispositionHint == nsIChannel::DISPOSITION_ATTACHMENT) {
+    *aContentDisposition = mContentDispositionHint;
+    return NS_OK;
+  }
+
   nsresult rv;
   nsCString header;
 
@@ -686,14 +697,23 @@ HttpBaseChannel::GetContentDispositionFilename(
   nsCString header;
 
   rv = GetContentDispositionHeader(header);
+  if (NS_SUCCEEDED(rv)) {
+    rv = NS_GetFilenameFromDisposition(aContentDispositionFilename, header);
+  }
+
+  // If we failed to get the filename from header, we should use
+  // mContentDispositionFilename, since mContentDispositionFilename is set from
+  // the download attribute.
   if (NS_FAILED(rv)) {
-    if (!mContentDispositionFilename) return rv;
+    if (!mContentDispositionFilename) {
+      return rv;
+    }
 
     aContentDispositionFilename = *mContentDispositionFilename;
     return NS_OK;
   }
 
-  return NS_GetFilenameFromDisposition(aContentDispositionFilename, header);
+  return rv;
 }
 
 NS_IMETHODIMP
@@ -1188,6 +1208,11 @@ HttpBaseChannel::DoApplyContentConversions(nsIStreamListener* aNextListener,
 
   if (!mApplyConversion) {
     LOG(("not applying conversion per mApplyConversion\n"));
+    return NS_OK;
+  }
+
+  if (mHasAppliedConversion) {
+    LOG(("not applying conversion because mHasAppliedConversion is true\n"));
     return NS_OK;
   }
 
@@ -2466,7 +2491,7 @@ HttpBaseChannel::GetLocalAddress(nsACString& addr) {
   if (mSelfAddr.raw.family == PR_AF_UNSPEC) return NS_ERROR_NOT_AVAILABLE;
 
   addr.SetLength(kIPv6CStrBufSize);
-  NetAddrToString(&mSelfAddr, addr.BeginWriting(), kIPv6CStrBufSize);
+  mSelfAddr.ToStringBuffer(addr.BeginWriting(), kIPv6CStrBufSize);
   addr.SetLength(strlen(addr.BeginReading()));
 
   return NS_OK;
@@ -2561,7 +2586,7 @@ HttpBaseChannel::GetRemoteAddress(nsACString& addr) {
   if (mPeerAddr.raw.family == PR_AF_UNSPEC) return NS_ERROR_NOT_AVAILABLE;
 
   addr.SetLength(kIPv6CStrBufSize);
-  NetAddrToString(&mPeerAddr, addr.BeginWriting(), kIPv6CStrBufSize);
+  mPeerAddr.ToStringBuffer(addr.BeginWriting(), kIPv6CStrBufSize);
   addr.SetLength(strlen(addr.BeginReading()));
 
   return NS_OK;
@@ -3228,6 +3253,7 @@ already_AddRefed<nsILoadInfo> HttpBaseChannel::CloneLoadInfoForRedirect(
 
 NS_IMETHODIMP
 HttpBaseChannel::SetNewListener(nsIStreamListener* aListener,
+                                bool aMustApplyContentConversion,
                                 nsIStreamListener** _retval) {
   LOG((
       "HttpBaseChannel::SetNewListener [this=%p, mListener=%p, newListener=%p]",
@@ -3242,6 +3268,9 @@ HttpBaseChannel::SetNewListener(nsIStreamListener* aListener,
 
   wrapper.forget(_retval);
   mListener = aListener;
+  if (aMustApplyContentConversion) {
+    mListenerRequiresContentConversion = true;
+  }
   return NS_OK;
 }
 
@@ -4779,6 +4808,30 @@ NS_IMETHODIMP HttpBaseChannel::ComputeCrossOriginOpenerPolicy(
   // Cross-Origin-Opener-Policy = %s"same-origin" /
   //                              %s"same-origin-allow-popups" /
   //                              %s"unsafe-none"; case-sensitive
+
+  nsCOMPtr<nsISFVService> sfv = GetSFVService();
+
+  nsCOMPtr<nsISFVItem> item;
+  nsresult rv = sfv->ParseItem(openerPolicy, getter_AddRefs(item));
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  nsCOMPtr<nsISFVBareItem> value;
+  rv = item->GetValue(getter_AddRefs(value));
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  nsCOMPtr<nsISFVToken> token = do_QueryInterface(value);
+  if (!token) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  rv = token->GetValue(openerPolicy);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
 
   nsILoadInfo::CrossOriginOpenerPolicy policy =
       nsILoadInfo::OPENER_POLICY_UNSAFE_NONE;

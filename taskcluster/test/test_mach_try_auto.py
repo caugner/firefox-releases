@@ -13,40 +13,19 @@ from taskgraph.util.chunking import BugbugLoader
 
 
 pytestmark = pytest.mark.slow
-
-
-@pytest.fixture(scope="module")
-def tgg(create_tgg):
-    params = TRY_AUTO_PARAMETERS.copy()
-    params.update(
-        {
-            "head_repository": "https://hg.mozilla.org/try",
-            "project": "try",
-            "target_kind": "test",
-            # These ensure this isn't considered a backstop. The pushdate must
-            # be slightly higher than the one in data/pushes.json, and
-            # pushlog_id must not be a multiple of 10.
-            "pushdate": 1593029536,
-            "pushlog_id": "2",
-        }
-    )
-    tgg = create_tgg(overrides=params)
-    return tgg
-
-
-@pytest.fixture(scope="module")
-def params(tgg):
-    return tgg.parameters
-
-
-@pytest.fixture(scope="module")
-def full_task_graph(tgg):
-    return tgg.full_task_graph
-
-
-@pytest.fixture(scope="module")
-def optimized_task_graph(full_task_graph, tgg):
-    return tgg.optimized_task_graph
+PARAMS = TRY_AUTO_PARAMETERS.copy()
+PARAMS.update(
+    {
+        "head_repository": "https://hg.mozilla.org/try",
+        "project": "try",
+        "target_kind": "test",
+        # These ensure this isn't considered a backstop. The pushdate must
+        # be slightly higher than the one in data/pushes.json, and
+        # pushlog_id must not be a multiple of 10.
+        "pushdate": 1593029536,
+        "pushlog_id": "2",
+    }
+)
 
 
 def test_generate_graph(optimized_task_graph):
@@ -86,7 +65,6 @@ def test_only_important_manifests(params, full_task_graph, filter_tasks):
         pytest.param(
             lambda t: t.kind == "build" and "fuzzing" in t.attributes["build_platform"],
             id="no fuzzing builds",
-            marks=pytest.mark.xfail,
         ),
         pytest.param(
             lambda t: t.kind == "build-signing",
@@ -96,12 +74,10 @@ def test_only_important_manifests(params, full_task_graph, filter_tasks):
         pytest.param(
             lambda t: t.kind == "upload-symbols",
             id="no upload-symbols",
-            marks=pytest.mark.xfail,
         ),
     ),
 )
-def test_tasks_are_not_scheduled(tgg, filter_tasks, func):
-    optimized_task_graph = tgg.optimized_task_graph
+def test_tasks_are_not_scheduled(optimized_task_graph, filter_tasks, func):
     # We can still sometimes get macosx64-shippable builds with |mach try
     # auto| due to TV tasks (since there is no 'opt' alternative for
     # macosx). Otherwise there shouldn't be any other shippable builds.

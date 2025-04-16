@@ -15,7 +15,6 @@
 #include "nsICacheEntryOpenCallback.h"
 #include "nsIDNSListener.h"
 #include "nsIApplicationCacheChannel.h"
-#include "nsIChannelWithDivertableParentListener.h"
 #include "nsIProtocolProxyCallback.h"
 #include "nsIHttpAuthenticableChannel.h"
 #include "nsIAsyncVerifyRedirectCallback.h"
@@ -23,7 +22,6 @@
 #include "nsIThreadRetargetableStreamListener.h"
 #include "nsWeakReference.h"
 #include "TimingStruct.h"
-#include "ADivertableParentChannel.h"
 #include "AutoClose.h"
 #include "nsIStreamListener.h"
 #include "nsICorsPreflightCallback.h"
@@ -31,6 +29,7 @@
 #include "nsIRaceCacheWithNetwork.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/extensions/PStreamFilterParent.h"
+#include "mozilla/net/DocumentLoadListener.h"
 #include "mozilla/Mutex.h"
 
 class nsDNSPrefetch;
@@ -76,7 +75,6 @@ class nsHttpChannel final : public HttpBaseChannel,
                             public nsIDNSListener,
                             public nsSupportsWeakReference,
                             public nsICorsPreflightCallback,
-                            public nsIChannelWithDivertableParentListener,
                             public nsIRaceCacheWithNetwork,
                             public nsIRequestTailUnblockCallback,
                             public nsITimerCallback {
@@ -96,7 +94,6 @@ class nsHttpChannel final : public HttpBaseChannel,
   NS_DECL_NSIASYNCVERIFYREDIRECTCALLBACK
   NS_DECL_NSITHREADRETARGETABLEREQUEST
   NS_DECL_NSIDNSLISTENER
-  NS_DECL_NSICHANNELWITHDIVERTABLEPARENTLISTENER
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_HTTPCHANNEL_IID)
   NS_DECL_NSIRACECACHEWITHNETWORK
   NS_DECL_NSITIMERCALLBACK
@@ -442,8 +439,8 @@ class nsHttpChannel final : public HttpBaseChannel,
       HttpTransactionShell* aTransWithStickyConn,
       const std::function<nsresult(nsHttpChannel*, nsresult)>&
           aContinueOnStopRequestFunc);
-  [[nodiscard]] nsresult DoConnect(
-      HttpTransactionShell* aTransWithStickyConn = nullptr);
+  [[nodiscard]] MOZ_NEVER_INLINE nsresult
+  DoConnect(HttpTransactionShell* aTransWithStickyConn = nullptr);
   [[nodiscard]] nsresult DoConnectActual(
       HttpTransactionShell* aTransWithStickyConn);
   [[nodiscard]] nsresult ContinueOnStopRequestAfterAuthRetry(
@@ -629,6 +626,8 @@ class nsHttpChannel final : public HttpBaseChannel,
   nsCOMPtr<nsICacheEntry> mOfflineCacheEntry;
   uint32_t mOfflineCacheLastModifiedTime;
 
+  nsTArray<StreamFilterRequest> mStreamFilterRequests;
+
   mozilla::TimeStamp mOnStartRequestTimestamp;
   // Timestamp of the time the channel was suspended.
   mozilla::TimeStamp mSuspendTimestamp;
@@ -739,6 +738,9 @@ class nsHttpChannel final : public HttpBaseChannel,
 
   uint32_t mUseHTTPSSVC : 1;
   uint32_t mWaitHTTPSSVCRecord : 1;
+  // Only set to true when we receive an HTTPSSVC record before the transaction
+  // is created.
+  uint32_t mHTTPSSVCTelemetryReported : 1;
 
   // The origin of the top window, only valid when mTopWindowOriginComputed is
   // true.
@@ -784,8 +786,6 @@ class nsHttpChannel final : public HttpBaseChannel,
 
   // If non-null, warnings should be reported to this object.
   RefPtr<HttpChannelSecurityWarningReporter> mWarningReporter;
-
-  RefPtr<ADivertableParentChannel> mParentChannel;
 
   // True if the channel is reading from cache.
   Atomic<bool> mIsReadingFromCache;

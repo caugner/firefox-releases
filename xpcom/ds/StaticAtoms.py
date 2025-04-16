@@ -287,6 +287,7 @@ STATIC_ATOMS = [
     Atom("cycler", "cycler"),
     Atom("dashed", "dashed"),
     Atom("data", "data"),
+    Atom("dataAtShortcutkeys", "data-at-shortcutkeys"),
     Atom("datalist", "datalist"),
     Atom("datal10nid", "data-l10n-id"),
     Atom("datal10nargs", "data-l10n-args"),
@@ -671,7 +672,6 @@ STATIC_ATOMS = [
     Atom("mozCustomContentContainer", "moz-custom-content-container"),
     Atom("mozGrabber", "mozGrabber"),
     Atom("mozNativeAnonymous", "-moz-native-anonymous"),
-    Atom("mozNativeAnonymousNoSpecificity", "-moz-native-anonymous-no-specificity"),
     Atom("mozprivatebrowsing", "mozprivatebrowsing"),
     Atom("mozResizer", "mozResizer"),
     Atom("mozResizingInfo", "mozResizingInfo"),
@@ -2484,7 +2484,7 @@ STATIC_ATOMS = [
     PseudoElementAtom("PseudoElement_mozColorSwatch", ":-moz-color-swatch"),
     PseudoElementAtom("PseudoElement_mozTextControlEditingRoot", ":-moz-text-control-editing-root"),
     PseudoElementAtom("PseudoElement_mozTextControlPreview", ":-moz-text-control-preview"),
-    PseudoElementAtom("PseudoElement_fileChooserButton", ":file-chooser-button"),
+    PseudoElementAtom("PseudoElement_fileSelectorButton", ":file-selector-button"),
 
     # CSS anonymous boxes -- these must appear in the same order as
     # in nsCSSAnonBoxList.h

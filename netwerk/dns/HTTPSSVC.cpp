@@ -172,6 +172,20 @@ Maybe<nsCString> SVCB::GetAlpn(bool aNoHttp2, bool aNoHttp3) const {
   return Nothing();
 }
 
+void SVCB::GetIPHints(CopyableTArray<mozilla::net::NetAddr>& aAddresses) const {
+  if (mSvcFieldPriority == 0) {
+    return;
+  }
+
+  for (const auto& value : mSvcFieldValue) {
+    if (value.mValue.is<SvcParamIpv4Hint>()) {
+      aAddresses.AppendElements(value.mValue.as<SvcParamIpv4Hint>().mValue);
+    } else if (value.mValue.is<SvcParamIpv6Hint>()) {
+      aAddresses.AppendElements(value.mValue.as<SvcParamIpv6Hint>().mValue);
+    }
+  }
+}
+
 NS_IMETHODIMP SVCBRecord::GetPriority(uint16_t* aPriority) {
   *aPriority = mData.mSvcFieldPriority;
   return NS_OK;
@@ -194,11 +208,19 @@ NS_IMETHODIMP SVCBRecord::GetValues(nsTArray<RefPtr<nsISVCParam>>& aValues) {
   return NS_OK;
 }
 
+NS_IMETHODIMP SVCBRecord::GetHasIPHintAddress(bool* aHasIPHintAddress) {
+  *aHasIPHintAddress = mData.mHasIPHints;
+  return NS_OK;
+}
+
 already_AddRefed<nsISVCBRecord>
 DNSHTTPSSVCRecordBase::GetServiceModeRecordInternal(
-    bool aNoHttp2, bool aNoHttp3, const nsTArray<SVCB>& aRecords) {
+    bool aNoHttp2, bool aNoHttp3, const nsTArray<SVCB>& aRecords,
+    bool& aRecordsAllExcluded) {
   nsCOMPtr<nsISVCBRecord> selectedRecord;
   uint32_t recordHasNoDefaultAlpnCount = 0;
+  uint32_t recordExcludedCount = 0;
+  aRecordsAllExcluded = false;
   nsCOMPtr<nsIDNSService> dns = do_GetService(NS_DNSSERVICE_CONTRACTID);
   for (const SVCB& record : aRecords) {
     if (record.mSvcFieldPriority == 0) {
@@ -215,6 +237,7 @@ DNSHTTPSSVCRecordBase::GetServiceModeRecordInternal(
                                                 &excluded)) &&
         excluded) {
       // Skip if the domain name of this record was failed to connect before.
+      ++recordExcludedCount;
       continue;
     }
 
@@ -240,7 +263,29 @@ DNSHTTPSSVCRecordBase::GetServiceModeRecordInternal(
     return nullptr;
   }
 
+  if (recordExcludedCount == aRecords.Length()) {
+    aRecordsAllExcluded = true;
+  }
+
   return selectedRecord.forget();
+}
+
+bool DNSHTTPSSVCRecordBase::HasIPAddressesInternal(
+    const nsTArray<SVCB>& aRecords) {
+  for (const SVCB& record : aRecords) {
+    if (record.mSvcFieldPriority != 0) {
+      for (const auto& value : record.mSvcFieldValue) {
+        if (value.mValue.is<SvcParamIpv4Hint>()) {
+          return true;
+        }
+        if (value.mValue.is<SvcParamIpv6Hint>()) {
+          return true;
+        }
+      }
+    }
+  }
+
+  return false;
 }
 
 }  // namespace net

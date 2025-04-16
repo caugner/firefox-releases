@@ -65,6 +65,9 @@ fuzzy(0-11,0-7155) == blur-inside-clipPath.svg blur-inside-clipPath-ref.svg
 == border-radius-01.html pass.svg
 == mask-image-filter-transform.html mask-image-filter-transform-ref.html
 
+== current-translate-01.svg pass.svg
+== current-translate-02.svg pass.svg
+
 == clip-01.svg pass.svg
 == clip-02a.svg clip-02-ref.svg
 == clip-02b.svg clip-02-ref.svg
@@ -482,6 +485,7 @@ random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == text-layout-05.svg text-
 fuzzy-if(cocoaWidget&&layersGPUAccelerated,0-1,0-3) random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == text-layout-06.svg text-layout-06-ref.svg # Bug 1392106
 random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == text-layout-07.svg text-layout-07-ref.svg # Bug 1392106
 random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == text-layout-08.svg text-layout-08-ref.svg # Bug 1392106
+random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == text-layout-09.svg pass.svg # Bug 1392106
 random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == text-scale-01.svg text-scale-01-ref.svg # Bug 1392106
 fuzzy-if(skiaContent,0-2,0-1000) random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == text-scale-02.svg text-scale-02-ref.svg # Bug 1392106
 random-if(/^Windows\x20NT\x206\.1/.test(http.oscpu)) == text-scale-03.svg text-scale-03-ref.svg # Bug 1392106

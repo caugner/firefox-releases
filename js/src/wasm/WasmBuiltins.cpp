@@ -28,7 +28,8 @@
 #include "jit/InlinableNatives.h"
 #include "jit/MacroAssembler.h"
 #include "jit/Simulator.h"
-#include "js/friend/StackLimits.h"  // js::CheckRecursionLimit
+#include "js/experimental/JitInfo.h"  // JSJitInfo
+#include "js/friend/StackLimits.h"    // js::CheckRecursionLimit
 #include "threading/Mutex.h"
 #include "util/Memory.h"
 #include "util/Poison.h"
@@ -1458,8 +1459,9 @@ bool wasm::EnsureBuiltinThunksInitialized() {
   MOZ_ASSERT(masm.callSiteTargets().empty());
   MOZ_ASSERT(masm.trapSites().empty());
 
-  if (!ExecutableAllocator::makeExecutableAndFlushICache(thunks->codeBase,
-                                                         thunks->codeSize)) {
+  if (!ExecutableAllocator::makeExecutableAndFlushICache(
+          FlushICacheSpec::LocalThreadOnly, thunks->codeBase,
+          thunks->codeSize)) {
     return false;
   }
 

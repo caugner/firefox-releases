@@ -45,6 +45,7 @@ RefPtr<ProcInfoPromise> GetProcInfo(nsTArray<ProcInfoRequest>&& aRequests) {
           info.childId = request.childId;
           info.type = request.processType;
           info.origin = std::move(request.origin);
+          info.windows = std::move(request.windowInfo);
           struct proc_bsdinfo proc;
           if ((unsigned long)proc_pidinfo(request.pid, PROC_PIDTBSDINFO, 0, &proc,
                                           PROC_PIDTBSDINFO_SIZE) < PROC_PIDTBSDINFO_SIZE) {
@@ -62,7 +63,6 @@ RefPtr<ProcInfoPromise> GetProcInfo(nsTArray<ProcInfoRequest>&& aRequests) {
 
           // copying all the info to the ProcInfo struct
           info.filename.AssignASCII(proc.pbi_name);
-          info.virtualMemorySize = pti.pti_virtual_size;
           info.residentSetSize = pti.pti_resident_size;
           info.cpuUser = pti.pti_total_user;
           info.cpuKernel = pti.pti_total_system;

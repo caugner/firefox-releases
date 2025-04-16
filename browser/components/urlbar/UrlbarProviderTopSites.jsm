@@ -144,7 +144,7 @@ class ProviderTopSites extends UrlbarProvider {
       // are stored in `label`, so prefer it.  Search top sites currently
       // don't have titles but `hostname` instead.
       title: link.label || link.title || link.hostname || "",
-      favicon: link.smallFavicon || link.favicon || null,
+      favicon: link.smallFavicon || link.favicon || undefined,
       sendAttributionRequest: link.sendAttributionRequest,
     }));
 
@@ -219,7 +219,7 @@ class ProviderTopSites extends UrlbarProvider {
             ...UrlbarResult.payloadAndSimpleHighlights(queryContext.tokens, {
               title: site.title,
               keyword: site.title,
-              keywordOffer: UrlbarUtils.KEYWORD_OFFER.HIDE,
+              keywordOffer: UrlbarUtils.KEYWORD_OFFER.SHOW,
               engine: engine.name,
               query: "",
               icon: site.favicon,

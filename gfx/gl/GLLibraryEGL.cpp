@@ -61,6 +61,7 @@ static const char* sEGLExtensionNames[] = {
     "EGL_EXT_create_context_robustness",
     "EGL_KHR_image",
     "EGL_KHR_fence_sync",
+    "EGL_KHR_wait_sync",
     "EGL_ANDROID_native_fence_sync",
     "EGL_ANDROID_image_crop",
     "EGL_ANGLE_d3d_share_handle_client_buffer",
@@ -546,6 +547,10 @@ bool GLLibraryEGL::Init(nsACString* const out_failureId) {
     (void)fnLoadSymbols(symbols);
   }
   {
+    const SymLoadStruct symbols[] = {SYMBOL(WaitSyncKHR), END_OF_SYMBOLS};
+    (void)fnLoadSymbols(symbols);
+  }
+  {
     const SymLoadStruct symbols[] = {SYMBOL(DupNativeFenceFDANDROID),
                                      END_OF_SYMBOLS};
     (void)fnLoadSymbols(symbols);
@@ -677,6 +682,13 @@ EglDisplay::EglDisplay(const PrivateUseOnly&, GLLibraryEGL& lib,
     if (strcmp(vendor, "ARM") == 0) {
       MarkExtensionUnsupported(EGLExtension::KHR_surfaceless_context);
     }
+  }
+
+  // ANDROID_native_fence_sync isn't necessarily enumerated in display ext,
+  // but it is one.
+  if (mLib->mSymbols.fDupNativeFenceFDANDROID) {
+    mAvailableExtensions[UnderlyingValue(
+        EGLExtension::ANDROID_native_fence_sync)] = true;
   }
 }
 

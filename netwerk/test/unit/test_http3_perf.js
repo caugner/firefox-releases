@@ -1,5 +1,26 @@
 "use strict";
 
+var perfMetadata = {
+  owner: "Network Team",
+  name: "http3 raw",
+  description:
+    "XPCShell tests that verifies the lib integration against a local server",
+  options: {
+    default: {
+      perfherder: true,
+      perfherder_metrics: [
+        {
+          name: "speed",
+          unit: "bps",
+        },
+      ],
+      xpcshell_cycles: 13,
+      verbose: true,
+    },
+  },
+  tags: ["network", "http3", "quic"],
+};
+
 var performance = performance || {};
 performance.now = (function() {
   return (

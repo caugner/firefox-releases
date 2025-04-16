@@ -30,16 +30,6 @@ namespace embedding {
 interface nsIPrintSettingsService : nsISupports
 {
   /**
-   * Returns a "global" PrintSettings object
-   * Creates a new the first time, if one doesn't exist.
-   *
-   * Then returns the same object each time after that.
-   *
-   * Initializes the globalPrintSettings from the default printer
-   */
-  readonly attribute nsIPrintSettings globalPrintSettings;
-
-  /**
    * Returns the default print settings as used for printing.
    */
   [noscript] readonly attribute nsIPrintSettings defaultPrintSettingsForPrinting;
@@ -47,16 +37,10 @@ interface nsIPrintSettingsService : nsISupports
   /**
    * Returns a new, unique PrintSettings object each time.
    *
-   * For example, if each browser was to have its own unique
-   * PrintSettings, then each browser window would call this to
-   * create its own unique PrintSettings object.
-   *
-   * If each browse window was to use the same PrintSettings object
-   * then it should use "globalPrintSettings"
-   *
    * Initializes the newPrintSettings from the unprefixed printer
    * (Note: this may not happen if there is an OS specific implementation.)
    *
+   * XXX This should really be a function called `createPrintSettings()`.
    */
   readonly attribute nsIPrintSettings newPrintSettings;
 

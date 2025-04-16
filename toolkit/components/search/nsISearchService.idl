@@ -216,8 +216,9 @@ interface nsISearchParseSubmissionResult : nsISupports
 [scriptable, uuid(0301834b-2630-440e-8b98-db8dc55f34b9)]
 interface nsISearchService : nsISupports
 {
-  const unsigned long ERROR_UNKNOWN_FAILURE = 0x1;
+  const unsigned long ERROR_DOWNLOAD_FAILURE = 0x1;
   const unsigned long ERROR_DUPLICATE_ENGINE = 0x2;
+  const unsigned long ERROR_ENGINE_CORRUPTED = 0x3;
 
   /**
    * Start asynchronous initialization.
@@ -229,11 +230,6 @@ interface nsISearchService : nsISupports
    * full initialization of the search service.
    */
   Promise init();
-
-  /**
-   * Exposed for testing.
-   */
-  void reInit();
 
   /**
    * Determine whether initialization has been completed.
@@ -283,6 +279,21 @@ interface nsISearchService : nsISupports
    *                                    manifest structure.
    */
   Promise addPolicyEngine(in jsval details);
+
+  /**
+   * Adds a new search engine defined by the user.
+   *
+   * @param name
+   *        The name of the engine.
+   * @param url
+   *        The url of the engine with %s denoting where to
+   *        replace the search term.
+   * @param alias [optional]
+   *        The alias to refer to the engine.
+   */
+  Promise addUserEngine(in AString name,
+                        in AString url,
+                        [optional] in AString alias);
 
   /**
    * Test-only function for adding an engine. This should be considered obsolete,

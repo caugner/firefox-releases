@@ -1459,7 +1459,7 @@ var gPrivacyPane = {
   showClearPrivateDataSettings() {
     gSubDialog.open(
       "chrome://browser/content/preferences/dialogs/sanitize.xhtml",
-      "resizable=no"
+      { features: "resizable=no" }
     );
   },
 
@@ -1475,19 +1475,17 @@ var gPrivacyPane = {
       ts.value = 0;
     }
 
-    gSubDialog.open(
-      "chrome://browser/content/sanitize.xhtml",
-      "resizable=no",
-      null,
-      () => {
+    gSubDialog.open("chrome://browser/content/sanitize.xhtml", {
+      features: "resizable=no",
+      closingCallback: () => {
         // reset the timeSpan pref
         if (aClearEverything) {
           ts.value = timeSpanOrig;
         }
 
         Services.obs.notifyObservers(null, "clear-private-data");
-      }
-    );
+      },
+    });
   },
 
   /**
@@ -1585,7 +1583,7 @@ var gPrivacyPane = {
     };
     gSubDialog.open(
       "chrome://browser/content/preferences/dialogs/permissions.xhtml",
-      null,
+      undefined,
       params
     );
   },
@@ -1595,8 +1593,7 @@ var gPrivacyPane = {
    */
   showBlockLists() {
     gSubDialog.open(
-      "chrome://browser/content/preferences/dialogs/blocklists.xhtml",
-      null
+      "chrome://browser/content/preferences/dialogs/blocklists.xhtml"
     );
   },
 
@@ -1762,7 +1759,7 @@ var gPrivacyPane = {
     };
     gSubDialog.open(
       "chrome://browser/content/preferences/dialogs/permissions.xhtml",
-      null,
+      undefined,
       params
     );
   },
@@ -1821,7 +1818,7 @@ var gPrivacyPane = {
 
     gSubDialog.open(
       "chrome://browser/content/preferences/dialogs/sitePermissions.xhtml",
-      "resizable=yes",
+      { features: "resizable=yes" },
       params
     );
   },
@@ -1837,7 +1834,7 @@ var gPrivacyPane = {
 
     gSubDialog.open(
       "chrome://browser/content/preferences/dialogs/sitePermissions.xhtml",
-      "resizable=yes",
+      { features: "resizable=yes" },
       params
     );
   },
@@ -1853,7 +1850,7 @@ var gPrivacyPane = {
 
     gSubDialog.open(
       "chrome://browser/content/preferences/dialogs/sitePermissions.xhtml",
-      "resizable=yes",
+      { features: "resizable=yes" },
       params
     );
   },
@@ -1869,7 +1866,7 @@ var gPrivacyPane = {
 
     gSubDialog.open(
       "chrome://browser/content/preferences/dialogs/sitePermissions.xhtml",
-      "resizable=yes",
+      { features: "resizable=yes" },
       params
     );
   },
@@ -1885,7 +1882,7 @@ var gPrivacyPane = {
 
     gSubDialog.open(
       "chrome://browser/content/preferences/dialogs/sitePermissions.xhtml",
-      "resizable=yes",
+      { features: "resizable=yes" },
       params
     );
   },
@@ -1897,7 +1894,7 @@ var gPrivacyPane = {
 
     gSubDialog.open(
       "chrome://browser/content/preferences/dialogs/sitePermissions.xhtml",
-      "resizable=yes",
+      { features: "resizable=yes" },
       params
     );
   },
@@ -1919,7 +1916,7 @@ var gPrivacyPane = {
 
     gSubDialog.open(
       "chrome://browser/content/preferences/dialogs/permissions.xhtml",
-      "resizable=yes",
+      { features: "resizable=yes" },
       params
     );
   },
@@ -1964,7 +1961,7 @@ var gPrivacyPane = {
 
     gSubDialog.open(
       "chrome://browser/content/preferences/dialogs/permissions.xhtml",
-      null,
+      undefined,
       params
     );
   },
@@ -2033,12 +2030,9 @@ var gPrivacyPane = {
       Services.prompt.alert(window, title, desc);
       this._initMasterPasswordUI();
     } else {
-      gSubDialog.open(
-        "chrome://mozapps/content/preferences/removemp.xhtml",
-        null,
-        null,
-        this._initMasterPasswordUI.bind(this)
-      );
+      gSubDialog.open("chrome://mozapps/content/preferences/removemp.xhtml", {
+        closingCallback: this._initMasterPasswordUI.bind(this),
+      });
     }
   },
 
@@ -2075,12 +2069,10 @@ var gPrivacyPane = {
       }
     }
 
-    gSubDialog.open(
-      "chrome://mozapps/content/preferences/changemp.xhtml",
-      "resizable=no",
-      null,
-      this._initMasterPasswordUI.bind(this)
-    );
+    gSubDialog.open("chrome://mozapps/content/preferences/changemp.xhtml", {
+      features: "resizable=no",
+      closingCallback: this._initMasterPasswordUI.bind(this),
+    });
   },
 
   /**
@@ -2110,26 +2102,13 @@ var gPrivacyPane = {
   /**
    * Enables/disables dependent controls related to password saving
    * When password saving is not enabled, we need to also disable the password generation checkbox
-   * The Exceptions button is used to configure sites where
-   * passwords are never saved. When browser is set to start in Private
-   * Browsing mode, the "Remember passwords" UI is useless, so we disable it.
+   * The Exceptions button is used to configure sites where passwords are never saved.
    */
   readSavePasswords() {
-    var pref = Preferences.get("signon.rememberSignons");
-    var excepts = document.getElementById("passwordExceptions");
-    var generatePasswords = document.getElementById("generatePasswords");
-    var autofillCheckbox = document.getElementById("passwordAutofillCheckbox");
-
-    if (PrivateBrowsingUtils.permanentPrivateBrowsing) {
-      document.getElementById("savePasswords").disabled = true;
-      excepts.disabled = true;
-      generatePasswords.disabled = true;
-      autofillCheckbox.disabled = true;
-      return false;
-    }
-    excepts.disabled = !pref.value;
-    generatePasswords.disabled = !pref.value;
-    autofillCheckbox.disabled = !pref.value;
+    var prefValue = Preferences.get("signon.rememberSignons").value;
+    document.getElementById("passwordExceptions").disabled = !prefValue;
+    document.getElementById("generatePasswords").disabled = !prefValue;
+    document.getElementById("passwordAutofillCheckbox").disabled = !prefValue;
 
     // don't override pref value in UI
     return undefined;
@@ -2288,7 +2267,7 @@ var gPrivacyPane = {
 
     gSubDialog.open(
       "chrome://browser/content/preferences/dialogs/permissions.xhtml",
-      null,
+      undefined,
       params
     );
   },
@@ -2434,12 +2413,7 @@ var gPrivacyPane = {
     let telemetryContainer = document.getElementById("telemetry-container");
 
     Services.prefs.setBoolPref(PREF_UPLOAD_ENABLED, checkbox.checked);
-
-    if (!checkbox.checked) {
-      telemetryContainer.hidden = checkbox.checked;
-    } else {
-      telemetryContainer.hidden = checkbox.checked;
-    }
+    telemetryContainer.hidden = checkbox.checked;
   },
 
   /**

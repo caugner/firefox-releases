@@ -21,9 +21,10 @@ from __future__ import absolute_import, print_function, unicode_literals
 
 import copy
 import logging
-from six import string_types, text_type
+import re
 
 from mozbuild.schedules import INCLUSIVE_COMPONENTS
+from six import string_types, text_type
 from voluptuous import (
     Any,
     Optional,
@@ -35,14 +36,15 @@ import taskgraph
 from taskgraph.transforms.base import TransformSequence
 from taskgraph.util.attributes import match_run_on_projects, keymatch
 from taskgraph.util.keyed_by import evaluate_keyed_by
-from taskgraph.util.schema import resolve_keyed_by, OptimizationSchema
 from taskgraph.util.templates import merge
 from taskgraph.util.treeherder import split_symbol, join_symbol
 from taskgraph.util.platforms import platform_family
 from taskgraph.util.schema import (
+    resolve_keyed_by,
     optionally_keyed_by,
     Schema,
 )
+from taskgraph.optimize.schema import OptimizationSchema
 from taskgraph.util.chunking import (
     chunk_manifests,
     get_runtimes,
@@ -81,6 +83,11 @@ WINDOWS_WORKER_TYPES = {
       'hardware': 't-win10-64-1803-hw',
     },
     'windows7-32-mingwclang': {
+      'virtual': 't-win7-32',
+      'virtual-with-gpu': 't-win7-32-gpu',
+      'hardware': 't-win10-64-1803-hw',
+    },
+    'windows7-32-qr': {
       'virtual': 't-win7-32',
       'virtual-with-gpu': 't-win7-32-gpu',
       'hardware': 't-win10-64-1803-hw',
@@ -139,7 +146,7 @@ WINDOWS_WORKER_TYPES = {
 
 # os x worker types keyed by test-platform
 MACOSX_WORKER_TYPES = {
-    'macosx1014-64': 't-osx-1014',
+    'macosx1014-64': 't-osx-1014-r7-edid',
     'macosx1014-64-power': 't-osx-1014-power'
 }
 
@@ -261,7 +268,12 @@ TEST_VARIANTS = {
         'description': "{description} with WebGL IPC process enabled",
         'suffix': 'gli',
         'replace': {
-            'run-on-projects': [],
+            'run-on-projects': {
+                'by-test-platform': {
+                    'mac.*': ['trunk'],
+                    'default': [],
+                }
+            }
         },
         'merge': {
             'mozharness': {
@@ -387,6 +399,7 @@ test_description_schema = Schema({
     Optional('run-on-projects'): optionally_keyed_by(
         'test-platform',
         'test-name',
+        'variant',
         Any([text_type], 'built-projects')),
 
     # When set only run on projects where the build would already be running.
@@ -988,9 +1001,11 @@ def set_tier(config, tasks):
                 'macosx1014-64-qr/debug',
                 'android-em-7.0-x86_64-shippable/opt',
                 'android-em-7.0-x86_64/debug',
+                'android-em-7.0-x86_64/opt',
                 'android-em-7.0-x86-shippable/opt',
                 'android-em-7.0-x86_64-shippable-qr/opt',
-                'android-em-7.0-x86_64-qr/debug'
+                'android-em-7.0-x86_64-qr/debug',
+                'android-em-7.0-x86_64-qr/opt',
             ]:
                 task['tier'] = 1
             else:
@@ -1054,7 +1069,7 @@ def handle_keyed_by(config, tasks):
     ]
     for task in tasks:
         for field in fields:
-            resolve_keyed_by(task, field, item_name=task['test-name'],
+            resolve_keyed_by(task, field, item_name=task['test-name'], defer=['variant'],
                              project=config.params['project'])
         yield task
 
@@ -1108,34 +1123,34 @@ def setup_browsertime(config, tasks):
 
         cd_fetches = {
             'android.*': [
-                'linux64-chromedriver-80',
                 'linux64-chromedriver-81',
-                'linux64-chromedriver-84'
+                'linux64-chromedriver-84',
+                'linux64-chromedriver-85'
             ],
             'linux.*': [
-                'linux64-chromedriver-80',
                 'linux64-chromedriver-81',
-                'linux64-chromedriver-84'
+                'linux64-chromedriver-84',
+                'linux64-chromedriver-85'
             ],
             'macosx.*': [
-                'mac64-chromedriver-80',
                 'mac64-chromedriver-81',
-                'mac64-chromedriver-84'
+                'mac64-chromedriver-84',
+                'mac64-chromedriver-85'
             ],
             'windows.*aarch64.*': [
-                'win32-chromedriver-80',
                 'win32-chromedriver-81',
-                'win32-chromedriver-84'
+                'win32-chromedriver-84',
+                'win32-chromedriver-85'
             ],
             'windows.*-32.*': [
-                'win32-chromedriver-80',
                 'win32-chromedriver-81',
-                'win32-chromedriver-84'
+                'win32-chromedriver-84',
+                'win32-chromedriver-85'
             ],
             'windows.*-64.*': [
-                'win32-chromedriver-80',
                 'win32-chromedriver-81',
-                'win32-chromedriver-84'
+                'win32-chromedriver-84',
+                'win32-chromedriver-85'
             ],
         }
 
@@ -1367,6 +1382,19 @@ def split_variants(config, tasks):
 
 
 @transforms.add
+def handle_keyed_by_variant(config, tasks):
+    """Resolve fields that can be keyed by platform, etc."""
+    fields = [
+        'run-on-projects',
+    ]
+    for task in tasks:
+        for field in fields:
+            resolve_keyed_by(task, field, item_name=task['test-name'],
+                             variant=task['attributes'].get('unittest_variant'))
+        yield task
+
+
+@transforms.add
 def handle_fission_attributes(config, tasks):
     """Handle run_on_projects for fission tasks."""
     for task in tasks:
@@ -1379,6 +1407,20 @@ def handle_fission_attributes(config, tasks):
 
             task[attr] = fission_attr
 
+        yield task
+
+
+@transforms.add
+def disable_try_only_platforms(config, tasks):
+    """Turns off platforms that should only run on try."""
+    try_only_platforms = (
+        "windows7-32-qr/.*",
+    )
+    for task in tasks:
+        if any(re.match(k + "$", task["test-platform"]) for k in try_only_platforms):
+            task["run-on-projects"] = []
+            if "fission-run-on-projects" in task:
+                task["fission-run-on-projects"] = []
         yield task
 
 

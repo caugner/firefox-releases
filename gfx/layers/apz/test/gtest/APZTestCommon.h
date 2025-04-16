@@ -127,14 +127,8 @@ class ScopedGfxSetting {
 
 class MockContentController : public GeckoContentController {
  public:
-  MOCK_METHOD1(NotifyLayerTransforms, void(const nsTArray<MatrixMessage>&));
+  MOCK_METHOD1(NotifyLayerTransforms, void(nsTArray<MatrixMessage>&&));
   MOCK_METHOD1(RequestContentRepaint, void(const RepaintRequest&));
-  MOCK_METHOD2(RequestFlingSnap,
-               void(const ScrollableLayerGuid::ViewID& aScrollId,
-                    const mozilla::CSSPoint& aDestination));
-  MOCK_METHOD2(AcknowledgeScrollUpdate,
-               void(const ScrollableLayerGuid::ViewID&,
-                    const uint32_t& aScrollGeneration));
   MOCK_METHOD5(HandleTap, void(TapType, const LayoutDevicePoint&, Modifiers,
                                const ScrollableLayerGuid&, uint64_t));
   MOCK_METHOD5(NotifyPinchGesture,
@@ -331,9 +325,9 @@ class TestAsyncPanZoomController : public AsyncPanZoomController {
     EXPECT_EQ(FLING, mState);
   }
 
-  void AssertStateIsSmoothScroll() const {
+  void AssertStateIsSmoothMsdScroll() const {
     RecursiveMutexAutoLock lock(mRecursiveMutex);
-    EXPECT_EQ(SMOOTH_SCROLL, mState);
+    EXPECT_EQ(SMOOTHMSD_SCROLL, mState);
   }
 
   void AssertNotAxisLocked() const {
@@ -390,6 +384,8 @@ class TestAsyncPanZoomController : public AsyncPanZoomController {
 class APZCTesterBase : public ::testing::Test {
  public:
   APZCTesterBase() { mcc = new NiceMock<MockContentControllerDelayed>(); }
+
+  virtual void SetUp() { gfxPlatform::GetPlatform(); }
 
   enum class PanOptions {
     None = 0,

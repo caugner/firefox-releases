@@ -2,10 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use api::{ColorF, DebugCommand, DocumentId, ExternalImageData, ExternalImageId, PrimitiveFlags};
+use api::{ColorF, DocumentId, ExternalImageData, ExternalImageId, PrimitiveFlags};
 use api::{ImageFormat, NotificationRequest, Shadow, FilterOp};
 use api::units::*;
 use api;
+use crate::render_api::DebugCommand;
 use crate::composite::NativeSurfaceOperation;
 use crate::device::TextureFilter;
 use crate::renderer::PipelineInfo;
@@ -70,7 +71,7 @@ const OPACITY_EPSILON: f32 = 0.001;
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 pub enum Filter {
     Identity,
-    Blur(f32),
+    Blur(f32, f32),
     Brightness(f32),
     Contrast(f32),
     Grayscale(f32),
@@ -116,7 +117,7 @@ impl Filter {
     pub fn is_noop(&self) -> bool {
         match *self {
             Filter::Identity => false, // this is intentional
-            Filter::Blur(length) => length == 0.0,
+            Filter::Blur(width, height) => width == 0.0 && height == 0.0,
             Filter::Brightness(amount) => amount == 1.0,
             Filter::Contrast(amount) => amount == 1.0,
             Filter::Grayscale(amount) => amount == 0.0,
@@ -179,7 +180,7 @@ impl From<FilterOp> for Filter {
     fn from(op: FilterOp) -> Self {
         match op {
             FilterOp::Identity => Filter::Identity,
-            FilterOp::Blur(r) => Filter::Blur(r),
+            FilterOp::Blur(w, h) => Filter::Blur(w, h),
             FilterOp::Brightness(b) => Filter::Brightness(b),
             FilterOp::Contrast(c) => Filter::Contrast(c),
             FilterOp::Grayscale(g) => Filter::Grayscale(g),
@@ -459,6 +460,9 @@ impl TextureUpdateList {
     /// with previous operations.
     pub fn push_reset(&mut self, id: CacheTextureId, info: TextureCacheAllocInfo) {
         self.debug_assert_coalesced(id);
+
+        // Drop any unapplied updates to the to-be-freed texture.
+        self.updates.remove(&id);
 
         // Coallesce this realloc into a previous alloc or realloc, if available.
         if let Some(cur) = self.allocations.iter_mut().find(|x| x.id == id) {

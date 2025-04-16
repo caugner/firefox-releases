@@ -28,7 +28,6 @@ Please note that some targeting attributes require stricter controls on the tele
 * [sync](#sync)
 * [topFrecentSites](#topfrecentsites)
 * [totalBookmarksCount](#totalbookmarkscount)
-* [trailheadInterrupt](#trailheadinterrupt)
 * [trailheadTriplet](#trailheadtriplet)
 * [usesFirefoxSync](#usesfirefoxsync)
 * [isFxAEnabled](#isFxAEnabled)
@@ -48,6 +47,8 @@ Please note that some targeting attributes require stricter controls on the tele
 * [isChinaRepack](#ischinarepack)
 * [userId](#userid)
 * [profileRestartCount](#profilerestartcount)
+* [homePageSettings](#homepagesettings)
+* [newtabSettings](#newtabsettings)
 
 ## Detailed usage
 
@@ -441,10 +442,6 @@ Total number of bookmarks.
 declare const totalBookmarksCount: number;
 ```
 
-### `trailheadInterrupt`
-
-(67.05+ only) Experiment branch for "interrupt" study
-
 ### `trailheadTriplet`
 
 (67.05+ only) Experiment branch for "triplet" study
@@ -682,4 +679,144 @@ More info about the details in [the telemetry docs](https://firefox-source-docs.
 
 ```ts
 declare const profileRestartCount: number;
+```
+
+### `homePageSettings`
+
+An object reflecting the current settings of the browser home page (about:home)
+
+#### Definition
+
+```ts
+declare const homePageSettings: {
+  isDefault: boolean;
+  isLocked: boolean;
+  isWebExt: boolean;
+  isCustomUrl: boolean;
+  urls: Array<URL>;
+}
+
+interface URL {
+  url: string;
+  host: string;
+}
+```
+
+#### Examples
+
+* Default about:home
+```javascript
+Object {
+  isDefault: true,
+  isLocked: false,
+  isCustomUrl: false,
+  isWebExt: false,
+  urls: [
+    { url: "about:home", host: "" }
+  ],
+}
+```
+
+* Default about:home with locked preference
+```javascript
+Object {
+  isDefault: true,
+  isLocked: true,
+  isCustomUrl: false,
+  isWebExt: false,
+  urls: [
+    { url: "about:home", host: "" }
+  ],
+}
+```
+
+* Custom URL
+```javascript
+Object {
+  isDefault: false,
+  isLocked: false,
+  isCustomUrl: true,
+  isWebExt: false,
+  urls: [
+    { url: "https://www.google.com", host: "google.com" }
+  ],
+}
+```
+
+* Custom URLs
+```javascript
+Object {
+  isDefault: false,
+  isLocked: false,
+  isCustomUrl: true,
+  isWebExt: false,
+  urls: [
+    { url: "https://www.google.com", host: "google.com" },
+    { url: "https://www.youtube.com", host: "youtube.com" }
+  ],
+}
+```
+
+* Web extension
+```javascript
+Object {
+  isDefault: false,
+  isLocked: false,
+  isCustomUrl: false,
+  isWebExt: true,
+  urls: [
+    { url: "moz-extension://123dsa43213acklncd/home.html", host: "" }
+  ],
+}
+```
+
+### `newtabSettings`
+
+An object reflecting the current settings of the browser newtab page (about:newtab)
+
+#### Definition
+
+```ts
+declare const newtabSettings: {
+  isDefault: boolean;
+  isWebExt: boolean;
+  isCustomUrl: boolean;
+  url: string;
+  host: string;
+}
+```
+
+#### Examples
+
+* Default about:newtab
+```javascript
+Object {
+  isDefault: true,
+  isCustomUrl: false,
+  isWebExt: false,
+  url: "about:newtab",
+  host: "",
+}
+```
+
+* Custom URL
+```javascript
+Object {
+  isDefault: false,
+  isCustomUrl: true,
+  isWebExt: false,
+  url: "https://www.google.com",
+  host: "google.com",
+}
+```
+
+* Web extension
+```javascript
+Object {
+  isDefault: false,
+  isCustomUrl: false,
+  isWebExt: true,
+  url: "moz-extension://123dsa43213acklncd/home.html",
+  host: "",
+}
 ```

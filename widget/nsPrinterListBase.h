@@ -23,8 +23,10 @@ class nsPrinterListBase : public nsIPrinterList {
     return SystemDefaultPrinterName(aName);
   }
   NS_IMETHOD GetPrinters(JSContext*, Promise**) final;
-  NS_IMETHOD GetNamedPrinter(const nsAString& aPrinterName, JSContext* aCx,
-                             Promise** aResult) final;
+  NS_IMETHOD GetPrinterByName(const nsAString& aPrinterName, JSContext* aCx,
+                              Promise** aResult) final;
+  NS_IMETHOD GetPrinterBySystemName(const nsAString& aPrinterName,
+                                    JSContext* aCx, Promise** aResult) final;
   NS_IMETHOD GetNamedOrDefaultPrinter(const nsAString& aPrinterName,
                                       JSContext* aCx, Promise** aResult) final;
   NS_IMETHOD GetFallbackPaperList(JSContext*, Promise**) final;
@@ -32,15 +34,8 @@ class nsPrinterListBase : public nsIPrinterList {
   struct PrinterInfo {
     // Both windows and CUPS: The name of the printer.
     nsString mName;
-    // CUPS only: Two handles to owned cups_dest_t / cups_dinfo_t objects.
-    void* mCupsHandles[2]{nullptr, nullptr};
-
-    // The major and minor version numbers for the print server that this
-    // printer is accessed through. With CUPS, these are the CUPS server's
-    // version.
-    uint64_t mServerMajor = 0;
-    uint64_t mServerMinor = 0;
-    uint64_t mServerPatch = 0;
+    // CUPS only: Handle to owned cups_dest_t.
+    void* mCupsHandle = nullptr;
   };
 
   // Called off the main thread, collect information to create an appropriate
@@ -64,7 +59,13 @@ class nsPrinterListBase : public nsIPrinterList {
   // This could be implemented in terms of Printers() and then searching the
   // returned printer info for a printer of the given name, but we expect
   // backends to have more efficient methods of implementing this.
-  virtual Maybe<PrinterInfo> NamedPrinter(nsString aName) const = 0;
+  virtual Maybe<PrinterInfo> PrinterByName(nsString aName) const = 0;
+
+  // Same as NamedPrinter, but uses the system name.
+  // Depending on whether or not there is a more efficient way to address the
+  // printer for a given backend, this may or may not be equivalent to
+  // NamedPrinter.
+  virtual Maybe<PrinterInfo> PrinterBySystemName(nsString aName) const = 0;
 
   // This is implemented separately from the IDL interface version so that it
   // can be made const, which allows it to be used while resolving promises.

@@ -193,6 +193,11 @@ struct Cell {
   inline JS::Zone* nurseryZone() const;
   inline JS::Zone* nurseryZoneFromAnyThread() const;
 
+  // Default barrier implementations for nursery allocatable cells. These may be
+  // overriden by derived classes.
+  static MOZ_ALWAYS_INLINE void readBarrier(Cell* thing);
+  static MOZ_ALWAYS_INLINE void writeBarrierPre(Cell* thing);
+
 #ifdef DEBUG
   static inline void assertThingIsNotGray(Cell* cell);
   inline bool isAligned() const;
@@ -275,8 +280,7 @@ class TenuredCell : public Cell {
 
   static MOZ_ALWAYS_INLINE void readBarrier(TenuredCell* thing);
   static MOZ_ALWAYS_INLINE void writeBarrierPre(TenuredCell* thing);
-
-  static void MOZ_ALWAYS_INLINE writeBarrierPost(void* cellp,
+  static MOZ_ALWAYS_INLINE void writeBarrierPost(void* cellp,
                                                  TenuredCell* prior,
                                                  TenuredCell* next);
 
@@ -390,6 +394,20 @@ inline JS::TraceKind Cell::getTraceKind() const {
   return JS::shadow::Zone::from(zone)->needsIncrementalBarrier();
 }
 
+/* static */ MOZ_ALWAYS_INLINE void Cell::readBarrier(Cell* thing) {
+  MOZ_ASSERT(!CurrentThreadIsGCMarking());
+  if (thing->isTenured()) {
+    TenuredCell::readBarrier(&thing->asTenured());
+  }
+}
+
+/* static */ MOZ_ALWAYS_INLINE void Cell::writeBarrierPre(Cell* thing) {
+  MOZ_ASSERT(!CurrentThreadIsGCMarking());
+  if (thing && thing->isTenured()) {
+    TenuredCell::writeBarrierPre(&thing->asTenured());
+  }
+}
+
 bool TenuredCell::isMarkedAny() const {
   MOZ_ASSERT(arena()->allocated());
   return chunk()->bitmap.isMarkedAny(this);
@@ -447,17 +465,19 @@ bool TenuredCell::isInsideZone(JS::Zone* zone) const {
 /* static */ MOZ_ALWAYS_INLINE void TenuredCell::readBarrier(
     TenuredCell* thing) {
   MOZ_ASSERT(!CurrentThreadIsIonCompiling());
+  MOZ_ASSERT(!CurrentThreadIsGCMarking());
   MOZ_ASSERT(thing);
   MOZ_ASSERT(CurrentThreadCanAccessZone(thing->zoneFromAnyThread()));
+
   // Barriers should not be triggered on main thread while collecting.
-  MOZ_ASSERT_IF(CurrentThreadCanAccessRuntime(thing->runtimeFromAnyThread()),
+  mozilla::DebugOnly<JSRuntime*> runtime = thing->runtimeFromAnyThread();
+  MOZ_ASSERT_IF(CurrentThreadCanAccessRuntime(runtime),
                 !JS::RuntimeHeapIsCollecting());
 
   JS::shadow::Zone* shadowZone = thing->shadowZoneFromAnyThread();
   if (shadowZone->needsIncrementalBarrier()) {
-    // Barriers are only enabled on the main thread and are disabled while
-    // collecting.
-    MOZ_ASSERT(!RuntimeFromMainThreadIsHeapMajorCollecting(shadowZone));
+    // We should only observe barriers being enabled on the main thread.
+    MOZ_ASSERT(CurrentThreadCanAccessRuntime(runtime));
     Cell* tmp = thing;
     TraceManuallyBarrieredGenericPointerEdge(shadowZone->barrierTracer(), &tmp,
                                              "read barrier");
@@ -466,7 +486,7 @@ bool TenuredCell::isInsideZone(JS::Zone* zone) const {
 
   if (thing->isMarkedGray()) {
     // There shouldn't be anything marked gray unless we're on the main thread.
-    MOZ_ASSERT(CurrentThreadCanAccessRuntime(thing->runtimeFromAnyThread()));
+    MOZ_ASSERT(CurrentThreadCanAccessRuntime(runtime));
     if (!JS::RuntimeHeapIsCollecting()) {
       JS::UnmarkGrayGCThingRecursively(
           JS::GCCellPtr(thing, thing->getTraceKind()));
@@ -479,6 +499,8 @@ void AssertSafeToSkipBarrier(TenuredCell* thing);
 /* static */ MOZ_ALWAYS_INLINE void TenuredCell::writeBarrierPre(
     TenuredCell* thing) {
   MOZ_ASSERT(!CurrentThreadIsIonCompiling());
+  MOZ_ASSERT(!CurrentThreadIsGCMarking());
+
   if (!thing) {
     return;
   }
@@ -499,6 +521,9 @@ void AssertSafeToSkipBarrier(TenuredCell* thing);
   }
 #endif
 
+  // Barriers can be triggered on the main thread while collecting, but are
+  // disabled. For example, this happens when destroying HeapPtr wrappers.
+
   JS::shadow::Zone* shadowZone = thing->shadowZoneFromAnyThread();
   if (shadowZone->needsIncrementalBarrier()) {
     MOZ_ASSERT(!RuntimeFromMainThreadIsHeapMajorCollecting(shadowZone));
@@ -511,10 +536,7 @@ void AssertSafeToSkipBarrier(TenuredCell* thing);
 
 static MOZ_ALWAYS_INLINE void AssertValidToSkipBarrier(TenuredCell* thing) {
   MOZ_ASSERT(!IsInsideNursery(thing));
-  MOZ_ASSERT_IF(
-      thing,
-      MapAllocToTraceKind(thing->getAllocKind()) != JS::TraceKind::Object &&
-          MapAllocToTraceKind(thing->getAllocKind()) != JS::TraceKind::String);
+  MOZ_ASSERT_IF(thing, !IsNurseryAllocable(thing->getAllocKind()));
 }
 
 /* static */ MOZ_ALWAYS_INLINE void TenuredCell::writeBarrierPost(
@@ -714,7 +736,7 @@ class alignas(gc::CellAlignBytes) CellWithTenuredGCPointer : public BaseCell {
     // As above, no flags are expected to be set here.
     MOZ_ASSERT(!IsInsideNursery(newValue));
     PtrT::writeBarrierPre(headerPtr());
-    unsafeSetHeaderPtr(newValue);
+    unbarrieredSetHeaderPtr(newValue);
   }
 
  public:
@@ -728,7 +750,7 @@ class alignas(gc::CellAlignBytes) CellWithTenuredGCPointer : public BaseCell {
     return reinterpret_cast<PtrT*>(this->header_);
   }
 
-  void unsafeSetHeaderPtr(PtrT* newValue) {
+  void unbarrieredSetHeaderPtr(PtrT* newValue) {
     uintptr_t data = uintptr_t(newValue);
     MOZ_ASSERT(this->flags() == 0);
     MOZ_ASSERT((data & Cell::RESERVED_MASK) == 0);

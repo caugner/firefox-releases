@@ -134,13 +134,21 @@ UniquePtr<SharedSurface_SurfaceTexture> SharedSurface_SurfaceTexture::Create(
     const SharedSurfaceDesc& desc) {
   const auto& size = desc.size;
 
-  jni::Object::LocalRef surfaceObj =
-      java::SurfaceAllocator::AcquireSurface(size.width, size.height, true);
+  jni::Object::LocalRef surfaceObj;
+  const bool useSingleBuffer =
+      desc.gl->Renderer() != GLRenderer::AndroidEmulator;
+
+  if (useSingleBuffer) {
+    surfaceObj =
+        java::SurfaceAllocator::AcquireSurface(size.width, size.height, true);
+  }
+
   if (!surfaceObj) {
     // Try multi-buffer mode
     surfaceObj =
         java::SurfaceAllocator::AcquireSurface(size.width, size.height, false);
   }
+
   if (!surfaceObj) {
     // Give up
     NS_WARNING("Failed to allocate SurfaceTexture!");
@@ -162,7 +170,8 @@ SharedSurface_SurfaceTexture::SharedSurface_SurfaceTexture(
     const EGLSurface eglSurface)
     : SharedSurface(desc, nullptr),
       mSurface(surface),
-      mEglSurface(eglSurface) {}
+      mEglSurface(eglSurface),
+      mEglDisplay(GLContextEGL::Cast(desc.gl)->mEgl) {}
 
 SharedSurface_SurfaceTexture::~SharedSurface_SurfaceTexture() {
   if (mOrigEglSurface) {
@@ -171,9 +180,11 @@ SharedSurface_SurfaceTexture::~SharedSurface_SurfaceTexture() {
     // to the surface.
     UnlockProd();
   }
-  const auto& gle = GLContextEGL::Cast(mDesc.gl);
-  const auto& egl = gle->mEgl;
-  egl->fDestroySurface(mEglSurface);
+
+  std::shared_ptr<EglDisplay> display = mEglDisplay.lock();
+  if (display) {
+    display->fDestroySurface(mEglSurface);
+  }
   java::SurfaceAllocator::DisposeSurface(mSurface);
 }
 
@@ -196,6 +207,14 @@ void SharedSurface_SurfaceTexture::UnlockProdImpl() {
 }
 
 void SharedSurface_SurfaceTexture::ProducerReadReleaseImpl() {
+  // This GeckoSurfaceTexture is not SurfaceTexture of this class's GeckoSurface
+  // when current process is content process. In this case, SurfaceTexture of
+  // this class's GeckoSurface does not exist in this process. It exists in
+  // compositor's process. Then GeckoSurfaceTexture in this process is a sync
+  // surface that copies back the SurfaceTextrure from compositor's process. It
+  // was added by Bug 1486659. Then SurfaceTexture::UpdateTexImage() becomes
+  // very heavy weight, since it does copy back the SurfaceTextrure from
+  // compositor's process.
   java::GeckoSurfaceTexture::LocalRef surfaceTexture =
       java::GeckoSurfaceTexture::Lookup(mSurface->GetHandle());
   if (!surfaceTexture) {
@@ -203,7 +222,11 @@ void SharedSurface_SurfaceTexture::ProducerReadReleaseImpl() {
     return;
   }
   surfaceTexture->UpdateTexImage();
-  surfaceTexture->ReleaseTexImage();
+  // Non single buffer mode Surface does not need ReleaseTexImage() call.
+  // When SurfaceTexture is sync Surface, it might not be single buffer mode.
+  if (surfaceTexture->IsSingleBuffer()) {
+    surfaceTexture->ReleaseTexImage();
+  }
 }
 
 void SharedSurface_SurfaceTexture::Commit() {

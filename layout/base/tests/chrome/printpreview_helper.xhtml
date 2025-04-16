@@ -69,7 +69,7 @@ function printpreview(options = {}) {
     }
   }
   var settings = Cc["@mozilla.org/gfx/printsettings-service;1"]
-                       .getService(Ci.nsIPrintSettingsService).globalPrintSettings;
+                       .getService(Ci.nsIPrintSettingsService).newPrintSettings;
   settings.showPrintProgress = false;
   settings.printBGColors = true;
   settings.headerStrLeft = "";
@@ -661,6 +661,26 @@ async function runTest24() {
       printBGImages: false,
     },
     expectDifference: true,
+  });
+  requestAnimationFrame(() => setTimeout(runTest25));
+}
+
+async function runTest25() {
+  await compareFiles("printpreview_downloadable_font.html", "printpreview_downloadable_font_ref.html");
+  requestAnimationFrame(() => setTimeout(runTest26));
+}
+
+async function runTest26() {
+  await compareFiles("printpreview_downloadable_font_in_iframe.html", "printpreview_downloadable_font_in_iframe_ref.html");
+  requestAnimationFrame(() => setTimeout(runTest27));
+}
+
+async function runTest27() {
+  await compareFiles("data:text/html,<style>:root { background-color: red; background-image: linear-gradient(red, red) }</style>", "data:text/html,", {
+    settings: {
+      printBGColors: false,
+      printBGImages: false,
+    }
   });
   finish();
 }

@@ -2359,16 +2359,9 @@ nscolor nsCSSRendering::DetermineBackgroundColor(nsPresContext* aPresContext,
                                                  nsIFrame* aFrame,
                                                  bool& aDrawBackgroundImage,
                                                  bool& aDrawBackgroundColor) {
-  aDrawBackgroundImage = true;
-  aDrawBackgroundColor = true;
-
-  const nsStyleVisibility* visibility = aStyle->StyleVisibility();
-
-  if (visibility->mColorAdjust != StyleColorAdjust::Exact &&
-      aFrame->HonorPrintBackgroundSettings()) {
-    aDrawBackgroundImage = aPresContext->GetBackgroundImageDraw();
-    aDrawBackgroundColor = aPresContext->GetBackgroundColorDraw();
-  }
+  auto shouldPaint = aFrame->ComputeShouldPaintBackground();
+  aDrawBackgroundImage = shouldPaint.mImage;
+  aDrawBackgroundColor = shouldPaint.mColor;
 
   const nsStyleBackground* bg = aStyle->StyleBackground();
   nscolor bgColor;
@@ -2473,9 +2466,9 @@ ImgDrawResult nsCSSRendering::PaintStyleImageLayerWithSC(
   bool drawBackgroundColor = !paintMask;
   nscolor bgColor = NS_RGBA(0, 0, 0, 0);
   if (!paintMask) {
-    bgColor = DetermineBackgroundColor(
-        &aParams.presCtx, aBackgroundSC, aParams.frame, drawBackgroundImage,
-        drawBackgroundColor);
+    bgColor =
+        DetermineBackgroundColor(&aParams.presCtx, aBackgroundSC, aParams.frame,
+                                 drawBackgroundImage, drawBackgroundColor);
   }
 
   // Masks shouldn't be suppressed for print.

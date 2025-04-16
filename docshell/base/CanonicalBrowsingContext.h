@@ -71,6 +71,13 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   void ClearInFlightProcessId(uint64_t aProcessId);
   uint64_t GetInFlightProcessId() const { return mInFlightProcessId; }
 
+  // The ID of the BrowsingContext which caused this BrowsingContext to be
+  // opened, or `0` if this is unknown.
+  // Only set for toplevel content BrowsingContexts, and may be from a different
+  // BrowsingContextGroup.
+  uint64_t GetCrossGroupOpenerId() const { return mCrossGroupOpenerId; }
+  void SetCrossGroupOpenerId(uint64_t aOpenerId);
+
   void GetWindowGlobals(nsTArray<RefPtr<WindowGlobalParent>>& aWindows);
 
   // The current active WindowGlobal.
@@ -100,7 +107,8 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   UniquePtr<LoadingSessionHistoryInfo> CreateLoadingSessionHistoryEntryForLoad(
       nsDocShellLoadState* aLoadState, nsIChannel* aChannel);
-  void SessionHistoryCommit(uint64_t aLoadId, const nsID& aChangeID);
+  void SessionHistoryCommit(uint64_t aLoadId, const nsID& aChangeID,
+                            uint32_t aLoadType);
 
   // Calls the session history listeners' OnHistoryReload, storing the result in
   // aCanReload. If aCanReload is set to true and we have an active or a loading
@@ -111,6 +119,22 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   void NotifyOnHistoryReload(bool& aCanReload,
                              Maybe<RefPtr<nsDocShellLoadState>>& aLoadState,
                              Maybe<bool>& aReloadActiveEntry);
+
+  void SetActiveSessionHistoryEntryForTop(
+      const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo* aInfo,
+      uint32_t aLoadType, const nsID& aChangeID);
+
+  void SetActiveSessionHistoryEntryForFrame(
+      const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo* aInfo,
+      int32_t aChildOffset, const nsID& aChangeID);
+
+  void ReplaceActiveSessionHistoryEntry(SessionHistoryInfo* aInfo);
+
+  void RemoveDynEntriesFromActiveSessionHistoryEntry();
+
+  void RemoveFromSessionHistory();
+
+  void HistoryGo(int32_t aIndex, std::function<void(int32_t&&)>&& aResolver);
 
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
@@ -201,6 +225,17 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   // us.
   void ReplacedBy(CanonicalBrowsingContext* aNewContext);
 
+  bool HasHistoryEntry(nsISHEntry* aEntry);
+
+  void SwapHistoryEntries(nsISHEntry* aOldEntry, nsISHEntry* aNewEntry);
+
+  void AddLoadingSessionHistoryEntry(uint64_t aLoadId,
+                                     SessionHistoryEntry* aEntry);
+
+  void GetLoadingSessionHistoryInfoFromParent(
+      Maybe<LoadingSessionHistoryInfo>& aLoadingInfo, int32_t* aRequestedIndex,
+      int32_t* aLength);
+
  protected:
   // Called when the browsing context is being discarded.
   void CanonicalDiscard();
@@ -260,6 +295,8 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   bool SupportsLoadingInParent(nsDocShellLoadState* aLoadState,
                                uint64_t* aOuterWindowId);
 
+  void HistoryCommitIndexAndLength(const nsID& aChangeID);
+
   // XXX(farre): Store a ContentParent pointer here rather than mProcessId?
   // Indicates which process owns the docshell.
   uint64_t mProcessId;
@@ -270,6 +307,8 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   // The ID of the former owner process during an ownership change, which may
   // have in-flight messages that assume it is still the owner.
   uint64_t mInFlightProcessId = 0;
+
+  uint64_t mCrossGroupOpenerId = 0;
 
   // The current remoteness change which is in a pending state.
   RefPtr<PendingRemotenessChange> mPendingRemotenessChange;

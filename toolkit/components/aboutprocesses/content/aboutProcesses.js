@@ -27,6 +27,14 @@ const ONE_MEGA = 1024 * 1024;
 const ONE_KILO = 1024;
 
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
+const { WebExtensionPolicy } = Cu.getGlobalForObject(Services);
+
+const SHOW_THREADS = Services.prefs.getBoolPref(
+  "toolkit.aboutProcesses.showThreads"
+);
+const SHOW_ALL_SUBFRAMES = Services.prefs.getBoolPref(
+  "toolkit.aboutProcesses.showAllSubframes"
+);
 
 /**
  * Returns a Promise that's resolved after the next turn of the event loop.
@@ -55,6 +63,57 @@ function wait(ms = 0) {
     return undefined;
   }
 }
+
+let tabFinder = {
+  update() {
+    this._map = new Map();
+    for (let win of Services.wm.getEnumerator("navigator:browser")) {
+      let tabbrowser = win.gBrowser;
+      for (let browser of tabbrowser.browsers) {
+        let id = browser.outerWindowID; // May be `null` if the browser isn't loaded yet
+        if (id != null) {
+          this._map.set(id, browser);
+        }
+      }
+      if (tabbrowser.preloadedBrowser) {
+        let browser = tabbrowser.preloadedBrowser;
+        if (browser.outerWindowID) {
+          this._map.set(browser.outerWindowID, browser);
+        }
+      }
+    }
+  },
+
+  /**
+   * Find the <xul:tab> for a window id.
+   *
+   * This is useful e.g. for reloading or closing tabs.
+   *
+   * @return null If the xul:tab could not be found, e.g. if the
+   * windowId is that of a chrome window.
+   * @return {{tabbrowser: <xul:tabbrowser>, tab: <xul.tab>}} The
+   * tabbrowser and tab if the latter could be found.
+   */
+  get(id) {
+    let browser = this._map.get(id);
+    if (!browser) {
+      return null;
+    }
+    let tabbrowser = browser.getTabBrowser();
+    if (!tabbrowser) {
+      return {
+        tabbrowser: null,
+        tab: {
+          getAttribute() {
+            return "";
+          },
+          linkedBrowser: browser,
+        },
+      };
+    }
+    return { tabbrowser, tab: tabbrowser.getTabForBrowser(browser) };
+  },
+};
 
 /**
  * Utilities for dealing with state
@@ -145,6 +204,63 @@ var State = {
     return result;
   },
 
+  _getDOMWindows(process) {
+    if (!process.windows) {
+      return [];
+    }
+    let windows = process.windows.map(win => {
+      let tab = tabFinder.get(win.outerWindowId);
+      let addon =
+        process.type == "extension"
+          ? WebExtensionPolicy.getByURI(win.documentURI)
+          : null;
+      let displayRank;
+      if (tab) {
+        displayRank = 1;
+      } else if (win.isProcessRoot) {
+        displayRank = 2;
+      } else if (win.documentTitle) {
+        displayRank = 3;
+      } else {
+        displayRank = 4;
+      }
+      return {
+        outerWindowId: win.outerWindowId,
+        documentURI: win.documentURI,
+        documentTitle: win.documentTitle,
+        isProcessRoot: win.isProcessRoot,
+        isInProcess: win.isInProcess,
+        tab,
+        addon,
+        // The number of instances we have collapsed.
+        count: 1,
+        // A rank used to quickly sort windows.
+        displayRank,
+      };
+    });
+
+    // We keep all tabs and addons but we collapse subframes that have the same host.
+
+    // A map from host -> subframe.
+    let collapsible = new Map();
+    let result = [];
+    for (let win of windows) {
+      if (win.tab || win.addon) {
+        result.push(win);
+        continue;
+      }
+      let prev = collapsible.get(win.documentURI.prePath);
+      if (prev) {
+        prev.count += 1;
+      } else {
+        collapsible.set(win.documentURI.prePath, win);
+        result.push(win);
+      }
+    }
+
+    return result;
+  },
+
   /**
    * Compute the delta between two process snapshots.
    *
@@ -167,29 +283,48 @@ var State = {
       type: cur.type,
       origin: cur.origin || "",
       threads: null,
-      displayRank: Control._getDisplayGroupRank(cur.type),
+      displayRank: Control._getDisplayGroupRank(cur),
+      windows: this._getDOMWindows(cur),
+      // If this process has an unambiguous title, store it here.
+      title: null,
     };
+    // Attempt to determine a title for this process.
+    let titles = [
+      ...new Set(
+        result.windows
+          .filter(win => win.documentTitle)
+          .map(win => win.documentTitle)
+      ),
+    ];
+    if (titles.length == 1) {
+      result.title = titles[0];
+    }
     if (!prev) {
-      result.threads = cur.threads.map(data =>
-        this._getThreadDelta(data, null, null)
-      );
+      if (SHOW_THREADS) {
+        result.threads = cur.threads.map(data =>
+          this._getThreadDelta(data, null, null)
+        );
+      }
       return result;
     }
     if (prev.pid != cur.pid) {
       throw new Error("Assertion failed: A process cannot change pid.");
     }
-    let prevThreads = new Map();
-    for (let thread of prev.threads) {
-      prevThreads.set(thread.tid, thread);
-    }
     let deltaT = (cur.date - prev.date) * MS_PER_NS;
-    let threads = cur.threads.map(curThread => {
-      let prevThread = prevThreads.get(curThread.tid);
-      if (!prevThread) {
-        return this._getThreadDelta(curThread);
+    let threads = null;
+    if (SHOW_THREADS) {
+      let prevThreads = new Map();
+      for (let thread of prev.threads) {
+        prevThreads.set(thread.tid, thread);
       }
-      return this._getThreadDelta(curThread, prevThread, deltaT);
-    });
+      threads = cur.threads.map(curThread => {
+        let prevThread = prevThreads.get(curThread.tid);
+        if (!prevThread) {
+          return this._getThreadDelta(curThread);
+        }
+        return this._getThreadDelta(curThread, prevThread, deltaT);
+      });
+    }
     result.deltaResidentUniqueSize =
       cur.residentUniqueSize - prev.residentUniqueSize;
     result.slopeCpuUser = (cur.cpuUser - prev.cpuUser) / deltaT;
@@ -200,6 +335,8 @@ var State = {
   },
 
   getCounters() {
+    tabFinder.update();
+
     // We rebuild the maps during each iteration to make sure that
     // we do not maintain references to processes that have been
     // shutdown.
@@ -266,22 +403,116 @@ var View = {
       row.classList.add("hung");
     }
 
-    // Column: type / twisty image
+    // Column: Name
     {
-      let content = data.origin ? `${data.origin} (${data.type})` : data.type;
+      let fluentName;
+      switch (data.type) {
+        case "web":
+          fluentName = "about-processes-web-process-name";
+          break;
+        case "webIsolated":
+          fluentName = "about-processes-webIsolated-process-name";
+          break;
+        case "webLargeAllocation":
+          fluentName = "about-processes-webLargeAllocation-process-name";
+          break;
+        case "file":
+          fluentName = "about-processes-file-process-name";
+          break;
+        case "extension":
+          fluentName = "about-processes-extension-process-name";
+          break;
+        case "privilegedabout":
+          fluentName = "about-processes-privilegedabout-process-name";
+          break;
+        case "withCoopCoep":
+          fluentName = "about-processes-withCoopCoep-process-name";
+          break;
+        case "browser":
+          fluentName = "about-processes-browser-process-name";
+          break;
+        case "plugin":
+          fluentName = "about-processes-plugin-process-name";
+          break;
+        case "gmpPlugin":
+          fluentName = "about-processes-gmpPlugin-process-name";
+          break;
+        case "gpu":
+          fluentName = "about-processes-gpu-process-name";
+          break;
+        case "vr":
+          fluentName = "about-processes-vr-process-name";
+          break;
+        case "rdd":
+          fluentName = "about-processes-rdd-process-name";
+          break;
+        case "socket":
+          fluentName = "about-processes-socket-process-name";
+          break;
+        case "remoteSandboxBroker":
+          fluentName = "about-processes-remoteSandboxBroker-process-name";
+          break;
+        case "forkServer":
+          fluentName = "about-processes-forkServer-process-name";
+          break;
+        case "preallocated":
+          fluentName = "about-processes-preallocated-process-name";
+          break;
+        // The following are probably not going to show up for users
+        // but let's handle the case anyway to avoid heisenoranges
+        // during tests in case of a leftover process from a previous
+        // test.
+        default:
+          fluentName = "about-processes-unknown-process-name";
+          break;
+      }
       let elt = this._addCell(row, {
-        content,
-        classes: ["type"],
+        fluentName,
+        fluentArgs: {
+          pid: "" + data.pid, // Make sure that this number is not localized
+          origin: data.origin,
+          type: data.type,
+        },
+        classes: ["type", "favicon"],
       });
 
-      if (data.threads.length) {
-        let img = document.createElement("span");
-        img.classList.add("twisty", "process");
-        if (data.isOpen) {
-          img.classList.add("open");
-        }
-        elt.insertBefore(img, elt.firstChild);
+      let image;
+      switch (data.type) {
+        case "browser":
+        case "privilegedabout":
+          image = "chrome://branding/content/icon32.png";
+          break;
+        case "extension":
+          image = "chrome://mozapps/skin/extensions/extension.svg";
+          break;
+        default:
+          // If all favicons match, pick the shared favicon.
+          // Otherwise, pick a default icon.
+          // If some tabs have no favicon, we ignore them.
+          for (let win of data.windows || []) {
+            if (!win.tab) {
+              continue;
+            }
+            let favicon = win.tab.tab.getAttribute("image");
+            if (!favicon) {
+              // No favicon here, let's ignore the tab.
+            } else if (!image) {
+              // Let's pick a first favicon.
+              // We'll remove it later if we find conflicting favicons.
+              image = favicon;
+            } else if (image == favicon) {
+              // So far, no conflict, keep the favicon.
+            } else {
+              // Conflicting favicons, fallback to default.
+              image = null;
+              break;
+            }
+          }
+          if (!image) {
+            image = "chrome://browser/skin/link.svg";
+          }
       }
+      elt.style.backgroundImage = `url('${image}')`;
     }
 
     // Column: Resident size
@@ -311,16 +542,104 @@ var View = {
       });
     }
 
-    // Column: pid
+    this._fragment.appendChild(row);
+    return row;
+  },
+
+  appendThreadSummaryRow(data, isOpen) {
+    let row = document.createElement("tr");
+    row.classList.add("thread-summary");
+
+    // Column: Name
+    let elt = this._addCell(row, {
+      fluentName: "about-processes-thread-summary",
+      fluentArgs: { number: data.threads.length },
+      classes: ["name", "indent"],
+    });
+    if (data.threads.length) {
+      let img = document.createElement("span");
+      img.classList.add("twisty");
+      if (data.isOpen) {
+        img.classList.add("open");
+      }
+      elt.insertBefore(img, elt.firstChild);
+    }
+
+    // Column: Resident size
     this._addCell(row, {
-      content: data.pid,
-      classes: ["pid", "root"],
+      content: "",
+      classes: ["totalMemorySize"],
     });
 
-    // Column: Number of threads
+    // Column: CPU: User and Kernel
     this._addCell(row, {
-      content: data.threads.length,
-      classes: ["numberOfThreads"],
+      content: "",
+      classes: ["cpu"],
+    });
+
+    this._fragment.appendChild(row);
+    return row;
+  },
+
+  appendDOMWindowRow(data, parent) {
+    let row = document.createElement("tr");
+    row.classList.add("window");
+
+    // Column: filename
+    let tab = tabFinder.get(data.outerWindowId);
+    let fluentName;
+    let name;
+    if (parent.type == "extension") {
+      fluentName = "about-processes-extension-name";
+      if (data.addon) {
+        name = data.addon.name;
+      } else if (data.documentURI.scheme == "about") {
+        // about: URLs don't have an host.
+        name = data.documentURI.spec;
+      } else {
+        name = data.documentURI.host;
+      }
+    } else if (tab && tab.tabbrowser) {
+      fluentName = "about-processes-tab-name";
+      name = data.documentTitle;
+    } else if (tab) {
+      fluentName = "about-processes-preloaded-tab";
+      name = null;
+    } else if (data.count == 1) {
+      fluentName = "about-processes-frame-name-one";
+      name = data.prePath;
+    } else {
+      fluentName = "about-processes-frame-name-many";
+      name = data.prePath;
+    }
+    let elt = this._addCell(row, {
+      fluentName,
+      fluentArgs: {
+        name,
+        url: data.documentURI.spec,
+        number: data.count,
+        shortUrl:
+          data.documentURI.scheme == "about"
+            ? data.documentURI.spec
+            : data.documentURI.prePath,
+      },
+      classes: ["name", "indent", "favicon"],
+    });
+    let image = tab?.tab.getAttribute("image");
+    if (image) {
+      elt.style.backgroundImage = `url('${image}')`;
+    }
+
+    // Column: Resident size (empty)
+    this._addCell(row, {
+      content: "",
+      classes: ["totalResidentSize"],
+    });
+
+    // Column: CPU (empty)
+    this._addCell(row, {
+      content: "",
+      classes: ["cpu"],
     });
 
     this._fragment.appendChild(row);
@@ -339,8 +658,12 @@ var View = {
 
     // Column: filename
     this._addCell(row, {
-      content: data.name,
-      classes: ["name", "indent"],
+      fluentName: "about-processes-thread-name",
+      fluentArgs: {
+        name: data.name,
+        tid: "" + data.tid /* Make sure that this number is not localized */,
+      },
+      classes: ["name", "double_indent"],
     });
 
     // Column: Resident size (empty)
@@ -361,25 +684,20 @@ var View = {
       });
     }
 
-    // Column: id
-    this._addCell(row, {
-      content: data.tid,
-      classes: ["tid"],
-    });
-
-    // Column: Number of threads (empty)
-    this._addCell(row, {
-      content: "",
-      classes: ["numberOfThreads"],
-    });
-
     this._fragment.appendChild(row);
     return row;
   },
 
-  _addCell(row, { content, classes }) {
+  _addCell(row, { content, classes, fluentName, fluentArgs }) {
     let elt = document.createElement("td");
-    this._setTextAndTooltip(elt, content);
+    if (fluentName) {
+      let span = document.createElement("span");
+      document.l10n.setAttributes(span, fluentName, fluentArgs);
+      elt.appendChild(span);
+    } else {
+      elt.textContent = content;
+      elt.setAttribute("title", content);
+    }
     elt.classList.add(...classes);
     row.appendChild(elt);
     return elt;
@@ -503,10 +821,6 @@ var View = {
       formatedValue: `${amount}${unitValue}`,
     };
   },
-  _setTextAndTooltip(elt, text, tooltip = text) {
-    elt.textContent = text;
-    elt.setAttribute("title", tooltip);
-  },
 };
 
 var Control = {
@@ -518,8 +832,13 @@ var Control = {
   _sortColumn: null,
   _sortAscendent: true,
   _removeSubtree(row) {
-    while (row.nextSibling && row.nextSibling.classList.contains("thread")) {
-      row.nextSibling.remove();
+    let sibling = row.nextSibling;
+    while (sibling && !sibling.classList.contains("process")) {
+      let next = sibling.nextSibling;
+      if (sibling.classList.contains("thread")) {
+        sibling.remove();
+      }
+      sibling = next;
     }
   },
   init() {
@@ -536,7 +855,7 @@ var Control = {
         let id = row.process.pid;
         if (target.classList.toggle("open")) {
           this._openItems.add(id);
-          this._showChildren(row);
+          this._showThreads(row);
           View.insertAfterRow(row);
         } else {
           this._openItems.delete(id);
@@ -665,9 +984,10 @@ var Control = {
     this._hungItems = new Set();
 
     counters = this._sortProcesses(counters);
-    let previousRow = null;
     let previousProcess = null;
     for (let process of counters) {
+      this._sortDOMWindows(process.windows);
+
       let isOpen = openItems.has(process.pid);
       process.isOpen = isOpen;
 
@@ -677,10 +997,22 @@ var Control = {
       let processRow = View.appendProcessRow(process, isOpen);
       processRow.process = process;
 
-      let latestRow = processRow;
-      if (isOpen) {
-        this._openItems.add(process.pid);
-        latestRow = this._showChildren(processRow);
+      let winRow;
+      for (let win of process.windows) {
+        if (SHOW_ALL_SUBFRAMES || win.tab || win.isProcessRoot) {
+          winRow = View.appendDOMWindowRow(win, process);
+          winRow.win = win;
+        }
+      }
+
+      if (SHOW_THREADS) {
+        let threadSummaryRow = View.appendThreadSummaryRow(process, isOpen);
+        threadSummaryRow.process = process;
+
+        if (isOpen) {
+          this._openItems.add(process.pid);
+          this._showThreads(processRow);
+        }
       }
       if (
         this._sortColumn == null &&
@@ -688,15 +1020,14 @@ var Control = {
         previousProcess.displayRank != process.displayRank
       ) {
         // Add a separation between successive categories of processes.
-        previousRow.classList.add("separate-from-next-process-group");
+        processRow.classList.add("separate-from-previous-process-group");
       }
       previousProcess = process;
-      previousRow = latestRow;
     }
 
     await View.commit();
   },
-  _showChildren(row) {
+  _showThreads(row) {
     let process = row.process;
     this._sortThreads(process.threads);
     let elt = row;
@@ -712,18 +1043,13 @@ var Control = {
       let order;
       switch (this._sortColumn) {
         case "column-name":
-          order = a.name.localeCompare(b.name);
+          order = a.name.localeCompare(b.name) || a.pid - b.pid;
           break;
         case "column-cpu-total":
           order = b.totalCpu - a.totalCpu;
-          if (order == 0) {
-            order = b.totalCpu - a.totalCpu;
-          }
           break;
 
-        case "column-cpu-threads":
         case "column-memory-resident":
-        case "column-type":
         case "column-pid":
         case null:
           order = b.tid - a.tid;
@@ -744,43 +1070,40 @@ var Control = {
         case "column-pid":
           order = b.pid - a.pid;
           break;
-        case "column-type":
-          order = String(a.origin).localeCompare(b.origin);
-          if (order == 0) {
-            order = String(a.type).localeCompare(b.type);
-          }
-          break;
         case "column-name":
-          order = String(a.name).localeCompare(b.name);
+          order =
+            String(a.origin).localeCompare(b.origin) ||
+            String(a.type).localeCompare(b.type) ||
+            a.pid - b.pid;
           break;
         case "column-cpu-total":
           order = b.totalCpu - a.totalCpu;
-          if (order == 0) {
-            order = b.totalCpu - a.totalCpu;
-          }
-          break;
-        case "column-cpu-threads":
-          order = b.threads.length - a.threads.length;
           break;
         case "column-memory-resident":
           order = b.totalResidentUniqueSize - a.totalResidentUniqueSize;
           break;
         case null:
           // Default order: classify processes by group.
-          order = a.displayRank - b.displayRank;
-          if (order == 0) {
+          order =
+            a.displayRank - b.displayRank ||
             // Other processes are ordered by origin.
-            order = String(a.name).localeCompare(b.name);
-            if (order == 0) {
-              // If we're running without Fission, many processes will have
-              // the same origin, so differenciate with CPU use.
-              order = b.slopeCpuUser - a.slopeCpuUser;
-            }
-          }
+            String(a.origin).localeCompare(b.origin);
           break;
         default:
           throw new Error("Unsupported order: " + this._sortColumn);
       }
+      if (!this._sortAscendent) {
+        order = -order;
+      }
+      return order;
+    });
+  },
+  _sortDOMWindows(windows) {
+    return windows.sort((a, b) => {
+      let order =
+        a.displayRank - b.displayRank ||
+        a.documentTitle.localeCompare(b.documentTitle) ||
+        a.documentURI.spec.localeCompare(b.documentURI.spec);
       if (!this._sortAscendent) {
         order = -order;
       }
@@ -794,23 +1117,40 @@ var Control = {
   // Then comes web content (rank 1).
   // Then come special processes (minus preallocated) (rank 2).
   // Then come preallocated processes (rank 3).
-  _getDisplayGroupRank(type) {
+  _getDisplayGroupRank(data) {
+    const RANK_BROWSER = 0;
+    const RANK_WEB_CONTENT = 1;
+    const RANK_UTILITY = 2;
+    const RANK_PREALLOCATED = 3;
+    let type = data.type;
     switch (type) {
       // Browser comes first.
       case "browser":
-        return 0;
+        return RANK_BROWSER;
       // Web content comes next.
-      case "web":
       case "webIsolated":
       case "webLargeAllocation":
       case "withCoopCoep":
-        return 1;
+        return RANK_WEB_CONTENT;
       // Preallocated processes come last.
       case "preallocated":
-        return 3;
+        return RANK_PREALLOCATED;
+      // "web" is special, as it could be one of:
+      // - web content currently loading/unloading/...
+      // - a preallocated process.
+      case "web":
+        if (data.windows.length >= 1) {
+          return RANK_WEB_CONTENT;
+        }
+        // For the time being, we do not display DOM workers
+        // (and there's no API to get information on them).
+        // Once the blockers for bug 1663737 have landed, we'll be able
+        // to find out whether this process has DOM workers. If so, we'll
+        // count this process as a content process.
+        return RANK_PREALLOCATED;
       // Other special processes before preallocated.
       default:
-        return 2;
+        return RANK_UTILITY;
     }
   },
 };

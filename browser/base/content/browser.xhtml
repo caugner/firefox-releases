@@ -96,7 +96,6 @@
   if (!AppConstants.MOZILLA_OFFICIAL) {
     Services.scriptloader.loadSubScript("chrome://browser/content/browser-development-helpers.js", this);
   }
-  Services.scriptloader.loadSubScript("chrome://browser/content/browser-media.js", this);
   Services.scriptloader.loadSubScript("chrome://browser/content/browser-pageActions.js", this);
   Services.scriptloader.loadSubScript("chrome://browser/content/browser-sidebar.js", this);
   Services.scriptloader.loadSubScript("chrome://browser/content/browser-tabsintitlebar.js", this);
@@ -2002,12 +2001,12 @@
 
       <toolbaritem id="PanelUI-button"
                    removable="false">
-        <toolbarbutton id="pioneer-button"
+        <toolbarbutton id="ion-button"
                        class="toolbarbutton-1"
                        hidden="true"
                        badged="true"
-                       onmousedown="switchToTabHavingURI('about:pioneer', true);"
-                       onkeypress="switchToTabHavingURI('about:pioneer', true);"/>
+                       onmousedown="switchToTabHavingURI('about:ion', true);"
+                       onkeypress="switchToTabHavingURI('about:ion', true);"/>
         <toolbarbutton id="whats-new-menu-button"
                        class="toolbarbutton-1"
                        hidden="true"
@@ -2051,6 +2050,23 @@
              collapsed="true"
              customizable="true">
       <toolbartabstop skipintoolbarset="true"/>
+
+      <toolbarbutton id="managed-bookmarks"
+                     class="bookmark-item"
+                     data-l10n-id="managed-bookmarks"
+                     context="placesContextManaged"
+                     container="true"
+                     removable="false"
+                     hidden="true"
+                     type="menu">
+        <menupopup id="managed-bookmarks-popup"
+                   oncommand="PlacesToolbarHelper.openManagedBookmark(event);"
+                   onclick="checkForMiddleClick(this, event);"
+                   ondragover="event.dataTransfer.effectAllowed='none';"
+                   ondragstart="PlacesToolbarHelper.onDragStartManaged(event);"
+                   onpopupshowing="PlacesToolbarHelper.populateManagedBookmarks(this);"/>
+      </toolbarbutton>
+
       <toolbaritem id="personal-bookmarks"
                    title="&bookmarksToolbarItem.label;"
                    cui-areatype="toolbar"
@@ -2277,32 +2293,27 @@
   <html:div id="fullscreen-and-pointerlock-wrapper">
     <html:div id="fullscreen-warning" class="pointerlockfswarning" hidden="true">
       <html:div class="pointerlockfswarning-domain-text">
-        &fullscreenWarning.beforeDomain.label;
-        <html:span class="pointerlockfswarning-domain"/>
-        &fullscreenWarning.afterDomain.label;
+        <html:span class="pointerlockfswarning-domain" data-l10n-name="domain"/>
       </html:div>
-      <html:div class="pointerlockfswarning-generic-text">
-        &fullscreenWarning.generic.label;
-      </html:div>
+      <html:div class="pointerlockfswarning-generic-text"
+                data-l10n-id="fullscreen-warning-no-domain"></html:div>
       <html:button id="fullscreen-exit-button"
-                   onclick="FullScreen.exitDomFullScreen();">
+                   onclick="FullScreen.exitDomFullScreen();"
 #ifdef XP_MACOSX
-              &exitDOMFullscreenMac.button;
+                   data-l10n-id="fullscreen-exit-mac-button"
 #else
-              &exitDOMFullscreen.button;
+                   data-l10n-id="fullscreen-exit-button"
 #endif
+              >
       </html:button>
     </html:div>
 
     <html:div id="pointerlock-warning" class="pointerlockfswarning" hidden="true">
       <html:div class="pointerlockfswarning-domain-text">
-        &pointerlockWarning.beforeDomain.label;
-        <html:span class="pointerlockfswarning-domain"/>
-        &pointerlockWarning.afterDomain.label;
+        <html:span class="pointerlockfswarning-domain" data-l10n-name="domain"/>
       </html:div>
-      <html:div class="pointerlockfswarning-generic-text">
-        &pointerlockWarning.generic.label;
-      </html:div>
+      <html:div class="pointerlockfswarning-generic-text"
+                data-l10n-id="pointerlock-warning-no-domain"></html:div>
     </html:div>
   </html:div>
 

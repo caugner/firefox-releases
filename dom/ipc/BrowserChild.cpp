@@ -45,6 +45,7 @@
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Services.h"
 #include "mozilla/StaticPrefs_dom.h"
+#include "mozilla/StaticPrefs_fission.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/StaticPtr.h"
 #include "mozilla/Telemetry.h"
@@ -967,8 +968,7 @@ mozilla::ipc::IPCResult BrowserChild::RecvWillChangeProcess(
 }
 
 mozilla::ipc::IPCResult BrowserChild::RecvLoadURL(
-    const nsCString& aURI, nsIPrincipal* aTriggeringPrincipal,
-    const ParentShowInfo& aInfo) {
+    nsDocShellLoadState* aLoadState, const ParentShowInfo& aInfo) {
   if (!mDidLoadURLInit) {
     mDidLoadURLInit = true;
     if (!InitBrowserChildMessageManager()) {
@@ -977,28 +977,19 @@ mozilla::ipc::IPCResult BrowserChild::RecvLoadURL(
 
     ApplyParentShowInfo(aInfo);
   }
-
-  LoadURIOptions loadURIOptions;
-  loadURIOptions.mTriggeringPrincipal = aTriggeringPrincipal;
-  loadURIOptions.mLoadFlags =
-      nsIWebNavigation::LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP |
-      nsIWebNavigation::LOAD_FLAGS_DISALLOW_INHERIT_PRINCIPAL;
-
-  nsIWebNavigation* webNav = WebNavigation();
-  nsresult rv = webNav->LoadURI(NS_ConvertUTF8toUTF16(aURI), loadURIOptions);
-  if (NS_FAILED(rv)) {
-    NS_WARNING(
-        "WebNavigation()->LoadURI failed. Eating exception, what else can I "
-        "do?");
-  }
+  nsAutoCString spec;
+  aLoadState->URI()->GetSpec(spec);
 
   nsCOMPtr<nsIDocShell> docShell = do_GetInterface(WebNavigation());
-  if (docShell) {
-    nsDocShell::Cast(docShell)->MaybeClearStorageAccessFlag();
+  MOZ_ASSERT(docShell);
+  if (!docShell) {
+    NS_WARNING("WebNavigation does not have a docshell");
   }
+  docShell->LoadURI(aLoadState, true);
 
-  CrashReporter::AnnotateCrashReport(CrashReporter::Annotation::URL, aURI);
+  nsDocShell::Cast(docShell)->MaybeClearStorageAccessFlag();
 
+  CrashReporter::AnnotateCrashReport(CrashReporter::Annotation::URL, spec);
   return IPC_OK();
 }
 
@@ -1767,12 +1758,14 @@ mozilla::ipc::IPCResult BrowserChild::RecvRealTouchEvent(
   // The other values don't really matter.
   InputAPZContext context(aGuid, aInputBlockId, aApzResponse);
 
+  nsTArray<TouchBehaviorFlags> allowedTouchBehaviors;
   if (localEvent.mMessage == eTouchStart && AsyncPanZoomEnabled()) {
     nsCOMPtr<Document> document = GetTopLevelDocument();
     if (StaticPrefs::layout_css_touch_action_enabled()) {
-      APZCCallbackHelper::SendSetAllowedTouchBehaviorNotification(
-          mPuppetWidget, document, localEvent, aInputBlockId,
-          mSetAllowedTouchBehaviorCallback);
+      allowedTouchBehaviors =
+          APZCCallbackHelper::SendSetAllowedTouchBehaviorNotification(
+              mPuppetWidget, document, localEvent, aInputBlockId,
+              mSetAllowedTouchBehaviorCallback);
     }
     UniquePtr<DisplayportSetListener> postLayerization =
         APZCCallbackHelper::SendSetTargetAPZCNotification(
@@ -1794,7 +1787,8 @@ mozilla::ipc::IPCResult BrowserChild::RecvRealTouchEvent(
   }
 
   mAPZEventState->ProcessTouchEvent(localEvent, aGuid, aInputBlockId,
-                                    aApzResponse, status);
+                                    aApzResponse, status,
+                                    std::move(allowedTouchBehaviors));
   return IPC_OK();
 }
 
@@ -2710,9 +2704,10 @@ bool BrowserChild::CreateRemoteLayerManager(
     success = mPuppetWidget->CreateRemoteLayerManager(
         [&](LayerManager* aLayerManager) -> bool {
           MOZ_ASSERT(aLayerManager->AsWebRenderLayerManager());
+          nsCString error;
           return aLayerManager->AsWebRenderLayerManager()->Initialize(
               aCompositorChild, wr::AsPipelineId(mLayersId),
-              &mTextureFactoryIdentifier);
+              &mTextureFactoryIdentifier, error);
         });
   } else {
     nsTArray<LayersBackend> ignored;
@@ -3406,7 +3401,19 @@ nsresult BrowserChild::CanCancelContentJS(
     return NS_OK;
   }
 
-  nsCOMPtr<nsISHistory> history = do_GetInterface(WebNavigation());
+  // If we have session history in the parent we've already performed
+  // the checks following, so we can return early.
+  if (StaticPrefs::fission_sessionHistoryInParent()) {
+    *aCanCancel = true;
+    return NS_OK;
+  }
+
+  nsCOMPtr<nsIDocShell> docShell = do_GetInterface(WebNavigation());
+  nsCOMPtr<nsISHistory> history;
+  if (docShell) {
+    history = nsDocShell::Cast(docShell)->GetSessionHistory()->LegacySHistory();
+  }
+
   if (!history) {
     return NS_ERROR_FAILURE;
   }

@@ -11,8 +11,6 @@
 #include "mozilla/Assertions.h"  // MOZ_ASSERT{,_IF}
 #include "mozilla/Attributes.h"  // MOZ_MUST_USE
 
-#include "jsapi.h"  // JS_SetPrivate
-
 #include "builtin/Array.h"                // js::NewDenseFullyAllocatedArray
 #include "builtin/Promise.h"              // js::RejectPromiseWithPendingError
 #include "builtin/streams/PipeToState.h"  // js::PipeToState
@@ -35,9 +33,9 @@
 #include "builtin/streams/MiscellaneousOperations-inl.h"  // js::ResolveUnwrappedPromiseWithValue
 #include "builtin/streams/ReadableStreamReader-inl.h"  // js::UnwrapReaderFromStream
 #include "vm/Compartment-inl.h"  // JS::Compartment::wrap, js::Unwrap{Callee,Internal}Slot
-#include "vm/JSContext-inl.h"    // JSContext::check
-#include "vm/JSObject-inl.h"  // js::IsCallable, js::NewObjectWithClassProto
-#include "vm/Realm-inl.h"     // js::AutoRealm
+#include "vm/JSContext-inl.h"  // JSContext::check
+#include "vm/JSObject-inl.h"   // js::IsCallable, js::NewObjectWithClassProto
+#include "vm/Realm-inl.h"      // js::AutoRealm
 
 using js::IsCallable;
 using js::NewHandler;
@@ -138,7 +136,7 @@ static MOZ_MUST_USE ReadableStream* CreateReadableStream(
     return nullptr;
   }
 
-  JS_SetPrivate(stream, nsISupportsObject_alreadyAddreffed);
+  stream->setPrivate(nsISupportsObject_alreadyAddreffed);
 
   // Step 1: Set stream.[[state]] to "readable".
   stream->initStateBits(Readable);

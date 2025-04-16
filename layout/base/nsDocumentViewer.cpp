@@ -49,6 +49,7 @@
 #include "mozilla/WeakPtr.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_javascript.h"
+#include "mozilla/StaticPrefs_fission.h"
 #include "mozilla/StaticPrefs_print.h"
 #include "mozilla/StyleSheet.h"
 #include "mozilla/StyleSheetInlines.h"
@@ -400,13 +401,6 @@ class nsDocumentViewer final : public nsIContentViewer,
 
   void InvalidatePotentialSubDocDisplayItem();
 
-#ifdef NS_PRINTING
-  // Called when the DocViewer is notified that the state
-  // of Printing or PP has changed
-  void SetIsPrintingInDocShellTree(nsIDocShellTreeItem* aParentNode,
-                                   bool aIsPrintingOrPP, bool aStartAtTop);
-#endif  // NS_PRINTING
-
   // Whether we should attach to the top level widget. This is true if we
   // are sharing/recycling a single base widget and not creating multiple
   // child widgets.
@@ -429,8 +423,7 @@ class nsDocumentViewer final : public nsIContentViewer,
   // (ie, non owning) references. If you add any members to this
   // class, please make the ownership explicit (pinkerton, scc).
 
-  WeakPtr<nsDocShell> mContainer;  // it owns me!
-  nsWeakPtr mTopContainerWhilePrinting;
+  WeakPtr<nsDocShell> mContainer;          // it owns me!
   RefPtr<nsDeviceContext> mDeviceContext;  // We create and own this baby
 
   // the following six items are explicitly in this order
@@ -1186,10 +1179,16 @@ nsDocumentViewer::LoadComplete(nsresult aStatus) {
     outerWin->StopDelayingPrintingUntilAfterLoad();
     if (outerWin->DelayedPrintUntilAfterLoad()) {
       // We call into the inner because it ensures there's an active document
-      // and such.
+      // and such, and it also waits until the whole thing completes, which is
+      // nice because it allows us to close if needed right here.
       if (RefPtr<nsPIDOMWindowInner> inner = window->GetCurrentInnerWindow()) {
         nsGlobalWindowInner::Cast(inner)->Print(IgnoreErrors());
       }
+      if (outerWin->DelayedCloseForPrinting()) {
+        outerWin->Close();
+      }
+    } else {
+      MOZ_ASSERT(!outerWin->DelayedCloseForPrinting());
     }
   }
 #endif
@@ -2065,7 +2064,7 @@ nsDocumentViewer::Show(void) {
       treeItem->GetInProcessSameTypeRootTreeItem(getter_AddRefs(root));
       nsCOMPtr<nsIWebNavigation> webNav = do_QueryInterface(root);
       RefPtr<ChildSHistory> history = webNav->GetSessionHistory();
-      if (history) {
+      if (!StaticPrefs::fission_sessionHistoryInParent() && history) {
         int32_t prevIndex, loadedIndex;
         nsCOMPtr<nsIDocShell> docShell = do_QueryInterface(treeItem);
         docShell->GetPreviousEntryIndex(&prevIndex);
@@ -2225,20 +2224,6 @@ nsDocumentViewer::GetSticky(bool* aSticky) {
 NS_IMETHODIMP
 nsDocumentViewer::SetSticky(bool aSticky) {
   mIsSticky = aSticky;
-
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDocumentViewer::RequestWindowClose(bool aIsPrintPending, bool* aCanClose) {
-  *aCanClose = true;
-
-#ifdef NS_PRINTING
-  if (aIsPrintPending || (mPrintJob && mPrintJob->GetIsPrinting())) {
-    *aCanClose = false;
-    mDeferredWindowClose = true;
-  }
-#endif
 
   return NS_OK;
 }
@@ -2779,16 +2764,6 @@ nsDocumentViewer::SetHintCharset(const Encoding* aEncoding) {
   };
   // now set the force char set on all children of mContainer
   CallChildren(childFn);
-}
-
-NS_IMETHODIMP nsDocumentViewer::AppendSubtree(
-    nsTArray<nsCOMPtr<nsIContentViewer>>& aArray) {
-  aArray.AppendElement(this);
-  auto childFn = [&aArray](nsDocumentViewer* aChild) {
-    aChild->AppendSubtree(aArray);
-  };
-  CallChildren(childFn);
-  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -3587,49 +3562,6 @@ nsDocumentViewer::GetPrintPreviewNumPages(int32_t* aPrintPreviewNumPages) {
 //----------------------------------------------------------------------------------
 // Walks the document tree and tells each DocShell whether Printing/PP is
 // happening
-void nsDocumentViewer::SetIsPrintingInDocShellTree(
-    nsIDocShellTreeItem* aParentNode, bool aIsPrintingOrPP, bool aStartAtTop) {
-  nsCOMPtr<nsIDocShellTreeItem> parentItem(aParentNode);
-
-  // find top of "same parent" tree
-  if (aStartAtTop) {
-    if (aIsPrintingOrPP) {
-      while (parentItem) {
-        nsCOMPtr<nsIDocShellTreeItem> parent;
-        parentItem->GetInProcessSameTypeParent(getter_AddRefs(parent));
-        if (!parent) {
-          break;
-        }
-        parentItem = parent;
-      }
-      mTopContainerWhilePrinting = do_GetWeakReference(parentItem);
-    } else {
-      parentItem = do_QueryReferent(mTopContainerWhilePrinting);
-    }
-  }
-
-  // Check to see if the DocShell's ContentViewer is printing/PP
-  nsCOMPtr<nsIDocShell> viewerContainer = do_QueryInterface(parentItem);
-  if (viewerContainer) {
-    viewerContainer->SetIsPrinting(aIsPrintingOrPP);
-  }
-
-  if (!aParentNode) {
-    return;
-  }
-
-  // Traverse children to see if any of them are printing.
-  int32_t n;
-  aParentNode->GetInProcessChildCount(&n);
-  for (int32_t i = 0; i < n; i++) {
-    nsCOMPtr<nsIDocShellTreeItem> child;
-    aParentNode->GetInProcessChildAt(i, getter_AddRefs(child));
-    NS_ASSERTION(child, "child isn't nsIDocShell");
-    if (child) {
-      SetIsPrintingInDocShellTree(child, aIsPrintingOrPP, false);
-    }
-  }
-}
 #endif  // NS_PRINTING
 
 bool nsDocumentViewer::ShouldAttachToTopLevel() {
@@ -3677,21 +3609,6 @@ bool nsDocumentViewer::GetIsPrinting() const {
 }
 
 //------------------------------------------------------------
-// Notification from the PrintJob of the current Printing status
-void nsDocumentViewer::SetIsPrinting(bool aIsPrinting) {
-#ifdef NS_PRINTING
-  // Set all the docShells in the docshell tree to be printing.
-  // that way if anyone of them tries to "navigate" it can't
-  nsCOMPtr<nsIDocShell> docShell(mContainer);
-  if (docShell || !aIsPrinting) {
-    SetIsPrintingInDocShellTree(docShell, aIsPrinting, true);
-  } else {
-    NS_WARNING("Did you close a window before printing?");
-  }
-#endif
-}
-
-//------------------------------------------------------------
 // The PrintJob holds the current value
 // this called from inside the DocViewer.
 // XXX it always returns false for subdocuments
@@ -3706,15 +3623,6 @@ bool nsDocumentViewer::GetIsPrintPreview() const {
 //------------------------------------------------------------
 // Notification from the PrintJob of the current PP status
 void nsDocumentViewer::SetIsPrintPreview(bool aIsPrintPreview) {
-#ifdef NS_PRINTING
-  // Set all the docShells in the docshell tree to be printing.
-  // that way if anyone of them tries to "navigate" it can't
-  nsCOMPtr<nsIDocShell> docShell(mContainer);
-  if (docShell || !aIsPrintPreview) {
-    SetIsPrintingInDocShellTree(docShell, aIsPrintPreview, true);
-  }
-#endif
-
   // Protect against pres shell destruction running scripts.
   nsAutoScriptBlocker scriptBlocker;
 
@@ -3769,14 +3677,15 @@ void nsDocumentViewer::OnDonePrinting() {
       printJob->Destroy();
     }
 
-    // We are done printing, now cleanup. For non-print-preview jobs, we are
-    // actually responsible for cleaning up our whole <browser> or window (see
-    // the OPEN_PRINT_BROWSER code), so gotta run window.close() too.
+    // We are done printing, now clean up.
+    //
+    // For non-print-preview jobs, we are actually responsible for cleaning up
+    // our whole <browser> or window (see the OPEN_PRINT_BROWSER code), so gotta
+    // run window.close(), which will take care of this.
     //
     // For print preview jobs the front-end code is responsible for cleaning the
     // UI.
-    if (mDeferredWindowClose || !printJob->CreatedForPrintPreview()) {
-      mDeferredWindowClose = false;
+    if (!printJob->CreatedForPrintPreview()) {
       if (mContainer) {
         if (nsCOMPtr<nsPIDOMWindowOuter> win = mContainer->GetWindow()) {
           win->Close();

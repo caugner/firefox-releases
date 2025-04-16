@@ -13,13 +13,14 @@
 
 #include "NamespaceImports.h"
 
+#include "builtin/TypedObject.h"
 #include "gc/Rooting.h"
 #include "jit/CacheIROpsGenerated.h"
 #include "jit/CompactBuffer.h"
 #include "jit/ICState.h"
-#include "jit/MacroAssembler.h"
 #include "jit/Simulator.h"
-#include "js/ScalarType.h"  // js::Scalar::Type
+#include "js/friend/XrayJitInfo.h"  // JS::XrayJitInfo
+#include "js/ScalarType.h"          // js::Scalar::Type
 #include "vm/Iteration.h"
 #include "vm/Shape.h"
 
@@ -28,6 +29,11 @@ namespace jit {
 
 enum class BaselineCacheIRStubKind;
 enum class InlinableNative : uint16_t;
+
+class ICStub;
+class ICScript;
+class Label;
+class MacroAssembler;
 
 // [SMDOC] CacheIR
 //
@@ -180,6 +186,7 @@ class TypedOperandId : public OperandId {
   _(ToPropertyKey)        \
   _(InstanceOf)           \
   _(GetIterator)          \
+  _(OptimizeSpreadCall)   \
   _(Compare)              \
   _(ToBool)               \
   _(Call)                 \
@@ -219,6 +226,7 @@ class StubField {
     JSObject,
     Symbol,
     String,
+    BaseScript,
     Id,
 
     // These fields take up 64 bits on all platforms.
@@ -290,10 +298,12 @@ class CallFlags {
 
   CallFlags() = default;
   explicit CallFlags(ArgFormat format) : argFormat_(format) {}
-  CallFlags(bool isConstructing, bool isSpread, bool isSameRealm = false)
+  CallFlags(bool isConstructing, bool isSpread, bool isSameRealm = false,
+            bool needsUninitializedThis = false)
       : argFormat_(isSpread ? Spread : Standard),
         isConstructing_(isConstructing),
-        isSameRealm_(isSameRealm) {}
+        isSameRealm_(isSameRealm),
+        needsUninitializedThis_(needsUninitializedThis) {}
 
   ArgFormat getArgFormat() const { return argFormat_; }
   bool isConstructing() const {
@@ -302,6 +312,9 @@ class CallFlags {
     return isConstructing_;
   }
   bool isSameRealm() const { return isSameRealm_; }
+
+  bool needsUninitializedThis() const { return needsUninitializedThis_; }
+  void setNeedsUninitializedThis() { needsUninitializedThis_ = true; }
 
   uint8_t toByte() const {
     // See CacheIRReader::callFlags()
@@ -313,6 +326,9 @@ class CallFlags {
     if (isSameRealm()) {
       value |= CallFlags::IsSameRealm;
     }
+    if (needsUninitializedThis()) {
+      value |= CallFlags::NeedsUninitializedThis;
+    }
     return value;
   }
 
@@ -320,6 +336,7 @@ class CallFlags {
   ArgFormat argFormat_ = ArgFormat::Unknown;
   bool isConstructing_ = false;
   bool isSameRealm_ = false;
+  bool needsUninitializedThis_ = false;
 
   // Used for encoding/decoding
   static const uint8_t ArgFormatBits = 4;
@@ -327,6 +344,7 @@ class CallFlags {
   static_assert(LastArgFormat <= ArgFormatMask, "Not enough arg format bits");
   static const uint8_t IsConstructing = 1 << 5;
   static const uint8_t IsSameRealm = 1 << 6;
+  static const uint8_t NeedsUninitializedThis = 1 << 7;
 
   friend class CacheIRReader;
   friend class CacheIRWriter;
@@ -498,6 +516,10 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
   static const size_t MaxStubDataSizeInBytes = 20 * sizeof(uintptr_t);
   bool tooLarge_;
 
+  // Assume this stub can't be trial inlined until we see a scripted call/inline
+  // instruction.
+  TrialInliningState trialInliningState_ = TrialInliningState::Failure;
+
   // Basic caching to avoid quadatic lookup behaviour in readStubFieldForIon.
   mutable uint32_t lastOffset_;
   mutable uint32_t lastIndex_;
@@ -586,6 +608,10 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
   void writeSymbolField(JS::Symbol* sym) {
     MOZ_ASSERT(sym);
     addStubField(uintptr_t(sym), StubField::Type::Symbol);
+  }
+  void writeBaseScriptField(BaseScript* script) {
+    MOZ_ASSERT(script);
+    addStubField(uintptr_t(script), StubField::Type::BaseScript);
   }
   void writeRawWordField(uintptr_t word) {
     addStubField(word, StubField::Type::RawWord);
@@ -680,6 +706,8 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
 
   bool failed() const { return buffer_.oom() || tooLarge_; }
 
+  TrialInliningState trialInliningState() const { return trialInliningState_; }
+
   uint32_t numInputOperands() const { return numInputOperands_; }
   uint32_t numOperandIds() const { return nextOperandId_; }
   uint32_t numInstructions() const { return nextInstructionId_; }
@@ -766,6 +794,10 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
     return NumberOperandId(input.id());
   }
 
+  ValOperandId boxObject(ObjOperandId input) {
+    return ValOperandId(input.id());
+  }
+
   void guardShapeForClass(ObjOperandId obj, Shape* shape) {
     // Guard shape to ensure that object class is unchanged. This is true
     // for all shapes.
@@ -801,18 +833,29 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
     guardGroup(obj, group);
   }
 
+  static uint32_t encodeNargsAndFlags(JSFunction* fun) {
+    static_assert(JSFunction::NArgsBits == 16);
+    static_assert(sizeof(decltype(fun->flags().toRaw())) == sizeof(uint16_t));
+    return (uint32_t(fun->nargs()) << 16) | fun->flags().toRaw();
+  }
+
   void guardSpecificFunction(ObjOperandId obj, JSFunction* expected) {
     // Guard object is a specific function. This implies immutable fields on
     // the JSFunction struct itself are unchanged.
     // Bake in the nargs and FunctionFlags so Warp can use them off-main thread,
     // instead of directly using the JSFunction fields.
-    static_assert(JSFunction::NArgsBits == 16);
-    static_assert(sizeof(decltype(expected->flags().toRaw())) ==
-                  sizeof(uint16_t));
-
-    uint32_t nargsAndFlags =
-        (uint32_t(expected->nargs()) << 16) | expected->flags().toRaw();
+    uint32_t nargsAndFlags = encodeNargsAndFlags(expected);
     guardSpecificFunction_(obj, expected, nargsAndFlags);
+  }
+
+  void guardFunctionScript(ObjOperandId fun, BaseScript* expected) {
+    // Guard function has a specific BaseScript. This implies immutable fields
+    // on the JSFunction struct itself are unchanged and are equivalent for
+    // lambda clones.
+    // Bake in the nargs and FunctionFlags so Warp can use them off-main thread,
+    // instead of directly using the JSFunction fields.
+    uint32_t nargsAndFlags = encodeNargsAndFlags(expected->function());
+    guardFunctionScript_(fun, expected, nargsAndFlags);
   }
 
   ValOperandId loadArgumentFixedSlot(
@@ -845,6 +888,18 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
       return loadArgumentDynamicSlot_(argcId, slotIndex);
     }
     return loadArgumentFixedSlot_(slotIndex);
+  }
+
+  void callScriptedFunction(ObjOperandId callee, Int32OperandId argc,
+                            CallFlags flags) {
+    callScriptedFunction_(callee, argc, flags);
+    trialInliningState_ = TrialInliningState::Candidate;
+  }
+
+  void callInlinedFunction(ObjOperandId callee, Int32OperandId argc,
+                           ICScript* icScript, CallFlags flags) {
+    callInlinedFunction_(callee, argc, icScript, flags);
+    trialInliningState_ = TrialInliningState::Inlined;
   }
 
   void callNativeFunction(ObjOperandId calleeId, Int32OperandId argc, JSOp op,
@@ -905,6 +960,34 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
     target = Simulator::RedirectNativeFunction(target, Args_General3);
 #endif
     callClassHook_(calleeId, argc, flags, target);
+  }
+
+  void callScriptedGetterResult(ValOperandId receiver, JSFunction* getter,
+                                bool sameRealm) {
+    MOZ_ASSERT(getter->hasJitEntry());
+    uint32_t nargsAndFlags = encodeNargsAndFlags(getter);
+    callScriptedGetterResult_(receiver, getter, sameRealm, nargsAndFlags);
+  }
+
+  void callNativeGetterResult(ValOperandId receiver, JSFunction* getter,
+                              bool sameRealm) {
+    MOZ_ASSERT(getter->isNativeWithoutJitEntry());
+    uint32_t nargsAndFlags = encodeNargsAndFlags(getter);
+    callNativeGetterResult_(receiver, getter, sameRealm, nargsAndFlags);
+  }
+
+  void callScriptedSetter(ObjOperandId receiver, JSFunction* setter,
+                          ValOperandId rhs, bool sameRealm) {
+    MOZ_ASSERT(setter->hasJitEntry());
+    uint32_t nargsAndFlags = encodeNargsAndFlags(setter);
+    callScriptedSetter_(receiver, setter, rhs, sameRealm, nargsAndFlags);
+  }
+
+  void callNativeSetter(ObjOperandId receiver, JSFunction* setter,
+                        ValOperandId rhs, bool sameRealm) {
+    MOZ_ASSERT(setter->isNativeWithoutJitEntry());
+    uint32_t nargsAndFlags = encodeNargsAndFlags(setter);
+    callNativeSetter_(receiver, setter, rhs, sameRealm, nargsAndFlags);
   }
 
   // These generate no code, but save the template object in a stub
@@ -1017,13 +1100,17 @@ class MOZ_RAII CacheIRReader {
         CallFlags::ArgFormat(encoded & CallFlags::ArgFormatMask);
     bool isConstructing = encoded & CallFlags::IsConstructing;
     bool isSameRealm = encoded & CallFlags::IsSameRealm;
+    bool needsUninitializedThis = encoded & CallFlags::NeedsUninitializedThis;
+    MOZ_ASSERT_IF(needsUninitializedThis, isConstructing);
     switch (format) {
       case CallFlags::Unknown:
         MOZ_CRASH("Unexpected call flags");
       case CallFlags::Standard:
-        return CallFlags(isConstructing, /*isSpread =*/false, isSameRealm);
+        return CallFlags(isConstructing, /*isSpread =*/false, isSameRealm,
+                         needsUninitializedThis);
       case CallFlags::Spread:
-        return CallFlags(isConstructing, /*isSpread =*/true, isSameRealm);
+        return CallFlags(isConstructing, /*isSpread =*/true, isSameRealm,
+                         needsUninitializedThis);
       default:
         // The existing non-standard argument formats (FunCall and FunApply)
         // can't be constructors and have no support for isSameRealm.
@@ -1091,6 +1178,7 @@ class MOZ_RAII CacheIRCloner {
   JSAtom* getAtomField(uint32_t stubOffset);
   PropertyName* getPropertyNameField(uint32_t stubOffset);
   JS::Symbol* getSymbolField(uint32_t stubOffset);
+  BaseScript* getBaseScriptField(uint32_t stubOffset);
   uintptr_t getRawWordField(uint32_t stubOffset);
   const void* getRawPointerField(uint32_t stubOffset);
   jsid getIdField(uint32_t stubOffset);
@@ -1179,7 +1267,7 @@ class MOZ_RAII GetPropIRGenerator : public IRGenerator {
   PreliminaryObjectAction preliminaryObjectAction_;
 
   AttachDecision tryAttachNative(HandleObject obj, ObjOperandId objId,
-                                 HandleId id);
+                                 HandleId id, ValOperandId receiverId);
   AttachDecision tryAttachUnboxed(HandleObject obj, ObjOperandId objId,
                                   HandleId id);
   AttachDecision tryAttachUnboxedExpando(HandleObject obj, ObjOperandId objId,
@@ -1199,20 +1287,22 @@ class MOZ_RAII GetPropIRGenerator : public IRGenerator {
                                                   HandleId id);
   AttachDecision tryAttachXrayCrossCompartmentWrapper(HandleObject obj,
                                                       ObjOperandId objId,
-                                                      HandleId id);
+                                                      HandleId id,
+                                                      ValOperandId receiverId);
   AttachDecision tryAttachFunction(HandleObject obj, ObjOperandId objId,
                                    HandleId id);
 
   AttachDecision tryAttachGenericProxy(HandleObject obj, ObjOperandId objId,
                                        HandleId id, bool handleDOMProxies);
   AttachDecision tryAttachDOMProxyExpando(HandleObject obj, ObjOperandId objId,
-                                          HandleId id);
+                                          HandleId id, ValOperandId receiverId);
   AttachDecision tryAttachDOMProxyShadowed(HandleObject obj, ObjOperandId objId,
                                            HandleId id);
   AttachDecision tryAttachDOMProxyUnshadowed(HandleObject obj,
-                                             ObjOperandId objId, HandleId id);
+                                             ObjOperandId objId, HandleId id,
+                                             ValOperandId receiverId);
   AttachDecision tryAttachProxy(HandleObject obj, ObjOperandId objId,
-                                HandleId id);
+                                HandleId id, ValOperandId receiverId);
 
   AttachDecision tryAttachPrimitive(ValOperandId valId, HandleId id);
   AttachDecision tryAttachStringChar(ValOperandId valId, ValOperandId indexId);
@@ -1222,7 +1312,7 @@ class MOZ_RAII GetPropIRGenerator : public IRGenerator {
   AttachDecision tryAttachMagicArgument(ValOperandId valId,
                                         ValOperandId indexId);
   AttachDecision tryAttachArgumentsObjectArg(HandleObject obj,
-                                             ObjOperandId objId,
+                                             ObjOperandId objId, uint32_t index,
                                              Int32OperandId indexId);
 
   AttachDecision tryAttachDenseElement(HandleObject obj, ObjOperandId objId,
@@ -1600,11 +1690,34 @@ class MOZ_RAII GetIteratorIRGenerator : public IRGenerator {
   void trackAttached(const char* name);
 };
 
+class MOZ_RAII OptimizeSpreadCallIRGenerator : public IRGenerator {
+  HandleValue val_;
+
+  AttachDecision tryAttachArray();
+  AttachDecision tryAttachNotOptimizable();
+
+ public:
+  OptimizeSpreadCallIRGenerator(JSContext* cx, HandleScript script,
+                                jsbytecode* pc, ICState::Mode mode,
+                                HandleValue value);
+
+  AttachDecision tryAttachStub();
+
+  void trackAttached(const char* name);
+};
+
 enum class StringChar { CodeAt, At };
+enum class ScriptedThisResult {
+  NoAction,
+  TemporarilyUnoptimizable,
+  UninitializedThis,
+  TemplateObject
+};
 
 class MOZ_RAII CallIRGenerator : public IRGenerator {
  private:
   JSOp op_;
+  bool isFirstStub_;
   uint32_t argc_;
   HandleValue callee_;
   HandleValue thisval_;
@@ -1613,13 +1726,13 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
   PropertyTypeCheckInfo typeCheckInfo_;
   BaselineCacheIRStubKind cacheIRStubKind_;
 
-  bool getTemplateObjectForScripted(HandleFunction calleeFunc,
-                                    MutableHandleObject result,
-                                    bool* skipAttach);
+  ScriptedThisResult getThisForScripted(HandleFunction calleeFunc,
+                                        MutableHandleObject result);
   bool getTemplateObjectForNative(HandleFunction calleeFunc,
                                   MutableHandleObject result);
 
   void emitNativeCalleeGuard(HandleFunction callee);
+  void emitCalleeGuard(ObjOperandId calleeId, HandleFunction callee);
 
   bool canAttachAtomicsReadWriteModify();
 
@@ -1665,6 +1778,8 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
   AttachDecision tryAttachSubstringKernel(HandleFunction callee);
   AttachDecision tryAttachObjectHasPrototype(HandleFunction callee);
   AttachDecision tryAttachString(HandleFunction callee);
+  AttachDecision tryAttachStringConstructor(HandleFunction callee);
+  AttachDecision tryAttachStringToStringValueOf(HandleFunction callee);
   AttachDecision tryAttachStringChar(HandleFunction callee, StringChar kind);
   AttachDecision tryAttachStringCharCodeAt(HandleFunction callee);
   AttachDecision tryAttachStringCharAt(HandleFunction callee);
@@ -1712,6 +1827,7 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
   AttachDecision tryAttachObjectCreate(HandleFunction callee);
   AttachDecision tryAttachArrayConstructor(HandleFunction callee);
   AttachDecision tryAttachTypedArrayConstructor(HandleFunction callee);
+  AttachDecision tryAttachNumberToString(HandleFunction callee);
   AttachDecision tryAttachReflectGetPrototypeOf(HandleFunction callee);
   AttachDecision tryAttachAtomicsCompareExchange(HandleFunction callee);
   AttachDecision tryAttachAtomicsExchange(HandleFunction callee);
@@ -1728,6 +1844,7 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
   AttachDecision tryAttachAssertFloat32(HandleFunction callee);
   AttachDecision tryAttachAssertRecoveredOnBailout(HandleFunction callee);
   AttachDecision tryAttachObjectIs(HandleFunction callee);
+  AttachDecision tryAttachObjectIsPrototypeOf(HandleFunction callee);
 
   AttachDecision tryAttachFunCall(HandleFunction calleeFunc);
   AttachDecision tryAttachFunApply(HandleFunction calleeFunc);
@@ -1740,9 +1857,9 @@ class MOZ_RAII CallIRGenerator : public IRGenerator {
 
  public:
   CallIRGenerator(JSContext* cx, HandleScript script, jsbytecode* pc, JSOp op,
-                  ICState::Mode mode, uint32_t argc, HandleValue callee,
-                  HandleValue thisval, HandleValue newTarget,
-                  HandleValueArray args);
+                  ICState::Mode mode, bool isFirstStub, uint32_t argc,
+                  HandleValue callee, HandleValue thisval,
+                  HandleValue newTarget, HandleValueArray args);
 
   AttachDecision tryAttachStub();
 
@@ -1924,6 +2041,9 @@ inline ReferenceType ReferenceTypeFromSimpleTypeDescrKey(uint32_t key) {
 
 // Returns whether obj is a WindowProxy wrapping the script's global.
 extern bool IsWindowProxyForScriptGlobal(JSScript* script, JSObject* obj);
+
+// Retrieve Xray JIT info set by the embedder.
+extern JS::XrayJitInfo* GetXrayJitInfo();
 
 }  // namespace jit
 }  // namespace js

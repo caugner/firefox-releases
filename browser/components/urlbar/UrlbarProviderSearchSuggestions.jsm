@@ -95,10 +95,17 @@ class ProviderSearchSuggestions extends UrlbarProvider {
       return false;
     }
 
-    return (
-      this._getFormHistoryCount(queryContext) ||
-      this._allowRemoteSuggestions(queryContext)
-    );
+    if (!this._allowSuggestions(queryContext)) {
+      return false;
+    }
+
+    let wantsLocalSuggestions =
+      UrlbarPrefs.get("maxHistoricalSearchSuggestions") &&
+      (!UrlbarPrefs.get("update2") ||
+        queryContext.trimmedSearchString ||
+        UrlbarPrefs.get("update2.emptySearchBehavior") != 0);
+
+    return wantsLocalSuggestions || this._allowRemoteSuggestions(queryContext);
   }
 
   /**
@@ -125,9 +132,7 @@ class ProviderSearchSuggestions extends UrlbarProvider {
   /**
    * Returns whether suggestions in general are allowed for a given query
    * context.  If this returns false, then we shouldn't fetch either form
-   * history or remote suggestions.  Otherwise further checks are necessary to
-   * determine whether to allow either form history or remote suggestions; see
-   * _getFormHistoryCount and _allowRemoteSuggestions.
+   * history or remote suggestions.
    *
    * @param {object} queryContext The query context object
    * @returns {boolean} True if suggestions in general are allowed and false if
@@ -161,12 +166,8 @@ class ProviderSearchSuggestions extends UrlbarProvider {
     queryContext,
     searchString = queryContext.searchString
   ) {
-    // Check whether suggestions in general are allowed.
-    if (
-      !this._allowSuggestions(queryContext) ||
-      // TODO (Bug 1626964): Support zero prefix suggestions.
-      !searchString.trim()
-    ) {
+    // TODO (Bug 1626964): Support zero prefix suggestions.
+    if (!searchString.trim()) {
       return false;
     }
 
@@ -269,10 +270,8 @@ class ProviderSearchSuggestions extends UrlbarProvider {
       engine = Services.search.getEngineByName(
         queryContext.searchMode.engineName
       );
-    } else if (queryContext.isPrivate) {
-      engine = Services.search.defaultPrivateEngine;
     } else {
-      engine = Services.search.defaultEngine;
+      engine = UrlbarSearchUtils.getDefaultEngine(queryContext.isPrivate);
     }
 
     if (!engine) {
@@ -316,45 +315,6 @@ class ProviderSearchSuggestions extends UrlbarProvider {
     }
   }
 
-  /**
-   * Returns the number of form history entries we should fetch from the
-   * suggestions controller for a given query context.
-   *
-   * @param {object} queryContext The query context object
-   * @param {string} [searchString] The effective search string without
-   *        restriction tokens or aliases. Defaults to the context searchString.
-   * @returns {number} The number of form history results we should fetch.
-   */
-  _getFormHistoryCount(queryContext, searchString = queryContext.searchString) {
-    if (!this._allowSuggestions(queryContext)) {
-      return 0;
-    }
-
-    // TODO (Bug 1657648): In search mode, we should probably fetch a larger
-    // number of local results when there's zero or just a few remote results.
-    let count = UrlbarPrefs.get("maxHistoricalSearchSuggestions");
-    if (!count) {
-      return 0;
-    }
-
-    // TODO (Bug 1626964): Support zero prefix suggestions.
-    // For now, in case the search string is empty, we allow more local
-    // suggestions because we don't have zero prefix remote suggestions.
-    // Note we still respect maxHistoricalSearchSuggestions being set to 0.
-    if (!searchString) {
-      return queryContext.maxResults;
-    }
-
-    // If there's a form history entry that equals the search string, the search
-    // suggestions controller will include it, and we'll make a result for it.
-    // If the heuristic result ends up being a search result, the muxer will
-    // exclude the form history result since it dupes the heuristic, and the
-    // final list of results would be left with `count` - 1 form history results
-    // instead of `count`.  Therefore we request `count` + 1 entries.  The muxer
-    // will dedupe and limit the final form history count as appropriate.
-    return count + 1;
-  }
-
   async _fetchSearchSuggestions(queryContext, engine, searchString, alias) {
     if (!engine) {
       return null;
@@ -362,17 +322,19 @@ class ProviderSearchSuggestions extends UrlbarProvider {
 
     this._suggestionsController = new SearchSuggestionController();
     this._suggestionsController.formHistoryParam = queryContext.formHistoryName;
-    this._suggestionsController.maxLocalResults = this._getFormHistoryCount(
-      queryContext,
-      searchString
-    );
 
-    let allowRemote = this._allowRemoteSuggestions(queryContext, searchString);
+    // If there's a form history entry that equals the search string, the search
+    // suggestions controller will include it, and we'll make a result for it.
+    // If the heuristic result ends up being a search result, the muxer will
+    // discard the form history result since it dupes the heuristic, and the
+    // final list of results would be left with `count` - 1 form history results
+    // instead of `count`.  Therefore we request `count` + 1 entries.  The muxer
+    // will dedupe and limit the final form history count as appropriate.
+    this._suggestionsController.maxLocalResults = queryContext.maxResults + 1;
 
     // Request maxResults + 1 remote suggestions for the same reason we request
-    // maxHistoricalSearchSuggestions + 1 form history entries; see
-    // _getFormHistoryCount.  We allow for the possibility that the engine may
-    // return a suggestion that's the same as the search string.
+    // maxHistoricalSearchSuggestions + 1 form history entries.
+    let allowRemote = this._allowRemoteSuggestions(queryContext, searchString);
     this._suggestionsController.maxRemoteResults = allowRemote
       ? queryContext.maxResults + 1
       : 0;
@@ -382,7 +344,8 @@ class ProviderSearchSuggestions extends UrlbarProvider {
       queryContext.isPrivate,
       engine,
       queryContext.userContextId,
-      this._isTokenOrRestrictionPresent(queryContext)
+      this._isTokenOrRestrictionPresent(queryContext),
+      false
     );
 
     // See `SearchSuggestionsController.fetch` documentation for a description
@@ -395,19 +358,20 @@ class ProviderSearchSuggestions extends UrlbarProvider {
 
     let results = [];
 
-    for (let entry of fetchData.local) {
-      results.push(
-        new UrlbarResult(
-          UrlbarUtils.RESULT_TYPE.SEARCH,
-          UrlbarUtils.RESULT_SOURCE.HISTORY,
-          ...UrlbarResult.payloadAndSimpleHighlights(queryContext.tokens, {
-            engine: engine.name,
-            isSearchHistory: true,
-            suggestion: [entry.value, UrlbarUtils.HIGHLIGHT.SUGGESTED],
-            lowerCaseSuggestion: entry.value.toLocaleLowerCase(),
-          })
-        )
-      );
+    // We use this to discard remote suggestions that duplicate form history.
+    let seenSuggestions = new Set();
+
+    // Add maxHistoricalSearchSuggestions form history results to the beginning
+    // of the array.  Below we'll add the remainder after remote suggestions.
+    // Any excess results that are not discarded by the muxer will appear below
+    // the remote suggestions in the final results.
+    let maxInitialFormHistory = UrlbarPrefs.get(
+      "maxHistoricalSearchSuggestions"
+    );
+    while (results.length < maxInitialFormHistory && fetchData.local.length) {
+      let entry = fetchData.local.shift();
+      results.push(makeFormHistoryResult(queryContext, engine, entry));
+      seenSuggestions.add(entry.value);
     }
 
     // If we don't return many results, then keep track of the query. If the
@@ -432,7 +396,7 @@ class ProviderSearchSuggestions extends UrlbarProvider {
     });
 
     for (let entry of fetchData.remote) {
-      if (looksLikeUrl(entry.value)) {
+      if (looksLikeUrl(entry.value) || seenSuggestions.has(entry.value)) {
         continue;
       }
 
@@ -466,18 +430,28 @@ class ProviderSearchSuggestions extends UrlbarProvider {
               lowerCaseSuggestion: entry.value.toLocaleLowerCase(),
               tailPrefix,
               tail: [tail, UrlbarUtils.HIGHLIGHT.SUGGESTED],
-              tailOffsetIndex: entry.tailOffsetIndex,
+              tailOffsetIndex: tail ? entry.tailOffsetIndex : undefined,
               keyword: [alias ? alias : undefined, UrlbarUtils.HIGHLIGHT.TYPED],
               query: [searchString.trim(), UrlbarUtils.HIGHLIGHT.NONE],
-              isSearchHistory: false,
-              icon: [engine.iconURI && !entry.value ? engine.iconURI.spec : ""],
-              keywordOffer: UrlbarUtils.KEYWORD_OFFER.NONE,
+              icon: !entry.value ? engine.iconURI?.spec : undefined,
             })
           )
         );
+        seenSuggestions.add(entry.value);
       } catch (err) {
         Cu.reportError(err);
         continue;
+      }
+    }
+
+    // Add the remaining form history results.
+    while (
+      results.length < queryContext.maxResults + 1 &&
+      fetchData.local.length
+    ) {
+      let entry = fetchData.local.shift();
+      if (!seenSuggestions.has(entry.value)) {
+        results.push(makeFormHistoryResult(queryContext, engine, entry));
       }
     }
 
@@ -493,25 +467,30 @@ class ProviderSearchSuggestions extends UrlbarProvider {
    * @returns {nsISearchEngine} aliasEngine.engine
    * @returns {string} aliasEngine.alias
    * @returns {string} aliasEngine.query
-   * @returns {boolean} aliasEngine.isTokenAlias
+   * @returns {object} { engine, alias, query }
    *
    */
   async _maybeGetAlias(queryContext) {
-    if (
-      queryContext.restrictSource &&
-      queryContext.restrictSource == UrlbarUtils.RESULT_SOURCE.SEARCH &&
-      queryContext.searchMode?.engineName &&
-      !queryContext.searchString.startsWith("@")
-    ) {
-      // If an engineName was passed in from the queryContext in restrict mode,
-      // we'll set our engine in startQuery based on engineName.
+    if (queryContext.searchMode) {
+      // If we're in search mode, don't try to parse an alias at all.
       return null;
     }
 
-    let possibleAlias = queryContext.tokens[0]?.value.trim();
-    // The "@" character on its own is handled by UnifiedComplete and returns a
-    // list of every available token alias.
+    let possibleAlias = queryContext.tokens[0]?.value;
+    // "@" on its own is handled by UrlbarProviderTokenAliasEngines and returns
+    // a list of every available token alias.
     if (!possibleAlias || possibleAlias == "@") {
+      return null;
+    }
+
+    let query = UrlbarUtils.substringAfter(
+      queryContext.searchString,
+      possibleAlias
+    );
+
+    // Match an alias only when it has a space after it.  If there's no trailing
+    // space, then continue to treat it as part of the search string.
+    if (UrlbarPrefs.get("update2") && !query.startsWith(" ")) {
       return null;
     }
 
@@ -521,16 +500,24 @@ class ProviderSearchSuggestions extends UrlbarProvider {
       return {
         engine: engineMatch,
         alias: possibleAlias,
-        query: UrlbarUtils.substringAfter(
-          queryContext.searchString,
-          possibleAlias
-        ).trim(),
-        isTokenAlias: possibleAlias.startsWith("@"),
+        query: query.trim(),
       };
     }
 
     return null;
   }
+}
+
+function makeFormHistoryResult(queryContext, engine, entry) {
+  return new UrlbarResult(
+    UrlbarUtils.RESULT_TYPE.SEARCH,
+    UrlbarUtils.RESULT_SOURCE.HISTORY,
+    ...UrlbarResult.payloadAndSimpleHighlights(queryContext.tokens, {
+      engine: engine.name,
+      suggestion: [entry.value, UrlbarUtils.HIGHLIGHT.SUGGESTED],
+      lowerCaseSuggestion: entry.value.toLocaleLowerCase(),
+    })
+  );
 }
 
 var UrlbarProviderSearchSuggestions = new ProviderSearchSuggestions();

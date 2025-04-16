@@ -60,7 +60,7 @@ class HttpBackgroundChannelChild final : public PHttpBackgroundChannelChild {
                                    const nsresult& aTransportStatus,
                                    const uint64_t& aOffset,
                                    const uint32_t& aCount,
-                                   const nsCString& aData,
+                                   const nsDependentCSubstring& aData,
                                    const bool& aDataFromSocketProcess);
 
   IPCResult RecvOnStopRequest(
@@ -79,10 +79,6 @@ class HttpBackgroundChannelChild final : public PHttpBackgroundChannelChild {
                            const int64_t& aProgressMax);
 
   IPCResult RecvOnStatus(const nsresult& aStatus);
-
-  IPCResult RecvFlushedForDiversion();
-
-  IPCResult RecvDivertMessages();
 
   IPCResult RecvNotifyClassificationFlags(const uint32_t& aClassificationFlags,
                                           const bool& aIsThirdParty);

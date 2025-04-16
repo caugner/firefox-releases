@@ -1,5 +1,4 @@
-//! This module defines x86_64-specific machine instruction types.an explanation of what it's
-//! doing.
+//! This module defines x86_64-specific machine instruction types.
 #![allow(dead_code)]
 #![allow(non_snake_case)]
 #![allow(non_camel_case_types)]
@@ -56,6 +55,18 @@ pub enum Inst {
         dst: Writable<Reg>,
     },
 
+    /// Bitwise not
+    Not {
+        size: u8, // 1, 2, 4 or 8
+        src: Writable<Reg>,
+    },
+
+    /// Integer negation
+    Neg {
+        size: u8, // 1, 2, 4 or 8
+        src: Writable<Reg>,
+    },
+
     /// Integer quotient and remainder: (div idiv) $rax $rdx (reg addr)
     Div {
         size: u8, // 1, 2, 4 or 8
@@ -89,13 +100,14 @@ pub enum Inst {
     },
 
     /// Do a sign-extend based on the sign of the value in rax into rdx: (cwd cdq cqo)
-    SignExtendRaxRdx {
+    /// or al into ah: (cbw)
+    SignExtendData {
         size: u8, // 1, 2, 4 or 8
     },
 
     /// Constant materialization: (imm32 imm64) reg.
     /// Either: movl $imm32, %reg32 or movabsq $imm64, %reg32.
-    Imm_R {
+    Imm {
         dst_is_64: bool,
         simm64: u64,
         dst: Writable<Reg>,
@@ -151,9 +163,9 @@ pub enum Inst {
         srcloc: Option<SourceLoc>,
     },
 
-    /// Arithmetic shifts: (shl shr sar) (l q) imm reg.
+    /// Arithmetic shifts: (shl shr sar) (b w l q) imm reg.
     Shift_R {
-        is_64: bool,
+        size: u8, // 1, 2, 4 or 8
         kind: ShiftKind,
         /// shift count: Some(0 .. #bits-in-type - 1), or None to mean "%cl".
         num_bits: Option<u8>,
@@ -359,6 +371,16 @@ pub enum Inst {
     /// Jump to a known target: jmp simm32.
     JmpKnown { dst: BranchTarget },
 
+    /// One-way conditional branch: jcond cond target.
+    ///
+    /// This instruction is useful when we have conditional jumps depending on more than two
+    /// conditions, see for instance the lowering of Brz/brnz with Fcmp inputs.
+    ///
+    /// A note of caution: in contexts where the branch target is another block, this has to be the
+    /// same successor as the one specified in the terminator branch of the current block.
+    /// Otherwise, this might confuse register allocation by creating new invisible edges.
+    JmpIf { cc: CC, taken: BranchTarget },
+
     /// Two-way conditional branch: jcond cond target target.
     /// Emitted as a compound sequence; the MachBuffer will shrink it as appropriate.
     JmpCond {
@@ -403,6 +425,56 @@ pub enum Inst {
         srcloc: SourceLoc,
         offset: i64,
     },
+
+    // =====================================
+    // Instructions pertaining to atomic memory accesses.
+    /// A standard (native) `lock cmpxchg src, (amode)`, with register conventions:
+    ///
+    /// `dst`  (read) address
+    /// `src`  (read) replacement value
+    /// %rax   (modified) in: expected value, out: value that was actually at `dst`
+    /// %rflags is written.  Do not assume anything about it after the instruction.
+    ///
+    /// The instruction "succeeded" iff the lowest `ty` bits of %rax afterwards are the same as
+    /// they were before.
+    LockCmpxchg {
+        ty: Type, // I8, I16, I32 or I64
+        src: Reg,
+        dst: SyntheticAmode,
+        srcloc: Option<SourceLoc>,
+    },
+
+    /// A synthetic instruction, based on a loop around a native `lock cmpxchg` instruction.
+    /// This atomically modifies a value in memory and returns the old value.  The sequence
+    /// consists of an initial "normal" load from `dst`, followed by a loop which computes the
+    /// new value and tries to compare-and-swap ("CAS") it into `dst`, using the native
+    /// instruction `lock cmpxchg{b,w,l,q}` .  The loop iterates until the CAS is successful.
+    /// If there is no contention, there will be only one pass through the loop body.  The
+    /// sequence does *not* perform any explicit memory fence instructions
+    /// (mfence/sfence/lfence).
+    ///
+    /// Note that the transaction is atomic in the sense that, as observed by some other thread,
+    /// `dst` either has the initial or final value, but no other.  It isn't atomic in the sense
+    /// of guaranteeing that no other thread writes to `dst` in between the initial load and the
+    /// CAS -- but that would cause the CAS to fail unless the other thread's last write before
+    /// the CAS wrote the same value that was already there.  In other words, this
+    /// implementation suffers (unavoidably) from the A-B-A problem.
+    ///
+    /// This instruction sequence has fixed register uses as follows:
+    ///
+    /// %r9   (read) address
+    /// %r10  (read) second operand for `op`
+    /// %r11  (written) scratch reg; value afterwards has no meaning
+    /// %rax  (written) the old value at %r9
+    /// %rflags is written.  Do not assume anything about it after the instruction.
+    AtomicRmwSeq {
+        ty: Type, // I8, I16, I32 or I64
+        op: inst_common::AtomicRmwOp,
+        srcloc: Option<SourceLoc>,
+    },
+
+    /// A memory fence (mfence, lfence or sfence).
+    Fence { kind: FenceKind },
 
     // =====================================
     // Meta-instructions generating no code.
@@ -452,6 +524,18 @@ impl Inst {
         Self::UnaryRmR { size, op, src, dst }
     }
 
+    pub(crate) fn not(size: u8, src: Writable<Reg>) -> Inst {
+        debug_assert_eq!(src.to_reg().get_class(), RegClass::I64);
+        debug_assert!(size == 8 || size == 4 || size == 2 || size == 1);
+        Inst::Not { size, src }
+    }
+
+    pub(crate) fn neg(size: u8, src: Writable<Reg>) -> Inst {
+        debug_assert_eq!(src.to_reg().get_class(), RegClass::I64);
+        debug_assert!(size == 8 || size == 4 || size == 2 || size == 1);
+        Inst::Neg { size, src }
+    }
+
     pub(crate) fn div(size: u8, signed: bool, divisor: RegMem, loc: SourceLoc) -> Inst {
         divisor.assert_regclass_is(RegClass::I64);
         debug_assert!(size == 8 || size == 4 || size == 2 || size == 1);
@@ -490,31 +574,18 @@ impl Inst {
         }
     }
 
-    pub(crate) fn sign_extend_rax_to_rdx(size: u8) -> Inst {
-        debug_assert!(size == 8 || size == 4 || size == 2);
-        Inst::SignExtendRaxRdx { size }
+    pub(crate) fn sign_extend_data(size: u8) -> Inst {
+        debug_assert!(size == 8 || size == 4 || size == 2 || size == 1);
+        Inst::SignExtendData { size }
     }
 
-    pub(crate) fn imm_r(dst_is_64: bool, simm64: u64, dst: Writable<Reg>) -> Inst {
+    pub(crate) fn imm(size: OperandSize, simm64: u64, dst: Writable<Reg>) -> Inst {
         debug_assert!(dst.to_reg().get_class() == RegClass::I64);
-        if !dst_is_64 {
-            debug_assert!(
-                low32_will_sign_extend_to_64(simm64),
-                "{} won't sign-extend to 64 bits!",
-                simm64
-            );
-        }
-        Inst::Imm_R {
+        // Try to generate a 32-bit immediate when the upper high bits are zeroed (which matches
+        // the semantics of movl).
+        let dst_is_64 = size == OperandSize::Size64 && simm64 > u32::max_value() as u64;
+        Inst::Imm {
             dst_is_64,
-            simm64,
-            dst,
-        }
-    }
-
-    pub(crate) fn imm32_r_unchecked(simm64: u64, dst: Writable<Reg>) -> Inst {
-        debug_assert!(dst.to_reg().get_class() == RegClass::I64);
-        Inst::Imm_R {
-            dst_is_64: false,
             simm64,
             dst,
         }
@@ -526,6 +597,7 @@ impl Inst {
         Inst::Mov_R_R { is_64, src, dst }
     }
 
+    // TODO Can be replaced by `Inst::move` (high-level) and `Inst::unary_rm_r` (low-level)
     pub(crate) fn xmm_mov(
         op: SseOpcode,
         src: RegMem,
@@ -800,19 +872,20 @@ impl Inst {
     }
 
     pub(crate) fn shift_r(
-        is_64: bool,
+        size: u8,
         kind: ShiftKind,
         num_bits: Option<u8>,
         dst: Writable<Reg>,
     ) -> Inst {
+        debug_assert!(size == 8 || size == 4 || size == 2 || size == 1);
         debug_assert!(if let Some(num_bits) = num_bits {
-            num_bits < if is_64 { 64 } else { 32 }
+            num_bits < size * 8
         } else {
             true
         });
         debug_assert!(dst.to_reg().get_class() == RegClass::I64);
         Inst::Shift_R {
-            is_64,
+            size,
             kind,
             num_bits,
             dst,
@@ -915,6 +988,10 @@ impl Inst {
         Inst::JmpKnown { dst }
     }
 
+    pub(crate) fn jmp_if(cc: CC, taken: BranchTarget) -> Inst {
+        Inst::JmpIf { cc, taken }
+    }
+
     pub(crate) fn jmp_cond(cc: CC, taken: BranchTarget, not_taken: BranchTarget) -> Inst {
         Inst::JmpCond {
             cc,
@@ -933,6 +1010,85 @@ impl Inst {
             cc,
             trap_code,
             srcloc,
+        }
+    }
+
+    /// Choose which instruction to use for loading a register value from memory. For loads smaller
+    /// than 64 bits, this method expects a way to extend the value (i.e. [ExtKind::SignExtend],
+    /// [ExtKind::ZeroExtend]); loads with no extension necessary will ignore this.
+    pub(crate) fn load(
+        ty: Type,
+        from_addr: impl Into<SyntheticAmode>,
+        to_reg: Writable<Reg>,
+        ext_kind: ExtKind,
+        srcloc: Option<SourceLoc>,
+    ) -> Inst {
+        let rc = to_reg.to_reg().get_class();
+        match rc {
+            RegClass::I64 => {
+                let ext_mode = match ty.bytes() {
+                    1 => Some(ExtMode::BQ),
+                    2 => Some(ExtMode::WQ),
+                    4 => Some(ExtMode::LQ),
+                    8 => None,
+                    _ => unreachable!("the type should never use a scalar load: {}", ty),
+                };
+                if let Some(ext_mode) = ext_mode {
+                    // Values smaller than 64 bits must be extended in some way.
+                    match ext_kind {
+                        ExtKind::SignExtend => {
+                            Inst::movsx_rm_r(ext_mode, RegMem::mem(from_addr), to_reg, srcloc)
+                        }
+                        ExtKind::ZeroExtend => {
+                            Inst::movzx_rm_r(ext_mode, RegMem::mem(from_addr), to_reg, srcloc)
+                        }
+                        ExtKind::None => panic!(
+                            "expected an extension kind for extension mode: {:?}",
+                            ext_mode
+                        ),
+                    }
+                } else {
+                    // 64-bit values can be moved directly.
+                    Inst::mov64_m_r(from_addr, to_reg, srcloc)
+                }
+            }
+            RegClass::V128 => {
+                let opcode = match ty {
+                    types::F32 => SseOpcode::Movss,
+                    types::F64 => SseOpcode::Movsd,
+                    types::F32X4 => SseOpcode::Movups,
+                    types::F64X2 => SseOpcode::Movupd,
+                    _ if ty.is_vector() && ty.bits() == 128 => SseOpcode::Movdqu,
+                    _ => unimplemented!("unable to load type: {}", ty),
+                };
+                Inst::xmm_unary_rm_r(opcode, RegMem::mem(from_addr), to_reg)
+            }
+            _ => panic!("unable to generate load for register class: {:?}", rc),
+        }
+    }
+
+    /// Choose which instruction to use for storing a register value to memory.
+    pub(crate) fn store(
+        ty: Type,
+        from_reg: Reg,
+        to_addr: impl Into<SyntheticAmode>,
+        srcloc: Option<SourceLoc>,
+    ) -> Inst {
+        let rc = from_reg.get_class();
+        match rc {
+            RegClass::I64 => Inst::mov_r_m(ty.bytes() as u8, from_reg, to_addr, srcloc),
+            RegClass::V128 => {
+                let opcode = match ty {
+                    types::F32 => SseOpcode::Movss,
+                    types::F64 => SseOpcode::Movsd,
+                    types::F32X4 => SseOpcode::Movups,
+                    types::F64X2 => SseOpcode::Movupd,
+                    _ if ty.is_vector() && ty.bits() == 128 => SseOpcode::Movdqu,
+                    _ => unimplemented!("unable to store type: {}", ty),
+                };
+                Inst::xmm_mov_r_m(opcode, from_reg, to_addr, srcloc)
+            }
+            _ => panic!("unable to generate store for register class: {:?}", rc),
         }
     }
 }
@@ -957,7 +1113,9 @@ impl Inst {
 
             Self::XMM_RM_R { op, src, dst, .. } => {
                 src.to_reg() == Some(dst.to_reg())
-                    && (*op == SseOpcode::Xorps || *op == SseOpcode::Xorpd)
+                    && (*op == SseOpcode::Xorps
+                        || *op == SseOpcode::Xorpd
+                        || *op == SseOpcode::Pxor)
             }
 
             Self::XmmRmRImm { op, src, dst, imm } => {
@@ -1034,6 +1192,18 @@ impl ShowWithRRU for Inst {
                 show_ireg_sized(dst.to_reg(), mb_rru, *size),
             ),
 
+            Inst::Not { size, src } => format!(
+                "{} {}",
+                ljustify2("not".to_string(), suffixBWLQ(*size)),
+                show_ireg_sized(src.to_reg(), mb_rru, *size)
+            ),
+
+            Inst::Neg { size, src } => format!(
+                "{} {}",
+                ljustify2("neg".to_string(), suffixBWLQ(*size)),
+                show_ireg_sized(src.to_reg(), mb_rru, *size)
+            ),
+
             Inst::Div {
                 size,
                 signed,
@@ -1077,7 +1247,8 @@ impl ShowWithRRU for Inst {
                 show_ireg_sized(divisor.to_reg(), mb_rru, *size),
             ),
 
-            Inst::SignExtendRaxRdx { size } => match size {
+            Inst::SignExtendData { size } => match size {
+                1 => "cbw",
                 2 => "cwd",
                 4 => "cdq",
                 8 => "cqo",
@@ -1240,7 +1411,7 @@ impl ShowWithRRU for Inst {
                 show_ireg_sized(dst.to_reg(), mb_rru, dst_size.to_bytes()),
             ),
 
-            Inst::Imm_R {
+            Inst::Imm {
                 dst_is_64,
                 simm64,
                 dst,
@@ -1320,22 +1491,22 @@ impl ShowWithRRU for Inst {
             ),
 
             Inst::Shift_R {
-                is_64,
+                size,
                 kind,
                 num_bits,
                 dst,
             } => match num_bits {
                 None => format!(
                     "{} %cl, {}",
-                    ljustify2(kind.to_string(), suffixLQ(*is_64)),
-                    show_ireg_sized(dst.to_reg(), mb_rru, sizeLQ(*is_64))
+                    ljustify2(kind.to_string(), suffixBWLQ(*size)),
+                    show_ireg_sized(dst.to_reg(), mb_rru, *size)
                 ),
 
                 Some(num_bits) => format!(
                     "{} ${}, {}",
-                    ljustify2(kind.to_string(), suffixLQ(*is_64)),
+                    ljustify2(kind.to_string(), suffixBWLQ(*size)),
                     num_bits,
-                    show_ireg_sized(dst.to_reg(), mb_rru, sizeLQ(*is_64))
+                    show_ireg_sized(dst.to_reg(), mb_rru, *size)
                 ),
             },
 
@@ -1406,12 +1577,18 @@ impl ShowWithRRU for Inst {
                 format!("{} {}", ljustify("jmp".to_string()), dst.show_rru(mb_rru))
             }
 
+            Inst::JmpIf { cc, taken } => format!(
+                "{} {}",
+                ljustify2("j".to_string(), cc.to_string()),
+                taken.show_rru(mb_rru),
+            ),
+
             Inst::JmpCond {
                 cc,
                 taken,
                 not_taken,
             } => format!(
-                "{} taken={} not_taken={}",
+                "{} {}; j {}",
                 ljustify2("j".to_string(), cc.to_string()),
                 taken.show_rru(mb_rru),
                 not_taken.show_rru(mb_rru)
@@ -1440,6 +1617,26 @@ impl ShowWithRRU for Inst {
                 offset,
                 show_ireg_sized(dst.to_reg(), mb_rru, 8),
             ),
+
+            Inst::LockCmpxchg { ty, src, dst, .. } => {
+                let size = ty.bytes() as u8;
+                format!("lock cmpxchg{} {}, {}",
+                        suffixBWLQ(size), show_ireg_sized(*src, mb_rru, size), dst.show_rru(mb_rru))
+            }
+
+            Inst::AtomicRmwSeq { ty, op, .. } => {
+                format!(
+                    "atomically {{ {}_bits_at_[%r9]) {:?}= %r10; %rax = old_value_at_[%r9]; %r11, %rflags = trash }}",
+                    ty.bits(), op)
+            },
+
+            Inst::Fence { kind } => {
+                match kind {
+                    FenceKind::MFence => "mfence".to_string(),
+                    FenceKind::LFence => "lfence".to_string(),
+                    FenceKind::SFence => "sfence".to_string(),
+                }
+            }
 
             Inst::VirtualSPOffsetAdj { offset } => format!("virtual_sp_offset_adjust {}", offset),
 
@@ -1473,9 +1670,19 @@ fn x64_get_regs(inst: &Inst, collector: &mut RegUsageCollector) {
                 collector.add_mod(*dst);
             }
         }
-        Inst::Div { divisor, .. } => {
+        Inst::Not { src, .. } => {
+            collector.add_mod(*src);
+        }
+        Inst::Neg { src, .. } => {
+            collector.add_mod(*src);
+        }
+        Inst::Div { size, divisor, .. } => {
             collector.add_mod(Writable::from_reg(regs::rax()));
-            collector.add_mod(Writable::from_reg(regs::rdx()));
+            if *size == 1 {
+                collector.add_def(Writable::from_reg(regs::rdx()));
+            } else {
+                collector.add_mod(Writable::from_reg(regs::rdx()));
+            }
             divisor.get_regs_as_uses(collector);
         }
         Inst::MulHi { rhs, .. } => {
@@ -1494,10 +1701,14 @@ fn x64_get_regs(inst: &Inst, collector: &mut RegUsageCollector) {
                 collector.add_def(*tmp);
             }
         }
-        Inst::SignExtendRaxRdx { .. } => {
-            collector.add_use(regs::rax());
-            collector.add_def(Writable::from_reg(regs::rdx()));
-        }
+        Inst::SignExtendData { size } => match size {
+            1 => collector.add_mod(Writable::from_reg(regs::rax())),
+            2 | 4 | 8 => {
+                collector.add_use(regs::rax());
+                collector.add_def(Writable::from_reg(regs::rdx()));
+            }
+            _ => unreachable!(),
+        },
         Inst::UnaryRmR { src, dst, .. } | Inst::XmmUnaryRmR { src, dst, .. } => {
             src.get_regs_as_uses(collector);
             collector.add_def(*dst);
@@ -1537,7 +1748,7 @@ fn x64_get_regs(inst: &Inst, collector: &mut RegUsageCollector) {
             src.get_regs_as_uses(collector);
             collector.add_use(*dst);
         }
-        Inst::Imm_R { dst, .. } => {
+        Inst::Imm { dst, .. } => {
             collector.add_def(*dst);
         }
         Inst::Mov_R_R { src, dst, .. } | Inst::XmmToGpr { src, dst, .. } => {
@@ -1657,15 +1868,30 @@ fn x64_get_regs(inst: &Inst, collector: &mut RegUsageCollector) {
             collector.add_def(*dst);
         }
 
+        Inst::LockCmpxchg { src, dst, .. } => {
+            dst.get_regs_as_uses(collector);
+            collector.add_use(*src);
+            collector.add_mod(Writable::from_reg(regs::rax()));
+        }
+
+        Inst::AtomicRmwSeq { .. } => {
+            collector.add_use(regs::r9());
+            collector.add_use(regs::r10());
+            collector.add_def(Writable::from_reg(regs::r11()));
+            collector.add_def(Writable::from_reg(regs::rax()));
+        }
+
         Inst::Ret
         | Inst::EpiloguePlaceholder
         | Inst::JmpKnown { .. }
+        | Inst::JmpIf { .. }
         | Inst::JmpCond { .. }
         | Inst::Nop { .. }
         | Inst::TrapIf { .. }
         | Inst::VirtualSPOffsetAdj { .. }
         | Inst::Hlt
-        | Inst::Ud2 { .. } => {
+        | Inst::Ud2 { .. }
+        | Inst::Fence { .. } => {
             // No registers are used.
         }
     }
@@ -1774,6 +2000,7 @@ fn x64_map_regs<RUM: RegUsageMapper>(inst: &mut Inst, mapper: &RUM) {
                 map_mod(mapper, dst);
             }
         }
+        Inst::Not { src, .. } | Inst::Neg { src, .. } => map_mod(mapper, src),
         Inst::Div { divisor, .. } => divisor.map_uses(mapper),
         Inst::MulHi { rhs, .. } => rhs.map_uses(mapper),
         Inst::CheckedDivOrRemSeq { divisor, tmp, .. } => {
@@ -1782,7 +2009,7 @@ fn x64_map_regs<RUM: RegUsageMapper>(inst: &mut Inst, mapper: &RUM) {
                 map_def(mapper, tmp)
             }
         }
-        Inst::SignExtendRaxRdx { .. } => {}
+        Inst::SignExtendData { .. } => {}
         Inst::XmmUnaryRmR {
             ref mut src,
             ref mut dst,
@@ -1857,7 +2084,7 @@ fn x64_map_regs<RUM: RegUsageMapper>(inst: &mut Inst, mapper: &RUM) {
             src.map_uses(mapper);
             map_use(mapper, dst);
         }
-        Inst::Imm_R { ref mut dst, .. } => map_def(mapper, dst),
+        Inst::Imm { ref mut dst, .. } => map_def(mapper, dst),
         Inst::Mov_R_R {
             ref mut src,
             ref mut dst,
@@ -2011,16 +2238,29 @@ fn x64_map_regs<RUM: RegUsageMapper>(inst: &mut Inst, mapper: &RUM) {
 
         Inst::LoadExtName { ref mut dst, .. } => map_def(mapper, dst),
 
+        Inst::LockCmpxchg {
+            ref mut src,
+            ref mut dst,
+            ..
+        } => {
+            map_use(mapper, src);
+            dst.map_uses(mapper);
+        }
+
         Inst::Ret
         | Inst::EpiloguePlaceholder
         | Inst::JmpKnown { .. }
         | Inst::JmpCond { .. }
+        | Inst::JmpIf { .. }
         | Inst::Nop { .. }
         | Inst::TrapIf { .. }
         | Inst::VirtualSPOffsetAdj { .. }
         | Inst::Ud2 { .. }
-        | Inst::Hlt => {
-            // No registers are used.
+        | Inst::Hlt
+        | Inst::AtomicRmwSeq { .. }
+        | Inst::Fence { .. } => {
+            // Instruction doesn't explicitly mention any regs, so it can't have any virtual
+            // regs that we'd need to remap.  Hence no action required.
         }
     }
 }
@@ -2093,16 +2333,18 @@ impl MachInst for Inst {
         debug_assert!(rc_dst == rc_src);
         match rc_dst {
             RegClass::I64 => Inst::mov_r_r(true, src_reg, dst_reg),
-            RegClass::V128 => match ty {
-                types::F32 => Inst::xmm_mov(SseOpcode::Movss, RegMem::reg(src_reg), dst_reg, None),
-                types::F64 => Inst::xmm_mov(SseOpcode::Movsd, RegMem::reg(src_reg), dst_reg, None),
-                _ if ty.is_vector() && ty.bits() == 128 => {
-                    // TODO Specialize this move for different types: MOVUPD, MOVDQU, etc.
-                    Inst::xmm_mov(SseOpcode::Movups, RegMem::reg(src_reg), dst_reg, None)
-                }
-                _ => panic!("unexpected type {:?} in gen_move of regclass V128", ty),
-            },
-            _ => panic!("gen_move(x64): unhandled regclass"),
+            RegClass::V128 => {
+                let opcode = match ty {
+                    types::F32 => SseOpcode::Movss,
+                    types::F64 => SseOpcode::Movsd,
+                    types::F32X4 => SseOpcode::Movaps,
+                    types::F64X2 => SseOpcode::Movapd,
+                    _ if ty.is_vector() && ty.bits() == 128 => SseOpcode::Movdqa,
+                    _ => unimplemented!("unable to move type: {}", ty),
+                };
+                Inst::xmm_unary_rm_r(opcode, RegMem::reg(src_reg), dst_reg)
+            }
+            _ => panic!("gen_move(x64): unhandled regclass {:?}", rc_dst),
         }
     }
 
@@ -2152,7 +2394,57 @@ impl MachInst for Inst {
         mut alloc_tmp: F,
     ) -> SmallVec<[Self; 4]> {
         let mut ret = SmallVec::new();
-        if ty.is_int() {
+        if ty == types::F32 {
+            if value == 0 {
+                ret.push(Inst::xmm_rm_r(
+                    SseOpcode::Xorps,
+                    RegMem::reg(to_reg.to_reg()),
+                    to_reg,
+                ));
+            } else {
+                let tmp = alloc_tmp(RegClass::I64, types::I32);
+                ret.push(Inst::imm(OperandSize::Size32, value, tmp));
+
+                ret.push(Inst::gpr_to_xmm(
+                    SseOpcode::Movd,
+                    RegMem::reg(tmp.to_reg()),
+                    OperandSize::Size32,
+                    to_reg,
+                ));
+            }
+        } else if ty == types::F64 {
+            if value == 0 {
+                ret.push(Inst::xmm_rm_r(
+                    SseOpcode::Xorpd,
+                    RegMem::reg(to_reg.to_reg()),
+                    to_reg,
+                ));
+            } else {
+                let tmp = alloc_tmp(RegClass::I64, types::I64);
+                ret.push(Inst::imm(OperandSize::Size64, value, tmp));
+
+                ret.push(Inst::gpr_to_xmm(
+                    SseOpcode::Movq,
+                    RegMem::reg(tmp.to_reg()),
+                    OperandSize::Size64,
+                    to_reg,
+                ));
+            }
+        } else {
+            // Must be an integer type.
+            debug_assert!(
+                ty == types::B1
+                    || ty == types::I8
+                    || ty == types::B8
+                    || ty == types::I16
+                    || ty == types::B16
+                    || ty == types::I32
+                    || ty == types::B32
+                    || ty == types::I64
+                    || ty == types::B64
+                    || ty == types::R32
+                    || ty == types::R64
+            );
             if value == 0 {
                 ret.push(Inst::alu_rmi_r(
                     ty == types::I64,
@@ -2161,42 +2453,11 @@ impl MachInst for Inst {
                     to_reg,
                 ));
             } else {
-                let is_64 = ty == types::I64 && value > 0x7fffffff;
-                ret.push(Inst::imm_r(is_64, value, to_reg));
-            }
-        } else if value == 0 {
-            ret.push(Inst::xmm_rm_r(
-                SseOpcode::Xorps,
-                RegMem::reg(to_reg.to_reg()),
-                to_reg,
-            ));
-        } else {
-            match ty {
-                types::F32 => {
-                    let tmp = alloc_tmp(RegClass::I64, types::I32);
-                    ret.push(Inst::imm32_r_unchecked(value, tmp));
-
-                    ret.push(Inst::gpr_to_xmm(
-                        SseOpcode::Movd,
-                        RegMem::reg(tmp.to_reg()),
-                        OperandSize::Size32,
-                        to_reg,
-                    ));
-                }
-
-                types::F64 => {
-                    let tmp = alloc_tmp(RegClass::I64, types::I64);
-                    ret.push(Inst::imm_r(true, value, tmp));
-
-                    ret.push(Inst::gpr_to_xmm(
-                        SseOpcode::Movq,
-                        RegMem::reg(tmp.to_reg()),
-                        OperandSize::Size64,
-                        to_reg,
-                    ));
-                }
-
-                _ => panic!("unexpected type {:?} in gen_constant", ty),
+                ret.push(Inst::imm(
+                    OperandSize::from_bytes(ty.bytes()),
+                    value,
+                    to_reg,
+                ));
             }
         }
         ret
@@ -2242,7 +2503,7 @@ impl MachInstEmit for Inst {
 }
 
 impl MachInstEmitState<Inst> for EmitState {
-    fn new(abi: &dyn ABIBody<I = Inst>) -> Self {
+    fn new(abi: &dyn ABICallee<I = Inst>) -> Self {
         EmitState {
             virtual_sp_offset: 0,
             nominal_sp_to_fp: abi.frame_size() as i64,

@@ -116,7 +116,9 @@ class nsResState {
 
   bool Reset() {
     // reset no more than once per second
-    if (PR_IntervalToSeconds(PR_IntervalNow() - mLastReset) < 1) return false;
+    if (PR_IntervalToSeconds(PR_IntervalNow() - mLastReset) < 1) {
+      return false;
+    }
 
     LOG(("Calling 'res_ninit'.\n"));
 
@@ -149,9 +151,10 @@ static inline bool IsLowPriority(uint16_t flags) {
 // this macro filters out any flags that are not used when constructing the
 // host key.  the significant flags are those that would affect the resulting
 // host record (i.e., the flags that are passed down to PR_GetAddrInfoByName).
-#define RES_KEY_FLAGS(_f)                                                     \
-  ((_f) & (nsHostResolver::RES_CANON_NAME | nsHostResolver::RES_DISABLE_TRR | \
-           nsIDNSService::RESOLVE_TRR_MODE_MASK))
+#define RES_KEY_FLAGS(_f)                                              \
+  ((_f) &                                                              \
+   (nsHostResolver::RES_CANON_NAME | nsHostResolver::RES_DISABLE_TRR | \
+    nsIDNSService::RESOLVE_TRR_MODE_MASK | nsHostResolver::RES_IP_HINT))
 
 #define IS_ADDR_TYPE(_type) ((_type) == nsIDNSService::RESOLVE_TYPE_DEFAULT)
 #define IS_OTHER_TYPE(_type) ((_type) != nsIDNSService::RESOLVE_TYPE_DEFAULT)
@@ -297,7 +300,7 @@ AddrHostRecord::~AddrHostRecord() {
   Telemetry::Accumulate(Telemetry::DNS_BLACKLIST_COUNT, mBlacklistedCount);
 }
 
-bool AddrHostRecord::Blacklisted(NetAddr* aQuery) {
+bool AddrHostRecord::Blacklisted(const NetAddr* aQuery) {
   // must call locked
   LOG(("Checking blacklist for host [%s], host record [%p].\n", host.get(),
        this));
@@ -308,7 +311,7 @@ bool AddrHostRecord::Blacklisted(NetAddr* aQuery) {
   }
 
   char buf[kIPv6CStrBufSize];
-  if (!NetAddrToString(aQuery, buf, sizeof(buf))) {
+  if (!aQuery->ToStringBuffer(buf, sizeof(buf))) {
     return false;
   }
   nsDependentCString strQuery(buf);
@@ -323,7 +326,7 @@ bool AddrHostRecord::Blacklisted(NetAddr* aQuery) {
   return false;
 }
 
-void AddrHostRecord::ReportUnusable(NetAddr* aAddress) {
+void AddrHostRecord::ReportUnusable(const NetAddr* aAddress) {
   // must call locked
   LOG(
       ("Adding address to blacklist for host [%s], host record [%p]."
@@ -333,7 +336,7 @@ void AddrHostRecord::ReportUnusable(NetAddr* aAddress) {
   ++mBlacklistedCount;
 
   char buf[kIPv6CStrBufSize];
-  if (NetAddrToString(aAddress, buf, sizeof(buf))) {
+  if (aAddress->ToStringBuffer(buf, sizeof(buf))) {
     LOG(
         ("Successfully adding address [%s] to blacklist for host "
          "[%s].\n",
@@ -522,7 +525,8 @@ TypeHostRecord::TypeHostRecord(const nsHostKey& key)
     : nsHostRecord(key),
       DNSHTTPSSVCRecordBase(key.host),
       mTrrLock("TypeHostRecord.mTrrLock"),
-      mResultsLock("TypeHostRecord.mResultsLock") {}
+      mResultsLock("TypeHostRecord.mResultsLock"),
+      mAllRecordsExcluded(false) {}
 
 TypeHostRecord::~TypeHostRecord() { mCallbacks.clear(); }
 
@@ -614,13 +618,38 @@ TypeHostRecord::GetServiceModeRecord(bool aNoHttp2, bool aNoHttp3,
   }
 
   auto& results = mResults.as<TypeRecordHTTPSSVC>();
-  nsCOMPtr<nsISVCBRecord> result =
-      GetServiceModeRecordInternal(aNoHttp2, aNoHttp3, results);
+  nsCOMPtr<nsISVCBRecord> result = GetServiceModeRecordInternal(
+      aNoHttp2, aNoHttp3, results, mAllRecordsExcluded);
   if (!result) {
     return NS_ERROR_NOT_AVAILABLE;
   }
 
   result.forget(aRecord);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+TypeHostRecord::GetHasIPAddresses(bool* aResult) {
+  NS_ENSURE_ARG(aResult);
+
+  if (!mResults.is<TypeRecordHTTPSSVC>()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  auto& results = mResults.as<TypeRecordHTTPSSVC>();
+  *aResult = HasIPAddressesInternal(results);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+TypeHostRecord::GetAllRecordsExcluded(bool* aResult) {
+  NS_ENSURE_ARG(aResult);
+
+  if (!mResults.is<TypeRecordHTTPSSVC>()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  *aResult = mAllRecordsExcluded;
   return NS_OK;
 }
 
@@ -740,7 +769,7 @@ void nsHostResolver::ClearPendingQueue(
     LinkedList<RefPtr<nsHostRecord>>& aPendingQ) {
   // loop through pending queue, erroring out pending lookups.
   if (!aPendingQ.isEmpty()) {
-    for (RefPtr<nsHostRecord> rec : aPendingQ) {
+    for (const RefPtr<nsHostRecord>& rec : aPendingQ) {
       rec->Cancel();
       if (rec->IsAddrRecord()) {
         CompleteLookup(rec, NS_ERROR_ABORT, nullptr, rec->pb, rec->originSuffix,
@@ -770,7 +799,7 @@ void nsHostResolver::FlushCache(bool aTrrToo) {
   // Clear the evictionQ and remove all its corresponding entries from
   // the cache first
   if (!mEvictionQ.isEmpty()) {
-    for (RefPtr<nsHostRecord> rec : mEvictionQ) {
+    for (const RefPtr<nsHostRecord>& rec : mEvictionQ) {
       rec->Cancel();
       mRecordDB.Remove(*static_cast<nsHostKey*>(rec));
     }
@@ -823,7 +852,9 @@ void nsHostResolver::Shutdown() {
     mEvictionQSize = 0;
     mPendingCount = 0;
 
-    if (mNumIdleTasks) mIdleTaskCV.NotifyAll();
+    if (mNumIdleTasks) {
+      mIdleTaskCV.NotifyAll();
+    }
 
     for (auto iter = mRecordDB.Iter(); !iter.Done(); iter.Next()) {
       iter.UserData()->Cancel();
@@ -839,7 +870,7 @@ void nsHostResolver::Shutdown() {
   ClearPendingQueue(pendingQLow);
 
   if (!evictionQ.isEmpty()) {
-    for (RefPtr<nsHostRecord> rec : evictionQ) {
+    for (const RefPtr<nsHostRecord>& rec : evictionQ) {
       rec->Cancel();
     }
   }
@@ -911,7 +942,9 @@ nsresult nsHostResolver::ResolveHost(const nsACString& aHost,
 
   // ensure that we are working with a valid hostname before proceeding.  see
   // bug 304904 for details.
-  if (!net_IsValidHostName(host)) return NS_ERROR_UNKNOWN_HOST;
+  if (!net_IsValidHostName(host)) {
+    return NS_ERROR_UNKNOWN_HOST;
+  }
 
   // By-Type requests use only TRR. If TRR is disabled we can return
   // immediately.
@@ -1023,8 +1056,7 @@ nsresult nsHostResolver::ResolveHost(const nsACString& aHost,
 
         // ok, just copy the result into the host record, and be
         // done with it! ;-)
-        addrRec->addr = MakeUnique<NetAddr>();
-        PRNetAddrToNetAddr(&tempAddr, addrRec->addr.get());
+        addrRec->addr = MakeUnique<NetAddr>(&tempAddr);
         // put reference to host record on stack...
         Telemetry::Accumulate(Telemetry::DNS_LOOKUP_METHOD2, METHOD_LITERAL);
         result = rec;
@@ -1088,22 +1120,20 @@ nsresult nsHostResolver::ResolveHost(const nsACString& aHost,
               // Search for any valid address in the AF_UNSPEC entry
               // in the cache (not blacklisted and from the right
               // family).
-              NetAddrElement* addrIter =
-                  addrUnspecRec->addr_info->mAddresses.getFirst();
-              while (addrIter) {
-                if ((af == addrIter->mAddress.inet.family) &&
-                    !addrUnspecRec->Blacklisted(&addrIter->mAddress)) {
-                  if (!addrRec->addr_info) {
-                    addrRec->addr_info =
-                        new AddrInfo(addrUnspecRec->addr_info->mHostName,
-                                     addrUnspecRec->addr_info->mCanonicalName,
-                                     addrUnspecRec->addr_info->IsTRR());
-                    addrRec->addr_info_gencnt++;
-                    rec->CopyExpirationTimesAndFlagsFrom(unspecRec);
-                  }
-                  addrRec->addr_info->AddAddress(new NetAddrElement(*addrIter));
+              nsTArray<NetAddr> addresses;
+              for (const auto& addr : addrUnspecRec->addr_info->Addresses()) {
+                if ((af == addr.inet.family) &&
+                    !addrUnspecRec->Blacklisted(&addr)) {
+                  addresses.AppendElement(addr);
                 }
-                addrIter = addrIter->getNext();
+              }
+              if (!addresses.IsEmpty()) {
+                addrRec->addr_info = new AddrInfo(
+                    addrUnspecRec->addr_info->Hostname(),
+                    addrUnspecRec->addr_info->CanonicalHostname(),
+                    addrUnspecRec->addr_info->IsTRR(), std::move(addresses));
+                addrRec->addr_info_gencnt++;
+                rec->CopyExpirationTimesAndFlagsFrom(unspecRec);
               }
             }
             // Now check if we have a new record.
@@ -1290,6 +1320,16 @@ nsresult nsHostResolver::TrrLookup_unlocked(nsHostRecord* rec, TRR* pushedTRR) {
   return TrrLookup(rec, pushedTRR);
 }
 
+void nsHostResolver::MaybeRenewHostRecord(nsHostRecord* aRec) {
+  if (aRec->isInList()) {
+    // we're already on the eviction queue. This is a renewal
+    MOZ_ASSERT(mEvictionQSize);
+    AssertOnQ(aRec, mEvictionQ);
+    aRec->remove();
+    mEvictionQSize--;
+  }
+}
+
 // returns error if no TRR resolve is issued
 // it is impt this is not called while a native lookup is going on
 nsresult nsHostResolver::TrrLookup(nsHostRecord* aRec, TRR* pushedTRR) {
@@ -1328,14 +1368,7 @@ nsresult nsHostResolver::TrrLookup(nsHostRecord* aRec, TRR* pushedTRR) {
     return NS_ERROR_UNKNOWN_HOST;
   }
 
-  if (rec->isInList()) {
-    // we're already on the eviction queue. This is a renewal
-    MOZ_ASSERT(mEvictionQSize);
-    AssertOnQ(rec, mEvictionQ);
-
-    rec->remove();
-    mEvictionQSize--;
-  }
+  MaybeRenewHostRecord(rec);
 
   bool madeQuery = false;
 
@@ -1358,7 +1391,7 @@ nsresult nsHostResolver::TrrLookup(nsHostRecord* aRec, TRR* pushedTRR) {
       sendAgain = false;
       if ((TRRTYPE_AAAA == rectype) && gTRRService &&
           (gTRRService->DisableIPv6() ||
-           (gTRRService->CheckIPv6Connectivity() && mNCS &&
+           (StaticPrefs::network_trr_skip_AAAA_when_not_supported() && mNCS &&
             mNCS->GetIPv6() == nsINetworkConnectivityService::NOT_AVAILABLE))) {
         break;
       }
@@ -1396,10 +1429,11 @@ nsresult nsHostResolver::TrrLookup(nsHostRecord* aRec, TRR* pushedTRR) {
       rectype = TRRTYPE_TXT;
     } else if (rec->type == nsIDNSService::RESOLVE_TYPE_HTTPSSVC) {
       rectype = TRRTYPE_HTTPSSVC;
-    }
-
-    if (pushedTRR) {
+    } else if (pushedTRR) {
       rectype = pushedTRR->Type();
+    } else {
+      MOZ_ASSERT(false, "Not an expected request type");
+      return NS_ERROR_UNKNOWN_HOST;
     }
 
     LOG(("TRR Resolve %s type %d\n", typeRec->host.get(), (int)rectype));
@@ -1426,7 +1460,7 @@ void nsHostResolver::AssertOnQ(nsHostRecord* rec,
 #ifdef DEBUG
   MOZ_ASSERT(!q.isEmpty());
   MOZ_ASSERT(rec->isInList());
-  for (RefPtr<nsHostRecord> r : q) {
+  for (const RefPtr<nsHostRecord>& r : q) {
     if (rec == r) {
       return;
     }
@@ -1452,12 +1486,7 @@ nsresult nsHostResolver::NativeLookup(nsHostRecord* aRec) {
   addrRec->mNativeStart = TimeStamp::Now();
 
   // Add rec to one of the pending queues, possibly removing it from mEvictionQ.
-  if (rec->isInList()) {
-    MOZ_ASSERT(mEvictionQSize);
-    AssertOnQ(rec, mEvictionQ);
-    rec->remove();  // was on the eviction queue
-    mEvictionQSize--;
-  }
+  MaybeRenewHostRecord(rec);
 
   switch (AddrHostRecord::GetPriority(rec->flags)) {
     case AddrHostRecord::DNS_PRIORITY_HIGH:
@@ -1532,7 +1561,7 @@ void nsHostResolver::ComputeEffectiveTRRMode(nsHostRecord* aRec) {
     return;
   }
 
-  if (gTRRService->SkipTRRWhenParentalControlEnabled() &&
+  if (StaticPrefs::network_dns_skipTRR_when_parental_control_enabled() &&
       gTRRService->ParentalControlEnabled()) {
     aRec->RecordReason(nsHostRecord::TRR_PARENTAL_CONTROL);
     aRec->mEffectiveTRRMode = nsIRequest::TRR_DISABLED_MODE;
@@ -1576,6 +1605,11 @@ void nsHostResolver::ComputeEffectiveTRRMode(nsHostRecord* aRec) {
 // Kick-off a name resolve operation, using native resolver and/or TRR
 nsresult nsHostResolver::NameLookup(nsHostRecord* rec) {
   LOG(("NameLookup host:%s af:%" PRId16, rec->host.get(), rec->af));
+
+  if (rec->flags & RES_IP_HINT) {
+    LOG(("Skip lookup if RES_IP_HINT is set\n"));
+    return NS_ERROR_UNKNOWN_HOST;
+  }
 
   nsresult rv = NS_ERROR_UNKNOWN_HOST;
   if (rec->mResolving) {
@@ -1718,7 +1752,9 @@ bool nsHostResolver::GetHostToLookup(AddrHostRecord** result) {
 
     // Determining timeout is racy, so allow one cycle through checking the
     // queues before exiting.
-    if (timedOut) break;
+    if (timedOut) {
+      break;
+    }
 
     // wait for one or more of the following to occur:
     //  (1) the pending queue has a host record to process
@@ -1764,8 +1800,8 @@ void nsHostResolver::PrepareRecordExpirationAddrRecord(
 
   unsigned int ttl = mDefaultCacheLifetime;
   if (sGetTtlEnabled || rec->addr_info->IsTRR()) {
-    if (rec->addr_info && rec->addr_info->ttl != AddrInfo::NO_TTL_DATA) {
-      ttl = rec->addr_info->ttl;
+    if (rec->addr_info && rec->addr_info->TTL() != AddrInfo::NO_TTL_DATA) {
+      ttl = rec->addr_info->TTL();
     }
     lifetime = ttl;
     grace = 0;
@@ -1776,25 +1812,26 @@ void nsHostResolver::PrepareRecordExpirationAddrRecord(
        lifetime, grace));
 }
 
-static nsresult merge_rrset(AddrInfo* rrto, AddrInfo* rrfrom) {
-  if (!rrto || !rrfrom) {
-    return NS_ERROR_NULL_POINTER;
-  }
-  NetAddrElement* element;
+static already_AddRefed<AddrInfo> merge_rrset(AddrInfo* rrto,
+                                              AddrInfo* rrfrom) {
+  MOZ_ASSERT(rrto && rrfrom);
   // Each of the arguments are all-IPv4 or all-IPv6 hence judging
   // by the first element. This is true only for TRR resolutions.
-  bool isIPv6 = (element = rrfrom->mAddresses.getFirst()) &&
-                element->mAddress.raw.family == PR_AF_INET6;
-  while ((element = rrfrom->mAddresses.getFirst())) {
-    element->remove();  // unlist from old
+  bool isIPv6 = rrfrom->Addresses().Length() > 0 &&
+                rrfrom->Addresses()[0].raw.family == PR_AF_INET6;
+
+  nsTArray<NetAddr> addresses = rrto->Addresses().Clone();
+  for (const auto& addr : rrfrom->Addresses()) {
     if (isIPv6) {
       // rrfrom has IPv6 so it should be first
-      rrto->mAddresses.insertFront(element);
+      addresses.InsertElementAt(0, addr);
     } else {
-      rrto->mAddresses.insertBack(element);
+      addresses.AppendElement(addr);
     }
   }
-  return NS_OK;
+  auto builder = rrto->Build();
+  builder.SetAddresses(std::move(addresses));
+  return builder.Finish();
 }
 
 static bool different_rrset(AddrInfo* rrset1, AddrInfo* rrset2) {
@@ -1802,49 +1839,29 @@ static bool different_rrset(AddrInfo* rrset1, AddrInfo* rrset2) {
     return true;
   }
 
-  LOG(("different_rrset %s\n", rrset1->mHostName.get()));
-  nsTArray<NetAddr> orderedSet1;
-  nsTArray<NetAddr> orderedSet2;
+  LOG(("different_rrset %s\n", rrset1->Hostname().get()));
 
   if (rrset1->IsTRR() != rrset2->IsTRR()) {
     return true;
   }
 
-  for (NetAddrElement* element = rrset1->mAddresses.getFirst(); element;
-       element = element->getNext()) {
-    if (LOG_ENABLED()) {
-      char buf[128];
-      NetAddrToString(&element->mAddress, buf, 128);
-      LOG(("different_rrset add to set 1 %s\n", buf));
-    }
-    orderedSet1.InsertElementAt(orderedSet1.Length(), element->mAddress);
-  }
-
-  for (NetAddrElement* element = rrset2->mAddresses.getFirst(); element;
-       element = element->getNext()) {
-    if (LOG_ENABLED()) {
-      char buf[128];
-      NetAddrToString(&element->mAddress, buf, 128);
-      LOG(("different_rrset add to set 2 %s\n", buf));
-    }
-    orderedSet2.InsertElementAt(orderedSet2.Length(), element->mAddress);
-  }
-
-  if (orderedSet1.Length() != orderedSet2.Length()) {
+  if (rrset1->Addresses().Length() != rrset2->Addresses().Length()) {
     LOG(("different_rrset true due to length change\n"));
     return true;
   }
+
+  nsTArray<NetAddr> orderedSet1 = rrset1->Addresses().Clone();
+  nsTArray<NetAddr> orderedSet2 = rrset2->Addresses().Clone();
   orderedSet1.Sort();
   orderedSet2.Sort();
 
-  for (uint32_t i = 0; i < orderedSet1.Length(); ++i) {
-    if (!(orderedSet1[i] == orderedSet2[i])) {
-      LOG(("different_rrset true due to content change\n"));
-      return true;
-    }
+  bool eq = orderedSet1 == orderedSet2;
+  if (!eq) {
+    LOG(("different_rrset true due to content change\n"));
+  } else {
+    LOG(("different_rrset false\n"));
   }
-  LOG(("different_rrset false\n"));
-  return false;
+  return !eq;
 }
 
 void nsHostResolver::AddToEvictionQ(nsHostRecord* rec) {
@@ -1915,7 +1932,7 @@ nsHostResolver::LookupStatus nsHostResolver::CompleteLookup(
   if (trrResult) {
     MutexAutoLock trrlock(addrRec->mTrrLock);
     LOG(("TRR lookup Complete (%d) %s %s\n", newRRSet->IsTRR(),
-         newRRSet->mHostName.get(), NS_SUCCEEDED(status) ? "OK" : "FAILED"));
+         newRRSet->Hostname().get(), NS_SUCCEEDED(status) ? "OK" : "FAILED"));
     MOZ_ASSERT(TRROutstanding());
     if (newRRSet->IsTRR() == TRRTYPE_A) {
       MOZ_ASSERT(addrRec->mTrrA);
@@ -1958,12 +1975,12 @@ nsHostResolver::LookupStatus nsHostResolver::CompleteLookup(
         return LOOKUP_OK;
       }
 
-      if (gTRRService && gTRRService->WaitForAllResponses()) {
+      if (gTRRService && StaticPrefs::network_trr_wait_for_A_and_AAAA()) {
         LOG(("CompleteLookup: waiting for all responses!\n"));
         return LOOKUP_OK;
       }
 
-      if (addrRec->mTrrA && (!gTRRService || !gTRRService->EarlyAAAA())) {
+      if (addrRec->mTrrA && !StaticPrefs::network_trr_early_AAAA()) {
         // This is an early AAAA with a pending A response. Allowed
         // only by pref.
         LOG(("CompleteLookup: avoiding early use of TRR AAAA!\n"));
@@ -1981,7 +1998,7 @@ nsHostResolver::LookupStatus nsHostResolver::CompleteLookup(
       if (addrRec->mFirstTRR) {
         if (NS_SUCCEEDED(status)) {
           LOG(("Merging responses"));
-          merge_rrset(newRRSet, addrRec->mFirstTRR);
+          newRRSet = merge_rrset(newRRSet, addrRec->mFirstTRR);
         } else {
           LOG(("Will use previous response"));
           newRRSet.swap(addrRec->mFirstTRR);  // transfers
@@ -1994,7 +2011,9 @@ nsHostResolver::LookupStatus nsHostResolver::CompleteLookup(
 
       if (NS_FAILED(addrRec->mFirstTRRresult) && NS_FAILED(status) &&
           (addrRec->mFirstTRRresult != NS_ERROR_UNKNOWN_HOST) &&
-          (status != NS_ERROR_UNKNOWN_HOST)) {
+          (status != NS_ERROR_UNKNOWN_HOST) &&
+          (addrRec->mFirstTRRresult != NS_ERROR_DEFINITIVE_UNKNOWN_HOST) &&
+          (status != NS_ERROR_DEFINITIVE_UNKNOWN_HOST)) {
         // the errors are not failed resolves, that means
         // something else failed, consider this as *TRR not used*
         // for actually trying to resolve the host
@@ -2021,7 +2040,8 @@ nsHostResolver::LookupStatus nsHostResolver::CompleteLookup(
       }
 
       if (!addrRec->mTRRSuccess &&
-          addrRec->mEffectiveTRRMode == nsIRequest::TRR_FIRST_MODE) {
+          addrRec->mEffectiveTRRMode == nsIRequest::TRR_FIRST_MODE &&
+          addrRec->mFirstTRRresult != NS_ERROR_DEFINITIVE_UNKNOWN_HOST) {
         MOZ_ASSERT(!addrRec->mResolving);
         NativeLookup(addrRec);
         MOZ_ASSERT(addrRec->mResolving);
@@ -2038,7 +2058,7 @@ nsHostResolver::LookupStatus nsHostResolver::CompleteLookup(
     }
 
     addrRec->mNative = false;
-    addrRec->mNativeSuccess = newRRSet ? true : false;
+    addrRec->mNativeSuccess = static_cast<bool>(newRRSet);
     if (addrRec->mNativeSuccess) {
       addrRec->mNativeDuration = TimeStamp::Now() - addrRec->mNativeStart;
     }
@@ -2057,12 +2077,14 @@ nsHostResolver::LookupStatus nsHostResolver::CompleteLookup(
       addrRec->addr_info_gencnt++;
     } else {
       if (addrRec->addr_info && newRRSet) {
-        addrRec->addr_info->ttl = newRRSet->ttl;
+        auto builder = addrRec->addr_info->Build();
+        builder.SetTTL(newRRSet->TTL());
         // Update trr timings
-        addrRec->addr_info->SetTrrFetchDuration(
-            newRRSet->GetTrrFetchDuration());
-        addrRec->addr_info->SetTrrFetchDurationNetworkOnly(
+        builder.SetTrrFetchDuration(newRRSet->GetTrrFetchDuration());
+        builder.SetTrrFetchDurationNetworkOnly(
             newRRSet->GetTrrFetchDurationNetworkOnly());
+
+        addrRec->addr_info = builder.Finish();
       }
       old_addr_info = std::move(newRRSet);
     }
@@ -2081,12 +2103,10 @@ nsHostResolver::LookupStatus nsHostResolver::CompleteLookup(
 
   if (LOG_ENABLED()) {
     MutexAutoLock lock(addrRec->addr_info_lock);
-    NetAddrElement* element;
     if (addrRec->addr_info) {
-      for (element = addrRec->addr_info->mAddresses.getFirst(); element;
-           element = element->getNext()) {
+      for (const auto& elem : addrRec->addr_info->Addresses()) {
         char buf[128];
-        NetAddrToString(&element->mAddress, buf, sizeof(buf));
+        elem.ToStringBuffer(buf, sizeof(buf));
         LOG(("CompleteLookup: %s has %s\n", addrRec->host.get(), buf));
       }
     } else {
@@ -2220,7 +2240,7 @@ void nsHostResolver::CancelAsyncRequest(
   if (rec) {
     nsHostRecord* recPtr = nullptr;
 
-    for (RefPtr<nsResolveHostCallback> c : rec->mCallbacks) {
+    for (const RefPtr<nsResolveHostCallback>& c : rec->mCallbacks) {
       if (c->EqualsAsyncListener(aListener)) {
         c->remove();
         recPtr = rec;
@@ -2247,7 +2267,7 @@ size_t nsHostResolver::SizeOfIncludingThis(MallocSizeOf mallocSizeOf) const {
 
   n += mRecordDB.ShallowSizeOfExcludingThis(mallocSizeOf);
   for (auto iter = mRecordDB.ConstIter(); !iter.Done(); iter.Next()) {
-    auto entry = iter.UserData();
+    auto* entry = iter.UserData();
     n += entry->SizeOfIncludingThis(mallocSizeOf);
   }
 
@@ -2399,21 +2419,10 @@ void nsHostResolver::GetDNSCacheEntries(nsTArray<DNSCacheEntries>* args) {
 
     {
       MutexAutoLock lock(addrRec->addr_info_lock);
-
-      NetAddr* addr = nullptr;
-      NetAddrElement* addrElement = addrRec->addr_info->mAddresses.getFirst();
-      if (addrElement) {
-        addr = &addrElement->mAddress;
-      }
-      while (addr) {
+      for (const auto& addr : addrRec->addr_info->Addresses()) {
         char buf[kIPv6CStrBufSize];
-        if (NetAddrToString(addr, buf, sizeof(buf))) {
+        if (addr.ToStringBuffer(buf, sizeof(buf))) {
           info.hostaddr.AppendElement(buf);
-        }
-        addr = nullptr;
-        addrElement = addrElement->getNext();
-        if (addrElement) {
-          addr = &addrElement->mAddress;
         }
       }
       info.TRR = addrRec->addr_info->IsTRR();

@@ -4,7 +4,6 @@
 
 #include "nsPrinterListCUPS.h"
 
-#include "mozilla/GkRustUtils.h"
 #include "mozilla/IntegerRange.h"
 #include "nsCUPSShim.h"
 #include "nsPrinterCUPS.h"
@@ -12,9 +11,6 @@
 #include "prenv.h"
 
 static nsCUPSShim sCupsShim;
-// Requested attributes for IPP requests, just the CUPS version now.
-static constexpr mozilla::Array<const char* const, 1> requestedAttributes{
-    "cups-version"};
 using PrinterInfo = nsPrinterListBase::PrinterInfo;
 
 /**
@@ -35,51 +31,6 @@ static void GetDisplayNameForPrinter(const cups_dest_t& aDest,
 #endif
 }
 
-// Fetches the CUPS version for the print server controlling the printer. This
-// will only modify the output arguments if the fetch succeeds.
-static void FetchCUPSVersionForPrinter(const cups_dest_t& aDest,
-                                       uint64_t& aOutMajor, uint64_t& aOutMinor,
-                                       uint64_t& aOutPatch) {
-  // Make an IPP request to the server for the printer.
-  const char* const uri = sCupsShim.cupsGetOption(
-      "printer-uri-supported", aDest.num_options, aDest.options);
-  if (!uri) {
-    return;
-  }
-
-  ipp_t* const ippRequest =
-      sCupsShim.ippNewRequest(IPP_OP_GET_PRINTER_ATTRIBUTES);
-
-  // Set the URI we want to use.
-  sCupsShim.ippAddString(ippRequest, IPP_TAG_OPERATION, IPP_TAG_URI,
-                         "printer-uri", nullptr, uri);
-
-  // Set the attributes to request.
-  sCupsShim.ippAddStrings(ippRequest, IPP_TAG_OPERATION, IPP_TAG_KEYWORD,
-                          "requested-attributes", requestedAttributes.Length,
-                          nullptr, &(requestedAttributes[0]));
-
-  // Use the default HTTP connection to query the CUPS server itself to get
-  // the CUPS version.
-  // Note that cupsDoRequest will delete the request whether it succeeds or
-  // fails, so we should not use ippDelete on it.
-  if (ipp_t* const ippResponse =
-          sCupsShim.cupsDoRequest(CUPS_HTTP_DEFAULT, ippRequest, "/")) {
-    ipp_attribute_t* const versionAttrib =
-        sCupsShim.ippFindAttribute(ippResponse, "cups-version", IPP_TAG_TEXT);
-    if (versionAttrib && sCupsShim.ippGetCount(versionAttrib) == 1) {
-      const char* versionString =
-          sCupsShim.ippGetString(versionAttrib, 0, nullptr);
-      MOZ_ASSERT(versionString);
-      // On error, GkRustUtils::ParseSemVer will not modify its arguments.
-      GkRustUtils::ParseSemVer(
-          nsDependentCSubstring{MakeStringSpan(versionString)}, aOutMajor,
-          aOutMinor, aOutPatch);
-    }
-    sCupsShim.ippDelete(ippResponse);
-  }
-}
-
 nsTArray<PrinterInfo> nsPrinterListCUPS::Printers() const {
   if (!sCupsShim.EnsureInitialized()) {
     return {};
@@ -88,29 +39,39 @@ nsTArray<PrinterInfo> nsPrinterListCUPS::Printers() const {
   nsTArray<PrinterInfo> printerInfoList;
 
   cups_dest_t* printers = nullptr;
+  // Ideally we should use cupsEnumDests with CUPS_PRINTER_DISCOVERED, etc.
+  // flags instead of calling cupsGetDests and filtering out
+  // CUPS_PRINTER_DISCOVERED later, because it should be faster than the
+  // cupsGetDests call.  That being said, unfortunately at least on Ubuntu 20.20
+  // cupsEnumDests doesn't filter out CUPS_PRINTER_DISCOVERED-ed printers at
+  // all. So for now we use cupsGetDests but if we still have perf issues when
+  // we enumerate available printers on Mac, we should use cupsEnumDest at least
+  // on Mac.
   auto numPrinters = sCupsShim.cupsGetDests(&printers);
   printerInfoList.SetCapacity(numPrinters);
 
   for (auto i : mozilla::IntegerRange(0, numPrinters)) {
     cups_dest_t* dest = printers + i;
 
+    if (const char* printerType = sCupsShim.cupsGetOption(
+            "printer-type", dest->num_options, dest->options)) {
+      nsresult rv;
+      int64_t type = nsAutoCString(printerType).ToInteger64(&rv);
+      if (NS_SUCCEEDED(rv) && (type & (CUPS_PRINTER_FAX | CUPS_PRINTER_SCANNER |
+                                       CUPS_PRINTER_DISCOVERED))) {
+        continue;
+      }
+    }
+
     cups_dest_t* ownedDest = nullptr;
     mozilla::DebugOnly<const int> numCopied =
         sCupsShim.cupsCopyDest(dest, 0, &ownedDest);
     MOZ_ASSERT(numCopied == 1);
 
-    cups_dinfo_t* ownedInfo =
-        sCupsShim.cupsCopyDestInfo(CUPS_HTTP_DEFAULT, ownedDest);
-
     nsString name;
     GetDisplayNameForPrinter(*dest, name);
 
-    uint64_t major = 0;
-    uint64_t minor = 0;
-    uint64_t patch = 0;
-    FetchCUPSVersionForPrinter(*dest, major, minor, patch);
-    printerInfoList.AppendElement(PrinterInfo{
-        std::move(name), {ownedDest, ownedInfo}, major, minor, patch});
+    printerInfoList.AppendElement(PrinterInfo{std::move(name), ownedDest});
   }
 
   sCupsShim.cupsFreeDests(numPrinters, printers);
@@ -120,12 +81,10 @@ nsTArray<PrinterInfo> nsPrinterListCUPS::Printers() const {
 RefPtr<nsIPrinter> nsPrinterListCUPS::CreatePrinter(PrinterInfo aInfo) const {
   return mozilla::MakeRefPtr<nsPrinterCUPS>(
       sCupsShim, std::move(aInfo.mName),
-      static_cast<cups_dest_t*>(aInfo.mCupsHandles[0]),
-      static_cast<cups_dinfo_t*>(aInfo.mCupsHandles[1]), aInfo.mServerMajor,
-      aInfo.mServerMinor, aInfo.mServerPatch);
+      static_cast<cups_dest_t*>(aInfo.mCupsHandle));
 }
 
-Maybe<PrinterInfo> nsPrinterListCUPS::NamedPrinter(
+Maybe<PrinterInfo> nsPrinterListCUPS::PrinterByName(
     nsString aPrinterName) const {
   Maybe<PrinterInfo> rv;
   if (!sCupsShim.EnsureInitialized()) {
@@ -168,16 +127,27 @@ Maybe<PrinterInfo> nsPrinterListCUPS::NamedPrinter(
 #endif
 
   if (printer) {
-    cups_dinfo_t* const info =
-        sCupsShim.cupsCopyDestInfo(CUPS_HTTP_DEFAULT, printer);
-    MOZ_ASSERT(info);
     // Since the printer name had to be passed by-value, we can move the
     // name from that.
-    rv.emplace(PrinterInfo{std::move(aPrinterName), {printer, info}});
+    rv.emplace(PrinterInfo{std::move(aPrinterName), printer});
   }
   return rv;
 }
 
+Maybe<PrinterInfo> nsPrinterListCUPS::PrinterBySystemName(
+    nsString aPrinterName) const {
+  Maybe<PrinterInfo> rv;
+  if (!sCupsShim.EnsureInitialized()) {
+    return rv;
+  }
+
+  const auto printerName = NS_ConvertUTF16toUTF8(aPrinterName);
+  if (cups_dest_t* const printer = sCupsShim.cupsGetNamedDest(
+          CUPS_HTTP_DEFAULT, printerName.get(), nullptr)) {
+    rv.emplace(PrinterInfo{std::move(aPrinterName), printer});
+  }
+  return rv;
+}
 nsresult nsPrinterListCUPS::SystemDefaultPrinterName(nsAString& aName) const {
   aName.Truncate();
 

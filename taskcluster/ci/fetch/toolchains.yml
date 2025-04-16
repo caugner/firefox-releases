@@ -352,7 +352,7 @@ sccache:
         type: git
         repo: https://github.com/mozilla/sccache
         # 0.2.13 release + various changes
-        revision: d172e77c1bfd08714e71fe80f80cc149eeae1749
+        revision: ea4d1464625e507a287be913697494a37fe7343c
 
 fxc2:
     description: fxc2 source code
@@ -365,7 +365,7 @@ mingw-w64:
     description: mingw-w64 source code
     fetch:
         type: git
-        repo: git://git.code.sf.net/p/mingw-w64/mingw-w64
+        repo: https://git.code.sf.net/p/mingw-w64/mingw-w64
         revision: 1b373beec6d07478ffba33726bb3bb21f32e4411
 
 libunwind:
@@ -424,6 +424,13 @@ clang-10:
         repo: https://github.com/llvm/llvm-project
         revision: d32170dbd5b0d54436537b6b75beaf44324e0c28
 
+clang-11:
+    description: clang 11.0.0 source code
+    fetch:
+        type: git
+        repo: https://github.com/llvm/llvm-project
+        revision: 8aca41f39c207b6f9efe2e448986d109892072ad
+
 civet-source:
     description: Repository for external static analysis checks
     fetch:
@@ -436,8 +443,8 @@ wasi-sdk:
     description: wasi-sdk source code
     fetch:
         type: git
-        repo: https://github.com/CraneStation/wasi-sdk
-        revision: 5225b05436ce57f01fe649f411f3ff701246628b
+        repo: https://github.com/WebAssembly/wasi-sdk
+        revision: 8446a3f8d49f70d17e38cefd9990a9e79bf3e78a
 
 ninja:
     description: ninja 1.9.0
@@ -480,7 +487,7 @@ fix-stacks:
     fetch:
         type: git
         repo: https://github.com/mozilla/fix-stacks/
-        revision: b8b127d27cdcd64a5e66a7fb0a06c6c818445a61
+        revision: 03a325aa0c5fc479dce135415cb8e16371495290
 
 winchecksec:
     description: winchecksec source code

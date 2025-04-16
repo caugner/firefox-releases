@@ -266,9 +266,9 @@ EditActionResult TextEditor::InsertLineFeedCharacterAtSelection() {
       !pointAfterInsertedLineFeed.GetChild(),
       "After inserting text into a text node, pointAfterInsertedLineFeed."
       "GetChild() should be nullptr");
-  rv = SelectionRefPtr()->Collapse(pointAfterInsertedLineFeed);
+  rv = SelectionRefPtr()->CollapseInLimiter(pointAfterInsertedLineFeed);
   if (NS_FAILED(rv)) {
-    NS_WARNING("Selection::Collapse() failed");
+    NS_WARNING("Selection::CollapseInLimiter() failed");
     return EditActionIgnored(rv);
   }
 
@@ -346,11 +346,12 @@ nsresult TextEditor::EnsureCaretNotAtEndOfTextNode() {
     return NS_ERROR_FAILURE;
   }
   IgnoredErrorResult ignoredError;
-  SelectionRefPtr()->Collapse(afterStartContainer, ignoredError);
+  SelectionRefPtr()->CollapseInLimiter(afterStartContainer, ignoredError);
   if (NS_WARN_IF(Destroyed())) {
     return NS_ERROR_EDITOR_DESTROYED;
   }
-  NS_WARNING_ASSERTION(!ignoredError.Failed(), "Selection::Collapse() failed");
+  NS_WARNING_ASSERTION(!ignoredError.Failed(),
+                       "Selection::CollapseInLimiter() failed");
   return ignoredError.StealNSResult();
 }
 
@@ -589,12 +590,14 @@ EditActionResult TextEditor::HandleInsertText(
           "After inserting text into a text node, pointAfterStringInserted."
           "GetChild() should be nullptr");
       ignoredError = IgnoredErrorResult();
-      SelectionRefPtr()->Collapse(pointAfterStringInserted, ignoredError);
+      SelectionRefPtr()->CollapseInLimiter(pointAfterStringInserted,
+                                           ignoredError);
       if (NS_WARN_IF(Destroyed())) {
         return EditActionHandled(NS_ERROR_EDITOR_DESTROYED);
       }
-      NS_WARNING_ASSERTION(!ignoredError.Failed(),
-                           "Selection::Collapse() failed, but ignored");
+      NS_WARNING_ASSERTION(
+          !ignoredError.Failed(),
+          "Selection::CollapseInLimiter() failed, but ignored");
     }
   }
 
@@ -800,12 +803,15 @@ EditActionResult TextEditor::HandleDeleteSelectionInternal(
     }
 
     // Test for distance between caret and text that will be deleted
-    EditActionResult result =
-        SetCaretBidiLevelForDeletion(selectionStartPoint, aDirectionAndAmount);
-    if (result.Failed() || result.Canceled()) {
-      NS_WARNING_ASSERTION(result.Succeeded(),
-                           "EditorBase::SetCaretBidiLevelForDeletion() failed");
-      return result;
+    AutoCaretBidiLevelManager bidiLevelManager(*this, aDirectionAndAmount,
+                                               selectionStartPoint);
+    if (bidiLevelManager.Failed()) {
+      NS_WARNING("EditorBase::AutoCaretBidiLevelManager() failed");
+      return EditActionResult(NS_ERROR_FAILURE);
+    }
+    bidiLevelManager.MaybeUpdateCaretBidiLevel(*this);
+    if (bidiLevelManager.Canceled()) {
+      return EditActionCanceled();
     }
   }
 

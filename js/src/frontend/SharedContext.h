@@ -28,6 +28,8 @@
 namespace js {
 namespace frontend {
 
+struct CompilationInfo;
+struct CompilationState;
 class ParseContext;
 class ScriptStencil;
 struct ScopeContext;
@@ -106,6 +108,21 @@ enum class ThisBinding : uint8_t {
 class GlobalSharedContext;
 class EvalSharedContext;
 class ModuleSharedContext;
+
+using ParserBindingName = AbstractBindingName<const ParserAtom>;
+using ParserBindingIter = AbstractBindingIter<const ParserAtom>;
+
+using BaseParserScopeData = AbstractBaseScopeData<const ParserAtom>;
+
+template <typename Scope>
+using ParserScopeData = typename Scope::template AbstractData<const ParserAtom>;
+
+using ParserGlobalScopeData = ParserScopeData<GlobalScope>;
+using ParserEvalScopeData = ParserScopeData<EvalScope>;
+using ParserLexicalScopeData = ParserScopeData<LexicalScope>;
+using ParserFunctionScopeData = ParserScopeData<FunctionScope>;
+using ParserModuleScopeData = ParserScopeData<ModuleScope>;
+using ParserVarScopeData = ParserScopeData<VarScope>;
 
 #define FLAG_GETTER(enumName, enumEntry, lowerName, name) \
  public:                                                  \
@@ -260,25 +277,22 @@ class SharedContext {
     return retVal;
   }
 
-  void copyScriptFields(ScriptStencil& stencil);
+  inline JSAtom* liftParserAtomToJSAtom(JSContext* cx,
+                                        const ParserAtom* atomId);
+  inline const ParserAtom* lowerJSAtomToParserAtom(JSContext* cx, JSAtom* atom);
+
+  void copyScriptFields(ScriptStencil& script);
 };
 
 class MOZ_STACK_CLASS GlobalSharedContext : public SharedContext {
   ScopeKind scopeKind_;
 
  public:
-  Rooted<GlobalScope::Data*> bindings;
+  ParserGlobalScopeData* bindings;
 
   GlobalSharedContext(JSContext* cx, ScopeKind scopeKind,
                       CompilationInfo& compilationInfo, Directives directives,
-                      SourceExtent extent)
-      : SharedContext(cx, Kind::Global, compilationInfo, directives, extent),
-        scopeKind_(scopeKind),
-        bindings(cx) {
-    MOZ_ASSERT(scopeKind == ScopeKind::Global ||
-               scopeKind == ScopeKind::NonSyntactic);
-    MOZ_ASSERT(thisBinding_ == ThisBinding::Global);
-  }
+                      SourceExtent extent);
 
   ScopeKind scopeKind() const { return scopeKind_; }
 };
@@ -290,10 +304,10 @@ inline GlobalSharedContext* SharedContext::asGlobalContext() {
 
 class MOZ_STACK_CLASS EvalSharedContext : public SharedContext {
  public:
-  Rooted<EvalScope::Data*> bindings;
+  ParserEvalScopeData* bindings;
 
   EvalSharedContext(JSContext* cx, CompilationInfo& compilationInfo,
-                    Directives directives, SourceExtent extent);
+                    CompilationState& compilationState, SourceExtent extent);
 };
 
 inline EvalSharedContext* SharedContext::asEvalContext() {
@@ -323,20 +337,20 @@ class FunctionBox : public SharedContext {
   mozilla::Maybe<ScopeIndex> enclosingScopeIndex_;
 
   // Names from the named lambda scope, if a named lambda.
-  LexicalScope::Data* namedLambdaBindings_ = nullptr;
+  ParserLexicalScopeData* namedLambdaBindings_ = nullptr;
 
   // Names from the function scope.
-  FunctionScope::Data* functionScopeBindings_ = nullptr;
+  ParserFunctionScopeData* functionScopeBindings_ = nullptr;
 
   // Names from the extra 'var' scope of the function, if the parameter list
   // has expressions.
-  VarScope::Data* extraVarScopeBindings_ = nullptr;
+  ParserVarScopeData* extraVarScopeBindings_ = nullptr;
 
   // The explicit or implicit name of the function. The FunctionFlags indicate
   // the kind of name.
   // This is copied to ScriptStencil.
   // Any update after the copy should be synced to the ScriptStencil.
-  JSAtom* atom_ = nullptr;
+  const ParserAtom* atom_ = nullptr;
 
   // Index into CompilationInfo::{funcData, functions}.
   FunctionIndex funcDataIndex_ = FunctionIndex(-1);
@@ -409,34 +423,30 @@ class FunctionBox : public SharedContext {
 
   // End of fields.
 
-  FunctionBox(JSContext* cx, FunctionBox* traceListHead, SourceExtent extent,
-              CompilationInfo& compilationInfo, Directives directives,
+  FunctionBox(JSContext* cx, SourceExtent extent,
+              CompilationInfo& compilationInfo,
+              CompilationState& compilationState, Directives directives,
               GeneratorKind generatorKind, FunctionAsyncKind asyncKind,
-              JSAtom* explicitName, FunctionFlags flags, FunctionIndex index,
+              const ParserAtom* atom, FunctionFlags flags, FunctionIndex index,
               TopLevelFunction isTopLevel);
 
-  MutableHandle<ScriptStencil> functionStencil() const;
+  ScriptStencil& functionStencil() const;
 
-#ifdef DEBUG
-  bool atomsAreKept();
-#endif
-
-  MutableHandle<LexicalScope::Data*> namedLambdaBindings() {
-    MOZ_ASSERT(atomsAreKept());
-    return MutableHandle<LexicalScope::Data*>::fromMarkedLocation(
-        &namedLambdaBindings_);
+  ParserLexicalScopeData* namedLambdaBindings() { return namedLambdaBindings_; }
+  void setNamedLambdaBindings(ParserLexicalScopeData* bindings) {
+    namedLambdaBindings_ = bindings;
   }
 
-  MutableHandle<FunctionScope::Data*> functionScopeBindings() {
-    MOZ_ASSERT(atomsAreKept());
-    return MutableHandle<FunctionScope::Data*>::fromMarkedLocation(
-        &functionScopeBindings_);
+  ParserFunctionScopeData* functionScopeBindings() {
+    return functionScopeBindings_;
+  }
+  void setFunctionScopeBindings(ParserFunctionScopeData* bindings) {
+    functionScopeBindings_ = bindings;
   }
 
-  MutableHandle<VarScope::Data*> extraVarScopeBindings() {
-    MOZ_ASSERT(atomsAreKept());
-    return MutableHandle<VarScope::Data*>::fromMarkedLocation(
-        &extraVarScopeBindings_);
+  ParserVarScopeData* extraVarScopeBindings() { return extraVarScopeBindings_; }
+  void setExtraVarScopeBindings(ParserVarScopeData* bindings) {
+    extraVarScopeBindings_ = bindings;
   }
 
   void initFromLazyFunction(JSFunction* fun);
@@ -553,22 +563,22 @@ class FunctionBox : public SharedContext {
   bool hasInferredName() const { return flags_.hasInferredName(); }
   bool hasGuessedAtom() const { return flags_.hasGuessedAtom(); }
 
-  JSAtom* displayAtom() const { return atom_; }
-  JSAtom* explicitName() const {
+  const ParserAtom* displayAtom() const { return atom_; }
+  const ParserAtom* explicitName() const {
     return (hasInferredName() || hasGuessedAtom()) ? nullptr : atom_;
   }
 
   // NOTE: We propagate to any existing functions for now. This handles both the
   // delazification case where functions already exist, and also handles
   // code-coverage which is not yet deferred.
-  void setInferredName(JSAtom* atom) {
+  void setInferredName(const ParserAtom* atom) {
     atom_ = atom;
     flags_.setInferredName();
     if (isFunctionFieldCopiedToStencil) {
       copyUpdatedAtomAndFlags();
     }
   }
-  void setGuessedAtom(JSAtom* atom) {
+  void setGuessedAtom(const ParserAtom* atom) {
     atom_ = atom;
     flags_.setGuessedAtom();
     if (isFunctionFieldCopiedToStencil) {
@@ -690,15 +700,11 @@ class FunctionBox : public SharedContext {
 
   FunctionIndex index() { return funcDataIndex_; }
 
-  void trace(JSTracer* trc);
-
-  static void TraceList(JSTracer* trc, FunctionBox* listHead);
-
   FunctionBox* traceLink() { return traceLink_; }
 
   void finishScriptFlags();
-  void copyScriptFields(ScriptStencil& stencil);
-  void copyFunctionFields(ScriptStencil& stencil);
+  void copyScriptFields(ScriptStencil& script);
+  void copyFunctionFields(ScriptStencil& script);
 
   // * setTreatAsRunOnce can be called to a lazy function, while emitting
   //   enclosing script

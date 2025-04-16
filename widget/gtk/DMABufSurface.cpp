@@ -26,6 +26,7 @@
 #include "GLContextTypes.h"  // for GLContext, etc
 #include "GLContextEGL.h"
 #include "GLContextProvider.h"
+#include "ScopedGLHelpers.h"
 
 #include "mozilla/layers/LayersSurfaces.h"
 
@@ -258,57 +259,15 @@ bool DMABufSurface::FenceImportFromFd() {
   return true;
 }
 
-void DMABufSurfaceRGBA::SetWLBuffer(struct wl_buffer* aWLBuffer) {
-  MOZ_ASSERT(mWLBuffer == nullptr, "WLBuffer already assigned!");
-  mWLBuffer = aWLBuffer;
-}
-
-wl_buffer* DMABufSurfaceRGBA::GetWLBuffer() { return mWLBuffer; }
-
-static void buffer_release(void* data, wl_buffer* buffer) {
-  auto surface = reinterpret_cast<DMABufSurfaceRGBA*>(data);
-  surface->WLBufferDetach();
-}
-
-static const struct wl_buffer_listener buffer_listener = {buffer_release};
-
-static void buffer_created(void* data,
-                           struct zwp_linux_buffer_params_v1* params,
-                           struct wl_buffer* new_buffer) {
-  auto surface = static_cast<DMABufSurfaceRGBA*>(data);
-
-  surface->SetWLBuffer(new_buffer);
-
-  nsWaylandDisplay* display = WaylandDisplayGet();
-  /* When not using explicit synchronization listen to wl_buffer.release
-   * for release notifications, otherwise we are going to use
-   * zwp_linux_buffer_release_v1. */
-  if (!display->IsExplicitSyncEnabled()) {
-    wl_buffer_add_listener(new_buffer, &buffer_listener, surface);
-  }
-  zwp_linux_buffer_params_v1_destroy(params);
-}
-
-static void buffer_create_failed(void* data,
-                                 struct zwp_linux_buffer_params_v1* params) {
-  zwp_linux_buffer_params_v1_destroy(params);
-}
-
-static const struct zwp_linux_buffer_params_v1_listener params_listener = {
-    buffer_created, buffer_create_failed};
-
 DMABufSurfaceRGBA::DMABufSurfaceRGBA()
     : DMABufSurface(SURFACE_RGBA),
       mSurfaceFlags(0),
       mWidth(0),
       mHeight(0),
       mGmbFormat(nullptr),
-      mWLBuffer(nullptr),
       mEGLImage(LOCAL_EGL_NO_IMAGE),
       mTexture(0),
-      mGbmBufferFlags(0),
-      mWLBufferAttached(false),
-      mFastWLBufferCreation(true) {}
+      mGbmBufferFlags(0) {}
 
 DMABufSurfaceRGBA::~DMABufSurfaceRGBA() { ReleaseSurface(); }
 
@@ -320,6 +279,9 @@ bool DMABufSurfaceRGBA::Create(int aWidth, int aHeight,
   mWidth = aWidth;
   mHeight = aHeight;
 
+  LOGDMABUF(("DMABufSurfaceRGBA::Create() UID %d size %d x %d\n", mUID, mWidth,
+             mHeight));
+
   mGmbFormat = GetDMABufDevice()->GetGbmFormat(mSurfaceFlags & DMABUF_ALPHA);
   if (!mGmbFormat) {
     // Requested DRM format is not supported.
@@ -329,6 +291,7 @@ bool DMABufSurfaceRGBA::Create(int aWidth, int aHeight,
   bool useModifiers = (aDMABufSurfaceFlags & DMABUF_USE_MODIFIERS) &&
                       mGmbFormat->mModifiersCount > 0;
   if (useModifiers) {
+    LOGDMABUF(("    Creating with modifiers\n"));
     mGbmBufferObject[0] = nsGbmLib::CreateWithModifiers(
         GetDMABufDevice()->GetGbmDevice(), mWidth, mHeight, mGmbFormat->mFormat,
         mGmbFormat->mModifiers, mGmbFormat->mModifiersCount);
@@ -339,10 +302,9 @@ bool DMABufSurfaceRGBA::Create(int aWidth, int aHeight,
 
   // Create without modifiers - use plain/linear format.
   if (!mGbmBufferObject[0]) {
+    LOGDMABUF(("    Creating without modifiers\n"));
     mGbmBufferFlags = (GBM_BO_USE_SCANOUT | GBM_BO_USE_LINEAR);
-    if (mSurfaceFlags & DMABUF_CREATE_WL_BUFFER) {
-      mGbmBufferFlags |= GBM_BO_USE_RENDERING;
-    } else if (mSurfaceFlags & DMABUF_TEXTURE) {
+    if (mSurfaceFlags & DMABUF_TEXTURE) {
       mGbmBufferFlags |= GBM_BO_USE_TEXTURING;
     }
 
@@ -360,6 +322,7 @@ bool DMABufSurfaceRGBA::Create(int aWidth, int aHeight,
   }
 
   if (!mGbmBufferObject[0]) {
+    LOGDMABUF(("    Failed to create GbmBufferObject\n"));
     return false;
   }
 
@@ -392,10 +355,7 @@ bool DMABufSurfaceRGBA::Create(int aWidth, int aHeight,
     }
   }
 
-  if (mSurfaceFlags & DMABUF_CREATE_WL_BUFFER) {
-    return CreateWLBuffer();
-  }
-
+  LOGDMABUF(("    Success\n"));
   return true;
 }
 
@@ -429,6 +389,8 @@ void DMABufSurfaceRGBA::ImportSurfaceDescriptor(
   if (desc.refCount().Length() > 0) {
     GlobalRefCountImport(desc.refCount()[0].ClonePlatformHandle().release());
   }
+
+  LOGDMABUF(("DMABufSurfaceRGBA::Import() UID %d\n", mUID));
 }
 
 bool DMABufSurfaceRGBA::Create(const SurfaceDescriptor& aDesc) {
@@ -447,6 +409,8 @@ bool DMABufSurfaceRGBA::Serialize(
   AutoTArray<uintptr_t, DMABUF_BUFFER_PLANES> images;
   AutoTArray<ipc::FileDescriptor, 1> fenceFDs;
   AutoTArray<ipc::FileDescriptor, 1> refCountFDs;
+
+  LOGDMABUF(("DMABufSurfaceRGBA::Serialize() UID %d\n", mUID));
 
   width.AppendElement(mWidth);
   height.AppendElement(mHeight);
@@ -469,39 +433,6 @@ bool DMABufSurfaceRGBA::Serialize(
       SurfaceDescriptorDMABuf(mSurfaceType, mBufferModifier, mGbmBufferFlags,
                               fds, width, height, format, strides, offsets,
                               GetYUVColorSpace(), fenceFDs, mUID, refCountFDs);
-
-  return true;
-}
-
-bool DMABufSurfaceRGBA::CreateWLBuffer() {
-  nsWaylandDisplay* display = WaylandDisplayGet();
-  if (!display->GetDmabuf()) {
-    return false;
-  }
-
-  struct zwp_linux_buffer_params_v1* params =
-      zwp_linux_dmabuf_v1_create_params(display->GetDmabuf());
-  for (int i = 0; i < mBufferPlaneCount; i++) {
-    zwp_linux_buffer_params_v1_add(params, mDmabufFds[i], i, mOffsets[i],
-                                   mStrides[i], mBufferModifier >> 32,
-                                   mBufferModifier & 0xffffffff);
-  }
-  zwp_linux_buffer_params_v1_add_listener(params, &params_listener, this);
-
-  if (mFastWLBufferCreation) {
-    mWLBuffer = zwp_linux_buffer_params_v1_create_immed(
-        params, mWidth, mHeight, mGmbFormat->mFormat, BUFFER_FLAGS);
-    /* When not using explicit synchronization listen to
-     * wl_buffer.release for release notifications, otherwise we
-     * are going to use zwp_linux_buffer_release_v1. */
-    if (!display->IsExplicitSyncEnabled()) {
-      wl_buffer_add_listener(mWLBuffer, &buffer_listener, this);
-    }
-  } else {
-    zwp_linux_buffer_params_v1_create(params, mWidth, mHeight,
-                                      mGmbFormat->mFormat, BUFFER_FLAGS);
-  }
-
   return true;
 }
 
@@ -556,7 +487,7 @@ bool DMABufSurfaceRGBA::CreateTexture(GLContext* aGLContext, int aPlane) {
 
   aGLContext->MakeCurrent();
   aGLContext->fGenTextures(1, &mTexture);
-  aGLContext->fBindTexture(LOCAL_GL_TEXTURE_2D, mTexture);
+  const ScopedBindTexture savedTex(aGLContext, mTexture);
   aGLContext->fTexParameteri(LOCAL_GL_TEXTURE_2D, LOCAL_GL_TEXTURE_WRAP_S,
                              LOCAL_GL_CLAMP_TO_EDGE);
   aGLContext->fTexParameteri(LOCAL_GL_TEXTURE_2D, LOCAL_GL_TEXTURE_WRAP_T,
@@ -567,6 +498,7 @@ bool DMABufSurfaceRGBA::CreateTexture(GLContext* aGLContext, int aPlane) {
                              LOCAL_GL_LINEAR);
   aGLContext->fEGLImageTargetTexture2D(LOCAL_GL_TEXTURE_2D, mEGLImage);
   mGL = aGLContext;
+
   return true;
 }
 
@@ -593,12 +525,6 @@ void DMABufSurfaceRGBA::ReleaseSurface() {
   MOZ_ASSERT(!IsMapped(), "We can't release mapped buffer!");
 
   ReleaseTextures();
-
-  if (mWLBuffer) {
-    wl_buffer_destroy(mWLBuffer);
-    mWLBuffer = nullptr;
-  }
-
   ReleaseDMABuf();
 }
 
@@ -610,6 +536,10 @@ void* DMABufSurface::MapInternal(uint32_t aX, uint32_t aY, uint32_t aWidth,
     NS_WARNING("We can't map DMABufSurfaceRGBA without mGbmBufferObject");
     return nullptr;
   }
+
+  LOGDMABUF(
+      ("DMABufSurfaceRGBA::MapInternal() UID %d size %d x %d -> %d x %d\n",
+       mUID, aX, aY, aWidth, aHeight));
 
   mMappedRegionStride[aPlane] = 0;
   mMappedRegionData[aPlane] = nullptr;
@@ -651,25 +581,30 @@ void DMABufSurface::Unmap(int aPlane) {
   }
 }
 
-bool DMABufSurfaceRGBA::Resize(int aWidth, int aHeight) {
-  if (aWidth == mWidth && aHeight == mHeight) {
-    return true;
-  }
+#ifdef DEBUG
+void DMABufSurfaceRGBA::DumpToFile(const char* pFile) {
+  uint32_t stride;
 
-  if (IsMapped()) {
-    NS_WARNING("We can't resize mapped surface!");
-    return false;
+  if (!MapReadOnly(&stride)) {
+    return;
   }
+  cairo_surface_t* surface = nullptr;
 
-  ReleaseSurface();
-  if (Create(aWidth, aHeight, mSurfaceFlags)) {
-    if (mSurfaceFlags & DMABUF_CREATE_WL_BUFFER) {
-      return CreateWLBuffer();
+  auto unmap = MakeScopeExit([&] {
+    if (surface) {
+      cairo_surface_destroy(surface);
     }
-  }
+    Unmap();
+  });
 
-  return false;
+  surface = cairo_image_surface_create_for_data(
+      (unsigned char*)mMappedRegion[0], CAIRO_FORMAT_ARGB32, mWidth, mHeight,
+      stride);
+  if (cairo_surface_status(surface) == CAIRO_STATUS_SUCCESS) {
+    cairo_surface_write_to_png(surface, pFile);
+  }
 }
+#endif
 
 #if 0
 // Copy from source surface by GL
@@ -988,7 +923,7 @@ bool DMABufSurfaceYUV::CreateTexture(GLContext* aGLContext, int aPlane) {
 
   aGLContext->MakeCurrent();
   aGLContext->fGenTextures(1, &mTexture[aPlane]);
-  aGLContext->fBindTexture(LOCAL_GL_TEXTURE_2D, mTexture[aPlane]);
+  const ScopedBindTexture savedTex(aGLContext, mTexture[aPlane]);
   aGLContext->fTexParameteri(LOCAL_GL_TEXTURE_2D, LOCAL_GL_TEXTURE_WRAP_S,
                              LOCAL_GL_CLAMP_TO_EDGE);
   aGLContext->fTexParameteri(LOCAL_GL_TEXTURE_2D, LOCAL_GL_TEXTURE_WRAP_T,

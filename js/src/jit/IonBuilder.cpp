@@ -12,6 +12,7 @@
 #include <algorithm>
 
 #include "builtin/Eval.h"
+#include "builtin/ModuleObject.h"
 #include "builtin/TypedObject.h"
 #include "frontend/SourceNotes.h"
 #include "jit/BaselineFrame.h"
@@ -22,14 +23,15 @@
 #include "jit/JitSpewer.h"
 #include "jit/Lowering.h"
 #include "jit/MIRGraph.h"
-#include "js/ScalarType.h"  // js::Scalar::Type
+#include "js/experimental/JitInfo.h"  // JSJitInfo
+#include "js/Object.h"                // JS::GetReservedSlot
+#include "js/ScalarType.h"            // js::Scalar::Type
 #include "util/CheckedArithmetic.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/BuiltinObjectKind.h"
 #include "vm/BytecodeIterator.h"
 #include "vm/BytecodeLocation.h"
 #include "vm/BytecodeUtil.h"
-#include "vm/EnvironmentObject.h"
 #include "vm/Instrumentation.h"
 #include "vm/Opcodes.h"
 #include "vm/PlainObject.h"  // js::PlainObject
@@ -1267,7 +1269,7 @@ AbortReasonOr<Ok> IonBuilder::initEnvironmentChain(MDefinition* callee) {
 
   // Update the environment slot from UndefinedValue only after initial
   // environment is created so that bailout doesn't see a partial env.
-  // See: |InitFromBailout|
+  // See: |BaselineStackBuilder::buildBaselineFrame|
   current->setEnvironmentChain(env);
   return Ok();
 }
@@ -5688,8 +5690,6 @@ bool IonBuilder::ensureArrayIteratorPrototypeNextNotModified() {
 AbortReasonOr<Ok> IonBuilder::jsop_optimize_spreadcall() {
   MDefinition* arr = current->peek(-1);
 
-  // Assuming optimization isn't available doesn't affect correctness.
-  // TODO: Investigate dynamic checks.
   bool result = false;
   do {
     // Inline with MIsPackedArray if the conditions described in
@@ -5737,11 +5737,13 @@ AbortReasonOr<Ok> IonBuilder::jsop_optimize_spreadcall() {
     auto* ins = MIsPackedArray::New(alloc(), arr);
     current->add(ins);
     current->push(ins);
-  } else {
-    arr->setImplicitlyUsedUnchecked();
-    pushConstant(BooleanValue(false));
+    return Ok();
   }
-  return Ok();
+
+  auto* ins = MOptimizeSpreadCallCache::New(alloc(), arr);
+  current->add(ins);
+  current->push(ins);
+  return resumeAfter(ins);
 }
 
 AbortReasonOr<Ok> IonBuilder::jsop_funapplyarray(uint32_t argc) {
@@ -10776,7 +10778,7 @@ AbortReasonOr<Ok> IonBuilder::getPropTryCommonGetter(bool* emitted,
         if (singleton && jitinfo->aliasSet() == JSJitInfo::AliasNone) {
           size_t slot = jitinfo->slotIndex;
           *emitted = true;
-          pushConstant(GetReservedSlot(singleton, slot));
+          pushConstant(JS::GetReservedSlot(singleton, slot));
           return Ok();
         }
 
@@ -11956,18 +11958,20 @@ AbortReasonOr<Ok> IonBuilder::jsop_functionthis() {
                  "JSOp::FunctionThis would need non-syntactic global");
   }
 
+  LexicalEnvironmentObject* globalLexical =
+      &script()->global().lexicalEnvironment();
+  JSObject* globalThis = globalLexical->thisObject();
+
   if (IsNullOrUndefined(def->type())) {
-    LexicalEnvironmentObject* globalLexical =
-        &script()->global().lexicalEnvironment();
-    pushConstant(ObjectValue(*globalLexical->thisObject()));
+    pushConstant(ObjectValue(*globalThis));
     return Ok();
   }
 
-  MBoxNonStrictThis* thisObj = MBoxNonStrictThis::New(alloc(), def);
+  MBoxNonStrictThis* thisObj = MBoxNonStrictThis::New(alloc(), def, globalThis);
   current->add(thisObj);
   current->push(thisObj);
 
-  return resumeAfter(thisObj);
+  return Ok();
 }
 
 AbortReasonOr<Ok> IonBuilder::jsop_globalthis() {
@@ -12490,7 +12494,8 @@ AbortReasonOr<Ok> IonBuilder::jsop_instanceof() {
       return Ok();
     }
 
-    MInstanceOf* ins = MInstanceOf::New(alloc(), obj, protoObject);
+    MConstant* protoConst = constant(ObjectValue(*protoObject));
+    MInstanceOf* ins = MInstanceOf::New(alloc(), obj, protoConst);
 
     current->add(ins);
     current->push(ins);
@@ -12529,7 +12534,7 @@ AbortReasonOr<Ok> IonBuilder::jsop_instanceof() {
       return Ok();
     }
 
-    MInstanceOf* ins = MInstanceOf::New(alloc(), obj, protoObject);
+    MInstanceOf* ins = MInstanceOf::New(alloc(), obj, protoConst);
     current->add(ins);
     current->push(ins);
     return resumeAfter(ins);

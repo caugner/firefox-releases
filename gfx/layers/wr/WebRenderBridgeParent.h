@@ -18,7 +18,6 @@
 #include "mozilla/layers/CompositorVsyncSchedulerOwner.h"
 #include "mozilla/layers/PWebRenderBridgeParent.h"
 #include "mozilla/layers/UiCompositorControllerParent.h"
-#include "mozilla/layers/WebRenderCompositionRecorder.h"
 #include "mozilla/HashTable.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Result.h"
@@ -113,7 +112,7 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
                         TimeDuration aVsyncRate);
 
   static WebRenderBridgeParent* CreateDestroyed(
-      const wr::PipelineId& aPipelineId);
+      const wr::PipelineId& aPipelineId, nsCString&& aError);
 
   wr::PipelineId PipelineId() { return mPipelineId; }
   already_AddRefed<wr::WebRenderAPI> GetWebRenderAPI() {
@@ -134,7 +133,7 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
 
   mozilla::ipc::IPCResult RecvEnsureConnected(
       TextureFactoryIdentifier* aTextureFactoryIdentifier,
-      MaybeIdNamespace* aMaybeIdNamespace) override;
+      MaybeIdNamespace* aMaybeIdNamespace, nsCString* aError) override;
 
   mozilla::ipc::IPCResult RecvNewCompositable(
       const CompositableHandle& aHandle, const TextureInfo& aInfo) override;
@@ -204,6 +203,8 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
       FrameUniformityData* aOutData) override;
 
   void ActorDestroy(ActorDestroyReason aWhy) override;
+
+  void SetClearColor(const gfx::DeviceColor& aColor);
 
   void Pause();
   bool Resume();
@@ -298,11 +299,10 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
   bool IsRootWebRenderBridgeParent() const;
   LayersId GetLayersId() const;
 
-  void SetCompositionRecorder(
-      UniquePtr<layers::WebRenderCompositionRecorder> aRecorder);
+  void BeginRecording(const TimeStamp& aRecordingStart);
 
   /**
-   * Write the frames collected by the |WebRenderCompositionRecorder| to disk.
+   * Write the frames collected since the call to BeginRecording to disk.
    *
    * If there is not currently a recorder, this is a no-op.
    */
@@ -316,7 +316,7 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
   void MaybeCaptureScreenPixels();
 #endif
   /**
-   * Return the frames collected by the |WebRenderCompositionRecorder| encoded
+   * Return the frames collected since the call to BeginRecording encoded
    * as data URIs.
    *
    * If there is not currently a recorder, this is a no-op and the promise will
@@ -335,7 +335,7 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
  private:
   class ScheduleSharedSurfaceRelease;
 
-  explicit WebRenderBridgeParent(const wr::PipelineId& aPipelineId);
+  WebRenderBridgeParent(const wr::PipelineId& aPipelineId, nsCString&& aError);
   virtual ~WebRenderBridgeParent();
 
   bool ProcessEmptyTransactionUpdates(TransactionData& aData,
@@ -507,6 +507,7 @@ class WebRenderBridgeParent final : public PWebRenderBridgeParent,
   wr::Epoch mWrEpoch;
   wr::IdNamespace mIdNamespace;
   CompositionOpportunityId mCompositionOpportunityId;
+  nsCString mInitError;
 
   VsyncId mSkippedCompositeId;
   TimeStamp mMostRecentComposite;

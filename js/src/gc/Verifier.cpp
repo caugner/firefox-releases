@@ -501,7 +501,7 @@ void js::gc::MarkingValidator::nonIncrementalMark(AutoGCSession& session) {
   MOZ_ASSERT(!gcmarker->isWeakMarking());
 
   /* Wait for off-thread parsing which can allocate. */
-  HelperThreadState().waitForAllThreads();
+  WaitForAllHelperThreads();
 
   gc->waitBackgroundAllocEnd();
   gc->waitBackgroundSweepEnd();
@@ -637,7 +637,11 @@ void js::gc::MarkingValidator::nonIncrementalMark(AutoGCSession& session) {
       auto ptr = map.lookup(chunk);
       MOZ_RELEASE_ASSERT(ptr, "Chunk not found in map");
       ChunkBitmap* entry = ptr->value().get();
-      std::swap(*entry, *bitmap);
+      for (size_t i = 0; i < ChunkBitmap::WordCount; i++) {
+        uintptr_t v = entry->bitmap[i];
+        entry->bitmap[i] = uintptr_t(bitmap->bitmap[i]);
+        bitmap->bitmap[i] = v;
+      }
     }
   }
 
@@ -1061,7 +1065,7 @@ bool js::gc::CheckWeakMapEntryMarking(const WeakMapBase* map, Cell* key,
     fprintf(stderr, "(map %p is %s, key %p is %s, value %p is %s)\n", map,
             map->mapColor.name(), key, keyColor.name(), value,
             valueColor.name());
-#ifdef DEBUG
+#  ifdef DEBUG
     fprintf(stderr, "Key:\n");
     key->dump();
     if (auto delegate = MaybeGetDelegate(key); delegate) {
@@ -1070,7 +1074,7 @@ bool js::gc::CheckWeakMapEntryMarking(const WeakMapBase* map, Cell* key,
     }
     fprintf(stderr, "Value:\n");
     value->dump();
-#endif
+#  endif
 
     ok = false;
   }

@@ -17,9 +17,11 @@
 #include "jit/ICState.h"
 #include "jit/SharedICRegisters.h"
 #include "js/GCVector.h"
+#include "proxy/DOMProxy.h"  // js::GetDOMProxyHandlerFamily
 #include "vm/ArrayObject.h"
 #include "vm/BytecodeUtil.h"
 #include "vm/JSContext.h"
+#include "vm/ProxyObject.h"
 #include "vm/Realm.h"
 
 namespace js {
@@ -679,6 +681,11 @@ class ICFallbackStub : public ICStub {
 
   inline size_t numOptimizedStubs() const { return state_.numOptimizedStubs(); }
 
+  bool newStubIsFirstStub() const {
+    return (state_.mode() == ICState::Mode::Specialized &&
+            numOptimizedStubs() == 0);
+  }
+
   ICState& state() { return state_; }
 
   // The icEntry_ field can't be initialized when the stub is created since we
@@ -707,6 +714,13 @@ class ICFallbackStub : public ICStub {
 
   void clearUsedByTranspiler() { state_.clearUsedByTranspiler(); }
   void setUsedByTranspiler() { state_.setUsedByTranspiler(); }
+
+  TrialInliningState trialInliningState() const {
+    return state_.trialInliningState();
+  }
+  void setTrialInliningState(TrialInliningState state) {
+    state_.setTrialInliningState(state);
+  }
 
   // If the transpiler optimized based on this IC, invalidate the script's Warp
   // code.
@@ -1664,6 +1678,13 @@ class ICGetIterator_Fallback : public ICFallbackStub {
       : ICFallbackStub(ICStub::GetIterator_Fallback, stubCode) {}
 };
 
+class ICOptimizeSpreadCall_Fallback : public ICFallbackStub {
+  friend class ICStubSpace;
+
+  explicit ICOptimizeSpreadCall_Fallback(TrampolinePtr stubCode)
+      : ICFallbackStub(ICStub::OptimizeSpreadCall_Fallback, stubCode) {}
+};
+
 // InstanceOf
 //      JSOp::Instanceof
 class ICInstanceOf_Fallback : public ICFallbackStub {
@@ -1909,6 +1930,11 @@ extern bool DoSetPropFallback(JSContext* cx, BaselineFrame* frame,
 extern bool DoGetIteratorFallback(JSContext* cx, BaselineFrame* frame,
                                   ICGetIterator_Fallback* stub,
                                   HandleValue value, MutableHandleValue res);
+
+extern bool DoOptimizeSpreadCallFallback(JSContext* cx, BaselineFrame* frame,
+                                         ICOptimizeSpreadCall_Fallback* stub,
+                                         HandleValue value,
+                                         MutableHandleValue res);
 
 extern bool DoInstanceOfFallback(JSContext* cx, BaselineFrame* frame,
                                  ICInstanceOf_Fallback* stub, HandleValue lhs,

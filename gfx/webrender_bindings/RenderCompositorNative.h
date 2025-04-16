@@ -8,6 +8,7 @@
 #define MOZILLA_GFX_RENDERCOMPOSITOR_NATIVE_H
 
 #include "GLTypes.h"
+#include "mozilla/layers/ScreenshotGrabber.h"
 #include "mozilla/webrender/RenderCompositor.h"
 #include "mozilla/TimeStamp.h"
 
@@ -45,6 +46,9 @@ class RenderCompositorNative : public RenderCompositor {
                      const wr::ImageFormat& aReadbackFormat,
                      const Range<uint8_t>& aReadbackBuffer,
                      bool* aNeedsYFlip) override;
+  bool MaybeRecordFrame(layers::CompositionRecorder& aRecorder) override;
+  bool MaybeGrabScreenshot(const gfx::IntSize& aWindowSize) override;
+  bool MaybeProcessScreenshotQueue() override;
 
   // Interface for wr::Compositor
   void CompositorBeginFrame() override;
@@ -84,6 +88,7 @@ class RenderCompositorNative : public RenderCompositor {
   // Can be null.
   RefPtr<layers::NativeLayerRoot> mNativeLayerRoot;
   UniquePtr<layers::NativeLayerRootSnapshotter> mNativeLayerRootSnapshotter;
+  layers::ScreenshotGrabber mProfilerScreenshotGrabber;
   RefPtr<layers::NativeLayer> mNativeLayerForEntireWindow;
   RefPtr<layers::SurfacePoolHandle> mSurfacePoolHandle;
 
@@ -119,8 +124,8 @@ class RenderCompositorNative : public RenderCompositor {
   // Used in native compositor mode:
   RefPtr<layers::NativeLayer> mCurrentlyBoundNativeLayer;
   nsTArray<RefPtr<layers::NativeLayer>> mAddedLayers;
-  uint64_t mTotalPixelCount = 0;
-  uint64_t mAddedPixelCount = 0;
+  uint64_t mTotalTilePixelCount = 0;
+  uint64_t mAddedTilePixelCount = 0;
   uint64_t mAddedClippedPixelCount = 0;
   uint64_t mDrawnPixelCount = 0;
   gfx::IntRect mVisibleBounds;
@@ -138,7 +143,7 @@ static inline bool operator==(const RenderCompositorNative::TileKey& a0,
 class RenderCompositorNativeOGL : public RenderCompositorNative {
  public:
   static UniquePtr<RenderCompositor> Create(
-      RefPtr<widget::CompositorWidget>&& aWidget);
+      RefPtr<widget::CompositorWidget>&& aWidget, nsACString& aError);
 
   RenderCompositorNativeOGL(RefPtr<widget::CompositorWidget>&& aWidget,
                             RefPtr<gl::GLContext>&& aGL);
@@ -172,7 +177,7 @@ class RenderCompositorNativeOGL : public RenderCompositorNative {
 class RenderCompositorNativeSWGL : public RenderCompositorNative {
  public:
   static UniquePtr<RenderCompositor> Create(
-      RefPtr<widget::CompositorWidget>&& aWidget);
+      RefPtr<widget::CompositorWidget>&& aWidget, nsACString& aError);
 
   RenderCompositorNativeSWGL(RefPtr<widget::CompositorWidget>&& aWidget,
                              void* aContext);

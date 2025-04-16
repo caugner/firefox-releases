@@ -22,6 +22,11 @@
 #include "threading/Mutex.h"
 
 namespace js {
+
+#ifdef DEBUG
+extern bool CurrentThreadIsGCMarking();
+#endif
+
 namespace gc {
 
 class Arena;
@@ -394,6 +399,7 @@ class StoreBuffer {
   inline void CheckAccess() const {
 #ifdef DEBUG
     if (JS::RuntimeHeapIsBusy()) {
+      MOZ_ASSERT(!CurrentThreadIsGCMarking());
       MOZ_ASSERT(lock_.ownedByCurrentThread());
     } else {
       MOZ_ASSERT(CurrentThreadCanAccessRuntime(runtime_));
@@ -612,6 +618,33 @@ class ArenaCellSet {
   static size_t offsetOfArena() { return offsetof(ArenaCellSet, arena); }
   static size_t offsetOfBits() { return offsetof(ArenaCellSet, bits); }
 };
+
+// Implement the post-write barrier for nursery allocateable cell type |T|. Call
+// this from |T::writeBarrierPost|.
+template <typename T>
+MOZ_ALWAYS_INLINE void WriteBarrierPostImpl(void* cellp, T* prev, T* next) {
+  MOZ_ASSERT(cellp);
+
+  // If the target needs an entry, add it.
+  js::gc::StoreBuffer* buffer;
+  if (next && (buffer = next->storeBuffer())) {
+    // If we know that the prev has already inserted an entry, we can skip
+    // doing the lookup to add the new entry. Note that we cannot safely
+    // assert the presence of the entry because it may have been added
+    // via a different store buffer.
+    if (prev && prev->storeBuffer()) {
+      return;
+    }
+    buffer->putCell(static_cast<T**>(cellp));
+    return;
+  }
+
+  // Remove the prev entry if the new value does not need it. There will only
+  // be a prev entry if the prev value was in the nursery.
+  if (prev && (buffer = prev->storeBuffer())) {
+    buffer->unputCell(static_cast<T**>(cellp));
+  }
+}
 
 } /* namespace gc */
 } /* namespace js */

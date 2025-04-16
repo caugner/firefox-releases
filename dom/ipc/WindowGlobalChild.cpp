@@ -114,15 +114,11 @@ already_AddRefed<WindowGlobalChild> WindowGlobalChild::Create(
         BrowserChild::GetFrom(static_cast<mozIDOMWindow*>(aWindow));
     MOZ_ASSERT(browserChild);
 
+#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
     dom::BrowsingContext* bc = aWindow->GetBrowsingContext();
+#endif
 
-    CrashReporter::AnnotateCrashReport(CrashReporter::Annotation::NewWindowBCId,
-                                       static_cast<unsigned int>(bc->Id()));
-    CrashReporter::AnnotateCrashReport(
-        CrashReporter::Annotation::NewWindowBCIsTop, bc->IsTop());
-
-    MOZ_DIAGNOSTIC_ASSERT(!bc->IsDiscarded());
-    MOZ_DIAGNOSTIC_ASSERT(bc->EverAttached());
+    MOZ_DIAGNOSTIC_ASSERT(bc->AncestorsAreCurrent());
     MOZ_DIAGNOSTIC_ASSERT(bc->IsInProcess());
 
     ManagedEndpoint<PWindowGlobalParent> endpoint =
@@ -631,6 +627,16 @@ void WindowGlobalChild::ActorDestroy(ActorDestroyReason aWhy) {
   JSActorDidDestroy();
 }
 
+bool WindowGlobalChild::SameOriginWithTop() {
+  nsGlobalWindowInner* topWindow =
+      WindowContext()->TopWindowContext()->GetInnerWindow();
+  if (!topWindow) {
+    return false;
+  }
+  return mWindowGlobal == topWindow ||
+         mDocumentPrincipal->Equals(topWindow->GetPrincipal());
+}
+
 WindowGlobalChild::~WindowGlobalChild() {
   MOZ_ASSERT(!gWindowGlobalChildById ||
              !gWindowGlobalChildById->Contains(InnerWindowId()));
@@ -643,6 +649,13 @@ JSObject* WindowGlobalChild::WrapObject(JSContext* aCx,
 
 nsISupports* WindowGlobalChild::GetParentObject() {
   return xpc::NativeGlobal(xpc::PrivilegedJunkScope());
+}
+
+void WindowGlobalChild::MaybeSendUpdateDocumentWouldPreloadResources() {
+  if (!mDocumentWouldPreloadResources) {
+    mDocumentWouldPreloadResources = true;
+    SendUpdateDocumentWouldPreloadResources();
+  }
 }
 
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(WindowGlobalChild, mWindowGlobal)

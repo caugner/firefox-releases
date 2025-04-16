@@ -81,13 +81,10 @@ add_task(async function navigateFrameNotExpandedInMarkupView() {
   //
   // The iframe we are about to navigate is therefore hidden and we are not
   // watching it - ie, it is not in the list of known NodeFronts/Actors.
-  const { resource, targetFront } = await navigateIframeTo(
-    inspector,
-    EXAMPLE_COM_URI
-  );
+  const resource = await navigateIframeTo(inspector, EXAMPLE_COM_URI);
 
   is(
-    resource?.resourceType,
+    resource.resourceType,
     resourceWatcher.TYPES.ROOT_NODE,
     "A resource with resourceType ROOT_NODE was received when navigating"
   );
@@ -108,7 +105,7 @@ add_task(async function navigateFrameNotExpandedInMarkupView() {
   // This should be fixed when implementing the RootNode resource on the server
   // in https://bugzilla.mozilla.org/show_bug.cgi?id=1644190
   todo(
-    !targetFront.getCachedFront("inspector"),
+    !resource.targetFront.getCachedFront("inspector"),
     "The inspector front for the new target should not be initialized"
   );
 });
@@ -119,9 +116,12 @@ async function navigateIframeTo(inspector, url) {
   const { resourceWatcher, targetList } = inspector.toolbox;
   const onTargetProcessed = waitForTargetProcessed(targetList, url);
 
-  const onNewRoot = waitForResourceOnce(
+  const onNewRoot = waitForNextResource(
     resourceWatcher,
-    resourceWatcher.TYPES.ROOT_NODE
+    resourceWatcher.TYPES.ROOT_NODE,
+    {
+      ignoreExistingResources: true,
+    }
   );
 
   info("Update the src attribute of the iframe tag");

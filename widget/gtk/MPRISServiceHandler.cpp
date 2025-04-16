@@ -66,7 +66,9 @@ static void HandleMethodCall(GDBusConnection* aConnection, const gchar* aSender,
   }
 
   MPRISServiceHandler* handler = static_cast<MPRISServiceHandler*>(aUserData);
-  if (!handler->PressKey(key.value())) {
+  if (handler->PressKey(key.value())) {
+    g_dbus_method_invocation_return_value(aInvocation, nullptr);
+  } else {
     g_dbus_method_invocation_return_error(
         aInvocation, G_DBUS_ERROR, G_DBUS_ERROR_FAILED,
         "%s.%s.%s is not available now", aObjectPath, aInterfaceName,
@@ -300,7 +302,7 @@ bool MPRISServiceHandler::Open() {
   gchar serviceName[256];
 
   InitIdentity();
-  SprintfLiteral(serviceName, DBUS_MRPIS_SERVICE_NAME ".instance%d", getpid());
+  SprintfLiteral(serviceName, DBUS_MPRIS_SERVICE_NAME ".instance%d", getpid());
   mOwnerId =
       g_bus_own_name(G_BUS_TYPE_SESSION, serviceName,
                      // Enter a waiting queue until this service name is free
@@ -330,7 +332,7 @@ MPRISServiceHandler::~MPRISServiceHandler() {
 
 void MPRISServiceHandler::Close() {
   gchar serviceName[256];
-  SprintfLiteral(serviceName, DBUS_MRPIS_SERVICE_NAME ".instance%d", getpid());
+  SprintfLiteral(serviceName, DBUS_MPRIS_SERVICE_NAME ".instance%d", getpid());
 
   OnNameLost(mConnection, serviceName);
 
@@ -730,7 +732,7 @@ GVariant* MPRISServiceHandler::GetMetadataAsGVariant() const {
 }
 
 void MPRISServiceHandler::EmitEvent(mozilla::dom::MediaControlKey aKey) const {
-  for (auto& listener : mListeners) {
+  for (const auto& listener : mListeners) {
     listener->OnActionPerformed(mozilla::dom::MediaControlAction(aKey));
   }
 }
@@ -807,7 +809,8 @@ bool MPRISServiceHandler::EmitSupportedKeyChanged(
   return EmitPropertiesChangedSignal(parameters);
 }
 
-bool MPRISServiceHandler::EmitPropertiesChangedSignal(GVariant* aParameters) const {
+bool MPRISServiceHandler::EmitPropertiesChangedSignal(
+    GVariant* aParameters) const {
   if (!mConnection) {
     LOG("No D-Bus Connection. Cannot emit properties changed signal");
     return false;

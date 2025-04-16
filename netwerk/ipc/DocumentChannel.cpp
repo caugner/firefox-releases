@@ -31,7 +31,6 @@
 #include "nsNetUtil.h"
 #include "nsQueryObject.h"
 #include "nsSerializationHelper.h"
-#include "nsStreamListenerWrapper.h"
 #include "nsStringStream.h"
 #include "nsURLHelper.h"
 
@@ -54,7 +53,6 @@ NS_INTERFACE_MAP_BEGIN(DocumentChannel)
   NS_INTERFACE_MAP_ENTRY(nsIRequest)
   NS_INTERFACE_MAP_ENTRY(nsIChannel)
   NS_INTERFACE_MAP_ENTRY(nsIIdentChannel)
-  NS_INTERFACE_MAP_ENTRY(nsITraceableChannel)
   NS_INTERFACE_MAP_ENTRY_CONCRETE(DocumentChannel)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIRequest)
 NS_INTERFACE_MAP_END
@@ -152,7 +150,7 @@ nsDocShell* DocumentChannel::GetDocShell() {
 // Changes here should also be made in
 // E10SUtils.documentChannelPermittedForURI().
 static bool URIUsesDocChannel(nsIURI* aURI) {
-  if (SchemeIsJavascript(aURI) || NS_IsAboutBlank(aURI)) {
+  if (SchemeIsJavascript(aURI)) {
     return false;
   }
 
@@ -161,14 +159,9 @@ static bool URIUsesDocChannel(nsIURI* aURI) {
          !spec.EqualsLiteral("about:crashcontent");
 }
 
-bool DocumentChannel::CanUseDocumentChannel(nsIURI* aURI, uint32_t aLoadFlags) {
-  // We want to use DocumentChannel if we're using a supported scheme. Sandboxed
-  // srcdoc loads break due to failing assertions after changing processes, and
-  // non-sandboxed srcdoc loads need to share the same principal object as their
-  // outer document (and must load in the same process), which breaks if we
-  // serialize to the parent process.
-  return !(aLoadFlags & nsDocShell::INTERNAL_LOAD_FLAGS_IS_SRCDOC) &&
-         URIUsesDocChannel(aURI);
+bool DocumentChannel::CanUseDocumentChannel(nsIURI* aURI) {
+  // We want to use DocumentChannel if we're using a supported scheme.
+  return URIUsesDocChannel(aURI);
 }
 
 /* static */
@@ -195,22 +188,6 @@ already_AddRefed<DocumentChannel> DocumentChannel::CreateForObject(
     nsLoadFlags aLoadFlags, nsIInterfaceRequestor* aNotificationCallbacks) {
   return CreateForDocument(aLoadState, aLoadInfo, aLoadFlags,
                            aNotificationCallbacks, 0, false, false);
-}
-
-//-----------------------------------------------------------------------------
-// DocumentChannel::nsITraceableChannel
-//-----------------------------------------------------------------------------
-
-NS_IMETHODIMP
-DocumentChannel::SetNewListener(nsIStreamListener* aListener,
-                                nsIStreamListener** _retval) {
-  NS_ENSURE_ARG_POINTER(aListener);
-
-  nsCOMPtr<nsIStreamListener> wrapper = new nsStreamListenerWrapper(mListener);
-
-  wrapper.forget(_retval);
-  mListener = aListener;
-  return NS_OK;
 }
 
 NS_IMETHODIMP

@@ -25,6 +25,7 @@
 #include "builtin/TypedObject.h"
 #include "jit/JitOptions.h"
 #include "js/Printf.h"
+#include "js/String.h"  // JS::MaxStringLength
 #include "vm/JSContext.h"
 #include "vm/Realm.h"
 #include "wasm/WasmOpIter.h"
@@ -1923,7 +1924,8 @@ static bool DecodeTableTypeAndLimits(Decoder& d, bool refTypesEnabled,
     maximumLength = Some(uint32_t(*limits.maximum));
   }
 
-  return tables->emplaceBack(tableElemType, initialLength, maximumLength, /* isAsmJS */ false);
+  return tables->emplaceBack(tableElemType, initialLength, maximumLength,
+                             /* isAsmJS */ false);
 }
 
 static bool GlobalIsJSCompatible(Decoder& d, ValType type) {
@@ -3078,9 +3080,13 @@ static bool DecodeModuleNameSubsection(Decoder& d,
     return d.fail("failed to read module name bytes");
   }
 
-  env->moduleName.emplace(moduleName);
+  if (!d.finishNameSubsection(*endOffset)) {
+    return false;
+  }
 
-  return d.finishNameSubsection(*endOffset);
+  // Only save the module name if the whole subsection validates.
+  env->moduleName.emplace(moduleName);
+  return true;
 }
 
 static bool DecodeFunctionNameSubsection(Decoder& d,
@@ -3113,7 +3119,8 @@ static bool DecodeFunctionNameSubsection(Decoder& d,
     }
 
     Name funcName;
-    if (!d.readVarU32(&funcName.length) || funcName.length > MaxStringLength) {
+    if (!d.readVarU32(&funcName.length) ||
+        funcName.length > JS::MaxStringLength) {
       return d.fail("unable to read function name length");
     }
 

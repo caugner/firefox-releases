@@ -28,7 +28,6 @@
  *  - the collection must be run by calling js::GCSlice() rather than js::GC()
  *  - the GC mode must have been set to JSGC_MODE_INCREMENTAL or
  *    JSGC_MODE_ZONE_INCREMENTAL with JS_SetGCParameter()
- *  - no thread may have an AutoKeepAtoms instance on the stack
  *
  * The last condition is an engine-internal mechanism to ensure that incremental
  * collection is not carried out without the correct barriers being implemented.
@@ -228,13 +227,14 @@
 #include "jit/JitCode.h"
 #include "jit/JitcodeMap.h"
 #include "jit/JitRealm.h"
-#include "jit/MacroAssembler.h"
+#include "js/Object.h"  // JS::GetClass
 #include "js/SliceBudget.h"
 #include "proxy/DeadObjectProxy.h"
 #include "util/Poison.h"
 #include "util/Windows.h"
 #include "vm/BigIntType.h"
 #include "vm/GeckoProfiler.h"
+#include "vm/HelperThreadState.h"
 #include "vm/JSAtom.h"
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
@@ -397,8 +397,10 @@ static constexpr FinalizePhase BackgroundFinalizePhases[] = {
       AllocKind::OBJECT_GROUP}}};
 
 void Arena::unmarkAll() {
-  uintptr_t* word = chunk()->bitmap.arenaBits(this);
-  memset(word, 0, ArenaBitmapWords * sizeof(uintptr_t));
+  MarkBitmapWord* arenaBits = chunk()->bitmap.arenaBits(this);
+  for (size_t i = 0; i < ArenaBitmapWords; i++) {
+    arenaBits[i] = 0;
+  }
 }
 
 void Arena::unmarkPreMarkedFreeCells() {
@@ -869,6 +871,9 @@ GCRuntime::GCRuntime(JSRuntime* rt)
       stats_(this),
       marker(rt),
       heapSize(nullptr),
+      helperThreadRatio(TuningDefaults::HelperThreadRatio),
+      maxHelperThreads(TuningDefaults::MaxHelperThreads),
+      helperThreadCount(1),
       rootsHash(256),
       nextCellUniqueId_(LargestTaggedNullCellPointer +
                         1),  // Ensure disjoint from null tagged pointers.
@@ -1267,6 +1272,8 @@ bool GCRuntime::init(uint32_t maxbytes) {
 
   gcprobes::Init(this);
 
+  updateHelperThreadCount();
+
   return true;
 }
 
@@ -1366,6 +1373,28 @@ bool GCRuntime::setParameter(JSGCParamKey key, uint32_t value,
     case JSGC_INCREMENTAL_WEAKMAP_ENABLED:
       marker.incrementalWeakMapMarkingEnabled = value != 0;
       break;
+    case JSGC_HELPER_THREAD_RATIO:
+      if (rt->parentRuntime) {
+        // Don't allow this to be set for worker runtimes.
+        return false;
+      }
+      if (value == 0) {
+        return false;
+      }
+      helperThreadRatio = double(value) / 100.0;
+      updateHelperThreadCount();
+      break;
+    case JSGC_MAX_HELPER_THREADS:
+      if (rt->parentRuntime) {
+        // Don't allow this to be set for worker runtimes.
+        return false;
+      }
+      if (value == 0) {
+        return false;
+      }
+      maxHelperThreads = value;
+      updateHelperThreadCount();
+      break;
     default:
       if (!tunables.setParameter(key, value, lock)) {
         return false;
@@ -1402,6 +1431,20 @@ void GCRuntime::resetParameter(JSGCParamKey key, AutoLockGC& lock) {
     case JSGC_INCREMENTAL_WEAKMAP_ENABLED:
       marker.incrementalWeakMapMarkingEnabled =
           TuningDefaults::IncrementalWeakMapMarkingEnabled;
+      break;
+    case JSGC_HELPER_THREAD_RATIO:
+      if (rt->parentRuntime) {
+        return;
+      }
+      helperThreadRatio = TuningDefaults::HelperThreadRatio;
+      updateHelperThreadCount();
+      break;
+    case JSGC_MAX_HELPER_THREADS:
+      if (rt->parentRuntime) {
+        return;
+      }
+      maxHelperThreads = TuningDefaults::MaxHelperThreads;
+      updateHelperThreadCount();
       break;
     default:
       tunables.resetParameter(key, lock);
@@ -1495,6 +1538,14 @@ uint32_t GCRuntime::getParameter(JSGCParamKey key, const AutoLockGC& lock) {
       return uint32_t(tunables.mallocGrowthFactor() * 100);
     case JSGC_CHUNK_BYTES:
       return ChunkSize;
+    case JSGC_HELPER_THREAD_RATIO:
+      MOZ_ASSERT(helperThreadRatio > 0.0);
+      return uint32_t(helperThreadRatio * 100.0);
+    case JSGC_MAX_HELPER_THREADS:
+      MOZ_ASSERT(maxHelperThreads <= UINT32_MAX);
+      return maxHelperThreads;
+    case JSGC_HELPER_THREAD_COUNT:
+      return helperThreadCount;
     default:
       MOZ_CRASH("Unknown parameter key");
   }
@@ -1505,6 +1556,30 @@ void GCRuntime::setMarkStackLimit(size_t limit, AutoLockGC& lock) {
   AutoUnlockGC unlock(lock);
   AutoStopVerifyingBarriers pauseVerification(rt, false);
   marker.setMaxCapacity(limit);
+}
+
+void GCRuntime::updateHelperThreadCount() {
+  if (!CanUseExtraThreads()) {
+    // startTask will run the work on the main thread if the count is 1.
+    MOZ_ASSERT(helperThreadCount == 1);
+    return;
+  }
+
+  // The count of helper threads used for GC tasks is process wide. Don't set it
+  // for worker JS runtimes.
+  if (rt->parentRuntime) {
+    helperThreadCount = rt->parentRuntime->gc.helperThreadCount;
+    return;
+  }
+
+  double cpuCount = HelperThreadState().cpuCount;
+  size_t target = size_t(cpuCount * helperThreadRatio.ref());
+  helperThreadCount = mozilla::Clamp(target, size_t(1), maxHelperThreads.ref());
+
+  HelperThreadState().ensureThreadCount(helperThreadCount);
+
+  AutoLockHelperThreadState lock;
+  HelperThreadState().setGCParallelThreadCount(helperThreadCount, lock);
 }
 
 bool GCRuntime::addBlackRootsTracer(JSTraceDataOp traceOp, void* data) {
@@ -3225,25 +3300,26 @@ void GCRuntime::startDecommit() {
   decommitTask.runFromMainThread();
 }
 
-void js::gc::BackgroundDecommitTask::run() {
-  ChunkPool emptyChunksToFree;
-
+void js::gc::BackgroundDecommitTask::run(AutoLockHelperThreadState& lock) {
   {
-    AutoLockGC lock(gc);
+    AutoUnlockHelperThreadState unlock(lock);
 
-    // To help minimize the total number of chunks needed over time, sort the
-    // available chunks list so that we allocate into more-used chunks first.
-    gc->availableChunks(lock).sort();
+    ChunkPool emptyChunksToFree;
+    {
+      AutoLockGC gcLock(gc);
 
-    gc->decommitFreeArenas(cancel_, lock);
+      // To help minimize the total number of chunks needed over time, sort the
+      // available chunks list so that we allocate into more-used chunks first.
+      gc->availableChunks(gcLock).sort();
 
-    emptyChunksToFree = gc->expireEmptyChunkPool(lock);
+      gc->decommitFreeArenas(cancel_, gcLock);
+
+      emptyChunksToFree = gc->expireEmptyChunkPool(gcLock);
+    }
+
+    FreeChunkPool(emptyChunksToFree);
   }
 
-  FreeChunkPool(emptyChunksToFree);
-
-  AutoLockHelperThreadState lock;
-  setFinishing(lock);
   gc->maybeRequestGCAfterBackgroundTask(lock);
 }
 
@@ -3392,17 +3468,11 @@ void GCRuntime::queueZonesAndStartBackgroundSweep(ZoneList& zones) {
   }
 }
 
-void BackgroundSweepTask::run() {
+void BackgroundSweepTask::run(AutoLockHelperThreadState& lock) {
   AutoTraceLog logSweeping(TraceLoggerForCurrentThread(),
                            TraceLogger_GCSweeping);
 
-  AutoLockHelperThreadState lock;
-
   gc->sweepFromBackgroundThread(lock);
-
-  // Signal to the main thread that we're about to finish, because we release
-  // the lock again before GCParallelTask's state is changed to finished.
-  setFinishing(lock);
 }
 
 void GCRuntime::sweepFromBackgroundThread(AutoLockHelperThreadState& lock) {
@@ -3463,16 +3533,10 @@ void GCRuntime::startBackgroundFree() {
   freeTask.startOrRunIfIdle(lock);
 }
 
-void BackgroundFreeTask::run() {
+void BackgroundFreeTask::run(AutoLockHelperThreadState& lock) {
   AutoTraceLog logFreeing(TraceLoggerForCurrentThread(), TraceLogger_GCFree);
 
-  AutoLockHelperThreadState lock;
-
   gc->freeFromBackgroundThread(lock);
-
-  // Signal to the main thread that we're about to finish, because we release
-  // the lock again before GCParallelTask's state is changed to finished.
-  setFinishing(lock);
 }
 
 void GCRuntime::freeFromBackgroundThread(AutoLockHelperThreadState& lock) {
@@ -3685,7 +3749,9 @@ class MOZ_RAII AutoRunParallelTask : public GCParallelTask {
 
   ~AutoRunParallelTask() { gc->joinTask(*this, phase_, lock_); }
 
-  void run() override {
+  void run(AutoLockHelperThreadState& lock) override {
+    AutoUnlockHelperThreadState unlock(lock);
+
     // The hazard analysis can't tell what the call to func_ will do but it's
     // not allowed to GC.
     JS::AutoSuppressGCAnalysis nogc;
@@ -3715,7 +3781,7 @@ void GCRuntime::purgeRuntime() {
   }
 
   for (GCZonesIter zone(this); !zone.done(); zone.next()) {
-    zone->purgeAtomCacheOrDefer();
+    zone->purgeAtomCache();
     zone->externalStringCache().purge();
     zone->functionToStringCache().purge();
   }
@@ -3891,10 +3957,9 @@ static bool ShouldCollectZone(Zone* zone, JS::GCReason reason) {
     return false;
   }
 
-  // If canCollectAtoms() is false then either an instance of AutoKeepAtoms is
-  // currently on the stack or parsing is currently happening on another
-  // thread. In either case we don't have information about which atoms are
-  // roots, so we must skip collecting atoms.
+  // If canCollectAtoms() is false then parsing is currently happening on
+  // another thread, in which case we don't have information about which atoms
+  // are roots, so we must skip collecting atoms.
   //
   // Note that only affects the first slice of an incremental GC since root
   // marking is completed before we return to the mutator.
@@ -4182,9 +4247,7 @@ bool GCRuntime::beginMarkPhase(JS::GCReason reason, AutoGCSession& session) {
    * GC.
    */
   if (!IsShutdownReason(reason) && reason != JS::GCReason::ROOTS_REMOVED) {
-    AutoLockHelperThreadState helperLock;
-    HelperThreadState().startHandlingCompressionTasks(
-        helperLock, GlobalHelperThreadState::ScheduleCompressionTask::GC);
+    StartHandlingCompressionsOnGC(rt);
   }
 
   return true;
@@ -4960,7 +5023,8 @@ class ImmediateSweepWeakCacheTask : public GCParallelTask {
         zone(other.zone),
         cache(other.cache) {}
 
-  void run() override {
+  void run(AutoLockHelperThreadState& lock) override {
+    AutoUnlockHelperThreadState unlock(lock);
     AutoSetThreadIsSweeping threadIsSweeping(zone);
     cache.sweep(&gc->storeBuffer());
   }
@@ -5023,14 +5087,7 @@ void GCRuntime::sweepCompressionTasks() {
   // Attach finished compression tasks.
   AutoLockHelperThreadState lock;
   AttachFinishedCompressions(runtime, lock);
-
-  // Sweep pending tasks that are holding onto should-be-dead ScriptSources.
-  auto& pending = HelperThreadState().compressionPendingList(lock);
-  for (size_t i = 0; i < pending.length(); i++) {
-    if (pending[i]->shouldCancel()) {
-      HelperThreadState().remove(pending, &i);
-    }
-  }
+  SweepPendingCompressions(lock);
 }
 
 void GCRuntime::sweepWeakMaps() {
@@ -5557,7 +5614,9 @@ bool ArenaLists::foregroundFinalize(JSFreeOp* fop, AllocKind thingKind,
   return true;
 }
 
-void js::gc::SweepMarkTask::run() {
+void js::gc::SweepMarkTask::run(AutoLockHelperThreadState& lock) {
+  AutoUnlockHelperThreadState unlock(lock);
+
   // Time reporting is handled separately for parallel tasks.
   gc->sweepMarkResult =
       gc->markUntilBudgetExhausted(this->budget, GCMarker::DontReportMarkTime);
@@ -8214,19 +8273,19 @@ JS::GCCellPtr::GCCellPtr(const Value& v) : ptr(0) {
   switch (v.type()) {
     case ValueType::String:
       ptr = checkedCast(v.toString(), JS::TraceKind::String);
-      break;
+      return;
     case ValueType::Object:
       ptr = checkedCast(&v.toObject(), JS::TraceKind::Object);
-      break;
+      return;
     case ValueType::Symbol:
       ptr = checkedCast(v.toSymbol(), JS::TraceKind::Symbol);
-      break;
+      return;
     case ValueType::BigInt:
       ptr = checkedCast(v.toBigInt(), JS::TraceKind::BigInt);
-      break;
+      return;
     case ValueType::PrivateGCThing:
       ptr = checkedCast(v.toGCThing(), v.toGCThing()->getTraceKind());
-      break;
+      return;
     case ValueType::Double:
     case ValueType::Int32:
     case ValueType::Boolean:
@@ -8235,9 +8294,11 @@ JS::GCCellPtr::GCCellPtr(const Value& v) : ptr(0) {
     case ValueType::Magic: {
       MOZ_ASSERT(!v.isGCThing());
       ptr = checkedCast(nullptr, JS::TraceKind::Null);
-      break;
+      return;
     }
   }
+
+  ReportBadValueTypeAndCrash(v);
 }
 
 JS::TraceKind JS::GCCellPtr::outOfLineKind() const {
@@ -8894,7 +8955,7 @@ JS_PUBLIC_API void js::gc::FinalizeDeadNurseryObject(JSContext* cx,
   MOZ_ASSERT(IsAboutToBeFinalizedUnbarriered(&prior));
   MOZ_ASSERT(obj == prior);
 
-  const JSClass* jsClass = js::GetObjectClass(obj);
+  const JSClass* jsClass = JS::GetClass(obj);
   jsClass->doFinalize(cx->defaultFreeOp(), obj);
 }
 

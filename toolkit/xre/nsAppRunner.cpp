@@ -298,6 +298,7 @@ nsString gAbsoluteArgv0Path;
 #  include <gtk/gtk.h>
 #  ifdef MOZ_WAYLAND
 #    include <gdk/gdkwayland.h>
+#    include "mozilla/widget/nsWaylandDisplay.h"
 #  endif
 #  ifdef MOZ_X11
 #    include <gdk/gdkx.h>
@@ -334,6 +335,7 @@ bool RunningGTest() { return RunGTest; }
 }  // namespace mozilla
 
 using namespace mozilla;
+using namespace mozilla::widget;
 using namespace mozilla::startup;
 using mozilla::Unused;
 using mozilla::dom::ContentChild;
@@ -1282,7 +1284,7 @@ ScopedXPCOMStartup::~ScopedXPCOMStartup() {
     if (appStartup) appStartup->DestroyHiddenWindow();
 
     gDirServiceProvider->DoShutdown();
-    PROFILER_ADD_MARKER("Shutdown early", OTHER);
+    PROFILER_MARKER_UNTYPED("Shutdown early", OTHER);
 
     WriteConsoleLog();
 
@@ -2221,9 +2223,8 @@ struct FileWriteFunc : public JSONWriteFunc {
   FILE* mFile;
   explicit FileWriteFunc(FILE* aFile) : mFile(aFile) {}
 
-  void Write(const char* aStr) override { fprintf(mFile, "%s", aStr); }
-  void Write(const char* aStr, size_t aLen) override {
-    fprintf(mFile, "%s", aStr);
+  void Write(const Span<const char>& aStr) override {
+    fprintf(mFile, "%.*s", int(aStr.size()), aStr.data());
   }
 };
 
@@ -2336,33 +2337,40 @@ static void SubmitDowngradeTelemetry(const nsCString& aLastVersion,
   JSONWriter w(MakeUnique<FileWriteFunc>(file));
   w.Start();
   {
-    w.StringProperty("type", pingType.get());
-    w.StringProperty("id", PromiseFlatCString(pingId).get());
-    w.StringProperty("creationDate", date);
+    w.StringProperty("type",
+                     Span<const char>(pingType.Data(), pingType.Length()));
+    w.StringProperty("id", PromiseFlatCString(pingId));
+    w.StringProperty("creationDate", MakeStringSpan(date));
     w.IntProperty("version", TELEMETRY_PING_FORMAT_VERSION);
-    w.StringProperty("clientId", clientId.get());
+    w.StringProperty("clientId", clientId);
     w.StartObjectProperty("application");
     {
-      w.StringProperty("architecture", arch.get());
-      w.StringProperty("buildId", gAppData->buildID);
-      w.StringProperty("name", gAppData->name);
-      w.StringProperty("version", gAppData->version);
+      w.StringProperty("architecture", arch);
+      w.StringProperty(
+          "buildId",
+          MakeStringSpan(static_cast<const char*>(gAppData->buildID)));
+      w.StringProperty(
+          "name", MakeStringSpan(static_cast<const char*>(gAppData->name)));
+      w.StringProperty(
+          "version",
+          MakeStringSpan(static_cast<const char*>(gAppData->version)));
       w.StringProperty("displayVersion",
                        MOZ_STRINGIFY(MOZ_APP_VERSION_DISPLAY));
-      w.StringProperty("vendor", gAppData->vendor);
+      w.StringProperty(
+          "vendor", MakeStringSpan(static_cast<const char*>(gAppData->vendor)));
       w.StringProperty("platformVersion", gToolkitVersion);
 #  ifdef TARGET_XPCOM_ABI
       w.StringProperty("xpcomAbi", TARGET_XPCOM_ABI);
 #  else
       w.StringProperty("xpcomAbi", "unknown");
 #  endif
-      w.StringProperty("channel", channel.get());
+      w.StringProperty("channel", channel);
     }
     w.EndObject();
     w.StartObjectProperty("payload");
     {
-      w.StringProperty("lastVersion", PromiseFlatCString(lastVersion).get());
-      w.StringProperty("lastBuildId", PromiseFlatCString(lastBuildId).get());
+      w.StringProperty("lastVersion", PromiseFlatCString(lastVersion));
+      w.StringProperty("lastBuildId", PromiseFlatCString(lastBuildId));
       w.BoolProperty("hasSync", aHasSync);
       w.IntProperty("button", aButton);
     }
@@ -3719,14 +3727,16 @@ static void PR_CALLBACK ReadAheadDlls_ThreadStart(void* arg) {
 
 #if defined(MOZ_WAYLAND)
 bool IsWaylandDisabled() {
+  const char* backendPref = PR_GetEnv("GDK_BACKEND");
+  if (backendPref && strcmp(backendPref, "wayland") == 0) {
+    return false;
+  }
   // Enable Wayland on Gtk+ >= 3.22 where we can expect recent enough
   // compositor & libwayland interface.
   bool disableWayland = (gtk_check_version(3, 22, 0) != nullptr);
   if (!disableWayland) {
-    // Make X11 backend the default one unless MOZ_ENABLE_WAYLAND or
-    // GDK_BACKEND are specified.
-    disableWayland = (PR_GetEnv("GDK_BACKEND") == nullptr) &&
-                     (PR_GetEnv("MOZ_ENABLE_WAYLAND") == nullptr);
+    // Make X11 backend the default one unless MOZ_ENABLE_WAYLAND is set.
+    disableWayland = (PR_GetEnv("MOZ_ENABLE_WAYLAND") == nullptr);
   }
   return disableWayland;
 }
@@ -4029,7 +4039,7 @@ int XREMain::XRE_mainStartup(bool* aExitFlag) {
       nsString leafName;
       rv = mProfD->GetLeafName(leafName);
       if (NS_SUCCEEDED(rv)) {
-        profileName = NS_ConvertUTF16toUTF8(leafName);
+        CopyUTF16toUTF8(leafName, profileName);
       }
     }
 
@@ -4334,27 +4344,6 @@ nsresult XREMain::XRE_mainRun() {
   mozilla::mscom::InitProfilerMarkers();
 #  endif  // defined(MOZ_GECKO_PROFILER)
 #endif    // defined(XP_WIN)
-
-#ifdef NS_FUNCTION_TIMER
-  // initialize some common services, so we don't pay the cost for these at odd
-  // times later on; SetWindowCreator -> ChromeRegistry -> IOService ->
-  // SocketTransportService -> (nspr wspm init), Prefs
-  {
-    nsCOMPtr<nsISupports> comp;
-
-    comp = do_GetService("@mozilla.org/preferences-service;1");
-
-    comp = do_GetService("@mozilla.org/network/socket-transport-service;1");
-
-    comp = do_GetService("@mozilla.org/network/dns-service;1");
-
-    comp = do_GetService("@mozilla.org/network/io-service;1");
-
-    comp = do_GetService("@mozilla.org/chrome/chrome-registry;1");
-
-    comp = do_GetService("@mozilla.org/focus-event-suppressor-service;1");
-  }
-#endif
 
   rv = mScopedXPCOM->SetWindowCreator(mNativeApp);
   NS_ENSURE_SUCCESS(rv, NS_ERROR_FAILURE);
@@ -4809,7 +4798,9 @@ int XREMain::XRE_main(int argc, char* argv[], const BootstrapConfig& aConfig) {
 
   mozilla::LogModule::Init(gArgc, gArgv);
 
+#ifndef XP_LINUX
   NS_SetCurrentThreadName("MainThread");
+#endif
 
   AUTO_BASE_PROFILER_LABEL("XREMain::XRE_main (around Gecko Profiler)", OTHER);
   AUTO_PROFILER_INIT;
@@ -4988,6 +4979,9 @@ int XREMain::XRE_main(int argc, char* argv[], const BootstrapConfig& aConfig) {
   // gdk_display_close also calls gdk_display_manager_set_default_display
   // appropriately when necessary.
   if (!gfxPlatform::IsHeadless()) {
+#  ifdef MOZ_WAYLAND
+    WaylandDisplayRelease();
+#  endif
     MOZ_gdk_display_close(mGdkDisplay);
   }
 #endif

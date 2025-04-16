@@ -105,11 +105,12 @@ nsresult TextEditor::PrepareToInsertContent(
   }
 
   IgnoredErrorResult error;
-  SelectionRefPtr()->Collapse(pointToInsert, error);
+  SelectionRefPtr()->CollapseInLimiter(pointToInsert, error);
   if (NS_WARN_IF(Destroyed())) {
     return NS_ERROR_EDITOR_DESTROYED;
   }
-  NS_WARNING_ASSERTION(!error.Failed(), "Selection::Collapse() failed");
+  NS_WARNING_ASSERTION(!error.Failed(),
+                       "Selection::CollapseInLimiter() failed");
   return error.StealNSResult();
 }
 
@@ -663,10 +664,7 @@ nsresult TextEditor::PasteTransferableAsAction(nsITransferable* aTransferable,
 }
 
 bool TextEditor::CanPaste(int32_t aClipboardType) const {
-  // Always enable the paste command when inside of a HTML or XHTML document,
-  // but if the document is chrome, let it control it.
-  RefPtr<Document> doc = GetDocument();
-  if (doc && doc->IsHTMLOrXHTML() && !nsContentUtils::IsChromeDoc(doc)) {
+  if (AreClipboardCommandsUnconditionallyEnabled()) {
     return true;
   }
 

@@ -42,6 +42,13 @@ bool nsHTTPSOnlyUtils::IsHttpsOnlyModeEnabled(bool aFromPrivateWindow) {
 /* static */
 void nsHTTPSOnlyUtils::PotentiallyFireHttpRequestToShortenTimout(
     mozilla::net::DocumentLoadListener* aDocumentLoadListener) {
+  // only send http background request to counter timeouts if the
+  // pref allows us to do that.
+  if (!mozilla::StaticPrefs::
+          dom_security_https_only_mode_send_http_background_request()) {
+    return;
+  }
+
   nsCOMPtr<nsIChannel> channel = aDocumentLoadListener->GetChannel();
   if (!channel) {
     return;
@@ -197,9 +204,19 @@ bool nsHTTPSOnlyUtils::CouldBeHttpsOnlyError(nsIChannel* aChannel,
     return false;
   }
 
-  // If the load is exempt, then there is nothing to do here.
+  // httpsOnlyStatus is reset to it's default value in the child-process after
+  // our forced timeout. Until we figure out why it's reset (bug 1661275) we
+  // have this workaround:
   uint32_t httpsOnlyStatus = loadInfo->GetHttpsOnlyStatus();
-  if (httpsOnlyStatus & nsILoadInfo::HTTPS_ONLY_EXEMPT) {
+  if (httpsOnlyStatus & nsILoadInfo::HTTPS_ONLY_UNINITIALIZED &&
+      !XRE_IsParentProcess() && aError == NS_ERROR_NET_TIMEOUT) {
+    return true;
+  }
+
+  // If the load is exempt or did not get upgraded,
+  // then there is nothing to do here.
+  if (httpsOnlyStatus & nsILoadInfo::HTTPS_ONLY_EXEMPT ||
+      httpsOnlyStatus & nsILoadInfo::HTTPS_ONLY_UNINITIALIZED) {
     return false;
   }
 
@@ -361,20 +378,16 @@ bool nsHTTPSOnlyUtils::LoopbackOrLocalException(nsIURI* aURI) {
     return false;
   }
 
-  // The linter wants this struct to get initialized,
-  // but PRNetAddrToNetAddr will do that.
-  mozilla::net::NetAddr addr;  // NOLINT(cppcoreguidelines-pro-type-member-init)
-  PRNetAddrToNetAddr(&tempAddr, &addr);
-
+  mozilla::net::NetAddr addr(&tempAddr);
   // Loopback IPs are always exempt
-  if (IsLoopBackAddress(&addr)) {
+  if (addr.IsLoopbackAddr()) {
     return true;
   }
 
   // Local IP exception can get disabled with a pref
   bool upgradeLocal =
       mozilla::StaticPrefs::dom_security_https_only_mode_upgrade_local();
-  return (!upgradeLocal && IsIPAddrLocal(&addr));
+  return (!upgradeLocal && addr.IsIPAddrLocal());
 }
 
 /////////////////////////////////////////////////////////////////////
@@ -484,13 +497,26 @@ TestHTTPAnswerRunnable::Notify(nsITimer* aTimer) {
       nsIRequest::INHIBIT_PERSISTENT_CACHING | nsIRequest::LOAD_BYPASS_CACHE |
       nsIChannel::LOAD_BYPASS_SERVICE_WORKER;
 
+  // No need to connect to the URI including the path because we only care about
+  // the round trip time if a server responds to an http request.
+  nsCOMPtr<nsIURI> backgroundChannelURI;
+  nsAutoCString prePathStr;
+  nsresult rv = mURI->GetPrePath(prePathStr);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+  rv = NS_NewURI(getter_AddRefs(backgroundChannelURI), prePathStr);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
   // we are using TYPE_OTHER because TYPE_DOCUMENT might have side effects
   nsCOMPtr<nsIChannel> testHTTPChannel;
-  nsresult rv =
-      NS_NewChannel(getter_AddRefs(testHTTPChannel), mURI, nullPrincipal,
-                    nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
-                    nsIContentPolicy::TYPE_OTHER, nullptr, nullptr, nullptr,
-                    nullptr, loadFlags);
+  rv = NS_NewChannel(getter_AddRefs(testHTTPChannel), backgroundChannelURI,
+                     nullPrincipal,
+                     nsILoadInfo::SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
+                     nsIContentPolicy::TYPE_OTHER, nullptr, nullptr, nullptr,
+                     nullptr, loadFlags);
 
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;

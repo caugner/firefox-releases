@@ -251,6 +251,8 @@
 
       this._audioMuted = false;
 
+      this._audioPlaying = false;
+
       this._hasAnyPlayingMediaBeenBlocked = false;
 
       this._unselectedTabHoverMessageListenerCount = 0;
@@ -749,6 +751,10 @@
       return this._audioMuted;
     }
 
+    get audioPlaying() {
+      return this._audioPlaying;
+    }
+
     get shouldHandleUnselectedTabHover() {
       return this._unselectedTabHoverMessageListenerCount > 0;
     }
@@ -953,12 +959,14 @@
       if (this._audioMuted) {
         return;
       }
+      this._audioPlaying = true;
       let event = document.createEvent("Events");
       event.initEvent("DOMAudioPlaybackStarted", true, false);
       this.dispatchEvent(event);
     }
 
     audioPlaybackStopped() {
+      this._audioPlaying = false;
       let event = document.createEvent("Events");
       event.initEvent("DOMAudioPlaybackStopped", true, false);
       this.dispatchEvent(event);
@@ -1171,9 +1179,13 @@
     }
 
     updateWebNavigationForLocationChange(aCanGoBack, aCanGoForward) {
-      if (this.isRemoteBrowser && this.messageManager) {
-        this._remoteWebNavigation.canGoBack = aCanGoBack;
-        this._remoteWebNavigation.canGoForward = aCanGoForward;
+      if (
+        this.isRemoteBrowser &&
+        this.messageManager &&
+        !lazyPrefs.sessionHistoryInParent
+      ) {
+        this._remoteWebNavigation._canGoBack = aCanGoBack;
+        this._remoteWebNavigation._canGoForward = aCanGoForward;
       }
     }
 
@@ -1218,11 +1230,41 @@
     }
 
     purgeSessionHistory() {
-      if (this.isRemoteBrowser) {
-        this._remoteWebNavigation.canGoBack = false;
-        this._remoteWebNavigation.canGoForward = false;
+      if (this.isRemoteBrowser && !lazyPrefs.sessionHistoryInParent) {
+        this._remoteWebNavigation._canGoBack = false;
+        this._remoteWebNavigation._canGoForward = false;
       }
+
       try {
+        if (lazyPrefs.sessionHistoryInParent) {
+          let sessionHistory = this.browsingContext?.sessionHistory;
+          if (!sessionHistory) {
+            return;
+          }
+
+          // place the entry at current index at the end of the history list, so it won't get removed
+          if (sessionHistory.index < sessionHistory.count - 1) {
+            let indexEntry = sessionHistory.getEntryAtIndex(
+              sessionHistory.index
+            );
+            sessionHistory.addEntry(indexEntry, true);
+          }
+
+          let purge = sessionHistory.count;
+          if (
+            this.browsingContext.currentWindowGlobal.documentURI !=
+            "about:blank"
+          ) {
+            --purge; // Don't remove the page the user's staring at from shistory
+          }
+
+          if (purge > 0) {
+            sessionHistory.purgeHistory(purge);
+          }
+
+          return;
+        }
+
         this.sendMessageToActor(
           "Browser:PurgeSessionHistory",
           {},

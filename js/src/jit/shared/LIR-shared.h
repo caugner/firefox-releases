@@ -912,6 +912,37 @@ class LSetArgumentsObjectArg : public LInstructionHelper<0, 1 + BOX_PIECES, 1> {
   static const size_t ValueIndex = 1;
 };
 
+// Load an element from an arguments object.
+class LLoadArgumentsObjectArg : public LInstructionHelper<BOX_PIECES, 2, 1> {
+ public:
+  LIR_HEADER(LoadArgumentsObjectArg)
+
+  LLoadArgumentsObjectArg(const LAllocation& argsObj, const LAllocation& index,
+                          const LDefinition& temp)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, argsObj);
+    setOperand(1, index);
+    setTemp(0, temp);
+  }
+
+  const LAllocation* getArgsObject() { return getOperand(0); }
+  const LAllocation* index() { return getOperand(1); }
+  const LDefinition* temp() { return this->getTemp(0); }
+};
+
+// Return |arguments.length| unless it has been overridden.
+class LArgumentsObjectLength : public LInstructionHelper<1, 1, 0> {
+ public:
+  LIR_HEADER(ArgumentsObjectLength)
+
+  explicit LArgumentsObjectLength(const LAllocation& argsObj)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, argsObj);
+  }
+
+  const LAllocation* getArgsObject() { return getOperand(0); }
+};
+
 // If the Value is an Object, return unbox(Value).
 // Otherwise, return the other Object.
 class LReturnFromCtor : public LInstructionHelper<1, BOX_PIECES + 1, 0> {
@@ -3834,6 +3865,19 @@ class LSetArrayLength : public LInstructionHelper<0, 2, 0> {
   const LAllocation* index() { return getOperand(1); }
 };
 
+// Load the "length" property of a function.
+class LFunctionLength : public LInstructionHelper<1, 1, 0> {
+ public:
+  LIR_HEADER(FunctionLength)
+
+  explicit LFunctionLength(const LAllocation& function)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, function);
+  }
+
+  const LAllocation* function() { return getOperand(0); }
+};
+
 class LGetNextEntryForIterator : public LInstructionHelper<1, 2, 3> {
  public:
   LIR_HEADER(GetNextEntryForIterator)
@@ -5698,6 +5742,23 @@ class LGetIteratorCache : public LInstructionHelper<1, BOX_PIECES, 2> {
   const LDefinition* temp2() { return getTemp(1); }
 };
 
+class LOptimizeSpreadCallCache : public LInstructionHelper<1, BOX_PIECES, 1> {
+ public:
+  LIR_HEADER(OptimizeSpreadCallCache)
+
+  static const size_t Value = 0;
+
+  LOptimizeSpreadCallCache(const LBoxAllocation& value, const LDefinition& temp)
+      : LInstructionHelper(classOpcode) {
+    setBoxOperand(Value, value);
+    setTemp(0, temp);
+  }
+  const MOptimizeSpreadCallCache* mir() const {
+    return mir_->toOptimizeSpreadCallCache();
+  }
+  const LDefinition* temp() { return getTemp(0); }
+};
+
 class LIteratorMore : public LInstructionHelper<BOX_PIECES, 1, 1> {
  public:
   LIR_HEADER(IteratorMore)
@@ -6170,6 +6231,49 @@ class LGuardSpecificSymbol : public LInstructionHelper<0, 1, 0> {
   }
 };
 
+class LGuardStringToIndex : public LInstructionHelper<1, 1, 0> {
+ public:
+  LIR_HEADER(GuardStringToIndex)
+
+  explicit LGuardStringToIndex(const LAllocation& str)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, str);
+  }
+
+  const LAllocation* string() { return getOperand(0); }
+};
+
+class LGuardStringToInt32 : public LInstructionHelper<1, 1, 1> {
+ public:
+  LIR_HEADER(GuardStringToInt32)
+
+  LGuardStringToInt32(const LAllocation& str, const LDefinition& temp)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, str);
+    setTemp(0, temp);
+  }
+
+  const LAllocation* string() { return getOperand(0); }
+  const LDefinition* temp() { return getTemp(0); }
+};
+
+class LGuardStringToDouble : public LInstructionHelper<1, 1, 2> {
+ public:
+  LIR_HEADER(GuardStringToDouble)
+
+  LGuardStringToDouble(const LAllocation& str, const LDefinition& temp1,
+                       const LDefinition& temp2)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, str);
+    setTemp(0, temp1);
+    setTemp(1, temp2);
+  }
+
+  const LAllocation* string() { return getOperand(0); }
+  const LDefinition* temp1() { return getTemp(0); }
+  const LDefinition* temp2() { return getTemp(1); }
+};
+
 class LGuardShape : public LInstructionHelper<1, 1, 1> {
  public:
   LIR_HEADER(GuardShape)
@@ -6347,6 +6451,24 @@ class LProxySetByValue
   MProxySetByValue* mir() const { return mir_->toProxySetByValue(); }
 };
 
+class LCallSetArrayLength
+    : public LCallInstructionHelper<0, 1 + BOX_PIECES, 0> {
+ public:
+  LIR_HEADER(CallSetArrayLength)
+
+  LCallSetArrayLength(const LAllocation& obj, const LBoxAllocation& rhs)
+      : LCallInstructionHelper(classOpcode) {
+    setOperand(0, obj);
+    setBoxOperand(RhsIndex, rhs);
+  }
+
+  static const size_t RhsIndex = 1;
+
+  const LAllocation* obj() { return getOperand(0); }
+
+  MCallSetArrayLength* mir() const { return mir_->toCallSetArrayLength(); }
+};
+
 class LMegamorphicLoadSlot : public LCallInstructionHelper<BOX_PIECES, 1, 3> {
  public:
   LIR_HEADER(MegamorphicLoadSlot)
@@ -6369,23 +6491,26 @@ class LMegamorphicLoadSlot : public LCallInstructionHelper<BOX_PIECES, 1, 3> {
 };
 
 class LMegamorphicLoadSlotByValue
-    : public LCallInstructionHelper<BOX_PIECES, 1 + BOX_PIECES, 1> {
+    : public LCallInstructionHelper<BOX_PIECES, 1 + BOX_PIECES, 2> {
  public:
   LIR_HEADER(MegamorphicLoadSlotByValue)
 
   LMegamorphicLoadSlotByValue(const LAllocation& obj,
                               const LBoxAllocation& idVal,
-                              const LDefinition& temp)
+                              const LDefinition& temp1,
+                              const LDefinition& temp2)
       : LCallInstructionHelper(classOpcode) {
     setOperand(0, obj);
     setBoxOperand(IdIndex, idVal);
-    setTemp(0, temp);
+    setTemp(0, temp1);
+    setTemp(1, temp2);
   }
 
   static const size_t IdIndex = 1;
 
   const LAllocation* object() { return getOperand(0); }
-  const LDefinition* temp() { return getTemp(0); }
+  const LDefinition* temp1() { return getTemp(0); }
+  const LDefinition* temp2() { return getTemp(1); }
 
   MMegamorphicLoadSlotByValue* mir() const {
     return mir_->toMegamorphicLoadSlotByValue();
@@ -6393,17 +6518,19 @@ class LMegamorphicLoadSlotByValue
 };
 
 class LMegamorphicStoreSlot
-    : public LCallInstructionHelper<BOX_PIECES, 1 + BOX_PIECES, 2> {
+    : public LCallInstructionHelper<BOX_PIECES, 1 + BOX_PIECES, 3> {
  public:
   LIR_HEADER(MegamorphicStoreSlot)
 
   LMegamorphicStoreSlot(const LAllocation& obj, const LBoxAllocation& rhs,
-                        const LDefinition& temp1, const LDefinition& temp2)
+                        const LDefinition& temp1, const LDefinition& temp2,
+                        const LDefinition& temp3)
       : LCallInstructionHelper(classOpcode) {
     setOperand(0, obj);
     setBoxOperand(RhsIndex, rhs);
     setTemp(0, temp1);
     setTemp(1, temp2);
+    setTemp(2, temp3);
   }
 
   static const size_t RhsIndex = 1;
@@ -6411,27 +6538,30 @@ class LMegamorphicStoreSlot
   const LAllocation* object() { return getOperand(0); }
   const LDefinition* temp1() { return getTemp(0); }
   const LDefinition* temp2() { return getTemp(1); }
+  const LDefinition* temp3() { return getTemp(2); }
 
   MMegamorphicStoreSlot* mir() const { return mir_->toMegamorphicStoreSlot(); }
 };
 
 class LMegamorphicHasProp
-    : public LCallInstructionHelper<1, 1 + BOX_PIECES, 1> {
+    : public LCallInstructionHelper<1, 1 + BOX_PIECES, 2> {
  public:
   LIR_HEADER(MegamorphicHasProp)
 
   LMegamorphicHasProp(const LAllocation& obj, const LBoxAllocation& idVal,
-                      const LDefinition& temp)
+                      const LDefinition& temp1, const LDefinition& temp2)
       : LCallInstructionHelper(classOpcode) {
     setOperand(0, obj);
     setBoxOperand(IdIndex, idVal);
-    setTemp(0, temp);
+    setTemp(0, temp1);
+    setTemp(1, temp2);
   }
 
   static const size_t IdIndex = 1;
 
   const LAllocation* object() { return getOperand(0); }
-  const LDefinition* temp() { return getTemp(0); }
+  const LDefinition* temp1() { return getTemp(0); }
+  const LDefinition* temp2() { return getTemp(1); }
 
   MMegamorphicHasProp* mir() const { return mir_->toMegamorphicHasProp(); }
 };
@@ -6532,32 +6662,36 @@ class LCheckPrivateFieldCache
   }
 };
 
-class LInstanceOfO : public LInstructionHelper<1, 1, 0> {
+class LInstanceOfO : public LInstructionHelper<1, 2, 0> {
  public:
   LIR_HEADER(InstanceOfO)
-  explicit LInstanceOfO(const LAllocation& lhs)
+  explicit LInstanceOfO(const LAllocation& lhs, const LAllocation& rhs)
       : LInstructionHelper(classOpcode) {
     setOperand(0, lhs);
+    setOperand(1, rhs);
   }
 
   MInstanceOf* mir() const { return mir_->toInstanceOf(); }
 
   const LAllocation* lhs() { return getOperand(0); }
+  const LAllocation* rhs() { return getOperand(1); }
 };
 
-class LInstanceOfV : public LInstructionHelper<1, BOX_PIECES, 0> {
+class LInstanceOfV : public LInstructionHelper<1, BOX_PIECES + 1, 0> {
  public:
   LIR_HEADER(InstanceOfV)
-  explicit LInstanceOfV(const LBoxAllocation& lhs)
+  explicit LInstanceOfV(const LBoxAllocation& lhs, const LAllocation& rhs)
       : LInstructionHelper(classOpcode) {
     setBoxOperand(LHS, lhs);
+    setOperand(RHS, rhs);
   }
 
   MInstanceOf* mir() const { return mir_->toInstanceOf(); }
 
-  const LAllocation* lhs() { return getOperand(LHS); }
+  const LAllocation* rhs() { return getOperand(RHS); }
 
   static const size_t LHS = 0;
+  static const size_t RHS = BOX_PIECES;
 };
 
 class LInstanceOfCache : public LInstructionHelper<1, BOX_PIECES + 1, 0> {
@@ -6570,7 +6704,6 @@ class LInstanceOfCache : public LInstructionHelper<1, BOX_PIECES + 1, 0> {
   }
 
   const LDefinition* output() { return this->getDef(0); }
-  const LAllocation* lhs() { return getOperand(LHS); }
   const LAllocation* rhs() { return getOperand(RHS); }
 
   static const size_t LHS = 0;
@@ -7648,6 +7781,20 @@ class LAssertClass : public LInstructionHelper<0, 1, 1> {
   MAssertClass* mir() { return mir_->toAssertClass(); }
 };
 
+class LAssertShape : public LInstructionHelper<0, 1, 0> {
+ public:
+  LIR_HEADER(AssertShape)
+
+  explicit LAssertShape(const LAllocation& input)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, input);
+  }
+
+  const LAllocation* input() { return getOperand(0); }
+
+  MAssertShape* mir() { return mir_->toAssertShape(); }
+};
+
 class LAssertResultT : public LInstructionHelper<0, 1, 0> {
  public:
   LIR_HEADER(AssertResultT)
@@ -7741,6 +7888,20 @@ class LGuardFunctionKind : public LInstructionHelper<0, 1, 1> {
   const LDefinition* temp() { return getTemp(0); }
 
   MGuardFunctionKind* mir() { return mir_->toGuardFunctionKind(); }
+};
+
+class LGuardFunctionScript : public LInstructionHelper<0, 1, 0> {
+ public:
+  LIR_HEADER(GuardFunctionScript)
+
+  explicit LGuardFunctionScript(const LAllocation& fun)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, fun);
+  }
+
+  const LAllocation* function() { return getOperand(0); }
+
+  MGuardFunctionScript* mir() { return mir_->toGuardFunctionScript(); }
 };
 
 class LRecompileCheck : public LInstructionHelper<0, 0, 1> {
@@ -7984,6 +8145,26 @@ class LIsPackedArray : public LInstructionHelper<1, 1, 1> {
   const LDefinition* temp() { return getTemp(0); }
 };
 
+class LGuardArrayIsPacked : public LInstructionHelper<0, 1, 2> {
+ public:
+  LIR_HEADER(GuardArrayIsPacked)
+
+  explicit LGuardArrayIsPacked(const LAllocation& array,
+                               const LDefinition& temp1,
+                               const LDefinition& temp2)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, array);
+    setTemp(0, temp1);
+    setTemp(1, temp2);
+  }
+
+  const LAllocation* array() { return getOperand(0); }
+  const LDefinition* temp1() { return getTemp(0); }
+  const LDefinition* temp2() { return getTemp(1); }
+
+  MGuardArrayIsPacked* mir() { return mir_->toGuardArrayIsPacked(); }
+};
+
 class LGetPrototypeOf : public LInstructionHelper<BOX_PIECES, 1, 0> {
  public:
   LIR_HEADER(GetPrototypeOf)
@@ -8092,6 +8273,18 @@ class LGuardTagNotEqual : public LInstructionHelper<0, 2, 0> {
 
   const LAllocation* lhs() { return getOperand(0); }
   const LAllocation* rhs() { return getOperand(1); }
+};
+
+class LLoadWrapperTarget : public LInstructionHelper<1, 1, 0> {
+ public:
+  LIR_HEADER(LoadWrapperTarget)
+
+  explicit LLoadWrapperTarget(const LAllocation& object)
+      : LInstructionHelper(classOpcode) {
+    setOperand(0, object);
+  }
+
+  const LAllocation* object() { return getOperand(0); }
 };
 
 template <size_t NumDefs>

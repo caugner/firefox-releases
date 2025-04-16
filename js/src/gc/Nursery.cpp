@@ -27,9 +27,6 @@
 #include "jit/JitRealm.h"
 #include "util/Poison.h"
 #include "vm/ArrayObject.h"
-#if defined(DEBUG)
-#  include "vm/EnvironmentObject.h"
-#endif
 #include "vm/JSONPrinter.h"
 #include "vm/Realm.h"
 #include "vm/Time.h"
@@ -168,26 +165,19 @@ Chunk* js::NurseryDecommitTask::popChunk(
   return chunk;
 }
 
-void js::NurseryDecommitTask::run() {
+void js::NurseryDecommitTask::run(AutoLockHelperThreadState& lock) {
   Chunk* chunk;
-
-  {
-    AutoLockHelperThreadState lock;
-
-    while ((chunk = popChunk(lock)) || partialChunk) {
-      if (chunk) {
-        AutoUnlockHelperThreadState unlock(lock);
-        decommitChunk(chunk);
-        continue;
-      }
-
-      if (partialChunk) {
-        decommitRange(lock);
-        continue;
-      }
+  while ((chunk = popChunk(lock)) || partialChunk) {
+    if (chunk) {
+      AutoUnlockHelperThreadState unlock(lock);
+      decommitChunk(chunk);
+      continue;
     }
 
-    setFinishing(lock);
+    if (partialChunk) {
+      decommitRange(lock);
+      continue;
+    }
   }
 }
 
@@ -442,23 +432,24 @@ JSObject* js::Nursery::allocateObject(JSContext* cx, size_t size,
   }
 
   // If we want external slots, add them.
-  HeapSlot* slots = nullptr;
+  ObjectSlots* slotsHeader = nullptr;
   if (nDynamicSlots) {
     MOZ_ASSERT(clasp->isNative());
-    slots = static_cast<HeapSlot*>(
-        allocateBuffer(cx->zone(), nDynamicSlots * sizeof(HeapSlot)));
-    if (!slots) {
+    void* allocation =
+        allocateBuffer(cx->zone(), ObjectSlots::allocSize(nDynamicSlots));
+    if (!allocation) {
       // It is safe to leave the allocated object uninitialized, since we
       // do not visit unallocated things in the nursery.
       return nullptr;
     }
+    slotsHeader = new (allocation) ObjectSlots(nDynamicSlots, 0);
   }
 
   // Store slots pointer directly in new object. If no dynamic slots were
   // requested, caller must initialize slots_ field itself as needed. We
   // don't know if the caller was a native object or not.
   if (nDynamicSlots) {
-    static_cast<NativeObject*>(obj)->initSlots(slots);
+    static_cast<NativeObject*>(obj)->initSlots(slotsHeader->slots());
   }
 
   gcprobes::NurseryAlloc(obj, size);

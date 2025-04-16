@@ -393,6 +393,10 @@ class RefTest(object):
         prefs['reftest.logLevel'] = options.log_tbpl_level or 'info'
         prefs['reftest.suite'] = options.suite
         prefs['gfx.font_rendering.ahem_antialias_none'] = True
+        # Run the "deferred" font-loader immediately, because if it finishes
+        # mid-test, the extra reflow that is triggered can disrupt the test.
+        prefs['gfx.font_loader.delay'] = 0
+        prefs['gfx.font_loader.interval'] = 0
         # Disable dark scrollbars because it's semi-transparent.
         prefs['widget.disable-dark-scrollbar'] = True
         prefs['reftest.isCoverageBuild'] = mozinfo.info.get('ccov', False)
@@ -553,13 +557,13 @@ class RefTest(object):
             stepOptions = copy.deepcopy(options)
             stepOptions.repeat = VERIFY_REPEAT
             stepOptions.runUntilFailure = True
-            stepOptions.environment.append("MOZ_CHAOSMODE=3")
+            stepOptions.environment.append("MOZ_CHAOSMODE=0xfb")
             result = self.runTests(tests, stepOptions)
             return result
 
         def step4():
             stepOptions = copy.deepcopy(options)
-            stepOptions.environment.append("MOZ_CHAOSMODE=3")
+            stepOptions.environment.append("MOZ_CHAOSMODE=0xfb")
             for i in range(VERIFY_REPEAT_SINGLE_BROWSER):
                 result = self.runTests(tests, stepOptions)
                 if result != 0:

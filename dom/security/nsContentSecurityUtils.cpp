@@ -13,6 +13,7 @@
 #include "nsIHttpChannel.h"
 #include "nsIMultiPartChannel.h"
 #include "nsIURI.h"
+#include "nsITransfer.h"
 #if defined(XP_WIN)
 #  include "WinUtils.h"
 #  include <wininet.h>
@@ -385,11 +386,6 @@ class EvalUsageNotificationRunnable final : public Runnable {
   uint32_t mColumnNumber;
 };
 
-// The Web Extension process pref may be toggled during a session, at which
-// point stuff may be loaded in the parent process but we would send telemetry
-// for it. Avoid this by observing if the pref ever was disabled.
-static bool sWebExtensionsRemoteWasEverDisabled = false;
-
 /* static */
 bool nsContentSecurityUtils::IsEvalAllowed(JSContext* cx,
                                            bool aIsSystemPrincipal,
@@ -482,16 +478,9 @@ bool nsContentSecurityUtils::IsEvalAllowed(JSContext* cx,
 
   if (XRE_IsE10sParentProcess() &&
       !StaticPrefs::extensions_webextensions_remote()) {
-    sWebExtensionsRemoteWasEverDisabled = true;
     MOZ_LOG(sCSMLog, LogLevel::Debug,
             ("Allowing eval() in parent process because the web extension "
              "process is disabled"));
-    return true;
-  }
-  if (XRE_IsE10sParentProcess() && sWebExtensionsRemoteWasEverDisabled) {
-    MOZ_LOG(sCSMLog, LogLevel::Debug,
-            ("Allowing eval() in parent process because the web extension "
-             "process was disabled at some point"));
     return true;
   }
 
@@ -567,13 +556,7 @@ bool nsContentSecurityUtils::IsEvalAllowed(JSContext* cx,
       fileName.get(), trimmedScript.get());
 #endif
 
-#ifdef EARLY_BETA_OR_EARLIER
-  // Until we understand the events coming from release, we don't want to
-  // enforce eval restrictions on release. Limiting to Nightly and early beta.
   return false;
-#else
-  return true;
-#endif
 }
 
 /* static */
@@ -910,7 +893,7 @@ void nsContentSecurityUtils::AssertAboutPageHasCSP(Document* aDocument) {
   MOZ_ASSERT(!foundWorkerSrc,
              "about: page must not contain a CSP including worker-src");
 
-  // addons, preferences, debugging, newinstall, pioneer, devtools all have
+  // addons, preferences, debugging, newinstall, ion, devtools all have
   // to allow some remote web resources
   MOZ_ASSERT(!foundWebScheme ||
                  StringBeginsWith(aboutSpec, "about:preferences"_ns) ||
@@ -918,7 +901,7 @@ void nsContentSecurityUtils::AssertAboutPageHasCSP(Document* aDocument) {
                  StringBeginsWith(aboutSpec, "about:newtab"_ns) ||
                  StringBeginsWith(aboutSpec, "about:debugging"_ns) ||
                  StringBeginsWith(aboutSpec, "about:newinstall"_ns) ||
-                 StringBeginsWith(aboutSpec, "about:pioneer"_ns) ||
+                 StringBeginsWith(aboutSpec, "about:ion"_ns) ||
                  StringBeginsWith(aboutSpec, "about:compat"_ns) ||
                  StringBeginsWith(aboutSpec, "about:logins"_ns) ||
                  StringBeginsWith(aboutSpec, "about:home"_ns) ||
@@ -1009,17 +992,9 @@ bool nsContentSecurityUtils::ValidateScriptFilename(const char* aFilename,
 
   if (XRE_IsE10sParentProcess() &&
       !StaticPrefs::extensions_webextensions_remote()) {
-    sWebExtensionsRemoteWasEverDisabled = true;
     MOZ_LOG(sCSMLog, LogLevel::Debug,
             ("Allowing a javascript load of %s because the web extension "
              "process is disabled.",
-             aFilename));
-    return true;
-  }
-  if (XRE_IsE10sParentProcess() && sWebExtensionsRemoteWasEverDisabled) {
-    MOZ_LOG(sCSMLog, LogLevel::Debug,
-            ("Allowing a javascript load of %s because the web extension "
-             "process was disabled at some point.",
              aFilename));
     return true;
   }
@@ -1115,7 +1090,7 @@ void nsContentSecurityUtils::LogMessageToConsole(nsIHttpChannel* aChannel,
 }
 
 /* static */
-bool nsContentSecurityUtils::IsDownloadAllowed(
+long nsContentSecurityUtils::ClassifyDownload(
     nsIChannel* aChannel, const nsAutoCString& aMimeTypeGuess) {
   MOZ_ASSERT(aChannel, "IsDownloadAllowed without channel?");
 
@@ -1151,15 +1126,15 @@ bool nsContentSecurityUtils::IsDownloadAllowed(
     if (httpChannel) {
       LogMessageToConsole(httpChannel, "MixedContentBlockedDownload");
     }
-    return false;
+    return nsITransfer::DOWNLOAD_POTENTIALLY_UNSAFE;
   }
 
   if (loadInfo->TriggeringPrincipal()->IsSystemPrincipal()) {
-    return true;
+    return nsITransfer::DOWNLOAD_ACCEPTABLE;
   }
 
   if (!StaticPrefs::dom_block_download_in_sandboxed_iframes()) {
-    return true;
+    return nsITransfer::DOWNLOAD_ACCEPTABLE;
   }
 
   uint32_t triggeringFlags = loadInfo->GetTriggeringSandboxFlags();
@@ -1171,8 +1146,8 @@ bool nsContentSecurityUtils::IsDownloadAllowed(
     if (httpChannel) {
       LogMessageToConsole(httpChannel, "IframeSandboxBlockedDownload");
     }
-    return false;
+    return nsITransfer::DOWNLOAD_FORBIDDEN;
   }
 
-  return true;
+  return nsITransfer::DOWNLOAD_ACCEPTABLE;
 }

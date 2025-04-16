@@ -327,6 +327,8 @@ static OperatingSystem BlocklistOSToOperatingSystem(const nsAString& os) {
     return OperatingSystem::OSX10_14;
   else if (os.EqualsLiteral("Darwin 19"))
     return OperatingSystem::OSX10_15;
+  else if (os.EqualsLiteral("Darwin 20"))
+    return OperatingSystem::OSX10_16;
   else if (os.EqualsLiteral("Android"))
     return OperatingSystem::Android;
   // For historical reasons, "All" in blocklist means "All Windows"
@@ -476,7 +478,7 @@ static VersionComparisonOp BlocklistComparatorToComparisonOp(
   e.g:
   os:WINNT 6.0\tvendor:0x8086\tdevices:0x2582,0x2782\tfeature:DIRECT3D_10_LAYERS\tfeatureStatus:BLOCKED_DRIVER_VERSION\tdriverVersion:8.52.322.2202\tdriverVersionComparator:LESS_THAN_OR_EQUAL
 */
-static bool BlocklistEntryToDriverInfo(nsCString& aBlocklistEntry,
+static bool BlocklistEntryToDriverInfo(const nsACString& aBlocklistEntry,
                                        GfxDriverInfo& aDriverInfo) {
   // If we get an application version to be zero, something is not working
   // and we are not going to bother checking the blocklist versions.
@@ -490,23 +492,19 @@ static bool BlocklistEntryToDriverInfo(nsCString& aBlocklistEntry,
         << GfxInfoBase::GetApplicationVersion().get();
   }
 
-  nsTArray<nsCString> keyValues;
-  ParseString(aBlocklistEntry, '\t', keyValues);
-
   aDriverInfo.mRuleId = "FEATURE_FAILURE_DL_BLOCKLIST_NO_ID"_ns;
 
-  for (uint32_t i = 0; i < keyValues.Length(); ++i) {
-    nsCString keyValue = keyValues[i];
+  for (const auto& keyValue : aBlocklistEntry.Split('\t')) {
     nsTArray<nsCString> splitted;
     ParseString(keyValue, ':', splitted);
     if (splitted.Length() != 2) {
       // If we don't recognize the input data, we do not want to proceed.
       gfxCriticalErrorOnce(CriticalLog::DefaultOptions(false))
-          << "Unrecognized data " << keyValue.get();
+          << "Unrecognized data " << nsCString(keyValue).get();
       return false;
     }
-    nsCString key = splitted[0];
-    nsCString value = splitted[1];
+    const nsCString& key = splitted[0];
+    const nsCString& value = splitted[1];
     NS_ConvertUTF8toUTF16 dataValue(value);
 
     if (value.Length() == 0) {
@@ -568,8 +566,8 @@ static bool BlocklistEntryToDriverInfo(nsCString& aBlocklistEntry,
             << "Unrecognized versionRange " << value.get();
         return false;
       }
-      nsCString minValue = versionRange[0];
-      nsCString maxValue = versionRange[1];
+      const nsCString& minValue = versionRange[0];
+      const nsCString& maxValue = versionRange[1];
 
       mozilla::Version minV(minValue.get());
       mozilla::Version maxV(maxValue.get());
@@ -602,13 +600,16 @@ static bool BlocklistEntryToDriverInfo(nsCString& aBlocklistEntry,
   return true;
 }
 
-static void BlocklistEntriesToDriverInfo(nsTArray<nsCString>& aBlocklistEntries,
-                                         nsTArray<GfxDriverInfo>& aDriverInfo) {
+static void BlocklistEntriesToDriverInfo(
+    const nsTSubstringSplitter<char>& aBlocklistEntries,
+    nsTArray<GfxDriverInfo>& aDriverInfo) {
   aDriverInfo.Clear();
-  aDriverInfo.SetLength(aBlocklistEntries.Length());
+  const uint32_t n =
+      std::distance(aBlocklistEntries.begin(), aBlocklistEntries.end());
+  aDriverInfo.SetLength(n);
 
-  for (uint32_t i = 0; i < aBlocklistEntries.Length(); ++i) {
-    nsCString blocklistEntry = aBlocklistEntries[i];
+  for (uint32_t i = 0; i < n; ++i) {
+    const nsDependentCSubstring& blocklistEntry = aBlocklistEntries.Get(i);
     GfxDriverInfo di;
     if (BlocklistEntryToDriverInfo(blocklistEntry, di)) {
       aDriverInfo[i] = di;
@@ -623,12 +624,8 @@ GfxInfoBase::Observe(nsISupports* aSubject, const char* aTopic,
                      const char16_t* aData) {
   if (strcmp(aTopic, "blocklist-data-gfxItems") == 0) {
     nsTArray<GfxDriverInfo> driverInfo;
-    nsTArray<nsCString> blocklistEntries;
-    nsCString utf8Data = NS_ConvertUTF16toUTF8(aData);
-    if (utf8Data.Length() > 0) {
-      ParseString(utf8Data, '\n', blocklistEntries);
-    }
-    BlocklistEntriesToDriverInfo(blocklistEntries, driverInfo);
+    NS_ConvertUTF16toUTF8 utf8Data(aData);
+    BlocklistEntriesToDriverInfo(utf8Data.Split('\n'), driverInfo);
     EvaluateDownloadedBlocklist(driverInfo);
   }
 

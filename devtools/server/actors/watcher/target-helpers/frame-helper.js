@@ -8,6 +8,9 @@ const Services = require("Services");
 const {
   WatcherRegistry,
 } = require("devtools/server/actors/watcher/WatcherRegistry.jsm");
+const {
+  WindowGlobalLogger,
+} = require("devtools/server/connectors/js-window-actor/WindowGlobalLogger.jsm");
 const Targets = require("devtools/server/actors/targets/index");
 
 /**
@@ -74,14 +77,16 @@ function destroyTargets(watcher) {
 }
 
 /**
- * Go over all existing BrowsingContext in order to fetch already existing resources
+ * Go over all existing BrowsingContext in order to communicate about new data entries
  *
  * @param WatcherActor watcher
  *        The Watcher Actor requesting to stop watching for new targets.
- * @param Array<String> resourceTypes
- *        List of all resource types to fetch.
+ * @param string type
+ *        The type of data to be added
+ * @param Array<Object> entries
+ *        The values to be added to this type of data
  */
-async function watchResources({ watcher, resourceTypes }) {
+async function addWatcherDataEntry({ watcher, type, entries }) {
   const browsingContexts = getWatchingBrowsingContexts(watcher);
   const promises = [];
   for (const browsingContext of browsingContexts) {
@@ -92,23 +97,24 @@ async function watchResources({ watcher, resourceTypes }) {
 
     const promise = browsingContext.currentWindowGlobal
       .getActor("DevToolsFrame")
-      .watchFrameResources({
+      .addWatcherDataEntry({
         watcherActorID: watcher.actorID,
         browserId: watcher.browserId,
-        resourceTypes,
+        type,
+        entries,
       });
     promises.push(promise);
   }
-  // Await for the queries in order to try to resolve only *after* we received all resources
+  // Await for the queries in order to try to resolve only *after* the remote code processed the new data
   return Promise.all(promises);
 }
 
 /**
- * Notify all existing frame targets to stop listening for some resource types.
+ * Notify all existing frame targets that some data entries have been removed
  *
- * See watchResources for argument documentation.
+ * See addWatcherDataEntry for argument documentation.
  */
-function unwatchResources({ watcher, resourceTypes }) {
+function removeWatcherDataEntry({ watcher, type, entries }) {
   const browsingContexts = getWatchingBrowsingContexts(watcher);
   for (const browsingContext of browsingContexts) {
     logWindowGlobal(
@@ -118,10 +124,11 @@ function unwatchResources({ watcher, resourceTypes }) {
 
     browsingContext.currentWindowGlobal
       .getActor("DevToolsFrame")
-      .unwatchFrameResources({
+      .removeWatcherDataEntry({
         watcherActorID: watcher.actorID,
         browserId: watcher.browserId,
-        resourceTypes,
+        type,
+        entries,
       });
   }
 }
@@ -129,8 +136,8 @@ function unwatchResources({ watcher, resourceTypes }) {
 module.exports = {
   createTargets,
   destroyTargets,
-  watchResources,
-  unwatchResources,
+  addWatcherDataEntry,
+  removeWatcherDataEntry,
 };
 
 /**
@@ -180,10 +187,7 @@ function getFilteredRemoteBrowsingContext(browserElement) {
   return getAllRemoteBrowsingContexts(
     browserElement?.browsingContext
   ).filter(browsingContext =>
-    shouldNotifyWindowGlobal(
-      browsingContext.currentWindowGlobal,
-      browserElement?.browserId
-    )
+    shouldNotifyWindowGlobal(browsingContext, browserElement?.browserId)
   );
 }
 
@@ -250,8 +254,13 @@ function getAllRemoteBrowsingContexts(topBrowsingContext) {
  * but may be not, it looks like the checks are really differents because WindowGlobalParent and WindowGlobalChild
  * expose very different attributes. (WindowGlobalChild exposes much less!)
  */
-function shouldNotifyWindowGlobal(windowGlobal, watchedBrowserId) {
-  const browsingContext = windowGlobal.browsingContext;
+function shouldNotifyWindowGlobal(browsingContext, watchedBrowserId) {
+  const windowGlobal = browsingContext.currentWindowGlobal;
+  // Loading or destroying BrowsingContext won't have any associated WindowGlobal.
+  // Ignore them. They should be either handled via DOMWindowCreated event or JSWindowActor destroy
+  if (!windowGlobal) {
+    return false;
+  }
   // Ignore extension for now as attaching to them is special.
   if (browsingContext.currentRemoteType == "extension") {
     return false;
@@ -290,27 +299,6 @@ function logWindowGlobal(windowGlobal, message) {
   if (!DEBUG) {
     return;
   }
-  const browsingContext = windowGlobal.browsingContext;
-  dump(
-    message +
-      " | BrowsingContext.browserId: " +
-      browsingContext.browserId +
-      " id: " +
-      browsingContext.id +
-      " Inner Window ID: " +
-      windowGlobal.innerWindowId +
-      " pid:" +
-      windowGlobal.osPid +
-      " isClosed:" +
-      windowGlobal.isClosed +
-      " isInProcess:" +
-      windowGlobal.isInProcess +
-      " isCurrentGlobal:" +
-      windowGlobal.isCurrentGlobal +
-      " currentRemoteType:" +
-      browsingContext.currentRemoteType +
-      " => " +
-      (windowGlobal.documentURI ? windowGlobal.documentURI.spec : "no-uri") +
-      "\n"
-  );
+
+  WindowGlobalLogger.logWindowGlobal(windowGlobal, message);
 }

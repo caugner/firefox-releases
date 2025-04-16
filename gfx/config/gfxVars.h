@@ -42,6 +42,7 @@ class gfxVarReceiver;
   _(UseWebRenderANGLE, bool, false)                                \
   _(UseWebRenderFlipSequentialWin, bool, false)                    \
   _(UseWebRenderDCompWin, bool, false)                             \
+  _(UseWebRenderDCompVideoOverlayWin, bool, false)                 \
   _(UseWebRenderTripleBufferingWin, bool, false)                   \
   _(UseWebRenderCompositor, bool, false)                           \
   _(UseWebRenderProgramBinaryDisk, bool, false)                    \
@@ -66,6 +67,7 @@ class gfxVarReceiver;
   _(DwmCompositionEnabled, bool, true)                             \
   _(FxREmbedded, bool, false)                                      \
   _(UseAHardwareBufferContent, bool, false)                        \
+  _(UseAHardwareBufferSharedSurface, bool, false)                  \
   _(UseEGL, bool, false)
 
 /* Add new entries above this line. */

@@ -31,8 +31,6 @@ typedef enum {
   DMABUF_ALPHA = 1 << 0,
   // Surface is used as texture and may be also shared
   DMABUF_TEXTURE = 1 << 1,
-  // Automatically create wl_buffer / EGLImage in Create routines.
-  DMABUF_CREATE_WL_BUFFER = 1 << 2,
   // Use modifiers. Such dmabuf surface may have more planes
   // and complex internal structure (tiling/compression/etc.)
   // so we can't do direct rendering to it.
@@ -123,6 +121,10 @@ class DMABufSurface {
   // Release all underlying data.
   virtual void ReleaseSurface() = 0;
 
+#ifdef DEBUG
+  virtual void DumpToFile(const char* pFile){};
+#endif
+
   DMABufSurface(SurfaceType aSurfaceType);
 
  protected:
@@ -170,7 +172,6 @@ class DMABufSurfaceRGBA : public DMABufSurface {
 
   DMABufSurfaceRGBA* GetAsDMABufSurfaceRGBA() { return this; }
 
-  bool Resize(int aWidth, int aHeight);
   void Clear();
 
   void ReleaseSurface();
@@ -201,11 +202,9 @@ class DMABufSurfaceRGBA : public DMABufSurface {
 
   uint32_t GetTextureCount() { return 1; };
 
-  void SetWLBuffer(struct wl_buffer* aWLBuffer);
-  wl_buffer* GetWLBuffer();
-  void WLBufferDetach() { mWLBufferAttached = false; };
-  bool WLBufferIsAttached() { return mWLBufferAttached; };
-  void WLBufferSetAttached() { mWLBufferAttached = true; };
+#ifdef DEBUG
+  virtual void DumpToFile(const char* pFile);
+#endif
 
   DMABufSurfaceRGBA();
 
@@ -215,7 +214,6 @@ class DMABufSurfaceRGBA : public DMABufSurface {
   bool Create(int aWidth, int aHeight, int aDMABufSurfaceFlags);
   bool Create(const mozilla::layers::SurfaceDescriptor& aDesc);
 
-  bool CreateWLBuffer();
   void ImportSurfaceDescriptor(const mozilla::layers::SurfaceDescriptor& aDesc);
 
  private:
@@ -225,13 +223,9 @@ class DMABufSurfaceRGBA : public DMABufSurface {
   int mHeight;
   mozilla::widget::GbmFormat* mGmbFormat;
 
-  wl_buffer* mWLBuffer;
   EGLImageKHR mEGLImage;
   GLuint mTexture;
   uint32_t mGbmBufferFlags;
-
-  bool mWLBufferAttached;
-  bool mFastWLBufferCreation;
 };
 
 class DMABufSurfaceYUV : public DMABufSurface {

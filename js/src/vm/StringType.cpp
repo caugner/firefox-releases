@@ -27,6 +27,7 @@
 #include "jsfriendapi.h"
 
 #include "frontend/BytecodeCompiler.h"
+#include "frontend/ParserAtom.h"
 #include "gc/Marking.h"
 #include "gc/MaybeRooted.h"
 #include "gc/Nursery.h"
@@ -1238,35 +1239,6 @@ template bool JSLinearString::isIndexSlow(const Latin1Char* s, size_t length,
 template bool JSLinearString::isIndexSlow(const char16_t* s, size_t length,
                                           uint32_t* indexp);
 
-/*
- * Declare length-2 strings. We only store strings where both characters are
- * alphanumeric. The lower 10 short chars are the numerals, the next 26 are
- * the lowercase letters, and the next 26 are the uppercase letters.
- */
-
-constexpr Latin1Char StaticStrings::fromSmallChar(SmallChar c) {
-  if (c < 10) {
-    return c + '0';
-  }
-  if (c < 36) {
-    return c + 'a' - 10;
-  }
-  return c + 'A' - 36;
-}
-
-constexpr StaticStrings::SmallChar StaticStrings::toSmallChar(uint32_t c) {
-  if (mozilla::IsAsciiDigit(c)) {
-    return c - '0';
-  }
-  if (mozilla::IsAsciiLowercaseAlpha(c)) {
-    return c - 'a' + 10;
-  }
-  if (mozilla::IsAsciiUppercaseAlpha(c)) {
-    return c - 'A' + 36;
-  }
-  return StaticStrings::INVALID_SMALL_CHAR;
-}
-
 constexpr StaticStrings::SmallCharArray StaticStrings::createSmallCharArray() {
   SmallCharArray array{};
   for (size_t i = 0; i < SMALL_CHAR_LIMIT; i++) {
@@ -1503,6 +1475,14 @@ bool AutoStableStringChars::copyTwoByteChars(JSContext* cx,
   twoByteChars_ = chars;
   s_ = linearString;
   return true;
+}
+
+UniqueChars js::ParserAtomToNewUTF8CharsZ(
+    JSContext* maybecx, const js::frontend::ParserAtom* atom) {
+  return UniqueChars(
+      atom->hasLatin1Chars()
+          ? JS::CharsToNewUTF8CharsZ(maybecx, atom->latin1Range()).c_str()
+          : JS::CharsToNewUTF8CharsZ(maybecx, atom->twoByteRange()).c_str());
 }
 
 #if defined(DEBUG) || defined(JS_JITSPEW)

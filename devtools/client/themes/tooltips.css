@@ -80,6 +80,14 @@ strong {
   direction: ltr;
 }
 
+/* Tooltip: JS Evaluation Context */
+
+#webconsole-input-evaluationsButton > .tooltip-panel {
+  /* helps the JS Context selector to have scrollbars when content exceed the vertical size of the popup */
+  overflow-y: auto;
+}
+
+
 /* Tooltip: Inactive CSS tooltip */
 
 .devtools-tooltip-inactive-css,
@@ -584,7 +592,7 @@ strong {
 .event-tooltip-debugger-icon {
   -moz-context-properties: stroke;
   stroke: var(--theme-icon-color);
-  background-image: url("resource://devtools/client/shared/components/reps/images/jump-definition.svg");
+  background-image: url("chrome://devtools/content/shared/components/reps/images/jump-definition.svg");
   background-repeat: no-repeat;
   background-position: center;
   width: 20px;

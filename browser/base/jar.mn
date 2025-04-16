@@ -5,7 +5,6 @@ browser.jar:
 %  content browser %content/browser/ contentaccessible=yes
 
         content/browser/aboutDialog-appUpdater.js     (content/aboutDialog-appUpdater.js)
-        content/browser/aboutDialog-appUpdater-legacy.js     (content/aboutDialog-appUpdater-legacy.js)
 *       content/browser/aboutDialog.xhtml                    (content/aboutDialog.xhtml)
         content/browser/aboutDialog.js                (content/aboutDialog.js)
         content/browser/aboutDialog.css               (content/aboutDialog.css)
@@ -41,14 +40,12 @@ browser.jar:
         content/browser/browser-ctrlTab.js            (content/browser-ctrlTab.js)
         content/browser/browser-customization.js      (content/browser-customization.js)
         content/browser/browser-data-submission-info-bar.js (content/browser-data-submission-info-bar.js)
-        content/browser/browser-defaultBrowserNotificationOnNewTabPage.js  (content/browser-defaultBrowserNotificationOnNewTabPage.js)
 #ifndef MOZILLA_OFFICIAL
         content/browser/browser-development-helpers.js (content/browser-development-helpers.js)
 #endif
         content/browser/browser-fullScreenAndPointerLock.js (content/browser-fullScreenAndPointerLock.js)
         content/browser/browser-fullZoom.js           (content/browser-fullZoom.js)
         content/browser/browser-gestureSupport.js     (content/browser-gestureSupport.js)
-        content/browser/browser-media.js              (content/browser-media.js)
         content/browser/browser-pageActions.js        (content/browser-pageActions.js)
         content/browser/browser-places.js             (content/browser-places.js)
         content/browser/browser-safebrowsing.js       (content/browser-safebrowsing.js)
@@ -85,7 +82,6 @@ browser.jar:
         content/browser/pageinfo/pageInfo.css         (content/pageinfo/pageInfo.css)
         content/browser/pageinfo/permissions.js       (content/pageinfo/permissions.js)
         content/browser/pageinfo/security.js          (content/pageinfo/security.js)
-        content/browser/content-refreshblocker.js     (content/content-refreshblocker.js)
         content/browser/robot.ico                     (content/robot.ico)
         content/browser/static-robot.png              (content/static-robot.png)
         content/browser/safeMode.css                  (content/safeMode.css)

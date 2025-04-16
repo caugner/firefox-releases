@@ -567,7 +567,6 @@ var Policies = {
     onBeforeAddons(manager, param) {
       if (param) {
         setAndLockPref("identity.fxaccounts.enabled", false);
-        setAndLockPref("trailhead.firstrun.branches", "nofirstrun-empty");
         setAndLockPref("browser.aboutwelcome.enabled", false);
       }
     },
@@ -1278,6 +1277,8 @@ var Policies = {
     },
   },
 
+  ManagedBookmarks: {},
+
   NetworkPrediction: {
     onBeforeAddons(manager, param) {
       setAndLockPref("network.dns.disablePrefetch", !param);
@@ -1307,7 +1308,14 @@ var Policies = {
 
   OfferToSaveLoginsDefault: {
     onBeforeUIStartup(manager, param) {
-      setDefaultPref("signon.rememberSignons", param);
+      let policies = Services.policies.getActivePolicies();
+      if ("OfferToSaveLogins" in policies) {
+        log.error(
+          `OfferToSaveLoginsDefault ignored because OfferToSaveLogins is present.`
+        );
+      } else {
+        setDefaultPref("signon.rememberSignons", param);
+      }
     },
   },
 
@@ -1315,7 +1323,6 @@ var Policies = {
     onProfileAfterChange(manager, param) {
       let url = param ? param.href : "";
       setAndLockPref("startup.homepage_welcome_url", url);
-      setAndLockPref("trailhead.firstrun.branches", "nofirstrun-empty");
       setAndLockPref("browser.aboutwelcome.enabled", false);
     },
   },
@@ -1538,7 +1545,21 @@ var Policies = {
                 if (!Number.isInteger(param[preference].Value)) {
                   throw new Error(`Non-integer value for ${preference}`);
                 }
-                prefBranch.setIntPref(preference, param[preference].Value);
+
+                // This is ugly, but necessary. On Windows GPO and macOS
+                // configs, booleans are converted to 0/1. In the previous
+                // Preferences implementation, the schema took care of
+                // automatically converting these values to booleans.
+                // Since we allow arbitrary prefs now, we have to do
+                // something different. See bug 1666836.
+                if (
+                  prefBranch.getPrefType(preference) == prefBranch.PREF_INT ||
+                  ![0, 1].includes(param[preference].Value)
+                ) {
+                  prefBranch.setIntPref(preference, param[preference].Value);
+                } else {
+                  prefBranch.setBoolPref(preference, !!param[preference].Value);
+                }
                 break;
 
               case "string":
@@ -1983,7 +2004,6 @@ var Policies = {
         manager.disallowFeature("urlbarinterventions");
       }
       if ("SkipOnboarding") {
-        setAndLockPref("trailhead.firstrun.branches", "nofirstrun-empty");
         setAndLockPref("browser.aboutwelcome.enabled", false);
       }
     },
@@ -2054,7 +2074,20 @@ function setDefaultPref(prefName, prefValue, locked = false) {
         throw new Error(`Non-integer value for ${prefName}`);
       }
 
-      defaults.setIntPref(prefName, prefValue);
+      // This is ugly, but necessary. On Windows GPO and macOS
+      // configs, booleans are converted to 0/1. In the previous
+      // Preferences implementation, the schema took care of
+      // automatically converting these values to booleans.
+      // Since we allow arbitrary prefs now, we have to do
+      // something different. See bug 1666836.
+      if (
+        defaults.getPrefType(prefName) == defaults.PREF_INT ||
+        ![0, 1].includes(prefValue)
+      ) {
+        defaults.setIntPref(prefName, prefValue);
+      } else {
+        defaults.setBoolPref(prefName, !!prefValue);
+      }
       break;
 
     case "string":

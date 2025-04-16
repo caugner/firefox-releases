@@ -952,27 +952,6 @@ enum class Tier {
   Serialized = Optimized
 };
 
-// Which backend to use in the case of the optimized tier.
-
-enum class OptimizedBackend {
-  Ion,
-  Cranelift,
-};
-
-// The CompileMode controls how compilation of a module is performed (notably,
-// how many times we compile it).
-
-enum class CompileMode { Once, Tier1, Tier2 };
-
-// Typed enum for whether debugging is enabled.
-
-enum class DebugEnabled { False, True };
-
-// A wasm module can either use no memory, a unshared memory (ArrayBuffer) or
-// shared memory (SharedArrayBuffer).
-
-enum class MemoryUsage { None = false, Unshared = 1, Shared = 2 };
-
 // Iterator over tiers present in a tiered data structure.
 
 class Tiers {
@@ -1209,8 +1188,7 @@ class FuncType {
   // but are guarded against separately.
   bool temporarilyUnsupportedReftypeForEntry() const {
     for (ValType arg : args()) {
-      if (arg.isReference() &&
-          (!arg.isExternRef() || !arg.isNullable())) {
+      if (arg.isReference() && (!arg.isExternRef() || !arg.isNullable())) {
         return true;
       }
     }
@@ -1226,8 +1204,7 @@ class FuncType {
   // excluded per spec but are guarded against separately.
   bool temporarilyUnsupportedReftypeForInlineEntry() const {
     for (ValType arg : args()) {
-      if (arg.isReference() &&
-          (!arg.isExternRef() || !arg.isNullable())) {
+      if (arg.isReference() && (!arg.isExternRef() || !arg.isNullable())) {
         return true;
       }
     }
@@ -1249,8 +1226,7 @@ class FuncType {
     }
     for (ValType result : results()) {
       if (result.isReference() &&
-          (!result.isExternRef() ||
-           !result.isNullable())) {
+          (!result.isExternRef() || !result.isNullable())) {
         return true;
       }
     }

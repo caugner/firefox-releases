@@ -73,7 +73,9 @@ add_task(async function init() {
 
 // Opens the view without showing the one-offs.  They should be hidden and arrow
 // key selection should work properly.
-add_task(async function noOneOffs() {
+//
+// This task can be removed when update2 is enabled by default.
+add_task(async function noOneOffs_legacy() {
   // Do a search for "@" since we hide the one-offs in that case.
   let value = "@";
   await UrlbarTestUtils.promiseAutocompleteResultPopup({
@@ -128,10 +130,9 @@ add_task(async function noOneOffs() {
   await hidePopup();
 });
 
-// The same as the previous task but with update 2 enabled.  Opens the view
-// without showing the one-offs.  Makes sure they're hidden and that arrow key
-// selection works properly.
-add_task(async function noOneOffsUpdate2() {
+// Opens the view without showing the one-offs.  They should be hidden and arrow
+// key selection should work properly.
+add_task(async function noOneOffs() {
   // Set the update2 prefs.
   await SpecialPowers.pushPrefEnv({
     set: [
@@ -196,8 +197,8 @@ add_task(async function noOneOffsUpdate2() {
   await SpecialPowers.popPrefEnv();
 });
 
-// Opens the top-sites view with update2 enabled.  The one-offs should be shown.
-add_task(async function topSitesUpdate2() {
+// Opens the top-sites view.  The one-offs should be shown.
+add_task(async function topSites() {
   // Set the update2 prefs.
   await SpecialPowers.pushPrefEnv({
     set: [
@@ -487,6 +488,7 @@ add_task(async function oneOffClick() {
       );
       await UrlbarTestUtils.assertSearchMode(window, {
         engineName: oneOffs[0].engine.name,
+        entry: "oneoff",
       });
       await UrlbarTestUtils.exitSearchMode(window, { backspace: true });
     } else {
@@ -539,6 +541,7 @@ add_task(async function oneOffReturn() {
       );
       await UrlbarTestUtils.assertSearchMode(window, {
         engineName: oneOffs[0].engine.name,
+        entry: "oneoff",
       });
       await UrlbarTestUtils.exitSearchMode(window, { backspace: true });
     } else {
@@ -620,7 +623,9 @@ add_task(async function hiddenWhenUsingSearchAlias() {
 });
 
 // Makes sure local search mode one-offs don't exist without update2.
-add_task(async function localOneOffsWithoutUpdate2() {
+//
+// This task can be removed when update2 is enabled by default.
+add_task(async function localOneOffs_legacy() {
   await SpecialPowers.pushPrefEnv({
     set: [["browser.urlbar.update2", false]],
   });
@@ -659,8 +664,8 @@ add_task(async function localOneOffsWithoutUpdate2() {
   await SpecialPowers.popPrefEnv();
 });
 
-// Makes sure local search mode one-offs exist with update2.
-add_task(async function localOneOffsWithUpdate2() {
+// Makes sure local search mode one-offs exist.
+add_task(async function localOneOffs() {
   // Null out _engines so that the one-offs rebuild themselves when the view
   // opens.
   oneOffSearchButtons._engines = null;
@@ -708,6 +713,7 @@ add_task(async function localOneOffClick() {
     );
     await UrlbarTestUtils.assertSearchMode(window, {
       source: button.source,
+      entry: "oneoff",
     });
   }
 
@@ -762,7 +768,16 @@ add_task(async function localOneOffReturn() {
       () => oneOffSearchButtons.selectedButtonIndex == index,
       "Waiting for local one-off to become selected"
     );
-    assertState(0, index, typedValue);
+
+    let expectedSelectedResultIndex = -1;
+    let count = UrlbarTestUtils.getResultCount(window);
+    if (count > 0) {
+      let result = await UrlbarTestUtils.getDetailsOfResultAt(window, 0);
+      if (result.heuristic) {
+        expectedSelectedResultIndex = 0;
+      }
+    }
+    assertState(expectedSelectedResultIndex, index, typedValue);
 
     Assert.ok(button.source, "Sanity check: Button has a source");
     let searchPromise = UrlbarTestUtils.promiseSearchComplete(window);
@@ -774,6 +789,7 @@ add_task(async function localOneOffReturn() {
     );
     await UrlbarTestUtils.assertSearchMode(window, {
       source: button.source,
+      entry: "oneoff",
     });
   }
 
@@ -831,6 +847,7 @@ add_task(async function localOneOffEmptySearchString() {
     );
     await UrlbarTestUtils.assertSearchMode(window, {
       source: button.source,
+      entry: "oneoff",
     });
 
     let resultCount = UrlbarTestUtils.getResultCount(window);
@@ -856,47 +873,17 @@ add_task(async function localOneOffEmptySearchString() {
   await SpecialPowers.popPrefEnv();
 });
 
-// The bookmarks one-off should be hidden when suggest.bookmark is false.
-add_task(async function hiddenBookmarksOneOff() {
-  await doLocalOneOffsShownTest("suggest.bookmark");
-});
-
-// The tabs one-off should be hidden when suggest.openpage is false.
-add_task(async function hiddenTabsOneOff() {
-  await doLocalOneOffsShownTest("suggest.openpage");
-});
-
-// The history one-off should be hidden when suggest.history is false.
-add_task(async function hiddenHistoryOneOff() {
-  await doLocalOneOffsShownTest("suggest.history");
-});
-
 /**
  * Checks that the local one-offs are shown correctly.
- *
- * @param {boolean} prefToDisable
- *   If given, this should be one of the `browser.urlbar.suggest` prefs.  It
- *   will be disabled before running the test to make sure the corresponding
- *   button isn't shown.
  */
-async function doLocalOneOffsShownTest(prefToDisable = "") {
-  let prefs = [
-    ["browser.urlbar.update2", true],
-    ["browser.urlbar.update2.localOneOffs", true],
-    ["browser.urlbar.update2.oneOffsRefresh", true],
-  ];
-  if (prefToDisable) {
-    prefs.push([`browser.urlbar.${prefToDisable}`, false]);
-  }
-  await SpecialPowers.pushPrefEnv({ set: prefs });
-
-  if (prefToDisable) {
-    Assert.equal(
-      UrlbarPrefs.get(prefToDisable),
-      false,
-      `Sanity check: Pref ${prefToDisable} is disabled`
-    );
-  }
+async function doLocalOneOffsShownTest() {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.urlbar.update2", true],
+      ["browser.urlbar.update2.localOneOffs", true],
+      ["browser.urlbar.update2.oneOffsRefresh", true],
+    ],
+  });
 
   let rebuildPromise = BrowserTestUtils.waitForEvent(
     oneOffSearchButtons,
@@ -909,11 +896,7 @@ async function doLocalOneOffsShownTest(prefToDisable = "") {
   await rebuildPromise;
 
   let buttons = oneOffSearchButtons.localButtons;
-  Assert.equal(
-    buttons.length,
-    prefToDisable ? 2 : 3,
-    "Expected number of local buttons"
-  );
+  Assert.equal(buttons.length, 3, "Expected number of local buttons");
 
   let expectedSource;
   let seenIDs = new Set();
@@ -938,39 +921,9 @@ async function doLocalOneOffsShownTest(prefToDisable = "") {
         break;
     }
     Assert.equal(button.source, expectedSource, "Expected button.source");
-
-    switch (prefToDisable) {
-      case "suggest.bookmark":
-        Assert.notEqual(expectedSource, UrlbarUtils.RESULT_SOURCE.BOOKMARKS);
-        break;
-      case "suggest.openpage":
-        Assert.notEqual(expectedSource, UrlbarUtils.RESULT_SOURCE.TABS);
-        break;
-      case "suggest.history":
-        Assert.notEqual(expectedSource, UrlbarUtils.RESULT_SOURCE.HISTORY);
-        break;
-      default:
-        if (prefToDisable) {
-          Assert.ok(false, `Unexpected pref: ${prefToDisable}`);
-        }
-        break;
-    }
   }
 
   await hidePopup();
-
-  if (prefToDisable) {
-    // Run the test again with the pref toggled back to true in order to test
-    // that the buttons automatically rebuild on the pref change and that all
-    // buttons are shown.
-    info(`Running test again with ${prefToDisable} = true`);
-    await SpecialPowers.pushPrefEnv({
-      set: [[`browser.urlbar.${prefToDisable}`, true]],
-    });
-    await doLocalOneOffsShownTest();
-    await SpecialPowers.popPrefEnv();
-  }
-
   await SpecialPowers.popPrefEnv();
 }
 

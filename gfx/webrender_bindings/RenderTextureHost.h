@@ -27,6 +27,7 @@ class RenderDXGITextureHostOGL;
 class RenderMacIOSurfaceTextureHostOGL;
 class RenderBufferTextureHost;
 class RenderTextureHostOGL;
+class RenderTextureHostSWGL;
 
 void ActivateBindAndTexParameteri(gl::GLContext* aGL, GLenum aActiveTexture,
                                   GLenum aBindTarget, GLuint aBindTexture,
@@ -57,7 +58,7 @@ class RenderTextureHost {
   // Called asynchronouly when corresponding TextureHost's is actually going to
   // be used by WebRender. For now, it is used only for
   // SurfaceTextureHost/RenderAndroidSurfaceTextureHostOGL.
-  virtual void NofityForUse() {}
+  virtual void NotifyForUse() {}
   // Called asynchronouly when corresponding TextureHost's mCompositableCount
   // becomes 0. For now, it is used only for
   // SurfaceTextureHost/RenderAndroidSurfaceTextureHostOGL.
@@ -74,6 +75,8 @@ class RenderTextureHost {
   AsRenderMacIOSurfaceTextureHostOGL() {
     return nullptr;
   }
+
+  virtual RenderTextureHostSWGL* AsRenderTextureHostSWGL() { return nullptr; }
 
  protected:
   virtual ~RenderTextureHost();

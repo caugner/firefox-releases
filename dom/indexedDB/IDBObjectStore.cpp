@@ -21,15 +21,18 @@
 #include "IndexedDatabase.h"
 #include "IndexedDatabaseInlines.h"
 #include "IndexedDatabaseManager.h"
+#include "IndexedDBCommon.h"
 #include "KeyPath.h"
 #include "ProfilerHelpers.h"
 #include "ReportInternalError.h"
 #include "js/Array.h"  // JS::GetArrayLength, JS::IsArrayObject
 #include "js/Class.h"
 #include "js/Date.h"
+#include "js/Object.h"  // JS::GetClass
 #include "js/StructuredClone.h"
 #include "mozilla/EndianUtils.h"
 #include "mozilla/ErrorResult.h"
+#include "mozilla/ResultExtensions.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/BlobBinding.h"
 #include "mozilla/dom/File.h"
@@ -158,7 +161,7 @@ bool StructuredCloneWriteCallback(JSContext* aCx,
   auto* const cloneWriteInfo =
       static_cast<IDBObjectStore::StructuredCloneWriteInfo*>(aClosure);
 
-  if (JS_GetClass(aObj) == IDBObjectStore::DummyPropClass()) {
+  if (JS::GetClass(aObj) == IDBObjectStore::DummyPropClass()) {
     MOZ_ASSERT(!cloneWriteInfo->mOffsetToKeyProp);
     cloneWriteInfo->mOffsetToKeyProp = js::GetSCOffset(aWriter);
 
@@ -823,79 +826,63 @@ RefPtr<IDBRequest> IDBObjectStore::AddOrPut(JSContext* aCx,
   commonParams.indexUpdateInfos() = std::move(updateInfos);
 
   // Convert any blobs or mutable files into FileAddInfo.
-  nsTArray<StructuredCloneFileChild>& files = cloneWriteInfo.mFiles;
+  IDB_TRY_VAR(
+      commonParams.fileAddInfos(),
+      TransformIntoNewArrayAbortOnErr(
+          cloneWriteInfo.mFiles,
+          [&database = *mTransaction->Database()](
+              auto& file) -> Result<FileAddInfo, nsresult> {
+            switch (file.Type()) {
+              case StructuredCloneFileBase::eBlob: {
+                MOZ_ASSERT(file.HasBlob());
+                MOZ_ASSERT(!file.HasMutableFile());
 
-  if (!files.IsEmpty()) {
-    const uint32_t count = files.Length();
+                PBackgroundIDBDatabaseFileChild* const fileActor =
+                    database.GetOrCreateFileActorForBlob(file.MutableBlob());
+                if (NS_WARN_IF(!fileActor)) {
+                  IDB_REPORT_INTERNAL_ERR();
+                  return Err(NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
+                }
 
-    auto& fileAddInfos = commonParams.fileAddInfos();
-    if (NS_WARN_IF(!fileAddInfos.SetCapacity(count, fallible))) {
-      aRv = NS_ERROR_OUT_OF_MEMORY;
-      return nullptr;
-    }
+                return FileAddInfo{fileActor, StructuredCloneFileBase::eBlob};
+              }
 
-    IDBDatabase* const database = mTransaction->Database();
+              case StructuredCloneFileBase::eMutableFile: {
+                MOZ_ASSERT(file.HasMutableFile());
+                MOZ_ASSERT(!file.HasBlob());
 
-    for (auto& file : files) {
-      auto fileAddInfoOrErr = [&file,
-                               database]() -> Result<FileAddInfo, nsresult> {
-        switch (file.Type()) {
-          case StructuredCloneFileBase::eBlob: {
-            MOZ_ASSERT(file.HasBlob());
-            MOZ_ASSERT(!file.HasMutableFile());
+                PBackgroundMutableFileChild* const mutableFileActor =
+                    file.MutableFile().GetBackgroundActor();
+                if (NS_WARN_IF(!mutableFileActor)) {
+                  IDB_REPORT_INTERNAL_ERR();
+                  return Err(NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
+                }
 
-            PBackgroundIDBDatabaseFileChild* const fileActor =
-                database->GetOrCreateFileActorForBlob(file.MutableBlob());
-            if (NS_WARN_IF(!fileActor)) {
-              IDB_REPORT_INTERNAL_ERR();
-              return Err(NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
+                return FileAddInfo{mutableFileActor,
+                                   StructuredCloneFileBase::eMutableFile};
+              }
+
+              case StructuredCloneFileBase::eWasmBytecode:
+              case StructuredCloneFileBase::eWasmCompiled: {
+                MOZ_ASSERT(file.HasBlob());
+                MOZ_ASSERT(!file.HasMutableFile());
+
+                PBackgroundIDBDatabaseFileChild* const fileActor =
+                    database.GetOrCreateFileActorForBlob(file.MutableBlob());
+                if (NS_WARN_IF(!fileActor)) {
+                  IDB_REPORT_INTERNAL_ERR();
+                  return Err(NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
+                }
+
+                return FileAddInfo{fileActor, file.Type()};
+              }
+
+              default:
+                MOZ_CRASH("Should never get here!");
             }
-
-            return FileAddInfo{fileActor, StructuredCloneFileBase::eBlob};
-          }
-
-          case StructuredCloneFileBase::eMutableFile: {
-            MOZ_ASSERT(file.HasMutableFile());
-            MOZ_ASSERT(!file.HasBlob());
-
-            PBackgroundMutableFileChild* const mutableFileActor =
-                file.MutableFile().GetBackgroundActor();
-            if (NS_WARN_IF(!mutableFileActor)) {
-              IDB_REPORT_INTERNAL_ERR();
-              return Err(NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
-            }
-
-            return FileAddInfo{mutableFileActor,
-                               StructuredCloneFileBase::eMutableFile};
-          }
-
-          case StructuredCloneFileBase::eWasmBytecode:
-          case StructuredCloneFileBase::eWasmCompiled: {
-            MOZ_ASSERT(file.HasBlob());
-            MOZ_ASSERT(!file.HasMutableFile());
-
-            PBackgroundIDBDatabaseFileChild* const fileActor =
-                database->GetOrCreateFileActorForBlob(file.MutableBlob());
-            if (NS_WARN_IF(!fileActor)) {
-              IDB_REPORT_INTERNAL_ERR();
-              return Err(NS_ERROR_DOM_INDEXEDDB_UNKNOWN_ERR);
-            }
-
-            return FileAddInfo{fileActor, file.Type()};
-          }
-
-          default:
-            MOZ_CRASH("Should never get here!");
-        }
-      }();
-
-      if (fileAddInfoOrErr.isErr()) {
-        aRv = fileAddInfoOrErr.unwrapErr();
-        return nullptr;
-      }
-      fileAddInfos.AppendElement(fileAddInfoOrErr.unwrap());
-    }
-  }
+          },
+          fallible),
+      nullptr, [&aRv](auto& result) { aRv = result.unwrapErr(); });
 
   const auto& params =
       aOverwrite ? RequestParams{ObjectStorePutParams(std::move(commonParams))}

@@ -14,9 +14,42 @@ using mozilla::Ok;
 using mozilla::Result;
 using mozilla::UniquePtr;
 
+enum struct UnusedZeroEnum : int32_t { Ok = 0, NotOk = 1 };
+
+namespace mozilla::detail {
+template <>
+struct UnusedZero<UnusedZeroEnum> {
+  using StorageType = UnusedZeroEnum;
+
+  static constexpr bool value = true;
+  static constexpr StorageType nullValue = UnusedZeroEnum::Ok;
+
+  static constexpr StorageType GetDefaultValue() {
+    return UnusedZeroEnum::NotOk;
+  }
+
+  static constexpr void AssertValid(StorageType aValue) {}
+  static constexpr const UnusedZeroEnum& Inspect(const StorageType& aValue) {
+    return aValue;
+  }
+  static constexpr UnusedZeroEnum Unwrap(StorageType aValue) { return aValue; }
+  static constexpr StorageType Store(UnusedZeroEnum aValue) { return aValue; }
+};
+}  // namespace mozilla::detail
+
 struct Failed {
   int x;
 };
+
+// V is trivially default-constructible, and E has UnusedZero<E>::value == true,
+// for a reference type and for a non-reference type
+static_assert(mozilla::detail::SelectResultImpl<uintptr_t, Failed&>::value ==
+              mozilla::detail::PackingStrategy::NullIsOk);
+static_assert(mozilla::detail::SelectResultImpl<Ok, UnusedZeroEnum>::value ==
+              mozilla::detail::PackingStrategy::NullIsOk);
+
+static_assert(std::is_trivially_destructible_v<Result<uintptr_t, Failed&>>);
+static_assert(std::is_trivially_destructible_v<Result<Ok, UnusedZeroEnum>>);
 
 static_assert(sizeof(Result<Ok, Failed&>) == sizeof(uintptr_t),
               "Result with empty value type should be pointer-sized");
@@ -56,9 +89,21 @@ static GenericErrorResult<Failed&> Fail() {
   return Err<Failed&>(failed);
 }
 
+static GenericErrorResult<UnusedZeroEnum> FailUnusedZeroEnum() {
+  return Err(UnusedZeroEnum::NotOk);
+}
+
 static Result<Ok, Failed&> Task1(bool pass) {
   if (!pass) {
     return Fail();  // implicit conversion from GenericErrorResult to Result
+  }
+  return Ok();
+}
+
+static Result<Ok, UnusedZeroEnum> Task1UnusedZeroEnumErr(bool pass) {
+  if (!pass) {
+    return FailUnusedZeroEnum();  // implicit conversion from GenericErrorResult
+                                  // to Result
   }
   return Ok();
 }
@@ -67,6 +112,13 @@ static Result<int, Failed&> Task2(bool pass, int value) {
   MOZ_TRY(
       Task1(pass));  // converts one type of result to another in the error case
   return value;      // implicit conversion from T to Result<T, E>
+}
+
+static Result<int, UnusedZeroEnum> Task2UnusedZeroEnumErr(bool pass,
+                                                          int value) {
+  MOZ_TRY(Task1UnusedZeroEnumErr(
+      pass));    // converts one type of result to another in the error case
+  return value;  // implicit conversion from T to Result<T, E>
 }
 
 static Result<int, Failed&> Task3(bool pass1, bool pass2, int value) {
@@ -82,12 +134,27 @@ static void BasicTests() {
   MOZ_RELEASE_ASSERT(!Task1(false).isOk());
   MOZ_RELEASE_ASSERT(Task1(false).isErr());
 
+  MOZ_RELEASE_ASSERT(Task1UnusedZeroEnumErr(true).isOk());
+  MOZ_RELEASE_ASSERT(!Task1UnusedZeroEnumErr(true).isErr());
+  MOZ_RELEASE_ASSERT(!Task1UnusedZeroEnumErr(false).isOk());
+  MOZ_RELEASE_ASSERT(Task1UnusedZeroEnumErr(false).isErr());
+  MOZ_RELEASE_ASSERT(UnusedZeroEnum::NotOk ==
+                     Task1UnusedZeroEnumErr(false).inspectErr());
+  MOZ_RELEASE_ASSERT(UnusedZeroEnum::NotOk ==
+                     Task1UnusedZeroEnumErr(false).unwrapErr());
+
   // MOZ_TRY works.
   MOZ_RELEASE_ASSERT(Task2(true, 3).isOk());
   MOZ_RELEASE_ASSERT(Task2(true, 3).unwrap() == 3);
   MOZ_RELEASE_ASSERT(Task2(true, 3).unwrapOr(6) == 3);
   MOZ_RELEASE_ASSERT(Task2(false, 3).isErr());
   MOZ_RELEASE_ASSERT(Task2(false, 3).unwrapOr(6) == 6);
+
+  MOZ_RELEASE_ASSERT(Task2UnusedZeroEnumErr(true, 3).isOk());
+  MOZ_RELEASE_ASSERT(Task2UnusedZeroEnumErr(true, 3).unwrap() == 3);
+  MOZ_RELEASE_ASSERT(Task2UnusedZeroEnumErr(true, 3).unwrapOr(6) == 3);
+  MOZ_RELEASE_ASSERT(Task2UnusedZeroEnumErr(false, 3).isErr());
+  MOZ_RELEASE_ASSERT(Task2UnusedZeroEnumErr(false, 3).unwrapOr(6) == 6);
 
   // MOZ_TRY_VAR works.
   MOZ_RELEASE_ASSERT(Task3(true, true, 3).isOk());
@@ -293,6 +360,125 @@ static void MapErrTest() {
   }
 }
 
+static Result<Ok, size_t> strlen_ResultWrapper(const char* aValue) {
+  return Err(strlen(aValue));
+}
+
+static void OrElseTest() {
+  struct MyError {
+    int x;
+
+    explicit MyError(int y) : x(y) {}
+  };
+
+  struct MyError2 {
+    int a;
+
+    explicit MyError2(int b) : a(b) {}
+  };
+
+  // `orElse`ing over error values, to Result<V, E> (the same error type) error
+  // variant.
+  {
+    MyError err(1);
+    Result<char, MyError> res(err);
+    MOZ_RELEASE_ASSERT(res.isErr());
+    bool invoked = false;
+    auto res2 = res.orElse([&invoked](const auto err) -> Result<char, MyError> {
+      MOZ_RELEASE_ASSERT(err.x == 1);
+      invoked = true;
+      if (err.x != 42) {
+        return Err(MyError(2));
+      }
+      return 'a';
+    });
+    MOZ_RELEASE_ASSERT(res2.isErr());
+    MOZ_RELEASE_ASSERT(invoked);
+    MOZ_RELEASE_ASSERT(res2.unwrapErr().x == 2);
+  }
+
+  // `orElse`ing over error values, to Result<V, E> (the same error type)
+  // success variant.
+  {
+    MyError err(42);
+    Result<char, MyError> res(err);
+    MOZ_RELEASE_ASSERT(res.isErr());
+    bool invoked = false;
+    auto res2 = res.orElse([&invoked](const auto err) -> Result<char, MyError> {
+      MOZ_RELEASE_ASSERT(err.x == 42);
+      invoked = true;
+      if (err.x != 42) {
+        return Err(MyError(2));
+      }
+      return 'a';
+    });
+    MOZ_RELEASE_ASSERT(res2.isOk());
+    MOZ_RELEASE_ASSERT(invoked);
+    MOZ_RELEASE_ASSERT(res2.unwrap() == 'a');
+  }
+
+  // `orElse`ing over error values, to Result<V, E2> (a different error type)
+  // error variant.
+  {
+    MyError err(1);
+    Result<char, MyError> res(err);
+    MOZ_RELEASE_ASSERT(res.isErr());
+    bool invoked = false;
+    auto res2 =
+        res.orElse([&invoked](const auto err) -> Result<char, MyError2> {
+          MOZ_RELEASE_ASSERT(err.x == 1);
+          invoked = true;
+          if (err.x != 42) {
+            return Err(MyError2(2));
+          }
+          return 'a';
+        });
+    MOZ_RELEASE_ASSERT(res2.isErr());
+    MOZ_RELEASE_ASSERT(invoked);
+    MOZ_RELEASE_ASSERT(res2.unwrapErr().a == 2);
+  }
+
+  // `orElse`ing over error values, to Result<V, E2> (a different error type)
+  // success variant.
+  {
+    MyError err(42);
+    Result<char, MyError> res(err);
+    MOZ_RELEASE_ASSERT(res.isErr());
+    bool invoked = false;
+    auto res2 =
+        res.orElse([&invoked](const auto err) -> Result<char, MyError2> {
+          MOZ_RELEASE_ASSERT(err.x == 42);
+          invoked = true;
+          if (err.x != 42) {
+            return Err(MyError2(2));
+          }
+          return 'a';
+        });
+    MOZ_RELEASE_ASSERT(res2.isOk());
+    MOZ_RELEASE_ASSERT(invoked);
+    MOZ_RELEASE_ASSERT(res2.unwrap() == 'a');
+  }
+
+  // `orElse`ing over success values.
+  {
+    Result<int, MyError> res(5);
+    auto res2 = res.orElse([](const auto err) -> Result<int, MyError> {
+      MOZ_RELEASE_ASSERT(false);
+      return Err(MyError(1));
+    });
+    MOZ_RELEASE_ASSERT(res2.isOk());
+    MOZ_RELEASE_ASSERT(res2.unwrap() == 5);
+  }
+
+  // Function pointers instead of lambdas as the `orElse`ing function.
+  {
+    Result<Ok, const char*> res("hello");
+    auto res2 = res.orElse(strlen_ResultWrapper);
+    MOZ_RELEASE_ASSERT(res2.isErr());
+    MOZ_RELEASE_ASSERT(res2.unwrapErr() == 5);
+  }
+}
+
 static void AndThenTest() {
   // `andThen`ing over success results.
   Result<int, const char*> r1(10);
@@ -384,6 +570,7 @@ int main() {
   ReferenceTest();
   MapTest();
   MapErrTest();
+  OrElseTest();
   AndThenTest();
   UniquePtrTest();
   return 0;

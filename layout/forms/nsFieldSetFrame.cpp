@@ -568,7 +568,7 @@ void nsFieldSetFrame::Reflow(nsPresContext* aPresContext,
     }
     ReflowInput kidReflowInput(aPresContext, aReflowInput, inner,
                                innerAvailSize, Nothing(),
-                               ReflowInput::CALLER_WILL_INIT);
+                               ReflowInput::InitFlag::CallerWillInit);
     // Override computed padding, in case it's percentage padding
     kidReflowInput.Init(aPresContext, Nothing(), nullptr,
                         &aReflowInput.ComputedPhysicalPadding());
@@ -914,18 +914,16 @@ void nsFieldSetFrame::EnsureChildContinuation(nsIFrame* aChild,
       }
     }
     if (aStatus.IsOverflowIncomplete()) {
-      if (nsFrameList* eoc =
-              GetPropTableFrames(ExcessOverflowContainersProperty())) {
+      if (nsFrameList* eoc = GetExcessOverflowContainers()) {
         eoc->AppendFrames(nullptr, nifs);
       } else {
-        SetPropTableFrames(new (PresShell()) nsFrameList(nifs),
-                           ExcessOverflowContainersProperty());
+        SetExcessOverflowContainers(std::move(nifs));
       }
     } else {
       if (nsFrameList* oc = GetOverflowFrames()) {
         oc->AppendFrames(nullptr, nifs);
       } else {
-        SetOverflowFrames(nifs);
+        SetOverflowFrames(std::move(nifs));
       }
     }
   }

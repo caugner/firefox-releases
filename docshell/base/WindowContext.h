@@ -64,6 +64,9 @@ class BrowsingContextGroup;
   FIELD(DocTreeHadAudibleMedia, bool)                                  \
   FIELD(AutoplayPermission, uint32_t)                                  \
   FIELD(ShortcutsPermission, uint32_t)                                 \
+  /* Store the Id of the browsing context where active media session   \
+   * exists on the top level window context */                         \
+  FIELD(ActiveMediaSessionContextId, Maybe<uint64_t>)                  \
   /* ALLOW_ACTION if it is allowed to open popups for the sub-tree     \
    * starting and including the current WindowContext */               \
   FIELD(PopupPermission, uint32_t)                                     \
@@ -119,9 +122,6 @@ class WindowContext : public nsISupports, public nsWrapperCache {
     uint64_t mInnerWindowId;
     uint64_t mOuterWindowId;
     uint64_t mBrowsingContextId;
-    // Note: This field is only used to add crash annotations for bug 1650257,
-    // and should be removed along with the annotation.
-    bool mBrowsingContextIsTop;
 
     FieldValues mFields;
   };
@@ -213,6 +213,8 @@ class WindowContext : public nsISupports, public nsWrapperCache {
               ContentParent* aSource);
   bool CanSet(FieldIndex<IDX_ShortcutsPermission>, const uint32_t& aValue,
               ContentParent* aSource);
+  bool CanSet(FieldIndex<IDX_ActiveMediaSessionContextId>,
+              const Maybe<uint64_t>& aValue, ContentParent* aSource);
   bool CanSet(FieldIndex<IDX_PopupPermission>, const uint32_t&,
               ContentParent* aSource);
   bool CanSet(FieldIndex<IDX_SHEntryHasUserInteraction>,
@@ -247,8 +249,8 @@ class WindowContext : public nsISupports, public nsWrapperCache {
   void DidSet(FieldIndex<I>, T&& aOldValue) {}
   void DidSet(FieldIndex<IDX_UserActivationState>);
 
-  uint64_t mInnerWindowId;
-  uint64_t mOuterWindowId;
+  const uint64_t mInnerWindowId;
+  const uint64_t mOuterWindowId;
   RefPtr<BrowsingContext> mBrowsingContext;
 
   // --- NEVER CHANGE `mChildren` DIRECTLY! ---

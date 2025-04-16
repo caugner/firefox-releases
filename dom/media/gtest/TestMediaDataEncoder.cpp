@@ -5,14 +5,14 @@
 
 #include "gtest/gtest.h"
 
-#include "nsMimeTypes.h"
-#include "VideoUtils.h"
-#include "PEMFactory.h"
-#include "ImageContainer.h"
 #include "AnnexB.h"
-
+#include "ImageContainer.h"
 #include "mozilla/AbstractThread.h"
 #include "mozilla/media/MediaUtils.h"  // For media::Await
+#include "nsMimeTypes.h"
+#include "PEMFactory.h"
+#include "TimeUnits.h"
+#include "VideoUtils.h"
 
 #include <algorithm>
 
@@ -81,9 +81,11 @@ class MediaDataEncoderTest : public testing::Test {
           new layers::RecyclingPlanarYCbCrImage(mRecycleBin);
       img->CopyData(mYUV);
       RefPtr<MediaData> frame = VideoData::CreateFromImage(
-          kImageSize, 0, TimeUnit::FromMicroseconds(aIndex * FRAME_DURATION),
-          TimeUnit::FromMicroseconds(FRAME_DURATION), img, (aIndex & 0xF) == 0,
-          TimeUnit::FromMicroseconds(aIndex * FRAME_DURATION));
+          kImageSize, 0,
+          media::TimeUnit::FromMicroseconds(aIndex * FRAME_DURATION),
+          media::TimeUnit::FromMicroseconds(FRAME_DURATION), img,
+          (aIndex & 0xF) == 0,
+          media::TimeUnit::FromMicroseconds(aIndex * FRAME_DURATION));
       return frame.forget();
     }
 

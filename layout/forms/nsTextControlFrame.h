@@ -72,8 +72,9 @@ class nsTextControlFrame : public nsContainerFrame,
   mozilla::LogicalSize ComputeAutoSize(
       gfxContext* aRenderingContext, mozilla::WritingMode aWM,
       const mozilla::LogicalSize& aCBSize, nscoord aAvailableISize,
-      const mozilla::LogicalSize& aMargin, const mozilla::LogicalSize& aBorder,
-      const mozilla::LogicalSize& aPadding, ComputeSizeFlags aFlags) override;
+      const mozilla::LogicalSize& aMargin,
+      const mozilla::LogicalSize& aBorderPadding,
+      mozilla::ComputeSizeFlags aFlags) override;
 
   void Reflow(nsPresContext* aPresContext, ReflowOutput& aDesiredSize,
               const ReflowInput& aReflowInput,
@@ -154,6 +155,8 @@ class nsTextControlFrame : public nsContainerFrame,
   NS_IMETHOD GetOwnedSelectionController(
       nsISelectionController** aSelCon) override;
   nsFrameSelection* GetOwnedFrameSelection() override;
+
+  void PlaceholderChanged(const nsAttrValue* aOld, const nsAttrValue* aNew);
 
   /**
    * Ensure mEditor is initialized with the proper flags and the default value.
@@ -329,6 +332,7 @@ class nsTextControlFrame : public nsContainerFrame,
 
   nsresult CreateRootNode();
   void CreatePlaceholderIfNeeded();
+  void UpdatePlaceholderText(nsString&, bool aNotify);
   void CreatePreviewIfNeeded();
   already_AddRefed<Element> MakeAnonElement(
       mozilla::PseudoStyleType, Element* aParent = nullptr,

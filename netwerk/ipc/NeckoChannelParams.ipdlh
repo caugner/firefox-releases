@@ -24,7 +24,7 @@ using class mozilla::TimeStamp from "mozilla/TimeStamp.h";
 using refcounted class nsIPropertyBag2 from "mozilla/dom/PropertyBagUtils.h";
 using refcounted class nsDOMNavigationTiming from "nsDOMNavigationTiming.h";
 using nsILoadInfo::CrossOriginEmbedderPolicy from "nsILoadInfo.h";
-using moveonly mozilla::dom::LoadingSessionHistoryInfo from "mozilla/dom/SessionHistoryEntry.h";
+using class mozilla::dom::LoadingSessionHistoryInfo from "mozilla/dom/SessionHistoryEntry.h";
 
 namespace mozilla {
 namespace net {
@@ -291,14 +291,11 @@ struct HttpChannelOpenArgs
   bool                        beConservative;
   uint32_t                    tlsFlags;
   LoadInfoArgs?               loadInfo;
-  nsHttpResponseHead?         synthesizedResponseHead;
-  nsCString                   synthesizedSecurityInfoSerialization;
   uint32_t                    cacheKey;
   uint64_t                    requestContextID;
   CorsPreflightArgs?          preflightArgs;
   uint32_t                    initialRwin;
   bool                        blockAuthPrompt;
-  bool                        suspendAfterSynthesizeResponse;
   bool                        allowStaleCacheContent;
   bool                        preferCacheLoadOverBypass;
   nsCString                   contentTypeHint;
@@ -323,7 +320,6 @@ struct HttpChannelOpenArgs
 struct HttpChannelConnectArgs
 {
   uint32_t registrarId;
-  bool shouldIntercept;
 };
 
 union HttpChannelCreationArgs
@@ -369,6 +365,7 @@ struct HttpConnectionInfoCloneArgs
   bool isIPv6Disabled;
   nsCString topWindowOrigin;
   bool isHttp3;
+  bool hasIPHintAddress;
   ProxyInfoCloneArgs[] proxyInfo;
 };
 
@@ -406,18 +403,6 @@ union FTPChannelCreationArgs
 {
   FTPChannelOpenArgs;      // For AsyncOpen: the common case.
   FTPChannelConnectArgs;   // Used for redirected-to channels
-};
-
-struct HttpChannelDiverterArgs
-{
-  PHttpChannel mChannel;
-  bool mApplyConversion;
-};
-
-union ChannelDiverterArgs
-{
-  HttpChannelDiverterArgs;
-  PFTPChannel;
 };
 
 struct CookieStruct

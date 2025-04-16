@@ -26,6 +26,8 @@ class nsIChannel;
 class nsIReferrerInfo;
 class OriginAttibutes;
 namespace mozilla {
+template <typename, class>
+class UniquePtr;
 namespace dom {
 class DocShellLoadStateInit;
 }  // namespace dom
@@ -141,8 +143,15 @@ class nsDocShellLoadState final {
   const mozilla::dom::LoadingSessionHistoryInfo* GetLoadingSessionHistoryInfo()
       const;
 
+  // Copies aLoadingInfo and stores the copy in this nsDocShellLoadState.
   void SetLoadingSessionHistoryInfo(
       const mozilla::dom::LoadingSessionHistoryInfo& aLoadingInfo);
+
+  // Stores aLoadingInfo in this nsDocShellLoadState.
+  void SetLoadingSessionHistoryInfo(
+      mozilla::UniquePtr<mozilla::dom::LoadingSessionHistoryInfo> aLoadingInfo);
+
+  bool LoadIsFromSessionHistory() const;
 
   const nsString& Target() const;
 
@@ -279,7 +288,9 @@ class nsDocShellLoadState final {
   mozilla::dom::DocShellLoadStateInit Serialize();
 
   void SetLoadIsFromSessionHistory(int32_t aRequestedIndex,
-                                   int32_t aSessionHistoryLength);
+                                   int32_t aSessionHistoryLength,
+                                   bool aLoadingFromActiveEntry);
+  void ClearLoadIsFromSessionHistory();
 
  protected:
   // Destructor can't be defaulted or inlined, as header doesn't have all type

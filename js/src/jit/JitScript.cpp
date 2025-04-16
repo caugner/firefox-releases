@@ -62,8 +62,8 @@ JitScript::JitScript(JSScript* script, Offset typeSetOffset,
       typeSetOffset_(typeSetOffset),
       bytecodeTypeMapOffset_(bytecodeTypeMapOffset),
       endOffset_(endOffset),
-      icScript_(this, script->getWarmUpCount(),
-                typeSetOffset - offsetOfICScript(), /*depth=*/0) {
+      icScript_(script->getWarmUpCount(), typeSetOffset - offsetOfICScript(),
+                /*depth=*/0) {
   setTypesGeneration(script->zone()->types.generation);
 
   if (IsTypeInferenceEnabled()) {
@@ -269,12 +269,11 @@ void ICScript::trace(JSTracer* trc) {
   }
 }
 
-bool ICScript::isInlined() const { return jitScript()->icScript() != this; }
-
 bool ICScript::addInlinedChild(JSContext* cx, UniquePtr<ICScript> child,
                                uint32_t pcOffset) {
+  MOZ_ASSERT(!hasInlinedChild(pcOffset));
   if (!inlinedChildren_) {
-    inlinedChildren_ = js::MakeUnique<Vector<CallSite>>(cx);
+    inlinedChildren_ = cx->make_unique<Vector<CallSite>>(cx);
     if (!inlinedChildren_) {
       return false;
     }
@@ -304,6 +303,25 @@ void ICScript::removeInlinedChild(uint32_t pcOffset) {
 
   // The ICScript is owned by the inlining root. Remove it.
   inliningRoot()->removeInlinedScript(icScript);
+}
+
+bool ICScript::hasInlinedChild(uint32_t pcOffset) {
+  if (!inlinedChildren_) {
+    return false;
+  }
+  for (auto& callsite : *inlinedChildren_) {
+    if (callsite.pcOffset_ == pcOffset) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void JitScript::resetWarmUpCount(uint32_t count) {
+  icScript_.resetWarmUpCount(count);
+  if (hasInliningRoot()) {
+    inliningRoot()->resetWarmUpCounts(count);
+  }
 }
 
 void JitScript::ensureProfileString(JSContext* cx, JSScript* script) {
@@ -877,8 +895,14 @@ InliningRoot* JitScript::getOrCreateInliningRoot(JSContext* cx,
 }
 
 FallbackICStubSpace* ICScript::fallbackStubSpace() {
-  if (inliningRoot_) {
+  if (isInlined()) {
     return inliningRoot_->fallbackStubSpace();
   }
-  return jitScript_->fallbackStubSpace();
+  return outerJitScript()->fallbackStubSpace();
+}
+
+JitScript* ICScript::outerJitScript() {
+  MOZ_ASSERT(!isInlined());
+  uint8_t* ptr = reinterpret_cast<uint8_t*>(this);
+  return reinterpret_cast<JitScript*>(ptr - JitScript::offsetOfICScript());
 }

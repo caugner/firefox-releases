@@ -23,6 +23,7 @@
 
 #ifdef MOZ_WIDGET_ANDROID
 #  include "mozilla/java/GeckoSurfaceTextureWrappers.h"
+#  include "mozilla/layers/AndroidHardwareBuffer.h"
 #  include "mozilla/widget/AndroidCompositorWidget.h"
 #  include <android/native_window.h>
 #  include <android/native_window_jni.h>
@@ -32,7 +33,7 @@ namespace mozilla::wr {
 
 /* static */
 UniquePtr<RenderCompositor> RenderCompositorEGL::Create(
-    RefPtr<widget::CompositorWidget> aWidget) {
+    RefPtr<widget::CompositorWidget> aWidget, nsACString& aError) {
 #ifdef MOZ_WAYLAND
   if (!gdk_display_get_default() ||
       GDK_IS_X11_DISPLAY(gdk_display_get_default())) {
@@ -58,7 +59,9 @@ EGLSurface RenderCompositorEGL::CreateEGLSurface() {
 
 RenderCompositorEGL::RenderCompositorEGL(
     RefPtr<widget::CompositorWidget> aWidget)
-    : RenderCompositor(std::move(aWidget)), mEGLSurface(EGL_NO_SURFACE) {}
+    : RenderCompositor(std::move(aWidget)),
+      mEGLSurface(EGL_NO_SURFACE),
+      mBufferAge(0) {}
 
 RenderCompositorEGL::~RenderCompositorEGL() {
 #ifdef MOZ_WIDGET_ANDROID
@@ -96,6 +99,24 @@ bool RenderCompositorEGL::BeginFrame() {
 
 RenderedFrameId RenderCompositorEGL::EndFrame(
     const nsTArray<DeviceIntRect>& aDirtyRects) {
+#ifdef MOZ_WIDGET_ANDROID
+  const auto& gle = gl::GLContextEGL::Cast(gl());
+  const auto& egl = gle->mEgl;
+
+  EGLSync sync = nullptr;
+  if (layers::AndroidHardwareBufferApi::Get()) {
+    sync = egl->fCreateSync(LOCAL_EGL_SYNC_NATIVE_FENCE_ANDROID, nullptr);
+  }
+  if (sync) {
+    int fenceFd = egl->fDupNativeFenceFDANDROID(sync);
+    if (fenceFd >= 0) {
+      mReleaseFenceFd = ipc::FileDescriptor(UniqueFileHandle(fenceFd));
+    }
+    egl->fDestroySync(sync);
+    sync = nullptr;
+  }
+#endif
+
   RenderedFrameId frameId = GetNextRenderFrameId();
   if (mEGLSurface != EGL_NO_SURFACE && aDirtyRects.Length() > 0) {
     gfx::IntRegion bufferInvalid;
@@ -179,6 +200,16 @@ void RenderCompositorEGL::DestroyEGLSurface() {
     egl->fDestroySurface(mEGLSurface);
     mEGLSurface = nullptr;
   }
+}
+
+ipc::FileDescriptor RenderCompositorEGL::GetAndResetReleaseFence() {
+#ifdef MOZ_WIDGET_ANDROID
+  MOZ_ASSERT(!layers::AndroidHardwareBufferApi::Get() ||
+             mReleaseFenceFd.IsValid());
+  return std::move(mReleaseFenceFd);
+#else
+  return ipc::FileDescriptor();
+#endif
 }
 
 LayoutDeviceIntSize RenderCompositorEGL::GetBufferSize() {

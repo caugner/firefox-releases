@@ -6,19 +6,4 @@
 
 #include "IndexedDBCommon.h"
 
-#include "nsPrintfCString.h"
-#include "nsXPCOM.h"
-
-namespace mozilla::dom::indexedDB {
-
-void HandleError(const nsLiteralCString& aExpr,
-                 const nsLiteralCString& aSourceFile, int32_t aSourceLine) {
-#ifdef DEBUG
-  NS_DebugBreak(NS_DEBUG_WARNING, "Error", aExpr.get(), aSourceFile.get(),
-                aSourceLine);
-#endif
-
-  // TODO: Report to browser console
-}
-
-}  // namespace mozilla::dom::indexedDB
+namespace mozilla::dom::indexedDB {}  // namespace mozilla::dom::indexedDB

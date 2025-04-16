@@ -11,18 +11,23 @@
 #include "nsCUPSShim.h"
 #include "nsString.h"
 
+#include "mozilla/DataMutex.h"
+#include "mozilla/RecursiveMutex.h"
+
 /**
  * @brief Interface to help implementing nsIPrinter using a CUPS printer.
  */
 class nsPrinterCUPS final : public nsPrinterBase {
  public:
   NS_IMETHOD GetName(nsAString& aName) override;
+  NS_IMETHOD GetSystemName(nsAString& aName) override;
   PrintSettingsInitializer DefaultSettings() const final;
   bool SupportsDuplex() const final;
   bool SupportsColor() const final;
+  bool SupportsMonochrome() const final;
   bool SupportsCollation() const final;
   nsTArray<mozilla::PaperInfo> PaperList() const final;
-  MarginDouble GetMarginsForPaper(uint64_t) const final {
+  MarginDouble GetMarginsForPaper(nsString aPaperId) const final {
     MOZ_ASSERT_UNREACHABLE(
         "The CUPS API requires us to always get the margin when fetching the "
         "paper list so there should be no need to query it separately");
@@ -32,17 +37,31 @@ class nsPrinterCUPS final : public nsPrinterBase {
   nsPrinterCUPS() = delete;
 
   nsPrinterCUPS(const nsCUPSShim& aShim, nsString aDisplayName,
-                cups_dest_t* aPrinter, cups_dinfo_t* aPrinterInfo,
-                uint64_t aCUPSMajor, uint64_t aCUPSMinor, uint64_t aCUPSPatch)
+                cups_dest_t* aPrinter)
       : mShim(aShim),
         mDisplayName(std::move(aDisplayName)),
         mPrinter(aPrinter),
-        mPrinterInfo(aPrinterInfo),
-        mCUPSMajor(aCUPSMajor),
-        mCUPSMinor(aCUPSMinor),
-        mCUPSPatch(aCUPSPatch) {}
+        mPrinterInfoMutex("nsPrinterCUPS::mPrinterInfoMutex") {}
 
  private:
+  struct CUPSPrinterInfo {
+    cups_dinfo_t* mPrinterInfo = nullptr;
+    uint64_t mCUPSMajor = 0;
+    uint64_t mCUPSMinor = 0;
+    uint64_t mCUPSPatch = 0;
+
+    // Whether we have attempted to fetch mPrinterInfo with CUPS_HTTP_DEFAULT.
+    bool mTriedInitWithDefault = false;
+    // Whether we have attempted to fetch mPrinterInfo with a connection.
+    bool mTriedInitWithConnection = false;
+    CUPSPrinterInfo() = default;
+    CUPSPrinterInfo(const CUPSPrinterInfo&) = delete;
+    CUPSPrinterInfo(CUPSPrinterInfo&&) = delete;
+  };
+
+  using PrinterInfoMutex =
+      mozilla::DataMutexBase<CUPSPrinterInfo, mozilla::RecursiveMutex>;
+
   ~nsPrinterCUPS();
 
   /**
@@ -61,13 +80,20 @@ class nsPrinterCUPS final : public nsPrinterBase {
   bool IsCUPSVersionAtLeast(uint64_t aCUPSMajor, uint64_t aCUPSMinor,
                             uint64_t aCUPSPatch) const;
 
+  /**
+   * Attempts to populate the CUPSPrinterInfo object.
+   * This usually works with the CUPS default connection,
+   * but has been known to require an established connection
+   * on older versions of Ubuntu (18 and below).
+   */
+  void TryEnsurePrinterInfo(
+      CUPSPrinterInfo& aInOutPrinterInfo,
+      http_t* const aConnection = CUPS_HTTP_DEFAULT) const;
+
   const nsCUPSShim& mShim;
   nsString mDisplayName;
   cups_dest_t* mPrinter;
-  cups_dinfo_t* mPrinterInfo;
-  uint64_t mCUPSMajor;
-  uint64_t mCUPSMinor;
-  uint64_t mCUPSPatch;
+  mutable PrinterInfoMutex mPrinterInfoMutex;
 };
 
 #endif /* nsPrinterCUPS_h___ */

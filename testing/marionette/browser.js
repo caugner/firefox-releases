@@ -5,30 +5,24 @@
 "use strict";
 /* global frame */
 
+const EXPORTED_SYMBOLS = ["browser", "Context", "WindowState"];
+
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 
-const { WebElementEventTarget } = ChromeUtils.import(
-  "chrome://marionette/content/dom.js"
-);
-const { element } = ChromeUtils.import(
-  "chrome://marionette/content/element.js"
-);
-const { NoSuchWindowError, UnsupportedOperationError } = ChromeUtils.import(
-  "chrome://marionette/content/error.js"
-);
-const { Log } = ChromeUtils.import("chrome://marionette/content/log.js");
-const {
-  MessageManagerDestroyedPromise,
-  waitForEvent,
-  waitForObserverTopic,
-} = ChromeUtils.import("chrome://marionette/content/sync.js");
+XPCOMUtils.defineLazyModuleGetters(this, {
+  element: "chrome://marionette/content/element.js",
+  error: "chrome://marionette/content/error.js",
+  Log: "chrome://marionette/content/log.js",
+  MessageManagerDestroyedPromise: "chrome://marionette/content/sync.js",
+  waitForEvent: "chrome://marionette/content/sync.js",
+  waitForObserverTopic: "chrome://marionette/content/sync.js",
+  WebElementEventTarget: "chrome://marionette/content/dom.js",
+});
 
-XPCOMUtils.defineLazyGetter(this, "logger", Log.get);
-
-this.EXPORTED_SYMBOLS = ["browser", "Context", "WindowState"];
+XPCOMUtils.defineLazyGetter(this, "logger", () => Log.get());
 
 /** @namespace */
 this.browser = {};
@@ -182,14 +176,6 @@ browser.Context = class {
     // being the currently selected tab.
     this.tab = null;
 
-    // Commands which trigger a navigation can cause the frame script to be
-    // moved to a different process. To not loose the currently active
-    // command, or any other already pushed following command, store them as
-    // long as they haven't been fully processed. The commands get flushed
-    // after a new browser has been registered.
-    this.pendingCommands = [];
-    this._needsFlushPendingCommands = false;
-
     this.frameRegsPending = 0;
 
     this.getIdForBrowser = driver.getIdForBrowser.bind(driver);
@@ -249,26 +235,6 @@ browser.Context = class {
   }
 
   /**
-   * Returns the current title of the content browser.
-   *
-   * @return {string}
-   *     Read-only property containing the current title.
-   *
-   * @throws {NoSuchWindowError}
-   *     If the current ChromeWindow does not have a content browser.
-   */
-  get currentTitle() {
-    // Bug 1363368 - contentBrowser could be null until we wait for its
-    // initialization been finished
-    if (this.contentBrowser) {
-      return this.contentBrowser.contentTitle;
-    }
-    throw new NoSuchWindowError(
-      "Current window does not have a content browser"
-    );
-  }
-
-  /**
    * Gets the position and dimensions of the top-level browsing context.
    *
    * @return {Map.<string, number>}
@@ -309,15 +275,14 @@ browser.Context = class {
    * @return {Promise}
    *     A promise which is resolved when the current window has been closed.
    */
-  closeWindow() {
-    let destroyed = new MessageManagerDestroyedPromise(
-      this.window.messageManager
-    );
-    let unloaded = waitForEvent(this.window, "unload");
+  async closeWindow() {
+    const destroyed = waitForObserverTopic("xul-window-destroyed", {
+      checkFn: () => this.window && this.window.closed,
+    });
 
     this.window.close();
 
-    return Promise.all([destroyed, unloaded]);
+    return destroyed;
   }
 
   /**
@@ -370,7 +335,7 @@ browser.Context = class {
         return win;
 
       default:
-        throw new UnsupportedOperationError(
+        throw new error.UnsupportedOperationError(
           `openWindow() not supported in ${this.driver.appName}`
         );
     }
@@ -407,7 +372,7 @@ browser.Context = class {
         break;
 
       default:
-        throw new UnsupportedOperationError(
+        throw new error.UnsupportedOperationError(
           `closeTab() not supported in ${this.driver.appName}`
         );
     }
@@ -458,7 +423,7 @@ browser.Context = class {
         break;
 
       default:
-        throw new UnsupportedOperationError(
+        throw new error.UnsupportedOperationError(
           `openTab() not supported in ${this.driver.appName}`
         );
     }
@@ -535,44 +500,11 @@ browser.Context = class {
 
       if (target === this.contentBrowser) {
         this.updateIdForBrowser(this.contentBrowser, uid);
-        this._needsFlushPendingCommands = true;
       }
     }
 
     // used to delete sessions
     this.knownFrames.push(uid);
-  }
-
-  /**
-   * Flush any queued pending commands.
-   *
-   * Needs to be run after a process change for the frame script.
-   */
-  flushPendingCommands() {
-    if (!this._needsFlushPendingCommands) {
-      return;
-    }
-
-    this.pendingCommands.forEach(cb => cb());
-    this._needsFlushPendingCommands = false;
-  }
-
-  /**
-   * This function intercepts commands interacting with content and queues
-   * or executes them as needed.
-   *
-   * No commands interacting with content are safe to process until
-   * the new listener script is loaded and registered itself.
-   * This occurs when a command whose effect is asynchronous (such
-   * as goBack) results in process change of the frame script and new
-   * commands are subsequently posted to the server.
-   */
-  executeWhenReady(cb) {
-    if (this._needsFlushPendingCommands) {
-      this.pendingCommands.push(cb);
-    } else {
-      cb();
-    }
   }
 };
 

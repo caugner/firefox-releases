@@ -28,6 +28,7 @@
 #ifdef FUZZING
 #  include "mozilla/StaticPrefs_fuzzing.h"
 #endif
+#include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/StaticPrefs_javascript.h"
 #include "mozilla/dom/ScriptSettings.h"
@@ -39,7 +40,9 @@
 #include "jsapi.h"
 #include "js/ContextOptions.h"
 #include "js/MemoryMetrics.h"
+#include "js/OffThreadScriptCompilation.h"
 #include "mozilla/dom/BindingUtils.h"
+#include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/ScriptLoader.h"
 #include "mozilla/dom/WindowBinding.h"
@@ -378,18 +381,15 @@ class WatchdogManager {
     }
 
     if (mWatchdog) {
-      int32_t contentTime =
-          Preferences::GetInt(PREF_MAX_SCRIPT_RUN_TIME_CONTENT, 10);
+      int32_t contentTime = StaticPrefs::dom_max_script_run_time();
       if (contentTime <= 0) {
         contentTime = INT32_MAX;
       }
-      int32_t chromeTime =
-          Preferences::GetInt(PREF_MAX_SCRIPT_RUN_TIME_CHROME, 20);
+      int32_t chromeTime = StaticPrefs::dom_max_chrome_script_run_time();
       if (chromeTime <= 0) {
         chromeTime = INT32_MAX;
       }
-      int32_t extTime =
-          Preferences::GetInt(PREF_MAX_SCRIPT_RUN_TIME_EXT_CONTENT, 5);
+      int32_t extTime = StaticPrefs::dom_max_ext_content_script_run_time();
       if (extTime <= 0) {
         extTime = INT32_MAX;
       }
@@ -620,19 +620,20 @@ bool XPCJSContext::InterruptCallback(JSContext* cx) {
 
   nsString addonId;
   const char* prefName;
-
+  bool runningContentJS = false;
   auto principal = BasePrincipal::Cast(nsContentUtils::SubjectPrincipal(cx));
   bool chrome = principal->Is<SystemPrincipal>();
   if (chrome) {
     prefName = PREF_MAX_SCRIPT_RUN_TIME_CHROME;
-    limit = Preferences::GetInt(prefName, 20);
+    limit = StaticPrefs::dom_max_chrome_script_run_time();
   } else if (auto policy = principal->ContentScriptAddonPolicy()) {
     policy->GetId(addonId);
     prefName = PREF_MAX_SCRIPT_RUN_TIME_EXT_CONTENT;
-    limit = Preferences::GetInt(prefName, 5);
+    limit = StaticPrefs::dom_max_ext_content_script_run_time();
   } else {
     prefName = PREF_MAX_SCRIPT_RUN_TIME_CONTENT;
-    limit = Preferences::GetInt(prefName, 10);
+    limit = StaticPrefs::dom_max_script_run_time();
+    runningContentJS = true;
   }
 
   // If there's no limit, or we're within the limit, let it go.
@@ -649,6 +650,33 @@ bool XPCJSContext::InterruptCallback(JSContext* cx) {
   if (!self->mSlowScriptSecondHalf) {
     self->mSlowScriptSecondHalf = true;
     return true;
+  }
+
+  int32_t limitWithoutImportantUserInput =
+      StaticPrefs::dom_max_script_run_time_without_important_user_input();
+  if (runningContentJS && XRE_IsContentProcess() && limit &&
+      limitWithoutImportantUserInput > limit &&
+      limitWithoutImportantUserInput >
+          self->mSlowScriptActualWait.ToSeconds()) {
+    // Call possibly slow PeekMessages after the other common early returns in
+    // this method.
+    ContentChild* contentChild = ContentChild::GetSingleton();
+    mozilla::ipc::MessageChannel* channel =
+        contentChild ? contentChild->GetIPCChannel() : nullptr;
+    if (channel) {
+      bool foundInputEvent = false;
+      channel->PeekMessages(
+          [&foundInputEvent](const IPC::Message& aMsg) -> bool {
+            if (nsContentUtils::IsMessageCriticalInputEvent(aMsg)) {
+              foundInputEvent = true;
+              return false;
+            }
+            return true;
+          });
+      if (!foundInputEvent) {
+        return true;
+      }
+    }
   }
 
   //
@@ -795,6 +823,7 @@ static void LoadStartupJSPrefs(XPCJSContext* xpccx) {
   bool useBaselineInterp = Preferences::GetBool(JS_OPTIONS_DOT_STR "blinterp");
   bool useBaselineJit = Preferences::GetBool(JS_OPTIONS_DOT_STR "baselinejit");
   bool useIon = Preferences::GetBool(JS_OPTIONS_DOT_STR "ion");
+  bool useWarp = Preferences::GetBool(JS_OPTIONS_DOT_STR "warp");
   bool useJitForTrustedPrincipals =
       Preferences::GetBool(JS_OPTIONS_DOT_STR "jit_trustedprincipals");
   bool useNativeRegExp =
@@ -838,6 +867,9 @@ static void LoadStartupJSPrefs(XPCJSContext* xpccx) {
   bool disableWasmHugeMemory =
       Preferences::GetBool(JS_OPTIONS_DOT_STR "wasm_disable_huge_memory");
 
+  bool useOffThreadParseGlobal =
+      Preferences::GetBool(JS_OPTIONS_DOT_STR "off_thread_parse_global");
+
   nsCOMPtr<nsIXULRuntime> xr = do_GetService("@mozilla.org/xre/runtime;1");
   if (xr) {
     bool safeMode = false;
@@ -855,6 +887,7 @@ static void LoadStartupJSPrefs(XPCJSContext* xpccx) {
   JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_BASELINE_ENABLE,
                                 useBaselineJit);
   JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_ION_ENABLE, useIon);
+  JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_WARP_ENABLE, useWarp);
   JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_JIT_TRUSTEDPRINCIPALS_ENABLE,
                                 useJitForTrustedPrincipals);
   JS_SetGlobalJitCompilerOption(cx, JSJITCOMPILER_NATIVE_REGEXP_ENABLE,
@@ -898,6 +931,8 @@ static void LoadStartupJSPrefs(XPCJSContext* xpccx) {
     bool disabledHugeMemory = JS::DisableWasmHugeMemory();
     MOZ_RELEASE_ASSERT(disabledHugeMemory);
   }
+
+  JS::SetUseOffThreadParseGlobal(useOffThreadParseGlobal);
 }
 
 static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
@@ -1297,6 +1332,12 @@ nsresult XPCJSContext::Initialize() {
 #ifdef FUZZING
   Preferences::RegisterCallback(ReloadPrefsCallback, "fuzzing.enabled", this);
 #endif
+
+  // Initialize the MIME type used for the bytecode cache, after calling
+  // SetProcessBuildIdOp and loading JS prefs.
+  if (!nsContentUtils::InitJSBytecodeMimeType()) {
+    NS_ABORT_OOM(0);  // Size is unknown.
+  }
 
   if (!JS::InitSelfHostedCode(cx)) {
     // Note: If no exception is pending, failure is due to OOM.

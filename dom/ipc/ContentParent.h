@@ -678,6 +678,9 @@ class ContentParent final
       const MaybeDiscarded<BrowsingContext>& aContext);
   mozilla::ipc::IPCResult RecvSetFocusedElement(
       const MaybeDiscarded<BrowsingContext>& aContext, bool aNeedsFocus);
+  mozilla::ipc::IPCResult RecvFinalizeFocusOuter(
+      const MaybeDiscarded<BrowsingContext>& aContext, bool aCanFocus,
+      CallerType aCallerType);
   mozilla::ipc::IPCResult RecvBlurToParent(
       const MaybeDiscarded<BrowsingContext>& aFocusedBrowsingContext,
       const MaybeDiscarded<BrowsingContext>& aBrowsingContextToClear,
@@ -1104,22 +1107,6 @@ class ContentParent final
 
   mozilla::ipc::IPCResult RecvDeviceReset();
 
-  mozilla::ipc::IPCResult RecvKeywordToURI(const nsCString& aKeyword,
-                                           const bool& aIsPrivateContext,
-                                           nsString* aProviderName,
-                                           RefPtr<nsIInputStream>* aPostData,
-                                           RefPtr<nsIURI>* aURI);
-
-  mozilla::ipc::IPCResult RecvGetFixupURIInfo(const nsString& aURIString,
-                                              const uint32_t& aFixupFlags,
-                                              bool aAllowThirdPartyFixup,
-                                              nsString* aProviderName,
-                                              RefPtr<nsIInputStream>* aPostData,
-                                              RefPtr<nsIURI>* aPreferredURI);
-
-  mozilla::ipc::IPCResult RecvNotifyKeywordSearchLoading(
-      const nsString& aProvider, const nsString& aKeyword);
-
   mozilla::ipc::IPCResult RecvCopyFavicon(
       nsIURI* aOldURI, nsIURI* aNewURI, const IPC::Principal& aLoadingPrincipal,
       const bool& aInPrivateBrowsing);
@@ -1327,7 +1314,7 @@ class ContentParent final
 
   mozilla::ipc::IPCResult RecvHistoryCommit(
       const MaybeDiscarded<BrowsingContext>& aContext, const uint64_t& aLoadID,
-      const nsID& aChangeID);
+      const nsID& aChangeID, const uint32_t& aLoadType);
 
   mozilla::ipc::IPCResult RecvHistoryGo(
       const MaybeDiscarded<BrowsingContext>& aContext, int32_t aOffset,
@@ -1350,6 +1337,38 @@ class ContentParent final
   mozilla::ipc::IPCResult RecvSessionHistoryEntryCacheKey(
       const MaybeDiscarded<BrowsingContext>& aContext,
       const uint32_t& aCacheKey);
+
+  mozilla::ipc::IPCResult
+  RecvSessionHistoryEntryStoreWindowNameInContiguousEntries(
+      const MaybeDiscarded<BrowsingContext>& aContext, const nsString& aName);
+
+  mozilla::ipc::IPCResult RecvGetLoadingSessionHistoryInfoFromParent(
+      const MaybeDiscarded<BrowsingContext>& aContext,
+      GetLoadingSessionHistoryInfoFromParentResolver&& aResolver);
+
+  mozilla::ipc::IPCResult RecvSetActiveSessionHistoryEntryForTop(
+      const MaybeDiscarded<BrowsingContext>& aContext,
+      const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo&& aInfo,
+      uint32_t aLoadType, const nsID& aChangeID);
+
+  mozilla::ipc::IPCResult RecvSetActiveSessionHistoryEntryForFrame(
+      const MaybeDiscarded<BrowsingContext>& aContext,
+      const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo&& aInfo,
+      int32_t aChildOffset, const nsID& aChangeID);
+
+  mozilla::ipc::IPCResult RecvReplaceActiveSessionHistoryEntry(
+      const MaybeDiscarded<BrowsingContext>& aContext,
+      SessionHistoryInfo&& aInfo);
+
+  mozilla::ipc::IPCResult RecvRemoveDynEntriesFromActiveSessionHistoryEntry(
+      const MaybeDiscarded<BrowsingContext>& aContext);
+
+  mozilla::ipc::IPCResult RecvRemoveFromSessionHistory(
+      const MaybeDiscarded<BrowsingContext>& aContext);
+
+  mozilla::ipc::IPCResult RecvHistoryReload(
+      const MaybeDiscarded<BrowsingContext>& aContext,
+      const uint32_t aReloadFlags);
 
   // Notify the ContentChild to enable the input event prioritization when
   // initializing.
@@ -1571,6 +1590,8 @@ const nsDependentCSubstring RemoteTypePrefix(
 bool IsWebRemoteType(const nsACString& aContentProcessType);
 
 bool IsWebCoopCoepRemoteType(const nsACString& aContentProcessType);
+
+bool IsPriviligedMozillaRemoteType(const nsACString& aContentProcessType);
 
 inline nsISupports* ToSupports(mozilla::dom::ContentParent* aContentParent) {
   return static_cast<nsIDOMProcessParent*>(aContentParent);

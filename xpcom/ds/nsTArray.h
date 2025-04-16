@@ -273,7 +273,7 @@ struct nsTArrayHeader {
 };
 
 extern "C" {
-extern nsTArrayHeader sEmptyTArrayHeader;
+extern const nsTArrayHeader sEmptyTArrayHeader;
 }
 
 namespace detail {
@@ -491,7 +491,7 @@ class nsTArray_base {
   // zero-length array is inserted into our array. But then aNum should
   // always be 0.
   void IncrementLength(size_t aNum) {
-    if (mHdr == EmptyHdr()) {
+    if (HasEmptyHeader()) {
       if (MOZ_UNLIKELY(aNum != 0)) {
         // Writing a non-zero length to the empty header would be extremely bad.
         MOZ_CRASH();
@@ -577,7 +577,11 @@ class nsTArray_base {
 
   Header* Hdr() const MOZ_NONNULL_RETURN { return mHdr; }
   Header** PtrToHdr() MOZ_NONNULL_RETURN { return &mHdr; }
-  static Header* EmptyHdr() MOZ_NONNULL_RETURN { return &sEmptyTArrayHeader; }
+  static Header* EmptyHdr() MOZ_NONNULL_RETURN {
+    return const_cast<Header*>(&sEmptyTArrayHeader);
+  }
+
+  [[nodiscard]] bool HasEmptyHeader() const { return mHdr == EmptyHdr(); }
 };
 
 namespace detail {
@@ -1129,7 +1133,7 @@ class nsTArray_Impl
   // "Shallow" prefix.
   [[nodiscard]] size_t ShallowSizeOfExcludingThis(
       mozilla::MallocSizeOf aMallocSizeOf) const {
-    if (this->UsesAutoArrayBuffer() || Hdr() == EmptyHdr()) {
+    if (this->UsesAutoArrayBuffer() || this->HasEmptyHeader()) {
       return 0;
     }
     return aMallocSizeOf(this->Hdr());
@@ -1446,7 +1450,7 @@ class nsTArray_Impl
   // Make sure to call Compact() if needed to avoid keeping a huge array
   // around.
   void ClearAndRetainStorage() {
-    if (base_type::mHdr == EmptyHdr()) {
+    if (this->HasEmptyHeader()) {
       return;
     }
 
@@ -2408,8 +2412,8 @@ auto nsTArray_Impl<E, Alloc>::AssignInternal(const Item* aArray,
     return ActualAlloc::ConvertBoolToResultType(false);
   }
 
-  MOZ_ASSERT_IF(base_type::mHdr == EmptyHdr(), aArrayLen == 0);
-  if (base_type::mHdr != EmptyHdr()) {
+  MOZ_ASSERT_IF(this->HasEmptyHeader(), aArrayLen == 0);
+  if (!this->HasEmptyHeader()) {
     if constexpr (std::is_same_v<ActualAlloc, FallibleAlloc>) {
       ClearAndRetainStorage();
     }
@@ -2489,7 +2493,7 @@ void nsTArray_Impl<E, Alloc>::UnorderedRemoveElementsAt(index_type aStart,
 template <typename E, class Alloc>
 template <typename Predicate>
 void nsTArray_Impl<E, Alloc>::RemoveElementsBy(Predicate aPredicate) {
-  if (base_type::mHdr == EmptyHdr()) {
+  if (this->HasEmptyHeader()) {
     return;
   }
 

@@ -1479,27 +1479,8 @@ bool BaselineGetFunctionThis(JSContext* cx, BaselineFrame* frame,
   return GetFunctionThis(cx, frame, res);
 }
 
-bool CallNativeGetter(JSContext* cx, HandleFunction callee, HandleObject obj,
-                      MutableHandleValue result) {
-  AutoRealm ar(cx, callee);
-
-  MOZ_ASSERT(callee->isNative());
-  JSNative natfun = callee->native();
-
-  JS::RootedValueArray<2> vp(cx);
-  vp[0].setObject(*callee.get());
-  vp[1].setObject(*obj.get());
-
-  if (!natfun(cx, 0, vp.begin())) {
-    return false;
-  }
-
-  result.set(vp[0]);
-  return true;
-}
-
-bool CallNativeGetterByValue(JSContext* cx, HandleFunction callee,
-                             HandleValue receiver, MutableHandleValue result) {
+bool CallNativeGetter(JSContext* cx, HandleFunction callee,
+                      HandleValue receiver, MutableHandleValue result) {
   AutoRealm ar(cx, callee);
 
   MOZ_ASSERT(callee->isNative());
@@ -1517,6 +1498,24 @@ bool CallNativeGetterByValue(JSContext* cx, HandleFunction callee,
   return true;
 }
 
+bool CallDOMGetter(JSContext* cx, const JSJitInfo* info, HandleObject obj,
+                   MutableHandleValue result) {
+  MOZ_ASSERT(info->type() == JSJitInfo::Getter);
+  MOZ_ASSERT(obj->isNative());
+  MOZ_ASSERT(obj->getClass()->isDOMClass());
+
+#ifdef DEBUG
+  DOMInstanceClassHasProtoAtDepth instanceChecker =
+      cx->runtime()->DOMcallbacks->instanceClassMatchesProto;
+  MOZ_ASSERT(instanceChecker(obj->getClass(), info->protoID, info->depth));
+#endif
+
+  // Loading DOM_OBJECT_SLOT, which must be the first slot.
+  JS::Value val = JS::GetReservedSlot(obj, 0);
+  JSJitGetterOp getter = info->getter;
+  return getter(cx, obj, val.toPrivate(), JSJitGetterCallArgs(result));
+}
+
 bool CallNativeSetter(JSContext* cx, HandleFunction callee, HandleObject obj,
                       HandleValue rhs) {
   AutoRealm ar(cx, callee);
@@ -1530,6 +1529,26 @@ bool CallNativeSetter(JSContext* cx, HandleFunction callee, HandleObject obj,
   vp[2].set(rhs);
 
   return natfun(cx, 1, vp.begin());
+}
+
+bool CallDOMSetter(JSContext* cx, const JSJitInfo* info, HandleObject obj,
+                   HandleValue value) {
+  MOZ_ASSERT(info->type() == JSJitInfo::Setter);
+  MOZ_ASSERT(obj->isNative());
+  MOZ_ASSERT(obj->getClass()->isDOMClass());
+
+#ifdef DEBUG
+  DOMInstanceClassHasProtoAtDepth instanceChecker =
+      cx->runtime()->DOMcallbacks->instanceClassMatchesProto;
+  MOZ_ASSERT(instanceChecker(obj->getClass(), info->protoID, info->depth));
+#endif
+
+  // Loading DOM_OBJECT_SLOT, which must be the first slot.
+  JS::Value val = JS::GetReservedSlot(obj, 0);
+  JSJitSetterOp setter = info->setter;
+
+  RootedValue v(cx, value);
+  return setter(cx, obj, val.toPrivate(), JSJitSetterCallArgs(&v));
 }
 
 bool EqualStringsHelperPure(JSString* str1, JSString* str2) {

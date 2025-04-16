@@ -346,7 +346,7 @@ FT2FontEntry* gfxFT2Font::GetFontEntry() {
 // properly.
 
 nsresult FT2FontEntry::ReadCMAP(FontInfoData* aFontInfoData) {
-  if (mCharacterMap) {
+  if (mCharacterMap || mShmemCharacterMap) {
     return NS_OK;
   }
 
@@ -397,13 +397,25 @@ nsresult FT2FontEntry::ReadCMAP(FontInfoData* aFontInfoData) {
 #endif
 
   mHasCmapTable = NS_SUCCEEDED(rv);
+
   if (mHasCmapTable) {
     gfxPlatformFontList* pfl = gfxPlatformFontList::PlatformFontList();
-    mCharacterMap = pfl->FindCharMap(charmap);
+    fontlist::FontList* sharedFontList = pfl->SharedFontList();
+    if (!IsUserFont() && mShmemFace) {
+      mShmemFace->SetCharacterMap(sharedFontList, charmap);  // async
+      if (!TrySetShmemCharacterMap()) {
+        // Temporarily retain charmap, until the shared version is
+        // ready for use.
+        mCharacterMap = charmap;
+      }
+    } else {
+      mCharacterMap = pfl->FindCharMap(charmap);
+    }
   } else {
     // if error occurred, initialize to null cmap
     mCharacterMap = new gfxCharacterMap();
   }
+
   return rv;
 }
 
@@ -1643,9 +1655,6 @@ void gfxFT2FontList::InitSharedFontListForPlatform() {
   // files, and record them in mFamilies (unshared list) or mFamilyInitData and
   // mFaceInitData (shared font list).
   FindFonts();
-
-  ApplyWhitelist(mFamilyInitData);
-  mFamilyInitData.Sort();
 
   mozilla::fontlist::FontList* list = SharedFontList();
   list->SetFamilyNames(mFamilyInitData);

@@ -21,6 +21,7 @@
 #include "jsapi.h"
 #include "jsfriendapi.h"
 #include "js/Array.h"  // JS::NewArrayObject
+#include "js/BuildId.h"
 #include "js/ArrayBuffer.h"  // JS::{GetArrayBufferData,IsArrayBufferObject,NewArrayBuffer}
 #include "js/JSON.h"
 #include "js/RegExp.h"  // JS::ExecuteRegExpNoStatics, JS::NewUCRegExpObject, JS::RegExpFlags
@@ -675,9 +676,6 @@ nsresult nsContentUtils::Init() {
   sBypassCSSOMOriginCheck = getenv("MOZ_BYPASS_CSSOM_ORIGIN_CHECK");
 #endif
 
-  nsDependentCString buildID(mozilla::PlatformBuildID());
-  sJSBytecodeMimeType = new nsCString("javascript/moz-bytecode-"_ns + buildID);
-
   Element::InitCCCallbacks();
 
   Unused << nsRFPService::GetOrCreate();
@@ -700,6 +698,21 @@ nsresult nsContentUtils::Init() {
   sInitialized = true;
 
   return NS_OK;
+}
+
+bool nsContentUtils::InitJSBytecodeMimeType() {
+  MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(!sJSBytecodeMimeType);
+
+  JS::BuildIdCharVector jsBuildId;
+  if (!JS::GetScriptTranscodingBuildId(&jsBuildId)) {
+    return false;
+  }
+
+  nsDependentCSubstring jsBuildIdStr(jsBuildId.begin(), jsBuildId.length());
+  sJSBytecodeMimeType =
+      new nsCString("javascript/moz-bytecode-"_ns + jsBuildIdStr);
+  return true;
 }
 
 void nsContentUtils::GetShiftText(nsAString& text) {
@@ -2538,6 +2551,17 @@ nsINode* nsContentUtils::GetCommonAncestorUnderInteractiveContent(
   }
 
   return parent;
+}
+
+/* static */
+BrowserParent* nsContentUtils::GetCommonBrowserParentAncestor(
+    BrowserParent* aBrowserParent1, BrowserParent* aBrowserParent2) {
+  return GetCommonAncestorInternal(
+      aBrowserParent1, aBrowserParent2, [](BrowserParent* aBrowserParent) {
+        return aBrowserParent->GetBrowserBridgeParent()
+                   ? aBrowserParent->GetBrowserBridgeParent()->Manager()
+                   : nullptr;
+      });
 }
 
 /* static */
@@ -5880,7 +5904,7 @@ nsresult nsContentUtils::GetUTFOrigin(nsIPrincipal* aPrincipal,
     asciiOrigin.AssignLiteral("null");
   }
 
-  aOrigin = NS_ConvertUTF8toUTF16(asciiOrigin);
+  CopyUTF8toUTF16(asciiOrigin, aOrigin);
   return NS_OK;
 }
 
@@ -5906,7 +5930,7 @@ nsresult nsContentUtils::GetUTFOrigin(nsIURI* aURI, nsAString& aOrigin) {
   rv = GetASCIIOrigin(aURI, asciiOrigin);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  aOrigin = NS_ConvertUTF8toUTF16(asciiOrigin);
+  CopyUTF8toUTF16(asciiOrigin, aOrigin);
   return NS_OK;
 }
 
@@ -6605,20 +6629,19 @@ Document* nsContentUtils::GetRootDocument(Document* aDoc) {
 }
 
 /* static */
-bool nsContentUtils::IsInPointerLockContext(nsPIDOMWindowOuter* aWin) {
-  if (!aWin) {
+bool nsContentUtils::IsInPointerLockContext(BrowsingContext* aContext) {
+  if (!aContext) {
     return false;
   }
 
   nsCOMPtr<Document> pointerLockedDoc =
       do_QueryReferent(EventStateManager::sPointerLockedDoc);
-  if (!pointerLockedDoc || !pointerLockedDoc->GetWindow()) {
+  if (!pointerLockedDoc || !pointerLockedDoc->GetBrowsingContext()) {
     return false;
   }
 
-  nsCOMPtr<nsPIDOMWindowOuter> lockTop =
-      pointerLockedDoc->GetWindow()->GetInProcessScriptableTop();
-  nsCOMPtr<nsPIDOMWindowOuter> top = aWin->GetInProcessScriptableTop();
+  BrowsingContext* lockTop = pointerLockedDoc->GetBrowsingContext()->Top();
+  BrowsingContext* top = aContext->Top();
 
   return top == lockTop;
 }
@@ -7820,7 +7843,7 @@ nsresult nsContentUtils::SendMouseEvent(
   if (!widget) return NS_ERROR_FAILURE;
 
   EventMessage msg;
-  WidgetMouseEvent::ExitFrom exitFrom = WidgetMouseEvent::eChild;
+  Maybe<WidgetMouseEvent::ExitFrom> exitFrom;
   bool contextMenuKey = false;
   if (aType.EqualsLiteral("mousedown")) {
     msg = eMouseDown;
@@ -7832,9 +7855,11 @@ nsresult nsContentUtils::SendMouseEvent(
     msg = eMouseEnterIntoWidget;
   } else if (aType.EqualsLiteral("mouseout")) {
     msg = eMouseExitFromWidget;
+    exitFrom = Some(WidgetMouseEvent::eChild);
   } else if (aType.EqualsLiteral("mousecancel")) {
     msg = eMouseExitFromWidget;
-    exitFrom = WidgetMouseEvent::eTopLevel;
+    exitFrom = Some(XRE_IsParentProcess() ? WidgetMouseEvent::eTopLevel
+                                          : WidgetMouseEvent::ePuppet);
   } else if (aType.EqualsLiteral("mouselongtap")) {
     msg = eMouseLongTap;
   } else if (aType.EqualsLiteral("contextmenu")) {
@@ -8812,7 +8837,7 @@ void nsContentUtils::GetPresentationURL(nsIDocShell* aDocShell,
 
     nsAutoCString uriStr;
     uri->GetSpec(uriStr);
-    aPresentationUrl = NS_ConvertUTF8toUTF16(uriStr);
+    CopyUTF8toUTF16(uriStr, aPresentationUrl);
     return;
   }
 

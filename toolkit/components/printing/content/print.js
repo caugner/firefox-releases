@@ -25,6 +25,46 @@ const MM_PER_POINT = 25.4 / 72;
 const INCHES_PER_POINT = 1 / 72;
 const ourBrowser = window.docShell.chromeEventHandler;
 
+var logger = (function() {
+  const getMaxLogLevel = () =>
+    Services.prefs.getBoolPref("print.debug", false) ? "all" : "warn";
+
+  let { ConsoleAPI } = ChromeUtils.import("resource://gre/modules/Console.jsm");
+  // Create a new instance of the ConsoleAPI so we can control the maxLogLevel with a pref.
+  let _logger = new ConsoleAPI({
+    prefix: "printUI",
+    maxLogLevel: getMaxLogLevel(),
+  });
+
+  function onPrefChange() {
+    if (_logger) {
+      _logger.maxLogLevel = getMaxLogLevel();
+    }
+  }
+  // Watch for pref changes and the maxLogLevel for the logger
+  Services.prefs.addObserver("print.debug", onPrefChange);
+  window.addEventListener("unload", () => {
+    Services.prefs.removeObserver("print.debug", onPrefChange);
+  });
+  return _logger;
+})();
+
+function serializeSettings(settings, logPrefix) {
+  let re = /^(k[A-Z]|resolution)/; // accessing settings.resolution throws an exception?
+  let types = new Set(["string", "boolean", "number", "undefined"]);
+  let nameValues = {};
+  for (let key in settings) {
+    try {
+      if (!re.test(key) && types.has(typeof settings[key])) {
+        nameValues[key] = settings[key];
+      }
+    } catch (e) {
+      logger.warn("Exception accessing setting: ", key, e);
+    }
+  }
+  return nameValues;
+}
+
 let deferredTasks = [];
 function createDeferredTask(fn, timeout) {
   let task = new DeferredTask(fn, timeout);
@@ -42,7 +82,7 @@ function cancelDeferredTasks() {
 document.addEventListener(
   "DOMContentLoaded",
   e => {
-    PrintEventHandler.init();
+    window._initialized = PrintEventHandler.init();
     ourBrowser.setAttribute("flex", "0");
     ourBrowser.classList.add("printSettingsBrowser");
     ourBrowser.closest(".dialogBox")?.classList.add("printDialogBox");
@@ -66,16 +106,16 @@ window.addEventListener(
 var PrintEventHandler = {
   settings: null,
   defaultSettings: null,
-  _printerSettingsChangedFlags: 0,
+  allPaperSizes: {},
   _nonFlaggedChangedSettings: {},
+  _userChangedSettings: {},
   settingFlags: {
     margins: Ci.nsIPrintSettings.kInitSaveMargins,
     orientation: Ci.nsIPrintSettings.kInitSaveOrientation,
-    paperName:
+    paperId:
       Ci.nsIPrintSettings.kInitSavePaperSize |
       Ci.nsIPrintSettings.kInitSaveUnwriteableMargins,
     printInColor: Ci.nsIPrintSettings.kInitSaveInColor,
-    printerName: Ci.nsIPrintSettings.kInitSavePrinterName,
     scaling: Ci.nsIPrintSettings.kInitSaveScaling,
     shrinkToFit: Ci.nsIPrintSettings.kInitSaveShrinkToFit,
     printFootersHeaders:
@@ -95,11 +135,11 @@ var PrintEventHandler = {
 
   // These settings do not have an associated pref value or flag, but
   // changing them requires us to update the print preview.
-  _nonFlaggedUpdatePreviewSettings: [
+  _nonFlaggedUpdatePreviewSettings: new Set([
     "printAllOrCustomRange",
     "startPageRange",
     "endPageRange",
-  ],
+  ]),
 
   async init() {
     Services.telemetry.scalarAdd("printing.preview_opened_tm", 1);
@@ -119,10 +159,6 @@ var PrintEventHandler = {
       sourceBrowsingContext = existingBrowser.browsingContext;
       this.previewBrowser.swapDocShells(existingBrowser);
       existingBrowser.remove();
-    } else {
-      this.previewBrowser.loadURI("about:printpreview", {
-        triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
-      });
     }
 
     this.originalSourceContentTitle =
@@ -146,14 +182,34 @@ var PrintEventHandler = {
     PrintSettingsViewProxy.fallbackPaperList = fallbackPaperList;
     PrintSettingsViewProxy.defaultSystemPrinter = defaultSystemPrinter;
 
+    logger.debug("availablePrinters: ", Object.keys(printersByName));
+    logger.debug("defaultSystemPrinter: ", defaultSystemPrinter);
+
     document.addEventListener("print", e => this.print());
     document.addEventListener("update-print-settings", e =>
-      this.updateSettings(e.detail)
+      this.onUserSettingsChange(e.detail)
     );
     document.addEventListener("cancel-print", () => this.cancelPrint());
-    document.addEventListener("open-system-dialog", () => {
+    document.addEventListener("open-system-dialog", async () => {
       // This file in only used if pref print.always_print_silent is false, so
       // no need to check that here.
+
+      if (document.body.getAttribute("rendering")) {
+        // Disable elements of form while waiting to initialize
+        for (let element of document.querySelector("#print").elements) {
+          element.disabled = true;
+        }
+        await window._initialized;
+      }
+
+      // Hide the dialog box before opening system dialog
+      // We cannot close the window yet because the browsing context for the
+      // print preview browser is needed to print the page.
+      let sourceBrowser = this.getSourceBrowsingContext().top.embedderElement;
+      let dialogBoxManager = gBrowser
+        .getTabDialogBox(sourceBrowser)
+        .getManager();
+      dialogBoxManager.hideDialog(sourceBrowser);
 
       // Use our settings to prepopulate the system dialog.
       // The system print dialog won't recognize our internal save-to-pdf
@@ -164,6 +220,10 @@ var PrintEventHandler = {
           ? PrintUtils.getPrintSettings(this.viewSettings.defaultSystemPrinter)
           : this.settings.clone();
       settings.showPrintProgress = true;
+      // We set the title so that if the user chooses save-to-PDF from the
+      // system dialog the title will be used to generate the prepopulated
+      // filename in the file picker.
+      settings.title = this.previewBrowser.browsingContext.embedderElement.contentTitle;
       const PRINTPROMPTSVC = Cc[
         "@mozilla.org/embedcomp/printingprompt-service;1"
       ].getService(Ci.nsIPrintingPromptService);
@@ -172,7 +232,7 @@ var PrintEventHandler = {
           "printing.dialog_opened_via_preview_tm",
           1
         );
-        PRINTPROMPTSVC.showPrintDialog(window, settings);
+        await this._showPrintDialog(PRINTPROMPTSVC, window, settings);
       } catch (e) {
         if (e.result == Cr.NS_ERROR_ABORT) {
           Services.telemetry.scalarAdd(
@@ -184,20 +244,24 @@ var PrintEventHandler = {
         }
         throw e;
       }
-      this.print(settings);
+      await this.print(settings);
     });
 
-    await this.refreshSettings(selectedPrinter.value);
+    let settingsToChange = await this.refreshSettings(selectedPrinter.value);
+    await this.updateSettings(settingsToChange, true);
+
+    // Kick off the initial print preview with the source browsing context.
+    let initialPreviewDone = this._updatePrintPreview(sourceBrowsingContext);
+    // We don't need the sourceBrowsingContext anymore, get rid of it.
+    sourceBrowsingContext = undefined;
 
     // Use a DeferredTask for updating the preview. This will ensure that we
     // only have one update running at a time.
     this._updatePrintPreviewTask = createDeferredTask(async () => {
-      await this._updatePrintPreview(sourceBrowsingContext);
-      // After the first use of sourceBrowsingContext we want to use the preview
-      // browser's browsing context so throw this one away.
-      sourceBrowsingContext = undefined;
+      await initialPreviewDone;
+      await this._updatePrintPreview();
+      document.dispatchEvent(new CustomEvent("preview-updated"));
     }, 0);
-    this.updatePrintPreview();
 
     document.dispatchEvent(
       new CustomEvent("available-destinations", {
@@ -215,11 +279,13 @@ var PrintEventHandler = {
 
     document.body.removeAttribute("loading");
 
-    window.requestAnimationFrame(() => {
-      window.focus();
-      // Now that we're showing the form, select the destination select.
-      document.getElementById("printer-picker").focus();
-    });
+    await new Promise(resolve => window.requestAnimationFrame(resolve));
+
+    // Now that we're showing the form, select the destination select.
+    window.focus();
+    document.getElementById("printer-picker").focus();
+
+    await initialPreviewDone;
   },
 
   unload() {
@@ -232,7 +298,7 @@ var PrintEventHandler = {
       remoteType: sourceBrowsingContext.currentRemoteType,
       userContextId: sourceBrowsingContext.originAttributes.userContextId,
       initialBrowsingContextGroupId: sourceBrowsingContext.group.id,
-      skipLoad: false,
+      skipLoad: true,
     });
     printPreviewBrowser.classList.add("printPreviewBrowser");
     printPreviewBrowser.setAttribute("flex", "1");
@@ -256,66 +322,6 @@ var PrintEventHandler = {
     return printPreviewBrowser;
   },
 
-  async refreshSettings(printerName) {
-    let currentPrinter = await PrintSettingsViewProxy.resolvePropertiesForPrinter(
-      printerName
-    );
-    this.settings = currentPrinter.settings;
-    this.defaultSettings = currentPrinter.defaultSettings;
-
-    // Some settings are only used by the UI
-    // assigning new values should update the underlying settings
-    this.viewSettings = new Proxy(this.settings, PrintSettingsViewProxy);
-
-    // restore settings which do not have a corresponding flag
-    for (let key of Object.keys(this._nonFlaggedChangedSettings)) {
-      this.viewSettings[key] = this._nonFlaggedChangedSettings[key];
-    }
-
-    // Ensure the output format is set properly
-    this.viewSettings.printerName = printerName;
-
-    // Ensure the color option is correct, if either of the supportsX flags are
-    // false then the user cannot change the value through the UI.
-    let flags = 0;
-    if (!this.viewSettings.supportsColor) {
-      flags |= this.settingFlags.printInColor;
-      this.viewSettings.printInColor = false;
-    } else if (!this.viewSettings.supportsMonochrome) {
-      flags |= this.settingFlags.printInColor;
-      this.viewSettings.printInColor = true;
-    }
-
-    // See if the paperName needs to change
-    let paperName = this.viewSettings.paperName;
-    let matchedPaper = PrintSettingsViewProxy.getBestPaperMatch(
-      paperName,
-      this.viewSettings.paperWidth,
-      this.viewSettings.paperHeight,
-      this.viewSettings.paperSizeUnit
-    );
-    if (!matchedPaper) {
-      // We didn't find a good match. Take the first paper size, but clear the
-      // global flag for carrying the paper size over.
-      paperName = Object.keys(PrintSettingsViewProxy.availablePaperSizes)[0];
-      this._printerSettingsChangedFlags ^= this.settingFlags.paperName;
-    } else if (matchedPaper.name !== paperName) {
-      // The exact paper name doesn't exist for this printer, update it
-      flags |= this.settingFlags.paperName;
-      paperName = matchedPaper.name;
-      console.log(
-        `Initial settings.paperName: "${this.viewSettings.paperName}" missing, using: ${paperName} instead`
-      );
-    }
-    // Compute and cache the margins for the current paper size
-    await PrintSettingsViewProxy.fetchPaperMargins(paperName);
-    this.viewSettings.paperName = paperName;
-
-    if (flags) {
-      this.saveSettingsToPrefs(flags);
-    }
-  },
-
   async print(systemDialogSettings) {
     // Disable the form when a print is in progress
     for (let element of document.querySelector("#print").elements) {
@@ -331,20 +337,21 @@ var PrintEventHandler = {
           this.originalSourceCurrentURI
         );
       } catch (e) {
-        // Don't care why just yet.
+        // If the user cancels saving, we should close the window for now.
+        window.close();
         return;
       }
     }
+
+    await window._initialized;
 
     // This seems like it should be handled automatically but it isn't.
     Services.prefs.setStringPref("print_printer", settings.printerName);
 
     try {
       this.settings.showPrintProgress = true;
-      await PrintUtils.printWindow(
-        this.previewBrowser.browsingContext,
-        settings
-      );
+      let bc = this.previewBrowser.browsingContext;
+      await this._doPrint(bc, settings);
     } catch (e) {
       Cu.reportError(e);
     }
@@ -357,67 +364,159 @@ var PrintEventHandler = {
     window.close();
   },
 
-  async updateSettings(changedSettings = {}) {
-    let didSettingsChange = false;
+  async refreshSettings(printerName) {
+    let currentPrinter = await PrintSettingsViewProxy.resolvePropertiesForPrinter(
+      printerName
+    );
+    this.settings = currentPrinter.settings;
+    this.defaultSettings = currentPrinter.defaultSettings;
+
+    logger.debug("currentPrinter name: ", printerName);
+    logger.debug("settings:", serializeSettings(this.settings));
+
+    // Some settings are only used by the UI
+    // assigning new values should update the underlying settings
+    this.viewSettings = new Proxy(this.settings, PrintSettingsViewProxy);
+
+    // Get the previously-changed settings we want to try to use on this printer
+    let settingsToUpdate = Object.assign({}, this._userChangedSettings);
+
+    // Ensure the color option is correct, if either of the supportsX flags are
+    // false then the user cannot change the value through the UI.
+    if (!this.viewSettings.supportsColor) {
+      settingsToUpdate.printInColor = false;
+    } else if (!this.viewSettings.supportsMonochrome) {
+      settingsToUpdate.printInColor = true;
+    }
+    if (
+      settingsToUpdate.printInColor != this._userChangedSettings.printInColor
+    ) {
+      delete this._userChangedSettings.printInColor;
+    }
+
+    // See if the paperId needs to change.
+    let paperId, paperWidth, paperHeight, paperSizeUnit;
+    if (settingsToUpdate.paperId) {
+      // The user changed paperId in this instance and session,
+      // We should have details on the paper size from the previous printer
+      paperId = settingsToUpdate.paperId;
+      let cachedPaperSize = this.allPaperSizes[paperId];
+      paperWidth = cachedPaperSize.width;
+      paperHeight = cachedPaperSize.height;
+      paperSizeUnit = cachedPaperSize.paperSizeUnit;
+    } else {
+      paperId = this.viewSettings.paperId;
+      paperWidth = this.viewSettings.paperWidth;
+      paperHeight = this.viewSettings.paperHeight;
+      paperSizeUnit = this.viewSettings.paperSizeUnit;
+    }
+
+    logger.debug("Using paperId: ", paperId);
+    logger.debug(
+      "Available paper sizes: ",
+      PrintSettingsViewProxy.availablePaperSizes
+    );
+    let matchedPaper =
+      paperId &&
+      PrintSettingsViewProxy.getBestPaperMatch(
+        paperId,
+        paperWidth,
+        paperHeight,
+        paperSizeUnit
+      );
+    if (!matchedPaper) {
+      // We didn't find a good match. Take the first paper size
+      matchedPaper = Object.values(
+        PrintSettingsViewProxy.availablePaperSizes
+      )[0];
+      delete this._userChangedSettings.paperId;
+    }
+    if (matchedPaper.id !== paperId) {
+      // The exact paper id doesn't exist for this printer
+      logger.log(
+        `Requested paperId: "${paperId}" missing on this printer, using: ${matchedPaper.id} instead`
+      );
+      delete this._userChangedSettings.paperId;
+      settingsToUpdate.paperId = matchedPaper.id;
+    }
+    return settingsToUpdate;
+  },
+
+  async onUserSettingsChange(changedSettings = {}) {
+    for (let [setting, value] of Object.entries(changedSettings)) {
+      Services.telemetry.keyedScalarAdd(
+        "printing.settings_changed",
+        setting,
+        1
+      );
+      // Update the list of user-changed settings, which we attempt to maintain
+      // across printer changes.
+      this._userChangedSettings[setting] = value;
+    }
+    if (changedSettings.printerName) {
+      logger.debug(
+        "onUserSettingsChange, changing to printerName:",
+        changedSettings.printerName
+      );
+      // Treat a printerName change separately, because it involves a settings
+      // object switch and we don't want to set the new name on the old settings.
+      changedSettings = await this.refreshSettings(changedSettings.printerName);
+    }
+    let shouldPreviewUpdate = await this.updateSettings(
+      changedSettings,
+      !!changedSettings.printerName
+    );
+    if (shouldPreviewUpdate) {
+      this.updatePrintPreview();
+    }
+    document.dispatchEvent(
+      new CustomEvent("print-settings", {
+        detail: this.viewSettings,
+      })
+    );
+  },
+
+  async updateSettings(changedSettings = {}, printerChanged = false) {
     let updatePreviewWithoutFlag = false;
     let flags = 0;
+    logger.debug("updateSettings ", changedSettings, printerChanged);
 
-    if (changedSettings.paperName) {
+    if (printerChanged || changedSettings.paperId) {
       // The paper's margin properties are async,
       // so resolve those now before we update the settings
-      await PrintSettingsViewProxy.fetchPaperMargins(changedSettings.paperName);
+      await PrintSettingsViewProxy.fetchPaperMargins(
+        changedSettings.paperId || this.viewSettings.paperId
+      );
     }
 
     for (let [setting, value] of Object.entries(changedSettings)) {
       if (this.viewSettings[setting] != value) {
         this.viewSettings[setting] = value;
 
-        if (setting in this.settingFlags) {
+        if (
+          setting in this.settingFlags &&
+          setting in this._userChangedSettings
+        ) {
           flags |= this.settingFlags[setting];
-        } else {
-          // some settings have no corresponding flag,
-          // but we may want to restore them if the current printer changes
-          this._nonFlaggedChangedSettings[setting] = value;
         }
-        didSettingsChange = true;
-        updatePreviewWithoutFlag |= this._nonFlaggedUpdatePreviewSettings.includes(
+        updatePreviewWithoutFlag |= this._nonFlaggedUpdatePreviewSettings.has(
           setting
         );
-
-        Services.telemetry.keyedScalarAdd(
-          "printing.settings_changed",
-          setting,
-          1
-        );
       }
     }
 
-    let printerChanged = flags & this.settingFlags.printerName;
-    if (didSettingsChange) {
-      this._printerSettingsChangedFlags |= flags;
-
-      if (printerChanged) {
-        // If the user has changed settings with the old printer, stash them all
-        // so they can be restored on top of the new printer's settings
-        flags |= this._printerSettingsChangedFlags;
-      }
-
-      if (flags) {
-        this.saveSettingsToPrefs(flags);
-      }
-      if (printerChanged) {
-        await this.refreshSettings(this.settings.printerName);
-      }
-      if (flags || printerChanged || updatePreviewWithoutFlag) {
-        this.updatePrintPreview();
-      }
-
-      document.dispatchEvent(
-        new CustomEvent("print-settings", {
-          detail: this.viewSettings,
-        })
-      );
+    let shouldPreviewUpdate =
+      flags || printerChanged || updatePreviewWithoutFlag;
+    logger.debug(
+      "updateSettings, calculated flags:",
+      flags,
+      "shouldPreviewUpdate:",
+      shouldPreviewUpdate
+    );
+    if (flags) {
+      this.saveSettingsToPrefs(flags);
     }
+    return shouldPreviewUpdate;
   },
 
   saveSettingsToPrefs(flags) {
@@ -432,6 +531,9 @@ var PrintEventHandler = {
    * the in progress update completes.
    */
   async updatePrintPreview() {
+    // Make sure the rendering state is set so we don't visibly update the
+    // sheet count with incomplete data.
+    this._showRenderingIndicator();
     this._updatePrintPreviewTask.arm();
   },
 
@@ -451,14 +553,26 @@ var PrintEventHandler = {
     // We never want the progress dialog to show
     settings.showPrintProgress = false;
 
-    let stack = previewBrowser.parentElement;
-    stack.setAttribute("rendering", true);
-    document.body.setAttribute("rendering", true);
+    this._showRenderingIndicator();
 
     let sourceWinId;
     if (sourceBrowsingContext) {
       sourceWinId = sourceBrowsingContext.currentWindowGlobal.outerWindowId;
     }
+
+    const isFirstCall = !this.printInitiationTime;
+    if (isFirstCall) {
+      let params = new URLSearchParams(location.search);
+      this.printInitiationTime = parseInt(
+        params.get("printInitiationTime"),
+        10
+      );
+      const elapsed = Date.now() - this.printInitiationTime;
+      Services.telemetry
+        .getHistogramById("PRINT_INIT_TO_PLATFORM_SENT_SETTINGS_MS")
+        .add(elapsed);
+    }
+
     // This resolves with a PrintPreviewSuccessInfo dictionary.  That also has
     // a `sheetCount` property available which we should use (bug 1662331).
     let {
@@ -466,32 +580,43 @@ var PrintEventHandler = {
       hasSelection,
     } = await previewBrowser.frameLoader.printPreview(settings, sourceWinId);
 
-    if (this._queuedPreviewUpdatePromise) {
-      // Now that we're done, the queued update (if there is one) will start.
-      this._previewUpdatingPromise = this._queuedPreviewUpdatePromise;
-      this._queuedPreviewUpdatePromise = null;
-    } else {
-      // No other update queued, send the page count and show the preview.
-      let numPages = totalPageCount;
-      // Adjust number of pages if the user specifies the pages they want printed
-      if (settings.printRange == Ci.nsIPrintSettings.kRangeSpecifiedPageRange) {
-        numPages = settings.endPageRange - settings.startPageRange + 1;
-      }
-      // Update the settings print options on whether there is a selection.
-      settings.SetPrintOptions(
-        Ci.nsIPrintSettings.kEnableSelectionRB,
-        hasSelection
-      );
-      document.dispatchEvent(
-        new CustomEvent("page-count", {
-          detail: { numPages, totalPages: totalPageCount },
-        })
-      );
-
-      stack.removeAttribute("rendering");
-      document.body.removeAttribute("rendering");
-      this._previewUpdatingPromise = null;
+    // Send the page count and show the preview.
+    let numPages = totalPageCount;
+    // Adjust number of pages if the user specifies the pages they want printed
+    if (settings.printRange == Ci.nsIPrintSettings.kRangeSpecifiedPageRange) {
+      numPages = settings.endPageRange - settings.startPageRange + 1;
     }
+    // Update the settings print options on whether there is a selection.
+    settings.SetPrintOptions(
+      Ci.nsIPrintSettings.kEnableSelectionRB,
+      hasSelection
+    );
+    document.dispatchEvent(
+      new CustomEvent("page-count", {
+        detail: { numPages, totalPages: totalPageCount },
+      })
+    );
+
+    this._hideRenderingIndicator();
+
+    if (isFirstCall) {
+      const elapsed = Date.now() - this.printInitiationTime;
+      Services.telemetry
+        .getHistogramById("PRINT_INIT_TO_PREVIEW_DOC_SHOWN_MS")
+        .add(elapsed);
+    }
+  },
+
+  _showRenderingIndicator() {
+    let stack = this.previewBrowser.parentElement;
+    stack.setAttribute("rendering", true);
+    document.body.setAttribute("rendering", true);
+  },
+
+  _hideRenderingIndicator() {
+    let stack = this.previewBrowser.parentElement;
+    stack.removeAttribute("rendering");
+    document.body.removeAttribute("rendering");
   },
 
   getSourceBrowsingContext() {
@@ -510,7 +635,7 @@ var PrintEventHandler = {
     let printers;
 
     if (Cu.isInAutomation) {
-      printers = [];
+      printers = await Promise.resolve(window._mockPrinters || []);
     } else {
       printers = await printerList.printers;
     }
@@ -529,6 +654,7 @@ var PrintEventHandler = {
     };
     printersByName[PrintUtils.SAVE_TO_PDF_PRINTER] = {
       supportsColor: true,
+      supportsMonochrome: false,
       name: PrintUtils.SAVE_TO_PDF_PRINTER,
     };
 
@@ -571,10 +697,10 @@ var PrintEventHandler = {
     switch (marginSize) {
       case "minimum":
         return {
-          marginTop: (paper || this.defaultSettings).unwriteableMarginTop,
-          marginLeft: (paper || this.defaultSettings).unwriteableMarginLeft,
-          marginBottom: (paper || this.defaultSettings).unwriteableMarginBottom,
-          marginRight: (paper || this.defaultSettings).unwriteableMarginRight,
+          marginTop: paper.unwriteableMarginTop,
+          marginLeft: paper.unwriteableMarginLeft,
+          marginBottom: paper.unwriteableMarginBottom,
+          marginRight: paper.unwriteableMarginRight,
         };
       case "none":
         return {
@@ -583,18 +709,52 @@ var PrintEventHandler = {
           marginBottom: 0,
           marginRight: 0,
         };
-      default:
+      default: {
+        let minimum = this.getMarginPresets("minimum", paper);
         return {
-          marginTop: this.defaultSettings.marginTop,
-          marginLeft: this.defaultSettings.marginLeft,
-          marginBottom: this.defaultSettings.marginBottom,
-          marginRight: this.defaultSettings.marginRight,
+          marginTop: Math.max(
+            minimum.marginTop,
+            this.defaultSettings.marginTop
+          ),
+          marginRight: Math.max(
+            minimum.marginRight,
+            this.defaultSettings.marginRight
+          ),
+          marginBottom: Math.max(
+            minimum.marginBottom,
+            this.defaultSettings.marginBottom
+          ),
+          marginLeft: Math.max(
+            minimum.marginLeft,
+            this.defaultSettings.marginLeft
+          ),
         };
+      }
     }
+  },
+
+  /**
+   * Prints the window. This method has been abstracted into a helper for
+   * testing purposes.
+   */
+  _doPrint(aBrowsingContext, aSettings) {
+    return aBrowsingContext.top.embedderElement.print(
+      aBrowsingContext.currentWindowGlobal.outerWindowId,
+      aSettings
+    );
+  },
+
+  /**
+   * Shows the system dialog. This method has been abstracted into a helper for
+   * testing purposes. The showPrintDialog() call blocks until the dialog is
+   * closed, so we mark it as async to allow us to reject from the test.
+   */
+  async _showPrintDialog(aPrintingPromptService, aWindow, aSettings) {
+    return aPrintingPromptService.showPrintDialog(aWindow, aSettings);
   },
 };
 
-const PrintSettingsViewProxy = {
+var PrintSettingsViewProxy = {
   get defaultHeadersAndFooterValues() {
     const defaultBranch = Services.prefs.getDefaultBranch("");
     let settingValues = {};
@@ -637,8 +797,8 @@ const PrintSettingsViewProxy = {
     "Microsoft XPS Document Writer",
   ]),
 
-  getBestPaperMatch(paperName, paperWidth, paperHeight, paperSizeUnit) {
-    let matchedPaper = paperName && this.availablePaperSizes[paperName];
+  getBestPaperMatch(paperId, paperWidth, paperHeight, paperSizeUnit) {
+    let matchedPaper = paperId && this.availablePaperSizes[paperId];
     if (matchedPaper) {
       return matchedPaper;
     }
@@ -678,11 +838,11 @@ const PrintSettingsViewProxy = {
     return null;
   },
 
-  async fetchPaperMargins(paperName) {
+  async fetchPaperMargins(paperId) {
     // resolve any async and computed properties we need on the paper
-    let paperInfo = this.availablePaperSizes[paperName];
+    let paperInfo = this.availablePaperSizes[paperId];
     if (!paperInfo) {
-      throw new Error("Can't fetchPaperMargins: " + paperName);
+      throw new Error("Can't fetchPaperMargins: " + paperId);
     }
     if (paperInfo._resolved) {
       // We've already resolved and calculated these values
@@ -717,10 +877,12 @@ const PrintSettingsViewProxy = {
     if (printerInfo.printer) {
       [
         printerInfo.supportsColor,
+        printerInfo.supportsMonochrome,
         printerInfo.paperList,
         printerInfo.defaultSettings,
       ] = await Promise.all([
         printerInfo.printer.supportsColor,
+        printerInfo.printer.supportsMonochrome,
         printerInfo.printer.paperList,
         // get a set of default settings for this printer
         printerInfo.printer.createDefaultSettings(printerName),
@@ -730,38 +892,50 @@ const PrintSettingsViewProxy = {
       // The Mozilla PDF pseudo-printer has no actual nsIPrinter implementation
       printerInfo.defaultSettings = PSSVC.newPrintSettings;
       printerInfo.defaultSettings.printerName = printerName;
+      printerInfo.defaultSettings.toFileName = "";
+      printerInfo.defaultSettings.outputFormat =
+        Ci.nsIPrintSettings.kOutputFormatPDF;
+      printerInfo.defaultSettings.printToFile = true;
       printerInfo.paperList = this.fallbackPaperList;
     }
     printerInfo.settings = printerInfo.defaultSettings.clone();
-    // Apply any user values
-    PSSVC.initPrintSettingsFromPrefs(
-      printerInfo.settings,
-      true,
-      printerInfo.settings.kInitSaveAll
-    );
+    // Apply any previously persisted user values
+    let flags = printerInfo.settings.kInitSaveAll;
+    if (printerName == PrintUtils.SAVE_TO_PDF_PRINTER) {
+      // Don't apply potentially-bad printToFile setting that may be in some user's prefs.
+      flags ^= printerInfo.settings.kInitSavePrintToFile;
+    }
+    PSSVC.initPrintSettingsFromPrefs(printerInfo.settings, true, flags);
     // We set `isInitializedFromPrinter` to make sure that that's set on the
     // SAVE_TO_PDF_PRINTER settings.  The naming is poor, but that tells the
     // platform code that the settings object is complete.
     printerInfo.settings.isInitializedFromPrinter = true;
 
+    printerInfo.settings.toFileName = "";
+
     // prepare the available paper sizes for this printer
+    if (!printerInfo.paperList?.length) {
+      logger.warn("Printer has empty paperList: ", printerInfo.printer.id);
+      printerInfo.paperList = this.fallbackPaperList;
+    }
+    let paperSizeUnit = printerInfo.settings.paperSizeUnit;
     let unitsPerPoint =
-      printerInfo.settings.paperSizeUnit ==
-      printerInfo.settings.kPaperSizeMillimeters
+      paperSizeUnit == printerInfo.settings.kPaperSizeMillimeters
         ? MM_PER_POINT
         : INCHES_PER_POINT;
 
-    let papersByName = (printerInfo.availablePaperSizes = {});
+    let papersById = (printerInfo.availablePaperSizes = {});
     // Store a convenience reference
-    this.availablePaperSizes = papersByName;
+    this.availablePaperSizes = papersById;
 
     for (let paper of printerInfo.paperList) {
       paper.QueryInterface(Ci.nsIPaper);
       // Bug 1662239: I'm seeing multiple duplicate entries for each paper size
       // so ensure we have one entry per name
-      if (!papersByName[paper.name]) {
-        papersByName[paper.name] = {
+      if (!papersById[paper.id]) {
+        papersById[paper.id] = {
           paper,
+          id: paper.id,
           name: paper.name,
           // Prepare dimension values in the correct unit for the settings. Paper dimensions
           // are given in points, so we multiply with the units-per-pt to get dimensions
@@ -769,9 +943,13 @@ const PrintSettingsViewProxy = {
           width: paper.width * unitsPerPoint,
           height: paper.height * unitsPerPoint,
           unitsPerPoint,
+          paperSizeUnit,
         };
       }
     }
+    // Update our cache of all the paper sizes by name
+    Object.assign(PrintEventHandler.allPaperSizes, papersById);
+
     // The printer properties don't change, mark this as resolved for next time
     printerInfo._resolved = true;
     return printerInfo;
@@ -780,8 +958,36 @@ const PrintSettingsViewProxy = {
   get(target, name) {
     switch (name) {
       case "currentPaper": {
-        let paperName = this.get(target, "paperName");
-        return this.availablePaperSizes[paperName];
+        let paperId = this.get(target, "paperId");
+        return paperId && this.availablePaperSizes[paperId];
+      }
+
+      case "marginPresets":
+        let paperSize = this.get(target, "currentPaper");
+        return {
+          none: PrintEventHandler.getMarginPresets("none", paperSize),
+          minimum: PrintEventHandler.getMarginPresets("minimum", paperSize),
+          default: PrintEventHandler.getMarginPresets("default", paperSize),
+        };
+
+      case "marginOptions": {
+        let allMarginPresets = this.get(target, "marginPresets");
+        let uniqueMargins = new Set();
+        let marginsEnabled = {};
+        for (let name of ["none", "default", "minimum"]) {
+          let {
+            marginTop,
+            marginLeft,
+            marginBottom,
+            marginRight,
+          } = allMarginPresets[name];
+          let key = [marginTop, marginLeft, marginBottom, marginRight].join(
+            ","
+          );
+          marginsEnabled[name] = !uniqueMargins.has(key);
+          uniqueMargins.add(key);
+        }
+        return marginsEnabled;
       }
 
       case "margins":
@@ -791,16 +997,15 @@ const PrintSettingsViewProxy = {
           marginBottom: target.marginBottom,
           marginRight: target.marginRight,
         };
-        // see if they match the minimum first
-        let paperSize = this.get(target, "currentPaper");
-        for (let presetName of ["minimum", "none"]) {
-          let marginPresets = PrintEventHandler.getMarginPresets(
-            presetName,
-            paperSize
-          );
+        // see if they match the none and then minimum margin values
+        let allMarginPresets = this.get(target, "marginPresets");
+        for (let presetName of ["none", "minimum"]) {
+          let marginPresets = allMarginPresets[presetName];
           if (
             Object.keys(marginSettings).every(
-              name => marginSettings[name] == marginPresets[name]
+              name =>
+                marginSettings[name].toFixed(2) ==
+                marginPresets[name].toFixed(2)
             )
           ) {
             return presetName;
@@ -815,7 +1020,7 @@ const PrintSettingsViewProxy = {
           .map(paper => {
             return {
               name: paper.name,
-              value: paper.name,
+              value: paper.id,
             };
           });
 
@@ -842,19 +1047,8 @@ const PrintSettingsViewProxy = {
           target.outputFormat == Ci.nsIPrintSettings.kOutputFormatPDF ||
           this.knownSaveToFilePrinters.has(target.printerName)
         );
-      // Black and white is always supported except:
-      //
-      //  * For PDF printing, where it'd require rasterization and thus bad
-      //    quality.
-      //
-      //  * For Mac, where there's no API to print in monochrome.
-      //
       case "supportsMonochrome":
-        return (
-          !this.get(target, "supportsColor") ||
-          (target.printerName != PrintUtils.SAVE_TO_PDF_PRINTER &&
-            AppConstants.platform !== "macosx")
-        );
+        return this.availablePrinters[target.printerName].supportsMonochrome;
       case "defaultSystemPrinter":
         return (
           this.defaultSystemPrinter?.value ||
@@ -862,6 +1056,9 @@ const PrintSettingsViewProxy = {
             p => p.name != PrintUtils.SAVE_TO_PDF_PRINTER
           )?.value
         );
+
+      case "numCopies":
+        return this.get(target, "willSaveToFile") ? 1 : target.numCopies;
     }
     return target[name];
   },
@@ -870,7 +1067,7 @@ const PrintSettingsViewProxy = {
     switch (name) {
       case "margins":
         if (!["default", "minimum", "none"].includes(value)) {
-          console.warn("Unexpected margin preset name: ", value);
+          logger.warn("Unexpected margin preset name: ", value);
           value = "default";
         }
         let paperSize = this.get(target, "currentPaper");
@@ -883,13 +1080,17 @@ const PrintSettingsViewProxy = {
         }
         break;
 
-      case "paperName": {
-        let paperName = value;
-        let paperSize = this.availablePaperSizes[paperName];
+      case "paperId": {
+        let paperId = value;
+        let paperSize = this.availablePaperSizes[paperId];
         target.paperWidth = paperSize.width;
         target.paperHeight = paperSize.height;
-        target.paperName = value;
-        // pull new margin values for the new paperName
+        target.unwriteableMarginTop = paperSize.unwriteableMarginTop;
+        target.unwriteableMarginRight = paperSize.unwriteableMarginRight;
+        target.unwriteableMarginBottom = paperSize.unwriteableMarginBottom;
+        target.unwriteableMarginLeft = paperSize.unwriteableMarginLeft;
+        target.paperId = paperSize.id;
+        // pull new margin values for the new paper size
         this.set(target, "margins", this.get(target, "margins"));
         break;
       }
@@ -914,18 +1115,6 @@ const PrintSettingsViewProxy = {
           value == "all"
             ? Ci.nsIPrintSettings.kRangeAllPages
             : Ci.nsIPrintSettings.kRangeSpecifiedPageRange;
-        break;
-
-      case "printerName":
-        target.printerName = value;
-        target.toFileName = "";
-        if (value == PrintUtils.SAVE_TO_PDF_PRINTER) {
-          target.outputFormat = Ci.nsIPrintSettings.kOutputFormatPDF;
-          target.printToFile = true;
-        } else {
-          target.outputFormat = Ci.nsIPrintSettings.kOutputFormatNative;
-          target.printToFile = false;
-        }
         break;
 
       default:
@@ -1085,6 +1274,27 @@ customElements.define("color-mode-select", ColorModePicker, {
   extends: "select",
 });
 
+class MarginsPicker extends PrintSettingSelect {
+  update(settings) {
+    // Re-evaluate which margin options should be enabled whenever the printer or paper changes
+    if (
+      settings.paperId !== this._paperId ||
+      settings.printerName !== this._printerName
+    ) {
+      let enabledMargins = settings.marginOptions;
+      for (let option of this.options) {
+        option.hidden = !enabledMargins[option.value];
+      }
+      this._paperId = settings.paperId;
+      this._printerName = settings.printerName;
+    }
+    super.update(settings);
+  }
+}
+customElements.define("margins-select", MarginsPicker, {
+  extends: "select",
+});
+
 class PaperSizePicker extends PrintSettingSelect {
   initialize() {
     super.initialize();
@@ -1096,7 +1306,7 @@ class PaperSizePicker extends PrintSettingSelect {
       this._printerName = settings.printerName;
       this.setOptions(settings.paperSizes);
     }
-    this.value = settings.paperName;
+    this.value = settings.paperId;
   }
 }
 customElements.define("paper-size-select", PaperSizePicker, {
@@ -1171,10 +1381,10 @@ class PrintUIForm extends PrintUIControlMixin(HTMLFormElement) {
   update(settings) {
     // If there are no default system printers available and we are not on mac,
     // we should hide the system dialog because it won't be populated with
-    // the correct settings. Mac supports save to pdf functionality
+    // the correct settings. Mac and Gtk support save to pdf functionality
     // in the native dialog, so it can be shown regardless.
     this.querySelector("#system-print").hidden =
-      !settings.defaultSystemPrinter && AppConstants.platform !== "macosx";
+      AppConstants.platform === "win" && !settings.defaultSystemPrinter;
 
     this.querySelector("#copies").hidden = settings.willSaveToFile;
   }

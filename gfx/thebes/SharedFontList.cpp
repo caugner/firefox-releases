@@ -33,7 +33,8 @@ static double WSSDistance(const Face* aFace, const gfxFontStyle& aStyle) {
   // weight/style/stretch priority: stretch >> style >> weight
   // so we multiply the stretch and style values to make them dominate
   // the result
-  return stretchDist * 1.0e8 + styleDist * 1.0e4 + weightDist;
+  return stretchDist * kStretchFactor + styleDist * kStyleFactor +
+         weightDist * kWeightFactor;
 }
 
 void* Pointer::ToPtr(FontList* aFontList) const {
@@ -84,9 +85,10 @@ Family::Family(FontList* aList, const InitData& aData)
       mFaces(Pointer::Null()),
       mIndex(aData.mIndex),
       mVisibility(aData.mVisibility),
+      mIsSimple(false),
       mIsBadUnderlineFamily(aData.mBadUnderline),
       mIsForceClassic(aData.mForceClassic),
-      mIsSimple(false) {
+      mIsAltLocale(aData.mAltLocale) {
   MOZ_ASSERT(aData.mIndex <= 0x7fffffffu);
   mIndex = aData.mIndex | (aData.mBundled ? 0x80000000u : 0u);
 }
@@ -398,6 +400,20 @@ void Family::SearchAllFontsForChar(FontList* aList,
         if (!charmap && !fe->HasCharacter(aMatchData->mCh)) {
           continue;
         }
+        if (aMatchData->mPresentation != eFontPresentation::Any) {
+          RefPtr<gfxFont> font = fe->FindOrMakeFont(&aMatchData->mStyle);
+          if (!font) {
+            continue;
+          }
+          bool hasColorGlyph =
+              font->HasColorGlyphFor(aMatchData->mCh, aMatchData->mNextCh);
+          if (hasColorGlyph != PrefersColor(aMatchData->mPresentation)) {
+            distance += kPresentationMismatch;
+            if (distance >= aMatchData->mMatchDistance) {
+              continue;
+            }
+          }
+        }
         aMatchData->mBestMatch = fe;
         aMatchData->mMatchDistance = distance;
         aMatchData->mMatchedSharedFamily = this;
@@ -485,8 +501,8 @@ void Family::SetupFamilyCharMap(FontList* aList) {
     }
     auto faceMap = static_cast<SharedBitSet*>(f->mCharacterMap.ToPtr(aList));
     if (!faceMap) {
-      return;  // If there's a face where setting up the cmap failed or is not
-               // yet complete, just bail out of creating the family charmap.
+      continue;  // If there's a face where setting up the cmap failed, we skip
+                 // it as unusable.
     }
     if (!firstMap) {
       firstMap = faceMap;
@@ -499,10 +515,14 @@ void Family::SetupFamilyCharMap(FontList* aList) {
       familyMap.Union(*faceMap);
     }
   }
-  if (merged) {
+  // If we created a merged cmap, we need to save that on the family; or if we
+  // found no usable cmaps at all, we need to store the empty familyMap so that
+  // we won't repeatedly attempt this for an unusable family.
+  if (merged || firstMapShmPointer.IsNull()) {
     mCharacterMap =
         gfxPlatformFontList::PlatformFontList()->GetShmemCharMap(&familyMap);
   } else {
+    // If all [usable] faces had the same cmap, we can just share it.
     mCharacterMap = firstMapShmPointer;
   }
 }
@@ -510,9 +530,9 @@ void Family::SetupFamilyCharMap(FontList* aList) {
 FontList::FontList(uint32_t aGeneration) {
   if (XRE_IsParentProcess()) {
     // Create the initial shared block, and initialize Header
-    if (AppendShmBlock()) {
+    if (AppendShmBlock(SHM_BLOCK_SIZE)) {
       Header& header = GetHeader();
-      header.mAllocated.store(sizeof(Header));
+      header.mBlockHeader.mAllocated = sizeof(Header);
       header.mGeneration = aGeneration;
       header.mFamilyCount = 0;
       header.mBlockCount.store(1);
@@ -540,6 +560,14 @@ FontList::FontList(uint32_t aGeneration) {
       if (!newShm->Map(SHM_BLOCK_SIZE) || !newShm->memory()) {
         MOZ_CRASH("failed to map shared memory");
       }
+      uint32_t size = static_cast<BlockHeader*>(newShm->memory())->mBlockSize;
+      MOZ_ASSERT(size >= SHM_BLOCK_SIZE);
+      if (size != SHM_BLOCK_SIZE) {
+        newShm->Unmap();
+        if (!newShm->Map(size) || !newShm->memory()) {
+          MOZ_CRASH("failed to map shared memory");
+        }
+      }
       mBlocks.AppendElement(new ShmBlock(std::move(newShm)));
     }
     blocks.Clear();
@@ -562,14 +590,15 @@ FontList::FontList(uint32_t aGeneration) {
 
 FontList::~FontList() { DetachShmBlocks(); }
 
-bool FontList::AppendShmBlock() {
+bool FontList::AppendShmBlock(uint32_t aSizeNeeded) {
   MOZ_ASSERT(XRE_IsParentProcess());
+  uint32_t size = std::max(aSizeNeeded, SHM_BLOCK_SIZE);
   auto newShm = MakeUnique<base::SharedMemory>();
-  if (!newShm->CreateFreezeable(SHM_BLOCK_SIZE)) {
+  if (!newShm->CreateFreezeable(size)) {
     MOZ_CRASH("failed to create shared memory");
     return false;
   }
-  if (!newShm->Map(SHM_BLOCK_SIZE) || !newShm->memory()) {
+  if (!newShm->Map(size) || !newShm->memory()) {
     MOZ_CRASH("failed to map shared memory");
     return false;
   }
@@ -580,8 +609,8 @@ bool FontList::AppendShmBlock() {
   }
 
   ShmBlock* block = new ShmBlock(std::move(newShm));
-  // Allocate space for the Allocated() header field present in all blocks
-  block->Allocated().store(4);
+  block->Allocated() = sizeof(BlockHeader);
+  block->BlockSize() = size;
 
   mBlocks.AppendElement(block);
   GetHeader().mBlockCount.store(mBlocks.Length());
@@ -619,6 +648,14 @@ FontList::ShmBlock* FontList::GetBlockFromParent(uint32_t aIndex) {
   if (!newShm->Map(SHM_BLOCK_SIZE) || !newShm->memory()) {
     MOZ_CRASH("failed to map shared memory");
   }
+  uint32_t size = static_cast<BlockHeader*>(newShm->memory())->mBlockSize;
+  MOZ_ASSERT(size >= SHM_BLOCK_SIZE);
+  if (size != SHM_BLOCK_SIZE) {
+    newShm->Unmap();
+    if (!newShm->Map(size) || !newShm->memory()) {
+      MOZ_CRASH("failed to map shared memory");
+    }
+  }
   return new ShmBlock(std::move(newShm));
 }
 
@@ -651,12 +688,6 @@ void FontList::ShareBlocksToProcess(nsTArray<base::SharedMemoryHandle>* aBlocks,
   }
 }
 
-// The block size MUST be sufficient to allocate the largest possible
-// SharedBitSet in a single contiguous block, following its own
-// Allocated() field.
-static_assert(FontList::SHM_BLOCK_SIZE >= 4 + SharedBitSet::kMaxSize,
-              "may not be able to allocate a SharedBitSet");
-
 Pointer FontList::Alloc(uint32_t aSize) {
   // Only the parent process does allocation.
   MOZ_ASSERT(XRE_IsParentProcess());
@@ -665,50 +696,69 @@ Pointer FontList::Alloc(uint32_t aSize) {
   // as our "Pointer" (block index/offset) is a 32-bit value even on x64.
   auto align = [](uint32_t aSize) -> size_t { return (aSize + 3u) & ~3u; };
 
-  // There's a limit to the size of object we can allocate: the block size,
-  // minus the 4-byte mAllocated header field at the start of the block.
-  MOZ_DIAGNOSTIC_ASSERT(aSize <= SHM_BLOCK_SIZE - 4);
-
   aSize = align(aSize);
 
-  int32_t blockIndex;
-  uint32_t curAlloc;
-  while (true) {
+  int32_t blockIndex = -1;
+  uint32_t curAlloc, size;
+
+  if (aSize < SHM_BLOCK_SIZE - sizeof(BlockHeader)) {
     // Try to allocate in the most recently added block first, as this is
     // highly likely to succeed; if not, try earlier blocks (to fill gaps).
     const int32_t blockCount = mBlocks.Length();
     for (blockIndex = blockCount - 1; blockIndex >= 0; --blockIndex) {
+      size = mBlocks[blockIndex]->BlockSize();
       curAlloc = mBlocks[blockIndex]->Allocated();
-      if (SHM_BLOCK_SIZE - curAlloc >= aSize) {
+      if (size - curAlloc >= aSize) {
         break;
       }
     }
-
-    if (blockIndex < 0) {
-      // Couldn't find enough space: create a new block, and retry.
-      if (!AppendShmBlock()) {
-        return Pointer::Null();
-      }
-      continue;  // retry; this will check the newly-added block first,
-                 // which must succeed because it's empty
-    }
-
-    // We've found a block; allocate space from it, and return
-    mBlocks[blockIndex]->Allocated() = curAlloc + aSize;
-    break;
   }
+
+  if (blockIndex < 0) {
+    // Couldn't find enough space (or the requested size is too large to use
+    // a part of a block): create a new block.
+    if (!AppendShmBlock(aSize + sizeof(BlockHeader))) {
+      return Pointer::Null();
+    }
+    blockIndex = mBlocks.Length() - 1;
+    curAlloc = mBlocks[blockIndex]->Allocated();
+  }
+
+  // We've found a block; allocate space from it, and return
+  mBlocks[blockIndex]->Allocated() = curAlloc + aSize;
 
   return Pointer(blockIndex, curAlloc);
 }
 
-void FontList::SetFamilyNames(const nsTArray<Family::InitData>& aFamilies) {
+void FontList::SetFamilyNames(nsTArray<Family::InitData>& aFamilies) {
   // Only the parent process should ever assign the list of families.
   MOZ_ASSERT(XRE_IsParentProcess());
 
   Header& header = GetHeader();
   MOZ_ASSERT(!header.mFamilyCount);
 
+  gfxPlatformFontList::PlatformFontList()->ApplyWhitelist(aFamilies);
+  aFamilies.Sort();
+
   size_t count = aFamilies.Length();
+
+  // Check for duplicate family entries (can occur if there is a bundled font
+  // that has the same name as a system-installed one); in this case we keep
+  // the bundled one as it will always be exposed.
+  if (count > 1) {
+    const nsCString* prevKey = &aFamilies[0].mKey;
+    for (size_t i = 1; i < count; ++i) {
+      if (aFamilies[i].mKey.Equals(*prevKey)) {
+        // Decide whether to discard the current entry or the preceding one
+        size_t discard =
+            aFamilies[i].mBundled && !aFamilies[i - 1].mBundled ? i - 1 : i;
+        aFamilies.RemoveElementAt(discard);
+        --count;
+        --i;
+      }
+    }
+  }
+
   header.mFamilies = Alloc(count * sizeof(Family));
   if (header.mFamilies.IsNull()) {
     return;
@@ -1003,6 +1053,28 @@ Pointer FontList::ToSharedPointer(const void* aPtr) {
   }
   MOZ_DIAGNOSTIC_ASSERT(false, "invalid shared-memory pointer");
   return Pointer::Null();
+}
+
+size_t FontList::SizeOfIncludingThis(
+    mozilla::MallocSizeOf aMallocSizeOf) const {
+  return aMallocSizeOf(this) + SizeOfExcludingThis(aMallocSizeOf);
+}
+
+size_t FontList::SizeOfExcludingThis(
+    mozilla::MallocSizeOf aMallocSizeOf) const {
+  size_t result = mBlocks.ShallowSizeOfExcludingThis(aMallocSizeOf);
+  for (const auto& b : mBlocks) {
+    result += aMallocSizeOf(b.get()) + aMallocSizeOf(b->mShmem.get());
+  }
+  return result;
+}
+
+size_t FontList::AllocatedShmemSize() const {
+  size_t result = 0;
+  for (const auto& b : mBlocks) {
+    result += b->BlockSize();
+  }
+  return result;
 }
 
 }  // namespace fontlist

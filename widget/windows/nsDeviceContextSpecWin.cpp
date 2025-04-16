@@ -12,6 +12,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/Telemetry.h"
+#include "nsAnonymousTemporaryFile.h"
 
 #include <wchar.h>
 #include <windef.h>
@@ -58,14 +59,7 @@ static const wchar_t kDriverName[] = L"WINSPOOL";
 //---------------
 // static members
 //----------------------------------------------------------------------------------
-nsDeviceContextSpecWin::nsDeviceContextSpecWin()
-    : mDevMode(nullptr)
-#ifdef MOZ_ENABLE_SKIA_PDF
-      ,
-      mPrintViaSkPDF(false)
-#endif
-{
-}
+nsDeviceContextSpecWin::nsDeviceContextSpecWin() = default;
 
 //----------------------------------------------------------------------------------
 
@@ -73,6 +67,10 @@ NS_IMPL_ISUPPORTS(nsDeviceContextSpecWin, nsIDeviceContextSpec)
 
 nsDeviceContextSpecWin::~nsDeviceContextSpecWin() {
   SetDevMode(nullptr);
+
+  if (mTempFile) {
+    mTempFile->Remove(/* recursive = */ false);
+  }
 
   if (nsCOMPtr<nsIPrintSettingsWin> ps = do_QueryInterface(mPrintSettings)) {
     ps->SetDeviceName(EmptyString());
@@ -287,9 +285,17 @@ already_AddRefed<PrintTarget> nsDeviceContextSpecWin::MakePrintTarget() {
     width /= TWIPS_PER_POINT_FLOAT;
     height /= TWIPS_PER_POINT_FLOAT;
 
-    nsCOMPtr<nsIFile> file = do_CreateInstance("@mozilla.org/file/local;1");
-    nsresult rv = file->InitWithPath(filename);
-    if (NS_FAILED(rv)) {
+    nsCOMPtr<nsIFile> file;
+    nsresult rv;
+    if (!filename.IsEmpty()) {
+      file = do_CreateInstance("@mozilla.org/file/local;1");
+      rv = file->InitWithPath(filename);
+    } else {
+      rv = NS_OpenAnonymousTemporaryNsIFile(getter_AddRefs(mTempFile));
+      file = mTempFile;
+    }
+
+    if (NS_WARN_IF(NS_FAILED(rv))) {
       return nullptr;
     }
 
@@ -322,29 +328,23 @@ already_AddRefed<PrintTarget> nsDeviceContextSpecWin::MakePrintTarget() {
 }
 
 float nsDeviceContextSpecWin::GetDPI() {
-  // To match the previous printing code we need to return 72 when printing to
-  // PDF and 144 when printing to a Windows surface.
-#ifdef MOZ_ENABLE_SKIA_PDF
-  if (mPrintViaSkPDF) {
-    return 72.0f;
+  if (mOutputFormat == nsIPrintSettings::kOutputFormatPDF || mPrintViaSkPDF) {
+    return nsIDeviceContextSpec::GetDPI();
   }
-#endif
-  return mOutputFormat == nsIPrintSettings::kOutputFormatPDF ? 72.0f : 144.0f;
+  // To match the previous printing code we need to return 144 when printing to
+  // a Windows surface.
+  return 144.0f;
 }
 
 float nsDeviceContextSpecWin::GetPrintingScale() {
   MOZ_ASSERT(mPrintSettings);
-#ifdef MOZ_ENABLE_SKIA_PDF
-  if (mPrintViaSkPDF) {
-    return 1.0f;  // PDF is vector based, so we don't need a scale
-  }
-#endif
-  // To match the previous printing code there is no scaling for PDF.
-  if (mOutputFormat == nsIPrintSettings::kOutputFormatPDF) {
-    return 1.0f;
+  if (mOutputFormat == nsIPrintSettings::kOutputFormatPDF || mPrintViaSkPDF) {
+    return nsIDeviceContextSpec::GetPrintingScale();
   }
 
   // The print settings will have the resolution stored from the real device.
+  //
+  // FIXME: Shouldn't we use this in GetDPI then instead of hard-coding 144.0?
   int32_t resolution;
   mPrintSettings->GetResolution(&resolution);
   return float(resolution) / GetDPI();
@@ -419,6 +419,10 @@ nsresult nsDeviceContextSpecWin::GetDataFromPrinter(const nsAString& aName,
       return NS_ERROR_FAILURE;
     }
 
+    // Some drivers do not return the correct size for their DEVMODE, so we
+    // over-allocate to try and compensate.
+    // (See https://bugzilla.mozilla.org/show_bug.cgi?id=1664530#c5)
+    needed *= 2;
     pDevMode =
         (LPDEVMODEW)::HeapAlloc(::GetProcessHeap(), HEAP_ZERO_MEMORY, needed);
     if (!pDevMode) return NS_ERROR_FAILURE;
@@ -491,17 +495,17 @@ static unsigned GetPrinterInfo4(nsTArray<BYTE>& aBuffer) {
   DWORD needed = 0;
   DWORD count = 0;
   const DWORD kFlags = PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS;
-  BOOL ok = EnumPrinters(kFlags,
-                         nullptr,  // Name
-                         kLevel,   // Level
-                         nullptr,  // pPrinterEnum
-                         0,        // cbBuf (buffer size)
-                         &needed,  // Bytes needed in buffer
-                         &count);
+  BOOL ok = ::EnumPrintersW(kFlags,
+                            nullptr,  // Name
+                            kLevel,   // Level
+                            nullptr,  // pPrinterEnum
+                            0,        // cbBuf (buffer size)
+                            &needed,  // Bytes needed in buffer
+                            &count);
   if (needed > 0) {
     aBuffer.SetLength(needed);
-    ok = EnumPrinters(kFlags, nullptr, kLevel, aBuffer.Elements(),
-                      aBuffer.Length(), &needed, &count);
+    ok = ::EnumPrintersW(kFlags, nullptr, kLevel, aBuffer.Elements(),
+                         aBuffer.Length(), &needed, &count);
   }
   if (!ok || !count) {
     return 0;
@@ -521,18 +525,43 @@ nsTArray<nsPrinterListBase::PrinterInfo> nsPrinterListWin::Printers() const {
   }
 
   const auto* printers =
-      reinterpret_cast<const PRINTER_INFO_4*>(buffer.Elements());
+      reinterpret_cast<const _PRINTER_INFO_4W*>(buffer.Elements());
   nsTArray<PrinterInfo> list;
   for (unsigned i = 0; i < count; i++) {
-    list.AppendElement(PrinterInfo{nsString(printers[i].pPrinterName)});
-    PR_PL(("Printer Name: %s\n",
-           NS_ConvertUTF16toUTF8(printers[i].pPrinterName).get()));
+    // For LOCAL printers, we check whether OpenPrinter succeeds, and omit
+    // them from the list if not. This avoids presenting printers that the
+    // user cannot actually use (e.g. due to Windows permissions).
+    // For NETWORK printers, this check may block for a long time (waiting for
+    // network timeout), so we skip it; if the user tries to access a printer
+    // that isn't available, we'll have to show an error later.
+    // (We always need to be able to handle an error, anyhow, as the printer
+    // could get disconnected after we've created the list, for example.)
+    bool isAvailable = false;
+    if (printers[i].Attributes & PRINTER_ATTRIBUTE_NETWORK) {
+      isAvailable = true;
+    } else if (printers[i].Attributes & PRINTER_ATTRIBUTE_LOCAL) {
+      HANDLE handle;
+      if (::OpenPrinterW(printers[i].pPrinterName, &handle, nullptr)) {
+        ::ClosePrinter(handle);
+        isAvailable = true;
+      }
+    }
+    if (isAvailable) {
+      list.AppendElement(PrinterInfo{nsString(printers[i].pPrinterName)});
+      PR_PL(("Printer Name: %s\n",
+             NS_ConvertUTF16toUTF8(printers[i].pPrinterName).get()));
+    }
+  }
+
+  if (!count) {
+    PR_PL(("[No usable printers found]\n"));
+    return {};
   }
 
   return list;
 }
 
-Maybe<nsPrinterListBase::PrinterInfo> nsPrinterListWin::NamedPrinter(
+Maybe<nsPrinterListBase::PrinterInfo> nsPrinterListWin::PrinterByName(
     nsString aName) const {
   Maybe<PrinterInfo> rv;
 
@@ -540,7 +569,7 @@ Maybe<nsPrinterListBase::PrinterInfo> nsPrinterListWin::NamedPrinter(
   unsigned count = GetPrinterInfo4(buffer);
 
   const auto* printers =
-      reinterpret_cast<const PRINTER_INFO_4*>(buffer.Elements());
+      reinterpret_cast<const _PRINTER_INFO_4W*>(buffer.Elements());
   for (unsigned i = 0; i < count; ++i) {
     if (aName.Equals(nsString(printers[i].pPrinterName))) {
       rv.emplace(PrinterInfo{aName});
@@ -549,6 +578,11 @@ Maybe<nsPrinterListBase::PrinterInfo> nsPrinterListWin::NamedPrinter(
   }
 
   return rv;
+}
+
+Maybe<nsPrinterListBase::PrinterInfo> nsPrinterListWin::PrinterBySystemName(
+    nsString aName) const {
+  return PrinterByName(std::move(aName));
 }
 
 RefPtr<nsIPrinter> nsPrinterListWin::CreatePrinter(PrinterInfo aInfo) const {

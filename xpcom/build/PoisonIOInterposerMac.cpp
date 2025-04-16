@@ -7,7 +7,7 @@
 #include "PoisonIOInterposer.h"
 // Disabled until bug 1658385 is fixed.
 #ifndef __aarch64__
-#include "mach_override.h"
+#  include "mach_override.h"
 #endif
 
 #include "mozilla/ArrayUtils.h"
@@ -100,7 +100,7 @@ void MacIOAutoObservation::Filename(nsAString& aFilename) {
 
   char filename[MAXPATHLEN];
   if (fcntl(mFd, F_GETPATH, filename) != -1) {
-    mFilename = NS_ConvertUTF8toUTF16(filename);
+    CopyUTF8toUTF16(filename, mFilename);
   } else {
     mFilename.Truncate();
   }

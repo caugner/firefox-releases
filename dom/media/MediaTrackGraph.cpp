@@ -8,7 +8,7 @@
 #include "mozilla/Unused.h"
 
 #include "AudioSegment.h"
-#include "CrossGraphTrack.h"
+#include "CrossGraphPort.h"
 #include "VideoSegment.h"
 #include "nsContentUtils.h"
 #include "nsPrintfCString.h"
@@ -414,10 +414,10 @@ void MediaTrackGraphImpl::UpdateTrackOrder() {
       // Not-visited input tracks should be processed first.
       // SourceMediaTracks have already been ordered.
       for (uint32_t i = inputs.Length(); i--;) {
-        if (inputs[i]->mSource->IsSuspended()) {
+        if (inputs[i]->GetSource()->IsSuspended()) {
           continue;
         }
-        auto input = inputs[i]->mSource->AsProcessedTrack();
+        auto input = inputs[i]->GetSource()->AsProcessedTrack();
         if (input && input->mCycleMarker == NOT_VISITED) {
           // It can be that this track has an input which is from a suspended
           // AudioContext.
@@ -440,10 +440,10 @@ void MediaTrackGraphImpl::UpdateTrackOrder() {
     // unless it is part of the cycle.
     uint32_t cycleStackMarker = 0;
     for (uint32_t i = inputs.Length(); i--;) {
-      if (inputs[i]->mSource->IsSuspended()) {
+      if (inputs[i]->GetSource()->IsSuspended()) {
         continue;
       }
-      auto input = inputs[i]->mSource->AsProcessedTrack();
+      auto input = inputs[i]->GetSource()->AsProcessedTrack();
       if (input) {
         cycleStackMarker = std::max(cycleStackMarker, input->mCycleMarker);
       }
@@ -850,27 +850,12 @@ void MediaTrackGraphImpl::NotifyInputData(const AudioDataValue* aBuffer,
     return;
   }
 #endif
-  mInputData = aBuffer;
-  mInputFrames = aFrames;
-  mInputChannelCount = aChannels;
-}
-
-void MediaTrackGraphImpl::ProcessInputData() {
-  if (!mInputData) {
-    return;
-  }
-
   nsTArray<RefPtr<AudioDataListener>>* listeners =
       mInputDeviceUsers.GetValue(mInputDeviceID);
   MOZ_ASSERT(listeners);
   for (auto& listener : *listeners) {
-    listener->NotifyInputData(this, mInputData, mInputFrames, GraphRate(),
-                              mInputChannelCount);
+    listener->NotifyInputData(this, aBuffer, aFrames, aRate, aChannels);
   }
-
-  mInputData = nullptr;
-  mInputFrames = 0;
-  mInputChannelCount = 0;
 }
 
 void MediaTrackGraphImpl::DeviceChangedImpl() {
@@ -1395,8 +1380,6 @@ auto MediaTrackGraphImpl::OneIterationImpl(GraphTime aStateEnd,
   if (SoftRealTimeLimitReached()) {
     DemoteThreadFromRealTime();
   }
-
-  ProcessInputData();
 
   // Changes to LIFECYCLE_RUNNING occur before starting or reviving the graph
   // thread, and so the monitor need not be held to check mLifecycleState.
@@ -2404,9 +2387,9 @@ void MediaTrack::AdvanceTimeVaryingValuesToCurrentTime(GraphTime aCurrentTime,
   }
 
   TrackTime time = aCurrentTime - mStartTime;
-  // Only prune if there is a reasonable chunk (50ms @ 48kHz) to forget, so we
-  // don't spend too much time pruning segments.
-  const TrackTime minChunkSize = 2400;
+  // Only prune if there is a reasonable chunk (50ms) to forget, so we don't
+  // spend too much time pruning segments.
+  const TrackTime minChunkSize = mSampleRate * 50 / 1000;
   if (time < mForgottenTime + minChunkSize) {
     return;
   }
@@ -2885,6 +2868,7 @@ float SourceMediaTrack::GetVolumeLocked() {
 SourceMediaTrack::~SourceMediaTrack() = default;
 
 void MediaInputPort::Init() {
+  mGraph->AssertOnGraphThreadOrNotRunning();
   LOG(LogLevel::Debug, ("%p: Adding MediaInputPort %p (from %p to %p)",
                         mSource->GraphImpl(), this, mSource, mDest));
   // Only connect the port if it wasn't disconnected on allocation.
@@ -2897,17 +2881,20 @@ void MediaInputPort::Init() {
 }
 
 void MediaInputPort::Disconnect() {
-  GraphImpl()->AssertOnGraphThreadOrNotRunning();
+  mGraph->AssertOnGraphThreadOrNotRunning();
   NS_ASSERTION(!mSource == !mDest,
-               "mSource must either both be null or both non-null");
-  if (!mSource) return;
+               "mSource and mDest must either both be null or both non-null");
+
+  if (!mSource) {
+    return;
+  }
 
   mSource->RemoveConsumer(this);
   mDest->RemoveInput(this);
   mSource = nullptr;
   mDest = nullptr;
 
-  GraphImpl()->SetTrackOrderDirty();
+  mGraph->SetTrackOrderDirty();
 }
 
 MediaInputPort::InputInterval MediaInputPort::GetNextInputInterval(
@@ -2918,6 +2905,7 @@ MediaInputPort::InputInterval MediaInputPort::GetNextInputInterval(
     result.mInputIsBlocked = true;
     return result;
   }
+  aPort->mGraph->AssertOnGraphThreadOrNotRunning();
   if (aTime >= aPort->mDest->mStartBlocking) {
     return result;
   }
@@ -2930,9 +2918,15 @@ MediaInputPort::InputInterval MediaInputPort::GetNextInputInterval(
   return result;
 }
 
-void MediaInputPort::Suspended() { mDest->InputSuspended(this); }
+void MediaInputPort::Suspended() {
+  mGraph->AssertOnGraphThreadOrNotRunning();
+  mDest->InputSuspended(this);
+}
 
-void MediaInputPort::Resumed() { mDest->InputResumed(this); }
+void MediaInputPort::Resumed() {
+  mGraph->AssertOnGraphThreadOrNotRunning();
+  mDest->InputResumed(this);
+}
 
 void MediaInputPort::Destroy() {
   class Message : public ControlMessage {
@@ -2950,17 +2944,25 @@ void MediaInputPort::Destroy() {
   };
   // Keep a reference to the graph, since Message might RunDuringShutdown()
   // synchronously and make GraphImpl() invalid.
-  RefPtr<MediaTrackGraphImpl> graph = GraphImpl();
+  RefPtr<MediaTrackGraphImpl> graph = mGraph;
   graph->AppendMessage(MakeUnique<Message>(this));
   --graph->mMainThreadPortCount;
 }
 
-MediaTrackGraphImpl* MediaInputPort::GraphImpl() { return mGraph; }
+MediaTrackGraphImpl* MediaInputPort::GraphImpl() const {
+  mGraph->AssertOnGraphThreadOrNotRunning();
+  return mGraph;
+}
 
-MediaTrackGraph* MediaInputPort::Graph() { return mGraph; }
+MediaTrackGraph* MediaInputPort::Graph() const {
+  mGraph->AssertOnGraphThreadOrNotRunning();
+  return mGraph;
+}
 
 void MediaInputPort::SetGraphImpl(MediaTrackGraphImpl* aGraph) {
   MOZ_ASSERT(!mGraph || !aGraph, "Should only be set once");
+  DebugOnly<MediaTrackGraphImpl*> graph = mGraph ? mGraph : aGraph;
+  MOZ_ASSERT(graph->OnGraphThreadOrNotRunning());
   mGraph = aGraph;
 }
 
@@ -2988,12 +2990,13 @@ already_AddRefed<MediaInputPort> ProcessedMediaTrack::AllocateInputPort(
     // Create a port that's disconnected, which is what it'd be after its source
     // track is Destroy()ed normally. Disconnect() is idempotent so destroying
     // this later is fine.
-    port = new MediaInputPort(nullptr, nullptr, aInputNumber, aOutputNumber);
+    port = new MediaInputPort(GraphImpl(), nullptr, nullptr, aInputNumber,
+                              aOutputNumber);
   } else {
     MOZ_ASSERT(aTrack->GraphImpl() == GraphImpl());
-    port = new MediaInputPort(aTrack, this, aInputNumber, aOutputNumber);
+    port = new MediaInputPort(GraphImpl(), aTrack, this, aInputNumber,
+                              aOutputNumber);
   }
-  port->SetGraphImpl(GraphImpl());
   ++GraphImpl()->mMainThreadPortCount;
   GraphImpl()->AppendMessage(MakeUnique<Message>(port));
   return port.forget();
@@ -3046,9 +3049,6 @@ MediaTrackGraphImpl::MediaTrackGraphImpl(
       mPortCount(0),
       mInputDeviceID(nullptr),
       mOutputDeviceID(aOutputDeviceID),
-      mInputData(nullptr),
-      mInputChannelCount(0),
-      mInputFrames(0),
       mMonitor("MediaTrackGraphImpl"),
       mLifecycleState(LIFECYCLE_THREAD_NOT_STARTED),
       mPostedRunInStableStateEvent(false),

@@ -121,6 +121,15 @@ enum class BailoutKind : uint8_t {
   // Symbol was not equal the expected JS::Symbol.
   SpecificSymbolGuard,
 
+  // Bailout triggered by MGuardStringToIndex.
+  StringToIndexGuard,
+
+  // Bailout triggered by MGuardStringToInt32.
+  StringToInt32Guard,
+
+  // Bailout triggered by MGuardStringToDouble.
+  StringToDoubleGuard,
+
   // Unbox expects a given type, bails out if it doesn't get it.
   NonInt32Input,
   NonNumericInput,  // unboxing a double works with int32 too
@@ -138,6 +147,10 @@ enum class BailoutKind : uint8_t {
 
   // Array length did not fit in int32.
   NonInt32ArrayLength,
+
+  // Function length not available ("length" property was redefined or function
+  // has a lazy script) or did not fit in int32.
+  FunctionLength,
 
   // END Normal bailouts
 
@@ -185,6 +198,9 @@ enum class BailoutKind : uint8_t {
   // Bailout triggered by a megamorphic load or store.
   MegamorphicAccess,
 
+  // Bailout triggered by MLoadArgumentsObjectArg and MArgumentsObjectLength.
+  ArgumentsObjectAccess,
+
   // Bailout triggered by MArrayPopShift.
   ArrayPopShift,
 
@@ -208,6 +224,12 @@ enum class BailoutKind : uint8_t {
 
   // Bailout triggered by MGuardFunctionKind.
   FunctionKindGuard,
+
+  // Bailout triggered by MGuardFunctionScript.
+  FunctionScriptGuard,
+
+  // Bailout triggered by MGuardArrayIsPacked
+  PackedArrayGuard,
 
   // When we're trying to use an uninitialized lexical.
   UninitializedLexical,
@@ -252,7 +274,13 @@ inline const char* BailoutKindString(BailoutKind kind) {
     case BailoutKind::SpecificAtomGuard:
       return "BailoutKind::SpecifcAtomGuard";
     case BailoutKind::SpecificSymbolGuard:
-      return "BailoutKind::SpecifcSymbolGuard";
+      return "BailoutKind::SpecificSymbolGuard";
+    case BailoutKind::StringToIndexGuard:
+      return "BailoutKind::StringToIndexGuard";
+    case BailoutKind::StringToInt32Guard:
+      return "BailoutKind::StringToInt32Guard";
+    case BailoutKind::StringToDoubleGuard:
+      return "BailoutKind::StringToDoubleGuard";
     case BailoutKind::NonInt32Input:
       return "BailoutKind::NonInt32Input";
     case BailoutKind::NonNumericInput:
@@ -273,6 +301,8 @@ inline const char* BailoutKindString(BailoutKind kind) {
       return "BailoutKind::FirstExecution";
     case BailoutKind::NonInt32ArrayLength:
       return "BailoutKind::NonInt32ArrayLength";
+    case BailoutKind::FunctionLength:
+      return "BailoutKind::FunctionLength";
 
     // Bailouts caused by invalid assumptions.
     case BailoutKind::OverflowInvalidate:
@@ -299,6 +329,8 @@ inline const char* BailoutKindString(BailoutKind kind) {
       return "BailoutKind::NotArrayBufferMaybeSharedGuard";
     case BailoutKind::MegamorphicAccess:
       return "BailoutKind::MegamorphicAccess";
+    case BailoutKind::ArgumentsObjectAccess:
+      return "BailoutKind::ArgumentsObjectAccess";
     case BailoutKind::ArrayPopShift:
       return "BailoutKind::ArrayPopShift";
     case BailoutKind::ArraySlice:
@@ -315,6 +347,10 @@ inline const char* BailoutKindString(BailoutKind kind) {
       return "BailoutKind::FunctionFlagsGuard";
     case BailoutKind::FunctionKindGuard:
       return "BailoutKind::FunctionKindGuard";
+    case BailoutKind::FunctionScriptGuard:
+      return "BailoutKind::FunctionScriptGuard";
+    case BailoutKind::PackedArrayGuard:
+      return "BailoutKind::PackedArrayGuard";
     case BailoutKind::UninitializedLexical:
       return "BailoutKind::UninitializedLexical";
     case BailoutKind::IonExceptionDebugMode:

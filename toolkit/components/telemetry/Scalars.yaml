@@ -336,6 +336,23 @@ browser.engagement.navigation:
     record_in_processes:
       - 'main'
 
+  urlbar_searchmode:
+    bug_numbers:
+      - 1654680
+    description: >
+      The count URI loads triggered in a subsession from the urlbar's search
+      mode, broken down by the originating action.
+    expires: never
+    kind: uint
+    keyed: True
+    notification_emails:
+      - htwyford@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+
   searchbar:
     bug_numbers:
       - 1271313
@@ -1782,6 +1799,28 @@ os.environment:
     operating_systems:
       - "windows"
 
+  allowed_app_sources:
+    bug_numbers:
+      - 1659157
+    description: >
+      Indicates what sources the OS is currently configured to allow apps to be
+      installed from. Possible values are "Anywhere", "Recommendations",
+      "PreferStore", "StoreOnly", "NoSuchFeature", or "Error". "Recommendations"
+      allows installs from anywhere, but recommends a comparable app from the
+      store, if available. "NoSuchFeature" will be reported on versions of
+      Windows that do not have an app source setting.
+    expires: never
+    kind: string
+    notification_emails:
+      - rtestard@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+    operating_systems:
+      - "windows"
+
 pictureinpicture:
   opened_method:
     bug_numbers:
@@ -2245,23 +2284,6 @@ dom.parentprocess:
       - 'fennec'
     record_in_processes:
       - 'main'
-
-# The following section contains scalars related to DOM IPC messages.
-dom.ipc:
-  rejected_window_actor_message:
-    bug_numbers:
-      - 1604609
-    description: Each key is the window actor name followed by the message name, with digits removed, that was rejected for being over approximately 256MB, recorded in the sending process at the time of sending.
-    expires: "83"
-    kind: uint
-    notification_emails:
-      - amccreight@mozilla.com
-    products:
-      - 'firefox'
-    record_in_processes:
-      - 'main'
-      - 'content'
-    keyed: true
 
 devtools.toolbar.eyedropper:
   opened:
@@ -2916,6 +2938,23 @@ devtools.changesview:
     notification_emails:
       - dev-developer-tools@lists.mozilla.org
       - mbalfanz@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+      - 'fennec'
+    record_in_processes:
+      - 'main'
+
+devtools.markup.scrollable.badge:
+  clicked:
+    bug_numbers:
+      - 1660818
+    description: >
+      Number of times the scrollable inspector badge has been clicked.
+    expires: never
+    kind: uint
+    notification_emails:
+      - dev-developer-tools@lists.mozilla.org
     release_channel_collection: opt-out
     products:
       - 'firefox'
@@ -3621,6 +3660,22 @@ gfx:
     record_in_processes:
       - 'main'
     release_channel_collection: opt-out
+  linux_window_protocol:
+    bug_numbers:
+      - 1645732
+    description: >
+      Windowing protocol on Linux. Can be Wayland, WaylandDRM, XWayland, or X11
+    expires: never
+    kind: string
+    notification_emails:
+      - gfx-telemetry-alerts@mozilla.com
+      - aosmond@mozilla.com
+      - mkaply@mozilla.com
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'main'
+    release_channel_collection: opt-out
 
 # The following section contains the form autofill related scalars.
 formautofill:
@@ -3956,6 +4011,24 @@ unknowncontenttype:
 
 # The following section contains scalars for printing.
 printing:
+  paper_size:
+    bug_numbers:
+      - 1660686
+    description: >
+      A counter of the number of times a given paper size (recorded as
+      "width x height" in points) is used for printing.
+    keyed: true
+    expires: "89"
+    kind: uint
+    notification_emails:
+      - jwatt@jwatt.org
+      - jkew@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - 'content'
+
   dialog_opened_without_preview:
     bug_numbers:
       - 1600623
@@ -5336,6 +5409,129 @@ urlbar:
       - 'firefox'
     record_in_processes:
       - main
+
+urlbar.searchmode:
+  keywordoffer:
+    bug_numbers:
+      - 1654680
+    description: >
+      A keyed uint recording how many times the user entered a particular search
+      mode after selecting a keyword offer result.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - fx-search@mozilla.com
+      - tbrooks@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+  oneoff:
+    bug_numbers:
+      - 1654680
+    description: >
+      A keyed uint recording how many times the user entered a particular search
+      mode after selecting a one-off.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - fx-search@mozilla.com
+      - tbrooks@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+  shortcut:
+    bug_numbers:
+      - 1654680
+    description: >
+      A keyed uint recording how many times the user entered a particular search
+      mode after pressing a keyboard shortcut.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - fx-search@mozilla.com
+      - tbrooks@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+  topsites_newtab:
+    bug_numbers:
+      - 1654680
+    description: >
+      A keyed uint recording how many times the user entered a particular search
+      mode after selecting a search shortcut Top Site on the New Tab Page.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - fx-search@mozilla.com
+      - tbrooks@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+  topsites_urlbar:
+    bug_numbers:
+      - 1654680
+    description: >
+      A keyed uint recording how many times the user entered a particular search
+      mode after selecting a search shortcut Top Site in the Urlbar..
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - fx-search@mozilla.com
+      - tbrooks@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+  typed:
+    bug_numbers:
+      - 1654680
+    description: >
+      A keyed uint recording how many times the user entered a particular search
+      mode after typing an alias.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - fx-search@mozilla.com
+      - tbrooks@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+  other:
+    bug_numbers:
+      - 1654680
+    description: >
+      A keyed uint recording how many times the user entered a particular search
+      mode from an unknown entry point. If values appear for this probe in
+      Telemetry, we should review the entry points to search mode.
+    expires: never
+    kind: uint
+    keyed: true
+    notification_emails:
+      - fx-search@mozilla.com
+      - tbrooks@mozilla.com
+    release_channel_collection: opt-out
+    products:
+      - 'firefox'
+    record_in_processes:
+      - main
+
 
 migration:
   uninstaller_profile_refresh:

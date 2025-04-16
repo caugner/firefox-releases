@@ -77,6 +77,7 @@ class DebugScript;
 
 namespace frontend {
 struct CompilationInfo;
+struct CompilationGCOutput;
 class ScriptStencil;
 }  // namespace frontend
 
@@ -1384,7 +1385,8 @@ class alignas(uintptr_t) PrivateScriptData final : public TrailingArray {
 
   static bool InitFromStencil(JSContext* cx, js::HandleScript script,
                               js::frontend::CompilationInfo& compilationInfo,
-                              const js::frontend::ScriptStencil& stencil);
+                              js::frontend::CompilationGCOutput& gcOutput,
+                              const js::frontend::ScriptStencil& scriptStencil);
 
   void trace(JSTracer* trc);
 
@@ -1442,7 +1444,7 @@ class RuntimeScriptData {
                                     js::HandleScript script);
 
   static bool InitFromStencil(JSContext* cx, js::HandleScript script,
-                              js::frontend::ScriptStencil& stencil);
+                              js::frontend::ScriptStencil& scriptStencil);
 
   size_t sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) {
     return mallocSizeOf(this) + mallocSizeOf(isd_.get());
@@ -1515,11 +1517,12 @@ using RuntimeScriptDataTable =
 //              |   Engine:     Parser                |
 //              +-------------------------------------+
 //                                v
-//              +-------------------------------------+
-//              | BaseScript                          |
-//              |   Provides:   SourceExtent/Bindings |
-//              |   Engine:     CompileLazyFunction   |
-//              +-------------------------------------+
+//              +-----------------------------------------------+
+//              | BaseScript                                    |
+//              |   Provides:   SourceExtent/Bindings           |
+//              |   Engine:     CompileLazyFunctionToStencil    |
+//              |               /InstantiateStencilsForDelazify |
+//              +-----------------------------------------------+
 //                                v
 //              +-------------------------------------+
 //              | RuntimeScriptData                   |
@@ -1560,6 +1563,10 @@ class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
   uint8_t* jitCodeRaw() const { return headerPtr(); }
 
  protected:
+  // Multi-purpose value that changes type as the script warms up from lazy form
+  // to interpreted-bytecode to JITs. See: ScriptWarmUpData type for more info.
+  ScriptWarmUpData warmUpData_ = {};
+
   // Object that determines what Realm this script is compiled for. For function
   // scripts this is the canonical function, otherwise it is the GlobalObject of
   // the realm.
@@ -1596,10 +1603,6 @@ class BaseScript : public gc::TenuredCellWithNonGCPointer<uint8_t> {
   // and various script note structures. If the script is currently lazy, this
   // will be nullptr.
   RefPtr<js::RuntimeScriptData> sharedData_ = {};
-
-  // Multi-purpose value that changes type as the script warms up from lazy form
-  // to interpreted-bytecode to JITs. See: ScriptWarmUpData type for more info.
-  ScriptWarmUpData warmUpData_ = {};
 
   // End of fields.
 
@@ -1998,7 +2001,7 @@ class JSScript : public js::BaseScript {
 
   friend bool js::RuntimeScriptData::InitFromStencil(
       JSContext* cx, js::HandleScript script,
-      js::frontend::ScriptStencil& stencil);
+      js::frontend::ScriptStencil& scriptStencil);
 
   template <js::XDRMode mode>
   friend js::XDRResult js::PrivateScriptData::XDR(
@@ -2013,7 +2016,8 @@ class JSScript : public js::BaseScript {
   friend bool js::PrivateScriptData::InitFromStencil(
       JSContext* cx, js::HandleScript script,
       js::frontend::CompilationInfo& compilationInfo,
-      const js::frontend::ScriptStencil& stencil);
+      js::frontend::CompilationGCOutput& gcOutput,
+      const js::frontend::ScriptStencil& scriptStencil);
 
  private:
   using js::BaseScript::BaseScript;
@@ -2039,14 +2043,15 @@ class JSScript : public js::BaseScript {
  public:
   static bool fullyInitFromStencil(
       JSContext* cx, js::frontend::CompilationInfo& compilationInfo,
-      js::HandleScript script, js::frontend::ScriptStencil& stencil,
-      js::HandleFunction function);
+      js::frontend::CompilationGCOutput& gcOutput, js::HandleScript script,
+      js::frontend::ScriptStencil& scriptStencil, js::HandleFunction function);
 
   // Allocate a JSScript and initialize it with bytecode. This consumes
   // allocations within the stencil.
   static JSScript* fromStencil(JSContext* cx,
                                js::frontend::CompilationInfo& compilationInfo,
-                               js::frontend::ScriptStencil& stencil,
+                               js::frontend::CompilationGCOutput& gcOutput,
+                               js::frontend::ScriptStencil& scriptStencil,
                                js::HandleFunction function);
 
 #ifdef DEBUG

@@ -13,16 +13,15 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 use regalloc::{RealReg, Reg, RegClass, Set, Writable};
 use smallvec::SmallVec;
-use std::convert::TryFrom;
 
 // We use a generic implementation that factors out AArch64 and x64 ABI commonalities, because
 // these ABIs are very similar.
 
 /// Support for the AArch64 ABI from the callee side (within a function body).
-pub type AArch64ABIBody = ABIBodyImpl<AArch64MachineImpl>;
+pub(crate) type AArch64ABICallee = ABICalleeImpl<AArch64MachineDeps>;
 
 /// Support for the AArch64 ABI from the caller side (at a callsite).
-pub type AArch64ABICall = ABICallImpl<AArch64MachineImpl>;
+pub(crate) type AArch64ABICaller = ABICallerImpl<AArch64MachineDeps>;
 
 // Spidermonkey specific ABI convention.
 
@@ -105,9 +104,9 @@ impl Into<AMode> for StackAMode {
 
 /// AArch64-specific ABI behavior. This struct just serves as an implementation
 /// point for the trait; it is never actually instantiated.
-pub struct AArch64MachineImpl;
+pub(crate) struct AArch64MachineDeps;
 
-impl ABIMachineImpl for AArch64MachineImpl {
+impl ABIMachineSpec for AArch64MachineDeps {
     type I = Inst;
 
     fn compute_arg_locs(
@@ -124,10 +123,18 @@ impl ABIMachineImpl for AArch64MachineImpl {
         let mut next_stack: u64 = 0;
         let mut ret = vec![];
 
-        let max_reg_vals = match (args_or_rets, is_baldrdash) {
-            (ArgsOrRets::Args, _) => 8,     // x0-x7, v0-v7
-            (ArgsOrRets::Rets, false) => 8, // x0-x7, v0-v7
-            (ArgsOrRets::Rets, true) => 1,  // x0 or v0
+        // Note on return values: on the regular non-baldrdash ABI, we may return values in 8
+        // registers for V128 and I64 registers independently of the number of register values
+        // returned in the other class. That is, we can return values in up to 8 integer and 8
+        // vector registers at once.
+        // In Baldrdash, we can only use one register for return value for all the register
+        // classes. That is, we can't return values in both one integer and one vector register;
+        // only one return value may be in a register.
+
+        let (max_per_class_reg_vals, mut remaining_reg_vals) = match (args_or_rets, is_baldrdash) {
+            (ArgsOrRets::Args, _) => (8, 16),     // x0-x7 and v0-v7
+            (ArgsOrRets::Rets, false) => (8, 16), // x0-x7 and v0-v7
+            (ArgsOrRets::Rets, true) => (1, 1),   // x0 or v0, but not both
         };
 
         for i in 0..params.len() {
@@ -167,7 +174,7 @@ impl ABIMachineImpl for AArch64MachineImpl {
             if let Some(param) = try_fill_baldrdash_reg(call_conv, param) {
                 assert!(rc == RegClass::I64);
                 ret.push(param);
-            } else if *next_reg < max_reg_vals {
+            } else if *next_reg < max_per_class_reg_vals && remaining_reg_vals > 0 {
                 let reg = match rc {
                     RegClass::I64 => xreg(*next_reg),
                     RegClass::V128 => vreg(*next_reg),
@@ -179,6 +186,7 @@ impl ABIMachineImpl for AArch64MachineImpl {
                     param.extension,
                 ));
                 *next_reg += 1;
+                remaining_reg_vals -= 1;
             } else {
                 // Compute size. Every arg takes a minimum slot of 8 bytes. (16-byte
                 // stack alignment happens separately after all args.)
@@ -202,7 +210,7 @@ impl ABIMachineImpl for AArch64MachineImpl {
 
         let extra_arg = if add_ret_area_ptr {
             debug_assert!(args_or_rets == ArgsOrRets::Args);
-            if next_xreg < max_reg_vals {
+            if next_xreg < max_per_class_reg_vals && remaining_reg_vals > 0 {
                 ret.push(ABIArg::Reg(
                     xreg(next_xreg).to_real_reg(),
                     I64,
@@ -276,7 +284,8 @@ impl ABIMachineImpl for AArch64MachineImpl {
         Inst::Ret
     }
 
-    fn gen_add_imm(into_reg: Writable<Reg>, from_reg: Reg, imm: u64) -> SmallVec<[Inst; 4]> {
+    fn gen_add_imm(into_reg: Writable<Reg>, from_reg: Reg, imm: u32) -> SmallVec<[Inst; 4]> {
+        let imm = imm as u64;
         let mut insts = SmallVec::new();
         if let Some(imm12) = Imm12::maybe_from_u64(imm) {
             insts.push(Inst::AluRRImm12 {
@@ -287,6 +296,7 @@ impl ABIMachineImpl for AArch64MachineImpl {
             });
         } else {
             let scratch2 = writable_tmp2_reg();
+            assert_ne!(scratch2.to_reg(), from_reg);
             insts.extend(Inst::load_constant(scratch2, imm.into()));
             insts.push(Inst::AluRRRExtend {
                 alu_op: ALUOp::Add64,
@@ -301,11 +311,12 @@ impl ABIMachineImpl for AArch64MachineImpl {
 
     fn gen_stack_lower_bound_trap(limit_reg: Reg) -> SmallVec<[Inst; 2]> {
         let mut insts = SmallVec::new();
-        insts.push(Inst::AluRRR {
-            alu_op: ALUOp::SubS64XR,
+        insts.push(Inst::AluRRRExtend {
+            alu_op: ALUOp::SubS64,
             rd: writable_zero_reg(),
             rn: stack_reg(),
             rm: limit_reg,
+            extendop: ExtendOp::UXTX,
         });
         insts.push(Inst::TrapIf {
             trap_info: (ir::SourceLoc::default(), ir::TrapCode::StackOverflow),
@@ -325,29 +336,29 @@ impl ABIMachineImpl for AArch64MachineImpl {
         Inst::LoadAddr { rd: into_reg, mem }
     }
 
-    fn get_fixed_tmp_reg() -> Reg {
+    fn get_stacklimit_reg() -> Reg {
         spilltmp_reg()
     }
 
-    fn gen_load_base_offset(into_reg: Writable<Reg>, base: Reg, offset: i64, ty: Type) -> Inst {
-        let mem = AMode::RegOffset(base, offset, ty);
+    fn gen_load_base_offset(into_reg: Writable<Reg>, base: Reg, offset: i32, ty: Type) -> Inst {
+        let mem = AMode::RegOffset(base, offset as i64, ty);
         Inst::gen_load(into_reg, mem, ty)
     }
 
-    fn gen_store_base_offset(base: Reg, offset: i64, from_reg: Reg, ty: Type) -> Inst {
-        let mem = AMode::RegOffset(base, offset, ty);
+    fn gen_store_base_offset(base: Reg, offset: i32, from_reg: Reg, ty: Type) -> Inst {
+        let mem = AMode::RegOffset(base, offset as i64, ty);
         Inst::gen_store(mem, from_reg, ty)
     }
 
-    fn gen_sp_reg_adjust(amount: i64) -> SmallVec<[Inst; 2]> {
+    fn gen_sp_reg_adjust(amount: i32) -> SmallVec<[Inst; 2]> {
         if amount == 0 {
             return SmallVec::new();
         }
 
         let (amount, is_sub) = if amount > 0 {
-            (u64::try_from(amount).unwrap(), false)
+            (amount as u64, false)
         } else {
-            (u64::try_from(-amount).unwrap(), true)
+            (-amount as u64, true)
         };
 
         let alu_op = if is_sub { ALUOp::Sub64 } else { ALUOp::Add64 };
@@ -363,10 +374,7 @@ impl ABIMachineImpl for AArch64MachineImpl {
             ret.push(adj_inst);
         } else {
             let tmp = writable_spilltmp_reg();
-            let const_inst = Inst::LoadConst64 {
-                rd: tmp,
-                const_data: amount,
-            };
+            let const_inst = Inst::load_constant(tmp, amount);
             let adj_inst = Inst::AluRRRExtend {
                 alu_op,
                 rd: writable_stack_reg(),
@@ -374,14 +382,16 @@ impl ABIMachineImpl for AArch64MachineImpl {
                 rm: tmp.to_reg(),
                 extendop: ExtendOp::UXTX,
             };
-            ret.push(const_inst);
+            ret.extend(const_inst);
             ret.push(adj_inst);
         }
         ret
     }
 
-    fn gen_nominal_sp_adj(offset: i64) -> Inst {
-        Inst::VirtualSPOffsetAdj { offset }
+    fn gen_nominal_sp_adj(offset: i32) -> Inst {
+        Inst::VirtualSPOffsetAdj {
+            offset: offset as i64,
+        }
     }
 
     fn gen_prologue_frame_setup() -> SmallVec<[Inst; 2]> {
@@ -544,11 +554,12 @@ impl ABIMachineImpl for AArch64MachineImpl {
         defs: Vec<Writable<Reg>>,
         loc: SourceLoc,
         opcode: ir::Opcode,
-    ) -> SmallVec<[(/* is_safepoint = */ bool, Inst); 2]> {
+        tmp: Writable<Reg>,
+    ) -> SmallVec<[(InstIsSafepoint, Inst); 2]> {
         let mut insts = SmallVec::new();
         match &dest {
             &CallDest::ExtName(ref name, RelocDistance::Near) => insts.push((
-                true,
+                InstIsSafepoint::Yes,
                 Inst::Call {
                     info: Box::new(CallInfo {
                         dest: name.clone(),
@@ -561,19 +572,19 @@ impl ABIMachineImpl for AArch64MachineImpl {
             )),
             &CallDest::ExtName(ref name, RelocDistance::Far) => {
                 insts.push((
-                    false,
+                    InstIsSafepoint::No,
                     Inst::LoadExtName {
-                        rd: writable_spilltmp_reg(),
+                        rd: tmp,
                         name: Box::new(name.clone()),
                         offset: 0,
                         srcloc: loc,
                     },
                 ));
                 insts.push((
-                    true,
+                    InstIsSafepoint::Yes,
                     Inst::CallInd {
                         info: Box::new(CallIndInfo {
-                            rn: spilltmp_reg(),
+                            rn: tmp.to_reg(),
                             uses,
                             defs,
                             loc,
@@ -583,7 +594,7 @@ impl ABIMachineImpl for AArch64MachineImpl {
                 ));
             }
             &CallDest::Reg(reg) => insts.push((
-                true,
+                InstIsSafepoint::Yes,
                 Inst::CallInd {
                     info: Box::new(CallIndInfo {
                         rn: *reg,
@@ -599,7 +610,7 @@ impl ABIMachineImpl for AArch64MachineImpl {
         insts
     }
 
-    fn get_spillslot_size(rc: RegClass, ty: Type) -> u32 {
+    fn get_number_of_spillslots_for_value(rc: RegClass, ty: Type) -> u32 {
         // We allocate in terms of 8-byte slots.
         match (rc, ty) {
             (RegClass::I64, _) => 1,
@@ -689,9 +700,10 @@ fn get_callee_saves(
             }
         }
     }
-    // Sort registers for deterministic code output.
-    int_saves.sort_by_key(|r| r.to_reg().get_index());
-    vec_saves.sort_by_key(|r| r.to_reg().get_index());
+    // Sort registers for deterministic code output. We can do an unstable sort because the
+    // registers will be unique (there are no dups).
+    int_saves.sort_unstable_by_key(|r| r.to_reg().get_index());
+    vec_saves.sort_unstable_by_key(|r| r.to_reg().get_index());
     (int_saves, vec_saves)
 }
 

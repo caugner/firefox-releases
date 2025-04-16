@@ -616,8 +616,6 @@ class nsIFrame : public nsQueryFrame {
   using Result = mozilla::Result<T, E>;
   using Nothing = mozilla::Nothing;
   using OnNonvisible = mozilla::OnNonvisible;
-  template <typename T = void>
-  using PropertyDescriptor = const mozilla::FramePropertyDescriptor<T>*;
   using ReflowInput = mozilla::ReflowInput;
   using ReflowOutput = mozilla::ReflowOutput;
   using Visibility = mozilla::Visibility;
@@ -2674,85 +2672,48 @@ class nsIFrame : public nsQueryFrame {
   virtual mozilla::AspectRatio GetIntrinsicRatio();
 
   /**
-   * Bit-flags to pass to ComputeSize in |aFlags| parameter.
-   */
-  enum ComputeSizeFlags {
-    eDefault = 0,
-    /**
-     * Set if the frame is in a context where non-replaced blocks should
-     * shrink-wrap (e.g., it's floating, absolutely positioned, or
-     * inline-block).
-     */
-    eShrinkWrap = 1 << 0,
-    /**
-     * Set if we'd like to compute our 'auto' bsize, regardless of our actual
-     * corresponding computed value. (e.g. to get an intrinsic height for flex
-     * items with "min-height: auto" to use during flexbox layout.)
-     */
-    eUseAutoBSize = 1 << 1,
-    /**
-     * Indicates that we should clamp the margin-box min-size to the given CB
-     * size.  This is used for implementing the grid area clamping here:
-     * https://drafts.csswg.org/css-grid/#min-size-auto
-     */
-    eIClampMarginBoxMinSize = 1 << 2,  // clamp in our inline axis
-    eBClampMarginBoxMinSize = 1 << 3,  // clamp in our block axis
-    /**
-     * The frame is stretching (per CSS Box Alignment) and doesn't have an
-     * Automatic Minimum Size in the indicated axis.
-     * (may be used for both flex/grid items, but currently only used for Grid)
-     * https://drafts.csswg.org/css-grid/#min-size-auto
-     * https://drafts.csswg.org/css-align-3/#valdef-justify-self-stretch
-     */
-    eIApplyAutoMinSize = 1 << 4,  // only has an effect when eShrinkWrap is
-                                  // false
-  };
-
-  /**
    * Compute the size that a frame will occupy.  Called while
    * constructing the ReflowInput to be used to Reflow the frame,
    * in order to fill its mComputedWidth and mComputedHeight member
    * variables.
    *
-   * The |height| member of the return value may be
-   * NS_UNCONSTRAINEDSIZE, but the |width| member must not be.
-   *
    * Note that the reason that border and padding need to be passed
    * separately is so that the 'box-sizing' property can be handled.
    * Thus aMargin includes absolute positioning offsets as well.
    *
-   * @param aWritingMode  The writing mode to use for the returned size
-   *                      (need not match this frame's writing mode).
-   *                      This is also the writing mode of the passed-in
-   *                      LogicalSize parameters.
+   * @param aWM  The writing mode to use for the returned size (need not match
+   *             this frame's writing mode). This is also the writing mode of
+   *             the passed-in LogicalSize parameters.
    * @param aCBSize  The size of the element's containing block.  (Well,
-   *                 the |height| component isn't really.)
-   * @param aAvailableWidth  The available width for 'auto' widths.
-   *                         This is usually the same as aCBSize.width,
+   *                 the BSize() component isn't really.)
+   * @param aAvailableISize  The available inline-size for 'auto' inline-size.
+   *                         This is usually the same as aCBSize.ISize(),
    *                         but differs in cases such as block
    *                         formatting context roots next to floats, or
    *                         in some cases of float reflow in quirks
    *                         mode.
-   * @param aMargin  The sum of the vertical / horizontal margins
-   *                 ***AND*** absolute positioning offsets (top, right,
-   *                 bottom, left) of the frame, including actual values
+   * @param aMargin  The sum of the inline / block margins ***AND***
+   *                 absolute positioning offsets (inset-block and
+   *                 inset-inline) of the frame, including actual values
    *                 resulting from percentages and from the
    *                 "hypothetical box" for absolute positioning, but
    *                 not including actual values resulting from 'auto'
    *                 margins or ignored 'auto' values in absolute
    *                 positioning.
-   * @param aBorder  The sum of the vertical / horizontal border widths
-   *                 of the frame.
-   * @param aPadding The sum of the vertical / horizontal margins of
-   *                 the frame, including actual values resulting from
-   *                 percentages.
-   * @param aFlags   Flags to further customize behavior (definitions above).
+   * @param aBorderPadding  The sum of the frame's inline / block border-widths
+   *                        and padding (including actual values resulting from
+   *                        percentage padding values).
+   * @param aFlags   Flags to further customize behavior (definitions in
+   *                 LayoutConstants.h).
    *
-   * The return value includes the computed LogicalSize and the enum class which
-   * indicates whether the inline/block size is affected by aspect-ratio or not.
-   * We need this information during reflow because the final size may be
-   * affected by the content size after applying aspect-ratio.
+   * The return value includes the computed LogicalSize and AspectRatioUsage
+   * which indicates whether the inline/block size is affected by aspect-ratio
+   * or not. The BSize() of the returned LogicalSize may be
+   * NS_UNCONSTRAINEDSIZE, but the ISize() must not be. We need AspectRatioUsage
+   * during reflow because the final size may be affected by the content size
+   * after applying aspect-ratio.
    * https://drafts.csswg.org/css-sizing-4/#aspect-ratio-minimum
+   *
    */
   enum class AspectRatioUsage : uint8_t {
     None,
@@ -2766,37 +2727,38 @@ class nsIFrame : public nsQueryFrame {
   virtual SizeComputationResult ComputeSize(
       gfxContext* aRenderingContext, mozilla::WritingMode aWM,
       const mozilla::LogicalSize& aCBSize, nscoord aAvailableISize,
-      const mozilla::LogicalSize& aMargin, const mozilla::LogicalSize& aBorder,
-      const mozilla::LogicalSize& aPadding, ComputeSizeFlags aFlags);
+      const mozilla::LogicalSize& aMargin,
+      const mozilla::LogicalSize& aBorderPadding,
+      mozilla::ComputeSizeFlags aFlags);
 
  protected:
   /**
    * A helper, used by |nsIFrame::ComputeSize| (for frames that need to
    * override only this part of ComputeSize), that computes the size
-   * that should be returned when 'width', 'height', and
-   * min/max-width/height are all 'auto' or equivalent.
+   * that should be returned when inline-size, block-size, and
+   * [min|max]-[inline-size|block-size] are all 'auto' or equivalent.
    *
-   * In general, frames that can accept any computed width/height should
-   * override only ComputeAutoSize, and frames that cannot do so need to
-   * override ComputeSize to enforce their width/height invariants.
+   * In general, frames that can accept any computed inline-size/block-size
+   * should override only ComputeAutoSize, and frames that cannot do so need to
+   * override ComputeSize to enforce their inline-size/block-size invariants.
    *
    * Implementations may optimize by returning a garbage width if
-   * StylePosition()->mWidth.GetUnit() != eStyleUnit_Auto, and
-   * likewise for height, since in such cases the result is guaranteed
-   * to be unused.
+   * StylePosition()->ISize() is not 'auto', and likewise for BSize(), since in
+   * such cases the result is guaranteed to be unused.
    */
   virtual mozilla::LogicalSize ComputeAutoSize(
       gfxContext* aRenderingContext, mozilla::WritingMode aWM,
       const mozilla::LogicalSize& aCBSize, nscoord aAvailableISize,
-      const mozilla::LogicalSize& aMargin, const mozilla::LogicalSize& aBorder,
-      const mozilla::LogicalSize& aPadding, ComputeSizeFlags aFlags);
+      const mozilla::LogicalSize& aMargin,
+      const mozilla::LogicalSize& aBorderPadding,
+      mozilla::ComputeSizeFlags aFlags);
 
   /**
    * Utility function for ComputeAutoSize implementations.  Return
    * max(GetMinISize(), min(aISizeInCB, GetPrefISize()))
    */
   nscoord ShrinkWidthToFit(gfxContext* aRenderingContext, nscoord aISizeInCB,
-                           ComputeSizeFlags aFlags);
+                           mozilla::ComputeSizeFlags aFlags);
 
  public:
   /**
@@ -3791,8 +3753,10 @@ class nsIFrame : public nsQueryFrame {
      * indicates that we arrived at its end.
      */
     int32_t mOffset = 0;
-    /** whether this frame and the returned frame are on different lines */
+    /** whether the input frame and the returned frame are on different lines */
     bool mJumpedLine = false;
+    /** whether we met a hard break between the input and the returned frame */
+    bool mJumpedHardBreak = false;
     /** whether we jumped over a non-selectable frame during the search */
     bool mMovedOverNonSelectableText = false;
 
@@ -4048,7 +4012,14 @@ class nsIFrame : public nsQueryFrame {
   bool IsStackingContext(const nsStyleDisplay*, const nsStyleEffects*);
   bool IsStackingContext();
 
-  virtual bool HonorPrintBackgroundSettings() { return true; }
+  virtual bool HonorPrintBackgroundSettings() const { return true; }
+
+  // Whether we should paint backgrounds or not.
+  struct ShouldPaintBackground {
+    bool mColor = false;
+    bool mImage = false;
+  };
+  ShouldPaintBackground ComputeShouldPaintBackground() const;
 
   /**
    * Determine whether the frame is logically empty, which is roughly
@@ -4110,10 +4081,19 @@ class nsIFrame : public nsQueryFrame {
     return mProperties.Has(aProperty);
   }
 
-  // Add a property, or update an existing property for the given descriptor.
+  /**
+   * Add a property, or update an existing property for the given descriptor.
+   *
+   * Note: This function asserts if updating an existing nsFrameList property.
+   */
   template <typename T>
   void SetProperty(FrameProperties::Descriptor<T> aProperty,
                    FrameProperties::PropertyType<T> aValue) {
+    if constexpr (std::is_same_v<T, nsFrameList>) {
+      MOZ_ASSERT(aValue, "Shouldn't set nullptr to a nsFrameList property!");
+      MOZ_ASSERT(!HasProperty(aProperty),
+                 "Shouldn't update an existing nsFrameList property!");
+    }
     mProperties.Set(aProperty, aValue, this);
   }
 
@@ -4125,6 +4105,13 @@ class nsIFrame : public nsQueryFrame {
     mProperties.Add(aProperty, aValue);
   }
 
+  /**
+   * Remove a property and return its value without destroying it. May return
+   * nullptr.
+   *
+   * Note: The caller is responsible for handling the life cycle of the returned
+   * value.
+   */
   template <typename T>
   [[nodiscard]] FrameProperties::PropertyType<T> TakeProperty(
       FrameProperties::Descriptor<T> aProperty, bool* aFoundResult = nullptr) {
@@ -4709,14 +4696,15 @@ class nsIFrame : public nsQueryFrame {
                             nscoord aContainingBlockISize,
                             nscoord aContentEdgeToBoxSizing,
                             nscoord aBoxSizingToMarginEdge,
-                            StyleExtremumLength aSize, ComputeSizeFlags aFlags);
+                            StyleExtremumLength aSize,
+                            mozilla::ComputeSizeFlags aFlags);
 
   nscoord ComputeISizeValue(gfxContext* aRenderingContext,
                             nscoord aContainingBlockISize,
                             nscoord aContentEdgeToBoxSizing,
                             nscoord aBoxSizingToMarginEdge,
                             const LengthPercentage& aSize,
-                            ComputeSizeFlags aFlags);
+                            mozilla::ComputeSizeFlags aFlags);
 
   template <typename SizeOrMaxSize>
   nscoord ComputeISizeValue(gfxContext* aRenderingContext,
@@ -4724,7 +4712,7 @@ class nsIFrame : public nsQueryFrame {
                             nscoord aContentEdgeToBoxSizing,
                             nscoord aBoxSizingToMarginEdge,
                             const SizeOrMaxSize& aSize,
-                            ComputeSizeFlags aFlags = eDefault) {
+                            mozilla::ComputeSizeFlags aFlags = {}) {
     MOZ_ASSERT(aSize.IsExtremumLength() || aSize.IsLengthPercentage(),
                "This doesn't handle auto / none");
     if (aSize.IsLengthPercentage()) {
@@ -5185,6 +5173,8 @@ class nsIFrame : public nsQueryFrame {
     //    non-whitespace and whitespace), then mSawBeforeType==true means "we
     //    already saw some non-whitespace".
     bool mSawBeforeType;
+    // true when we've encountered at least one non-newline character
+    bool mSawInlineCharacter;
     // true when the last character encountered was punctuation
     bool mLastCharWasPunctuation;
     // true when the last character encountered was whitespace
@@ -5199,10 +5189,12 @@ class nsIFrame : public nsQueryFrame {
     PeekWordState()
         : mAtStart(true),
           mSawBeforeType(false),
+          mSawInlineCharacter(false),
           mLastCharWasPunctuation(false),
           mLastCharWasWhitespace(false),
           mSeenNonPunctuationSinceWhitespace(false) {}
     void SetSawBeforeType() { mSawBeforeType = true; }
+    void SetSawInlineCharacter() { mSawInlineCharacter = true; }
     void Update(bool aAfterPunctuation, bool aAfterWhitespace) {
       mLastCharWasPunctuation = aAfterPunctuation;
       mLastCharWasWhitespace = aAfterWhitespace;
@@ -5734,6 +5726,7 @@ template <bool IsLessThanOrEqual(nsIFrame*, nsIFrame*)>
 template <bool IsLessThanOrEqual(nsIFrame*, nsIFrame*)>
 /* static */ void nsIFrame::SortFrameList(nsFrameList& aFrameList) {
   nsIFrame* head = MergeSort<IsLessThanOrEqual>(aFrameList.FirstChild());
+  aFrameList.Clear();
   aFrameList = nsFrameList(head, nsLayoutUtils::GetLastSibling(head));
   MOZ_ASSERT(IsFrameListSorted<IsLessThanOrEqual>(aFrameList),
              "After we sort a frame list, it should be in sorted order...");

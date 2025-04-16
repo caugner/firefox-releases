@@ -16,6 +16,7 @@
 #include "vm/GlobalObject.h"
 #include "vm/JSContext.h"     // JSContext
 #include "vm/RegExpObject.h"  // RegexpObject
+#include "vm/Scope.h"         // GlobalScope
 
 using namespace js;
 using namespace js::frontend;
@@ -24,14 +25,22 @@ bool GCThingList::append(FunctionBox* funbox, GCThingIndex* index) {
   // Append the function to the vector and return the index in *index.
   *index = GCThingIndex(vector.length());
 
-  return vector.append(mozilla::AsVariant(funbox->index()));
+  if (!vector.append(mozilla::AsVariant(funbox->index()))) {
+    js::ReportOutOfMemory(cx);
+    return false;
+  }
+  return true;
 }
 
 AbstractScopePtr GCThingList::getScope(size_t index) const {
   const ScriptThingVariant& elem = vector[index];
   if (elem.is<EmptyGlobalScopeType>()) {
-    MOZ_ASSERT(compilationInfo.enclosingScope == nullptr);
-    return AbstractScopePtr(&compilationInfo.cx->global()->emptyGlobalScope());
+    // The empty enclosing scope should be stored by
+    // CompilationInput::initForSelfHostingGlobal.
+    MOZ_ASSERT(compilationInfo.input.enclosingScope);
+    MOZ_ASSERT(
+        !compilationInfo.input.enclosingScope->as<GlobalScope>().hasBindings());
+    return AbstractScopePtr(compilationInfo.input.enclosingScope);
   }
   return AbstractScopePtr(compilationInfo, elem.as<ScopeIndex>());
 }
@@ -46,6 +55,7 @@ mozilla::Maybe<ScopeIndex> GCThingList::getScopeIndex(size_t index) const {
 
 bool js::frontend::EmitScriptThingsVector(JSContext* cx,
                                           CompilationInfo& compilationInfo,
+                                          CompilationGCOutput& gcOutput,
                                           const ScriptThingsVector& objects,
                                           mozilla::Span<JS::GCCellPtr> output) {
   MOZ_ASSERT(objects.length() <= INDEX_LIMIT);
@@ -54,12 +64,17 @@ bool js::frontend::EmitScriptThingsVector(JSContext* cx,
   struct Matcher {
     JSContext* cx;
     CompilationInfo& compilationInfo;
+    CompilationGCOutput& gcOutput;
     uint32_t i;
     mozilla::Span<JS::GCCellPtr>& output;
 
     bool operator()(const ScriptAtom& data) {
-      JSAtom* atom = data;
-      output[i] = JS::GCCellPtr(atom);
+      auto maybeAtom = data->toJSAtom(cx, compilationInfo);
+      if (maybeAtom.isErr()) {
+        return false;
+      }
+      MOZ_ASSERT(maybeAtom.unwrap());
+      output[i] = JS::GCCellPtr(maybeAtom.unwrap());
       return true;
     }
 
@@ -69,7 +84,7 @@ bool js::frontend::EmitScriptThingsVector(JSContext* cx,
     }
 
     bool operator()(const BigIntIndex& index) {
-      BigIntStencil& data = compilationInfo.bigIntData[index];
+      BigIntStencil& data = compilationInfo.stencil.bigIntData[index];
       BigInt* bi = data.createBigInt(cx);
       if (!bi) {
         return false;
@@ -79,7 +94,7 @@ bool js::frontend::EmitScriptThingsVector(JSContext* cx,
     }
 
     bool operator()(const RegExpIndex& rindex) {
-      RegExpStencil& data = compilationInfo.regExpData[rindex];
+      RegExpStencil& data = compilationInfo.stencil.regExpData[rindex];
       RegExpObject* regexp = data.createRegExp(cx);
       if (!regexp) {
         return false;
@@ -89,8 +104,8 @@ bool js::frontend::EmitScriptThingsVector(JSContext* cx,
     }
 
     bool operator()(const ObjLiteralIndex& index) {
-      ObjLiteralStencil& data = compilationInfo.objLiteralData[index];
-      JSObject* obj = data.create(cx);
+      ObjLiteralStencil& data = compilationInfo.stencil.objLiteralData[index];
+      JSObject* obj = data.create(cx, compilationInfo);
       if (!obj) {
         return false;
       }
@@ -99,12 +114,12 @@ bool js::frontend::EmitScriptThingsVector(JSContext* cx,
     }
 
     bool operator()(const ScopeIndex& index) {
-      output[i] = JS::GCCellPtr(compilationInfo.scopes[index].get());
+      output[i] = JS::GCCellPtr(gcOutput.scopes[index].get());
       return true;
     }
 
     bool operator()(const FunctionIndex& index) {
-      output[i] = JS::GCCellPtr(compilationInfo.functions[index]);
+      output[i] = JS::GCCellPtr(gcOutput.functions[index]);
       return true;
     }
 
@@ -116,7 +131,7 @@ bool js::frontend::EmitScriptThingsVector(JSContext* cx,
   };
 
   for (uint32_t i = 0; i < objects.length(); i++) {
-    Matcher m{cx, compilationInfo, i, output};
+    Matcher m{cx, compilationInfo, gcOutput, i, output};
     if (!objects[i].match(m)) {
       return false;
     }
@@ -163,8 +178,9 @@ void CGScopeNoteList::recordEndImpl(uint32_t index, uint32_t offset) {
   list[index].length = offset - list[index].start;
 }
 
-JSObject* ObjLiteralStencil::create(JSContext* cx) const {
-  return InterpretObjLiteral(cx, atoms_, writer_);
+JSObject* ObjLiteralStencil::create(JSContext* cx,
+                                    CompilationInfo& compilationInfo) const {
+  return InterpretObjLiteral(cx, compilationInfo, atoms_, writer_);
 }
 
 BytecodeSection::BytecodeSection(JSContext* cx, uint32_t lineNum)

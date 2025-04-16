@@ -598,9 +598,10 @@ nsresult TextEditor::SetTextAsSubAction(const nsAString& aString) {
     //     we can saving the expensive cost of modifying `Selection` here.
     nsresult rv;
     if (IsEmpty()) {
-      rv = SelectionRefPtr()->Collapse(rootElement, 0);
-      NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
-                           "Selection::Collapse() failed, but ignored");
+      rv = SelectionRefPtr()->CollapseInLimiter(rootElement, 0);
+      NS_WARNING_ASSERTION(
+          NS_SUCCEEDED(rv),
+          "Selection::CollapseInLimiter() failed, but ignored");
     } else {
       // XXX Oh, we shouldn't select padding `<br>` element for empty last
       //     line here since we will need to recreate it in multiline
@@ -1149,9 +1150,16 @@ bool TextEditor::FireClipboardEvent(EventMessage aEventMessage,
     return false;
   }
 
-  if (!nsCopySupport::FireClipboardEvent(
-          aEventMessage, aSelectionType, presShell,
-          MOZ_KnownLive(SelectionRefPtr()), aActionTaken)) {
+  RefPtr<Selection> sel = SelectionRefPtr();
+  if (IsHTMLEditor() && aEventMessage == eCopy && sel->IsCollapsed()) {
+    // If we don't have a usable selection for copy and we're an HTML editor
+    // (which is global for the document) try to use the last focused selection
+    // instead.
+    sel = nsCopySupport::GetSelectionForCopy(GetDocument());
+  }
+
+  if (!nsCopySupport::FireClipboardEvent(aEventMessage, aSelectionType,
+                                         presShell, sel, aActionTaken)) {
     return false;
   }
 
@@ -1192,17 +1200,18 @@ nsresult TextEditor::CutAsAction(nsIPrincipal* aPrincipal) {
   return EditorBase::ToGenericNSResult(rv);
 }
 
+bool TextEditor::AreClipboardCommandsUnconditionallyEnabled() const {
+  Document* document = GetDocument();
+  return document && document->AreClipboardCommandsUnconditionallyEnabled();
+}
+
 bool TextEditor::IsCutCommandEnabled() const {
   AutoEditActionDataSetter editActionData(*this, EditAction::eNotEditing);
   if (NS_WARN_IF(!editActionData.CanHandle())) {
     return false;
   }
 
-  // Cut is always enabled in HTML documents, but if the document is chrome,
-  // let it control it.
-  Document* document = GetDocument();
-  if (document && document->IsHTMLOrXHTML() &&
-      !nsContentUtils::IsChromeDoc(document)) {
+  if (AreClipboardCommandsUnconditionallyEnabled()) {
     return true;
   }
 
@@ -1228,11 +1237,7 @@ bool TextEditor::IsCopyCommandEnabled() const {
     return false;
   }
 
-  // Copy is always enabled in HTML documents, but if the document is chrome,
-  // let it control it.
-  Document* document = GetDocument();
-  if (document && document->IsHTMLOrXHTML() &&
-      !nsContentUtils::IsChromeDoc(document)) {
+  if (AreClipboardCommandsUnconditionallyEnabled()) {
     return true;
   }
 
@@ -1545,8 +1550,9 @@ nsresult TextEditor::SelectEntireDocument() {
   // If we're empty, don't select all children because that would select the
   // padding <br> element for empty editor.
   if (IsEmpty()) {
-    nsresult rv = SelectionRefPtr()->Collapse(anonymousDivElement, 0);
-    NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "Selection::Collapse() failed");
+    nsresult rv = SelectionRefPtr()->CollapseInLimiter(anonymousDivElement, 0);
+    NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                         "Selection::CollapseInLimiter() failed");
     return rv;
   }
 

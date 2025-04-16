@@ -15,6 +15,14 @@ interface nsIPrinter : nsISupports
   readonly attribute AString name;
 
   /**
+   * The system name of the printer.
+   *
+   * This may be faster for lookup in nsIPrinterList functions, but will only
+   * work for functions that will accept the system name.
+   */
+  readonly attribute AString systemName;
+
+  /**
    * Creates a Promise that will resolve to an nsIPrintSettings object containing
    * the default settings for this printer. For convenience, a new, mutable
    * nsIPrintSettings object is created for each call.
@@ -43,6 +51,13 @@ interface nsIPrinter : nsISupports
    */
   [implicit_jscontext]
   readonly attribute Promise supportsColor;
+
+  /**
+   * Returns a Promise that resolves to true or false to indicate whether this
+   * printer supports monochrome printing.
+   */
+  [implicit_jscontext]
+  readonly attribute Promise supportsMonochrome;
 
   /**
    * Returns a Promise that resolves to true or false to indicate whether this

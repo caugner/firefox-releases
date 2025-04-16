@@ -69,7 +69,6 @@ struct JSClass;
 namespace js {
 
 class AutoAssertNoContentJS;
-class AutoKeepAtoms;
 class EnterDebuggeeNoExecute;
 #ifdef JS_TRACE_LOGGING
 class TraceLoggerThread;
@@ -231,8 +230,15 @@ struct SelfHostedLazyScript {
   // in BaseScript::jitCodeRaw_.
   uint8_t* jitCodeRaw_ = nullptr;
 
+  // Warm-up count of zero. This field is stored at the same offset as
+  // BaseScript::warmUpData_.
+  ScriptWarmUpData warmUpData_ = {};
+
   static constexpr size_t offsetOfJitCodeRaw() {
     return offsetof(SelfHostedLazyScript, jitCodeRaw_);
+  }
+  static constexpr size_t offsetOfWarmUpData() {
+    return offsetof(SelfHostedLazyScript, warmUpData_);
   }
 };
 

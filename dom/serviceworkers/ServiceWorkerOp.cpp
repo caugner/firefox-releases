@@ -610,7 +610,7 @@ class LifeCycleEventOp final : public ExtendableEventOp {
       RejectAll(rv);
     }
 
-    return DispatchFailed(rv);
+    return !DispatchFailed(rv);
   }
 };
 
@@ -689,7 +689,7 @@ class PushEventOp final : public ExtendableEventOp {
                   nsIPushErrorReporter::DELIVERY_UNCAUGHT_EXCEPTION);
     }
 
-    return DispatchFailed(rv);
+    return !DispatchFailed(rv);
   }
 
   void FinishedWithResult(ExtendableEventResult aResult) override {
@@ -765,7 +765,7 @@ class PushSubscriptionChangeEventOp final : public ExtendableEventOp {
       RejectAll(rv);
     }
 
-    return DispatchFailed(rv);
+    return !DispatchFailed(rv);
   }
 };
 
@@ -894,7 +894,7 @@ class NotificationEventOp : public ExtendableEventOp,
       FinishedWithResult(Rejected);
     }
 
-    return DispatchFailed(rv);
+    return !DispatchFailed(rv);
   }
 
   void FinishedWithResult(ExtendableEventResult aResult) override {
@@ -968,7 +968,7 @@ class MessageEventOp final : public ExtendableEventOp {
     if (!mData->TakeTransferredPortsAsSequence(ports)) {
       RejectAll(NS_ERROR_FAILURE);
       rv.SuppressException();
-      return true;
+      return false;
     }
 
     RootedDictionary<ExtendableMessageEventInit> init(aCx);
@@ -992,13 +992,13 @@ class MessageEventOp final : public ExtendableEventOp {
     if (NS_WARN_IF(NS_FAILED(result))) {
       RejectAll(result);
       rv.SuppressException();
-      return true;
+      return false;
     }
 
     nsCString origin;
     mozUrl->Origin(origin);
 
-    init.mOrigin = NS_ConvertUTF8toUTF16(origin);
+    CopyUTF8toUTF16(origin, init.mOrigin);
 
     init.mSource.SetValue().SetAsClient() = new Client(
         sgo, mArgs.get_ServiceWorkerMessageEventOpArgs().clientInfoAndState());
@@ -1019,7 +1019,7 @@ class MessageEventOp final : public ExtendableEventOp {
       RejectAll(rv2);
     }
 
-    return DispatchFailed(rv2);
+    return !DispatchFailed(rv2);
   }
 
   RefPtr<ServiceWorkerCloneData> mData;
@@ -1297,7 +1297,7 @@ void FetchEventOp::GetRequestURL(nsAString& aOutRequestURL) {
       mArgs.get_ServiceWorkerFetchEventOpArgs().internalRequest().urlList();
   MOZ_ASSERT(!urls.IsEmpty());
 
-  aOutRequestURL = NS_ConvertUTF8toUTF16(urls.LastElement());
+  CopyUTF8toUTF16(urls.LastElement(), aOutRequestURL);
 }
 
 void FetchEventOp::ResolvedCallback(JSContext* aCx,

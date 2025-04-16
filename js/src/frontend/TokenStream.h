@@ -205,6 +205,7 @@
 
 #include "frontend/CompilationInfo.h"
 #include "frontend/ErrorReporter.h"
+#include "frontend/ParserAtom.h"
 #include "frontend/Token.h"
 #include "frontend/TokenKind.h"
 #include "js/CompileOptions.h"
@@ -223,13 +224,11 @@ struct KeywordInfo;
 
 namespace js {
 
-class AutoKeepAtoms;
-
 namespace frontend {
 
-extern TokenKind ReservedWordTokenKind(PropertyName* str);
+extern TokenKind ReservedWordTokenKind(const ParserName* name);
 
-extern const char* ReservedWordToCharZ(PropertyName* str);
+extern const char* ReservedWordToCharZ(const ParserName* name);
 
 extern const char* ReservedWordToCharZ(TokenKind tt);
 
@@ -295,16 +294,8 @@ class TokenStreamSpecific;
 template <typename Unit>
 class MOZ_STACK_CLASS TokenStreamPosition final {
  public:
-  // The JS_HAZ_ROOTED is permissible below because: 1) the only field in
-  // TokenStreamPosition that can keep GC things alive is Token, 2) the only
-  // GC things Token can keep alive are atoms, and 3) the AutoKeepAtoms&
-  // passed to the constructor here represents that collection of atoms
-  // is disabled while atoms in Tokens in this Position are alive.  DON'T
-  // ADD NON-ATOM GC THING POINTERS HERE!  They would create a rooting
-  // hazard that JS_HAZ_ROOTED will cause to be ignored.
   template <class AnyCharsAccess>
-  inline TokenStreamPosition(
-      AutoKeepAtoms& keepAtoms,
+  inline explicit TokenStreamPosition(
       TokenStreamSpecific<Unit, AnyCharsAccess>& tokenStream);
 
  private:
@@ -325,7 +316,7 @@ class MOZ_STACK_CLASS TokenStreamPosition final {
   Token currentToken;
   unsigned lookahead;
   Token lookaheadTokens[TokenStreamShared::maxLookahead];
-} JS_HAZ_ROOTED;
+};
 
 template <typename Unit>
 class SourceUnits;
@@ -730,10 +721,10 @@ class TokenStreamAnyChars : public TokenStreamShared {
   MOZ_MUST_USE bool checkOptions();
 
  private:
-  PropertyName* reservedWordToPropertyName(TokenKind tt) const;
+  const ParserName* reservedWordToPropertyName(TokenKind tt) const;
 
  public:
-  PropertyName* currentName() const {
+  const ParserName* currentName() const {
     if (isCurrentTokenType(TokenKind::Name) ||
         isCurrentTokenType(TokenKind::PrivateName)) {
       return currentToken().name();
@@ -747,7 +738,8 @@ class TokenStreamAnyChars : public TokenStreamShared {
     if (isCurrentTokenType(TokenKind::Name) ||
         isCurrentTokenType(TokenKind::PrivateName)) {
       TokenPos pos = currentToken().pos;
-      return (pos.end - pos.begin) != currentToken().name()->length();
+      const ParserAtom* name = currentToken().name();
+      return (pos.end - pos.begin) != name->length();
     }
 
     MOZ_ASSERT(TokenKindIsPossibleIdentifierName(currentToken().type));
@@ -1507,6 +1499,8 @@ class TokenStreamCharsShared {
   using CharBuffer = Vector<char16_t, 32>;
 
  protected:
+  JSContext* cx;
+
   /**
    * Buffer transiently used to store sequences of identifier or string code
    * points when such can't be directly processed from the original source
@@ -1520,7 +1514,7 @@ class TokenStreamCharsShared {
  protected:
   explicit TokenStreamCharsShared(JSContext* cx,
                                   CompilationInfo* compilationInfo)
-      : charBuffer(cx), compilationInfo(compilationInfo) {}
+      : cx(cx), charBuffer(cx), compilationInfo(compilationInfo) {}
 
   MOZ_MUST_USE bool appendCodePointToCharBuffer(uint32_t codePoint);
 
@@ -1537,24 +1531,16 @@ class TokenStreamCharsShared {
     return mozilla::IsAscii(static_cast<char32_t>(unit));
   }
 
-  JSAtom* drainCharBufferIntoAtom() {
-    JSAtom* atom = AtomizeChars(this->compilationInfo->cx, charBuffer.begin(),
-                                charBuffer.length());
-    if (!atom) {
-      return nullptr;
-    }
-
+  const ParserAtom* drainCharBufferIntoAtom() {
     // Add to parser atoms table.
-#ifdef JS_PARSER_ATOMS
-    auto maybeId = this->compilationInfo->parserAtoms.internChar16(
-        this->compilationInfo->cx, charBuffer.begin(), charBuffer.length());
+    auto maybeId = this->compilationInfo->stencil.parserAtoms.internChar16(
+        cx, charBuffer.begin(), charBuffer.length());
     if (maybeId.isErr()) {
       return nullptr;
     }
-#endif  // JS_PARSER_ATOMS
 
     charBuffer.clear();
-    return atom;
+    return maybeId.unwrap();
   }
 
  protected:
@@ -1615,7 +1601,8 @@ class TokenStreamCharsBase : public TokenStreamCharsShared {
     sourceUnits.ungetCodeUnit();
   }
 
-  MOZ_ALWAYS_INLINE JSAtom* atomizeSourceChars(mozilla::Span<const Unit> units);
+  MOZ_ALWAYS_INLINE const ParserAtom* atomizeSourceChars(
+      mozilla::Span<const Unit> units);
 
   /**
    * Try to match a non-LineTerminator ASCII code point.  Return true iff it
@@ -1701,45 +1688,21 @@ inline void TokenStreamCharsBase<Unit>::consumeKnownCodeUnit(int32_t unit) {
 }
 
 template <>
-MOZ_ALWAYS_INLINE JSAtom* TokenStreamCharsBase<char16_t>::atomizeSourceChars(
+MOZ_ALWAYS_INLINE const ParserAtom*
+TokenStreamCharsBase<char16_t>::atomizeSourceChars(
     mozilla::Span<const char16_t> units) {
-  JSAtom* atom =
-      AtomizeChars(this->compilationInfo->cx, units.data(), units.size());
-  if (!atom) {
-    return nullptr;
-  }
-
-#ifdef JS_PARSER_ATOMS
-  auto maybeId = this->compilationInfo->parserAtoms.internChar16(
-      this->compilationInfo->cx, units.data(), units.size());
-  if (maybeId.isErr()) {
-    return nullptr;
-  }
-#endif  // JS_PARSER_ATOMS
-
-  return atom;
+  return this->compilationInfo->stencil.parserAtoms
+      .internChar16(cx, units.data(), units.size())
+      .unwrapOr(nullptr);
 }
 
 template <>
-/* static */ MOZ_ALWAYS_INLINE JSAtom*
+/* static */ MOZ_ALWAYS_INLINE const ParserAtom*
 TokenStreamCharsBase<mozilla::Utf8Unit>::atomizeSourceChars(
     mozilla::Span<const mozilla::Utf8Unit> units) {
-  auto chars = ToCharSpan(units);
-  JSAtom* atom =
-      AtomizeUTF8Chars(this->compilationInfo->cx, chars.data(), chars.size());
-  if (!atom) {
-    return nullptr;
-  }
-
-#ifdef JS_PARSER_ATOMS
-  auto maybeId = this->compilationInfo->parserAtoms.internUtf8(
-      this->compilationInfo->cx, units.data(), units.size());
-  if (maybeId.isErr()) {
-    return nullptr;
-  }
-#endif  // JS_PARSER_ATOMS
-
-  return atom;
+  return this->compilationInfo->stencil.parserAtoms
+      .internUtf8(cx, units.data(), units.size())
+      .unwrapOr(nullptr);
 }
 
 template <typename Unit>
@@ -2023,7 +1986,7 @@ class GeneralTokenStreamChars : public SpecializedTokenStreamCharsBase<Unit> {
     newToken(TokenKind::BigInt, start, modifier, out);
   }
 
-  void newAtomToken(TokenKind kind, JSAtom* atom, TokenStart start,
+  void newAtomToken(TokenKind kind, const ParserAtom* atom, TokenStart start,
                     TokenStreamShared::Modifier modifier, TokenKind* out) {
     MOZ_ASSERT(kind == TokenKind::String || kind == TokenKind::TemplateHead ||
                kind == TokenKind::NoSubsTemplate);
@@ -2032,13 +1995,13 @@ class GeneralTokenStreamChars : public SpecializedTokenStreamCharsBase<Unit> {
     token->setAtom(atom);
   }
 
-  void newNameToken(PropertyName* name, TokenStart start,
+  void newNameToken(const ParserName* name, TokenStart start,
                     TokenStreamShared::Modifier modifier, TokenKind* out) {
     Token* token = newToken(TokenKind::Name, start, modifier, out);
     token->setName(name);
   }
 
-  void newPrivateNameToken(PropertyName* name, TokenStart start,
+  void newPrivateNameToken(const ParserName* name, TokenStart start,
                            TokenStreamShared::Modifier modifier,
                            TokenKind* out) {
     Token* token = newToken(TokenKind::PrivateName, start, modifier, out);
@@ -2151,7 +2114,7 @@ class GeneralTokenStreamChars : public SpecializedTokenStreamCharsBase<Unit> {
    */
   void consumeOptionalHashbangComment();
 
-  JSAtom* getRawTemplateStringAtom() {
+  const ParserAtom* getRawTemplateStringAtom() {
     TokenStreamAnyChars& anyChars = anyCharsAccess();
 
     MOZ_ASSERT(anyChars.currentToken().type == TokenKind::TemplateHead ||
@@ -2910,7 +2873,6 @@ class MOZ_STACK_CLASS TokenStreamSpecific
 template <typename Unit>
 template <class AnyCharsAccess>
 inline TokenStreamPosition<Unit>::TokenStreamPosition(
-    AutoKeepAtoms& keepAtoms,
     TokenStreamSpecific<Unit, AnyCharsAccess>& tokenStream)
     : currentToken(tokenStream.anyCharsAccess().currentToken()) {
   TokenStreamAnyChars& anyChars = tokenStream.anyCharsAccess();

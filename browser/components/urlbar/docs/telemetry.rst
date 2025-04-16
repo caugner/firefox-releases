@@ -50,29 +50,6 @@ FX_URLBAR_SELECTED_RESULT_INDEX
   This probe tracks the indexes of picked results in the results list.
   It's an enumerated histogram with 17 buckets.
 
-FX_URLBAR_SELECTED_RESULT_TYPE
-  This probe was replaced with FX_URLBAR_SELECTED_RESULT_TYPE_2 in Firefox 78
-  because we needed more buckets.
-
-  This probe tracks the types of picked results.
-  It's an enumerated histogram with 14 buckets.
-  Values can be:
-
-    0. autofill
-    1. bookmark
-    2. history
-    3. keyword
-    4. searchengine
-    5. searchsuggestion
-    6. switchtab
-    7. tag
-    8. visiturl
-    9. remotetab
-    10. extension
-    11. preloaded-top-site
-    12. tip
-    13. topsite
-
 FX_URLBAR_SELECTED_RESULT_TYPE_2
   This probe tracks the types of picked results.
   It's an enumerated histogram with 32 buckets.
@@ -94,22 +71,14 @@ FX_URLBAR_SELECTED_RESULT_TYPE_2
     13. topsite
     14. formhistory
 
-FX_URLBAR_SELECTED_RESULT_INDEX_BY_TYPE
-  This probe was replaced with FX_URLBAR_SELECTED_RESULT_INDEX_BY_TYPE_2 in
-  Firefox 78 because we needed more buckets.
-
-  This probe tracks picked result type, for each one it tracks the index where
-  it appeared.
-  It's a keyed histogram where the keys are result types (see
-  SELECTED_RESULT_TYPES). For each key, this records the indexes of
-  picked results for that result type.
-
 FX_URLBAR_SELECTED_RESULT_INDEX_BY_TYPE_2
   This probe tracks picked result type, for each one it tracks the index where
   it appeared.
   It's a keyed histogram where the keys are result types (see
-  SELECTED_RESULT_TYPES). For each key, this records the indexes of
-  picked results for that result type.
+  `UrlbarUtils.SELECTED_RESULT_TYPES`_). For each key, this records the indexes
+  of picked results for that result type.
+
+  .. _UrlbarUtils.SELECTED_RESULT_TYPES: https://searchfox.org/mozilla-central/search?q=symbol:UrlbarUtils%23SELECTED_RESULT_TYPES&redirect=false
 
 Scalars
 -------
@@ -176,6 +145,44 @@ urlbar.tips
   - ``searchTip_redirect-shown``
     Incremented when the redirect search tip is shown.
 
+urlbar.searchmode.*
+  This is set of keyed scalars whose values are uints are are incremented each
+  time search mode is entered in the Urlbar. The suffix on the scalar name
+  describes how search mode was entered. Possibilities include:
+
+  - ``handoff``
+    Used when the user uses the search box on the new tab page and is handed off
+    to the address bar.
+  - ``keywordoffer``
+    Used when the user selects a keyword offer result.
+  - ``oneoff``
+    Used when the user selects a one-off engine in the Urlbar.
+  - ``shortcut``
+    Used when the user enters search mode with a keyboard shortcut or menu bar
+    item (e.g. ``Accel+K``).
+  - ``topsites_newtab``
+    Used when the user selects a search shortcut Top Site from the New Tab Page.
+  - ``topsites_urlbar``
+    Used when the user selects a search shortcut Top Site from the Urlbar.
+  - ``typed``
+    Used when the user types an engine alias in the Urlbar.
+  - ``other``
+    Used as a catchall for other behaviour. We don't expect this scalar to hold
+    any values. If it does, we need to correct an issue with search mode entry
+    points.
+
+  The keys for the scalars above are engine and source names. If the user enters
+  a remote search mode with a built-in engine, we record the engine name. If the
+  user enters a remote search mode with an engine they installed (e.g. via
+  OpenSearch or a WebExtension), we record ``other`` (not to be confused with
+  the ``urlbar.searchmode.other`` scalar above). If they enter a local search
+  mode, we record the English name of the result source (e.g. "bookmarks",
+  "history", "tabs"). Note that we slightly modify the engine name for some
+  built-in engines: we flatten all localized Amazon sites (Amazon.com,
+  Amazon.ca, Amazon.de, etc.) to "Amazon" and we flatten all localized
+  Wikipedia sites (Wikipedia (en), Wikipedia (fr), etc.) to "Wikipedia". This
+  is done to reduce the number of keys used by these scalars.
+
 Event Telemetry
 ---------------
 
@@ -233,7 +240,7 @@ Event Object
 
 Event Extra
   This object contains additional information about the interaction.
-  Extra is a key-value store, whhere all the keys and values are strings.
+  Extra is a key-value store, where all the keys and values are strings.
 
   - ``elapsed``
     Time in milliseconds from the initial interaction to an action.
@@ -275,13 +282,15 @@ SEARCH_COUNTS
     - ``alias`` This is when using an alias (like ``@google``) in the urlbar.
       Note there is often confusion between the terms alias and keyword, and
       they may be used inappropriately: aliases refer to search engines, while
-      keywords refer to bookmarks.
+      keywords refer to bookmarks. We expect no results for this SAP in Firefox
+      82+, since urlbar-searchmode replaces it.
     - ``abouthome``
     - ``contextmenu``
     - ``newtab``
     - ``searchbar``
     - ``system``
-    - ``urlbar`` Except aliases.
+    - ``urlbar`` Except aliases and search mode.
+    - ``urlbar-searchmode`` Used when the Urlbar is in search mode.
     - ``webextension``
     - ``oneoff-urlbar``
     - ``oneoff-searchbar``
@@ -295,7 +304,8 @@ browser.engagement.navigation.*
   by the originating action.
   Possible SAPs are:
 
-    - ``urlbar``
+    - ``urlbar``  Except search mode.
+    - ``urlbar_searchmode``  Used when the Urlbar is in search mode.
     - ``searchbar``
     - ``about_home``
     - ``about_newtab``
@@ -321,7 +331,53 @@ browser.engagement.navigation.*
       For ``urlbar`` or ``searchbar``, indicates the user confirmed a search
       suggestion.
 
-navigation.search
+Obsolete probes
+---------------
+
+Obsolete histograms
+~~~~~~~~~~~~~~~~~~~
+
+FX_URLBAR_SELECTED_RESULT_TYPE (OBSOLETE)
+  This probe is obsolete and was replaced with
+  ``FX_URLBAR_SELECTED_RESULT_TYPE_2`` in Firefox 78 in order to increase the
+  number of buckets.
+
+  This probe tracked the types of picked results.
+  It's an enumerated histogram with 14 buckets.
+  Values can be:
+
+    0. autofill
+    1. bookmark
+    2. history
+    3. keyword
+    4. searchengine
+    5. searchsuggestion
+    6. switchtab
+    7. tag
+    8. visiturl
+    9. remotetab
+    10. extension
+    11. preloaded-top-site
+    12. tip
+    13. topsite
+
+FX_URLBAR_SELECTED_RESULT_INDEX_BY_TYPE (OBSOLETE)
+  This probe is obsolete and was replaced with
+  ``FX_URLBAR_SELECTED_RESULT_INDEX_BY_TYPE_2`` in Firefox 78 in order to
+  increase the number of buckets.
+
+  This probe tracked picked result type, for each one it tracks the index where
+  it appeared.
+  It's a keyed histogram where the keys are result types (see
+  `UrlbarUtils.SELECTED_RESULT_TYPES`_). For each key, this records the indexes
+  of picked results for that result type.
+
+  .. _UrlbarUtils.SELECTED_RESULT_TYPES: https://searchfox.org/mozilla-central/search?q=symbol:UrlbarUtils%23SELECTED_RESULT_TYPES&redirect=false
+
+Obsolete search probes
+----------------------
+
+navigation.search (OBSOLETE)
   This is a legacy and disabled event telemetry that is currently under
   discussion for removal or modernization. It can't be enabled through a pref.
   it's more or less equivalent to browser.engagement.navigation, but can also

@@ -200,6 +200,12 @@ bool WindowContext::CanSet(FieldIndex<IDX_ShortcutsPermission>,
   return IsTop() && CheckOnlyOwningProcessCanSet(aSource);
 }
 
+bool WindowContext::CanSet(FieldIndex<IDX_ActiveMediaSessionContextId>,
+                           const Maybe<uint64_t>& aValue,
+                           ContentParent* aSource) {
+  return IsTop();
+}
+
 bool WindowContext::CanSet(FieldIndex<IDX_PopupPermission>, const uint32_t&,
                            ContentParent* aSource) {
   return CheckOnlyOwningProcessCanSet(aSource);
@@ -399,7 +405,6 @@ WindowContext::IPCInitializer WindowContext::GetIPCInitializer() {
   init.mInnerWindowId = mInnerWindowId;
   init.mOuterWindowId = mOuterWindowId;
   init.mBrowsingContextId = mBrowsingContext->Id();
-  init.mBrowsingContextIsTop = mBrowsingContext->IsTop();
   init.mFields = mFields.RawValues();
   return init;
 }
@@ -491,7 +496,6 @@ void IPDLParamTraits<dom::WindowContext::IPCInitializer>::Write(
   WriteIPDLParam(aMessage, aActor, aInit.mInnerWindowId);
   WriteIPDLParam(aMessage, aActor, aInit.mOuterWindowId);
   WriteIPDLParam(aMessage, aActor, aInit.mBrowsingContextId);
-  WriteIPDLParam(aMessage, aActor, aInit.mBrowsingContextIsTop);
   WriteIPDLParam(aMessage, aActor, aInit.mFields);
 }
 
@@ -503,8 +507,6 @@ bool IPDLParamTraits<dom::WindowContext::IPCInitializer>::Read(
          ReadIPDLParam(aMessage, aIterator, aActor, &aInit->mOuterWindowId) &&
          ReadIPDLParam(aMessage, aIterator, aActor,
                        &aInit->mBrowsingContextId) &&
-         ReadIPDLParam(aMessage, aIterator, aActor,
-                       &aInit->mBrowsingContextIsTop) &&
          ReadIPDLParam(aMessage, aIterator, aActor, &aInit->mFields);
 }
 

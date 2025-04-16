@@ -4,7 +4,7 @@
 
 use crate::entity::SecondaryMap;
 use crate::fx::{FxHashMap, FxHashSet};
-use crate::inst_predicates::{has_side_effect_or_load, is_constant_64bit};
+use crate::inst_predicates::{has_lowering_side_effect, is_constant_64bit};
 use crate::ir::instructions::BranchInfo;
 use crate::ir::types::I64;
 use crate::ir::{
@@ -13,7 +13,7 @@ use crate::ir::{
     ValueDef,
 };
 use crate::machinst::{
-    ABIBody, BlockIndex, BlockLoweringOrder, LoweredBlock, MachLabel, VCode, VCodeBuilder,
+    ABICallee, BlockIndex, BlockLoweringOrder, LoweredBlock, MachLabel, VCode, VCodeBuilder,
     VCodeInst,
 };
 use crate::CodegenResult;
@@ -61,8 +61,8 @@ pub trait LowerCtx {
 
     // Function-level queries:
 
-    /// Get the `ABIBody`.
-    fn abi(&mut self) -> &dyn ABIBody<I = Self::I>;
+    /// Get the `ABICallee`.
+    fn abi(&mut self) -> &dyn ABICallee<I = Self::I>;
     /// Get the (virtual) register that receives the return value. A return
     /// instruction should lower into a sequence that fills this register. (Why
     /// not allow the backend to specify its own result register for the return?
@@ -312,7 +312,7 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
     /// Prepare a new lowering context for the given IR function.
     pub fn new(
         f: &'func Function,
-        abi: Box<dyn ABIBody<I = I>>,
+        abi: Box<dyn ABICallee<I = I>>,
         block_order: BlockLoweringOrder,
     ) -> CodegenResult<Lower<'func, I>> {
         let mut vcode = VCodeBuilder::new(abi, block_order);
@@ -372,7 +372,7 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
         for bb in f.layout.blocks() {
             cur_color += 1;
             for inst in f.layout.block_insts(bb) {
-                let side_effect = has_side_effect_or_load(f, inst);
+                let side_effect = has_lowering_side_effect(f, inst);
 
                 // Assign colors. A new color is chosen *after* any side-effecting instruction.
                 inst_colors[inst] = InstColor::new(cur_color);
@@ -799,15 +799,15 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
             ValueDef::Result(src_inst, result_idx) => {
                 debug!(" -> src inst {}", src_inst);
                 debug!(
-                    " -> has side effect: {}",
-                    has_side_effect_or_load(self.f, src_inst)
+                    " -> has lowering side effect: {}",
+                    has_lowering_side_effect(self.f, src_inst)
                 );
                 debug!(
                     " -> our color is {:?}, src inst is {:?}",
                     self.inst_color(at_inst),
                     self.inst_color(src_inst)
                 );
-                if !has_side_effect_or_load(self.f, src_inst)
+                if !has_lowering_side_effect(self.f, src_inst)
                     || self.inst_color(at_inst) == self.inst_color(src_inst)
                 {
                     Some((src_inst, result_idx))
@@ -844,7 +844,7 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
 impl<'func, I: VCodeInst> LowerCtx for Lower<'func, I> {
     type I = I;
 
-    fn abi(&mut self) -> &dyn ABIBody<I = I> {
+    fn abi(&mut self) -> &dyn ABICallee<I = I> {
         self.vcode.abi()
     }
 
@@ -989,7 +989,11 @@ impl<'func, I: VCodeInst> LowerCtx for Lower<'func, I> {
 
     fn use_input_reg(&mut self, input: LowerInput) {
         debug!("use_input_reg: vreg {:?} is needed", input.reg);
-        self.vreg_needed[input.reg.get_index()] = true;
+        // We may directly return a real (machine) register when we know that register holds the
+        // result of an opcode (e.g. GetPinnedReg).
+        if input.reg.is_virtual() {
+            self.vreg_needed[input.reg.get_index()] = true;
+        }
     }
 
     fn is_reg_needed(&self, ir_inst: Inst, reg: Reg) -> bool {

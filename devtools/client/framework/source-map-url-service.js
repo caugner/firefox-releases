@@ -233,7 +233,7 @@ class SourceMapURLService {
       nodeHref,
       sourceMapBaseURL,
       sourceMapURL,
-      actorID: id,
+      resourceId: id,
     } = sheet;
     const url = href || nodeHref;
 
@@ -428,9 +428,11 @@ class SourceMapURLService {
           return;
         }
 
-        this._onResourceAvailable = async ({ resource }) => {
+        this._onResourceAvailable = async resources => {
           if (this._sourcesLoading === sourcesLoading) {
-            this._onNewStyleSheet(resource.styleSheet);
+            for (const resource of resources) {
+              this._onNewStyleSheet(resource);
+            }
           }
         };
 

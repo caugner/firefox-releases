@@ -14,6 +14,10 @@ const InspectorUtils = require("InspectorUtils");
 const {
   EXCLUDED_LISTENER,
 } = require("devtools/server/actors/inspector/constants");
+const {
+  TYPES,
+  getResourceWatcher,
+} = require("devtools/server/actors/resources/index");
 
 loader.lazyRequireGetter(
   this,
@@ -41,6 +45,7 @@ loader.lazyRequireGetter(
   [
     "allAnonymousContentTreeWalkerFilter",
     "findGridParentContainerForNode",
+    "isDocumentReady",
     "isNodeDead",
     "noAnonymousContentTreeWalkerFilter",
     "nodeDocument",
@@ -207,6 +212,13 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
       targetActor.chromeEventHandler
     );
 
+    // TODO: This preference is a client preference and should not be read here.
+    // See Bug 1662059.
+    this.isOverflowDebuggingEnabled = Services.prefs.getBoolPref(
+      "devtools.overflow.debugging.enabled",
+      false
+    );
+
     // In this map, the key-value pairs are the overflow causing elements and their
     // respective ancestor scrollable node actor.
     this.overflowCausingElementsMap = new Map();
@@ -264,16 +276,6 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
     // managed.
     this.rootNode = this.document();
 
-    // By default the walker will not notify about new root nodes and waits for
-    // a consumer to explicitly ask to be notified about root nodes to start
-    // emitting related events.
-    this._isWatchingRootNode = false;
-    // XXX: Ideally the walker would also use a watch API on the target actor to
-    // know if "window-ready" has already been fired. Without such an API there
-    // is a risk that the walker will fire several new-root-available for the
-    // same node.
-    this._emittedRootNode = null;
-
     this.layoutChangeObserver = getLayoutChangesObserver(this.targetActor);
     this._onReflows = this._onReflows.bind(this);
     this.layoutChangeObserver.on("reflows", this._onReflows);
@@ -293,49 +295,9 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
   },
 
   watchRootNode() {
-    if (this._isWatchingRootNode) {
-      throw new Error("WalkerActor::watchRootNode should only be called once");
+    if (this.rootNode && isDocumentReady(this.rootDoc)) {
+      this.emit("root-available", this.rootNode);
     }
-
-    this._isWatchingRootNode = true;
-    if (this.rootNode && this._isRootDocumentReady()) {
-      this._emitNewRoot(this.rootNode, { isTopLevelDocument: true });
-    }
-  },
-
-  unwatchRootNode() {
-    this._isWatchingRootNode = false;
-    this._emittedRootNode = null;
-  },
-
-  _emitNewRoot(rootNode, { isTopLevelDocument }) {
-    const alreadyEmittedTopRootNode = this._emittedRootNode === rootNode;
-    if (!this._isWatchingRootNode || alreadyEmittedTopRootNode) {
-      return;
-    }
-
-    if (isTopLevelDocument) {
-      this._emittedRootNode = this.rootNode;
-    }
-
-    this.emit("root-available", rootNode);
-  },
-
-  _isRootDocumentReady() {
-    if (this.rootDoc) {
-      const { readyState } = this.rootDoc;
-      if (readyState == "interactive" || readyState == "complete") {
-        return true;
-      }
-    }
-
-    // A document might stay forever in unitialized state.
-    // If the target actor is not currently loading a document,
-    // assume the document is ready.
-    const webProgress = this.rootDoc.defaultView.docShell.QueryInterface(
-      Ci.nsIWebProgress
-    );
-    return !webProgress.isLoadingDocument;
   },
 
   /**
@@ -606,7 +568,7 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
         actor.wasScrollable = isScrollable;
       }
 
-      if (isScrollable) {
+      if (this.isOverflowDebuggingEnabled && isScrollable) {
         this.updateOverflowCausingElements(
           actor,
           currentOverflowCausingElementsMap
@@ -614,19 +576,25 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
       }
     }
 
-    // Get the NodeActor for each node in the symmetric difference of
-    // currentOverflowCausingElementsMap and this.overflowCausingElementsMap
-    const overflowStateChanges = [...currentOverflowCausingElementsMap.keys()]
-      .filter(node => !this.overflowCausingElementsMap.has(node))
-      .concat(
-        [...this.overflowCausingElementsMap.keys()].filter(
-          node => !currentOverflowCausingElementsMap.has(node)
+    if (this.isOverflowDebuggingEnabled) {
+      // Get the NodeActor for each node in the symmetric difference of
+      // currentOverflowCausingElementsMap and this.overflowCausingElementsMap
+      const overflowStateChanges = [...currentOverflowCausingElementsMap.keys()]
+        .filter(node => !this.overflowCausingElementsMap.has(node))
+        .concat(
+          [...this.overflowCausingElementsMap.keys()].filter(
+            node => !currentOverflowCausingElementsMap.has(node)
+          )
         )
-      )
-      .filter(node => this.hasNode(node))
-      .map(node => this.getNode(node));
+        .filter(node => this.hasNode(node))
+        .map(node => this.getNode(node));
 
-    this.overflowCausingElementsMap = currentOverflowCausingElementsMap;
+      this.overflowCausingElementsMap = currentOverflowCausingElementsMap;
+
+      if (overflowStateChanges.length) {
+        this.emit("overflow-change", overflowStateChanges);
+      }
+    }
 
     if (displayTypeChanges.length) {
       this.emit("display-change", displayTypeChanges);
@@ -634,10 +602,6 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
 
     if (scrollableStateChanges.length) {
       this.emit("scrollable-change", scrollableStateChanges);
-    }
-
-    if (overflowStateChanges.length) {
-      this.emit("overflow-change", overflowStateChanges);
     }
   },
 
@@ -2543,6 +2507,7 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
       // we may already have a root document set in the constructor.
       if (
         this.rootDoc &&
+        this.rootDoc !== window.document &&
         !Cu.isDeadWrapper(this.rootDoc) &&
         this.rootDoc.defaultView
       ) {
@@ -2552,7 +2517,7 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
       this.rootWin = window;
       this.rootDoc = window.document;
       this.rootNode = this.document();
-      this._emitNewRoot(this.rootNode, { isTopLevelDocument: true });
+      this.emit("root-available", this.rootNode);
     } else {
       const frame = getFrameElement(window);
       const frameActor = this.getNode(frame);
@@ -2560,7 +2525,7 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
         // If the parent frame is in the map of known node actors, create the
         // actor for the new document and emit a root-available event.
         const documentActor = this._getOrCreateNodeActor(window.document);
-        this._emitNewRoot(documentActor, { isTopLevelDocument: false });
+        this.emit("root-available", documentActor);
       }
     }
   },
@@ -2616,9 +2581,7 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
       this._updateMutationBreakpointState("unload", node, null);
     }
 
-    if (this._isWatchingRootNode) {
-      this.emit("root-destroyed", documentActor);
-    }
+    this.emit("root-destroyed", documentActor);
 
     // Cleanup root doc references if we just unloaded the top level root
     // document.
@@ -2749,8 +2712,18 @@ var WalkerActor = protocol.ActorClassWithSpec(walkerSpec, {
    * NodeActor.
    * Note that getNodeFromActor was added later and can now be used instead.
    */
-  getStyleSheetOwnerNode: function(styleSheetActorID) {
-    return this.getNodeFromActor(styleSheetActorID, ["ownerNode"]);
+  getStyleSheetOwnerNode: function(resourceId) {
+    const watcher = getResourceWatcher(this.targetActor, TYPES.STYLESHEET);
+    if (watcher) {
+      const ownerNode = watcher.getOwnerNode(resourceId);
+      return this.attachElement(ownerNode);
+    }
+
+    // Following code can be removed once we enable STYLESHEET resource on the watcher/server
+    // side by default. For now it is being preffed off and we have to support the two
+    // codepaths. Once enabled we will only support the stylesheet watcher codepath.
+    const actorBasedNode = this.getNodeFromActor(resourceId, ["ownerNode"]);
+    return actorBasedNode;
   },
 
   /**

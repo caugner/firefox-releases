@@ -54,7 +54,7 @@
 }
 
 .tree-node button.arrow {
-  mask: url("resource://devtools/client/debugger/images/arrow.svg") no-repeat center;
+  mask: url("chrome://devtools/content/debugger/images/arrow.svg") no-repeat center;
   mask-size: 10px;
   vertical-align: -1px;
   width: 10px;
@@ -338,7 +338,7 @@ html[dir="rtl"] .tree-node button.arrow:not(.expanded) {
 
 button.open-accessibility-inspector,
 button.open-inspector {
-  mask: url("resource://devtools/client/shared/components/reps/images/open-inspector.svg")
+  mask: url("chrome://devtools/content/shared/components/reps/images/open-inspector.svg")
     no-repeat;
   display: inline-block;
   vertical-align: top;
@@ -368,7 +368,7 @@ button.jump-definition {
   margin-left: 0.25em;
   vertical-align: middle;
   background: 0% 50%
-    url("resource://devtools/client/shared/components/reps/images/jump-definition.svg")
+    url("chrome://devtools/content/shared/components/reps/images/jump-definition.svg")
     no-repeat;
   border-color: transparent;
   stroke: var(--theme-icon-color);
@@ -388,7 +388,7 @@ button.jump-definition {
 /* Invoke getter button */
 
 button.invoke-getter {
-  mask: url(resource://devtools/client/shared/components/reps/images/input.svg)
+  mask: url(chrome://devtools/content/shared/components/reps/images/input.svg)
     no-repeat;
   display: inline-block;
   background-color: var(--theme-icon-color);
@@ -470,7 +470,7 @@ button.invoke-getter {
 }
 
 button.remove-set-watchpoint {
-  mask: url("resource://devtools/client/debugger/images/webconsole-logpoint.svg")
+  mask: url("chrome://devtools/content/debugger/images/webconsole-logpoint.svg")
     no-repeat;
   display: inline-block;
   vertical-align: top;
@@ -484,7 +484,7 @@ button.remove-set-watchpoint {
 }
 
 button.remove-get-watchpoint {
-  mask: url("resource://devtools/client/debugger/images/webconsole-logpoint.svg")
+  mask: url("chrome://devtools/content/debugger/images/webconsole-logpoint.svg")
     no-repeat;
   display: inline-block;
   vertical-align: top;
@@ -498,7 +498,7 @@ button.remove-get-watchpoint {
 }
 
 button.remove-getorset-watchpoint {
-  mask: url("resource://devtools/client/debugger/images/webconsole-logpoint.svg")
+  mask: url("chrome://devtools/content/debugger/images/webconsole-logpoint.svg")
     no-repeat;
   display: inline-block;
   vertical-align: top;

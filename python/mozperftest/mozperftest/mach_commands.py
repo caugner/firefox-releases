@@ -5,12 +5,21 @@ import os
 import sys
 from functools import partial
 import subprocess
+import shlex
 
 from mach.decorators import CommandProvider, Command, CommandArgument
 from mozbuild.base import MachCommandBase, MachCommandConditions as conditions
 
 
-_TRY_PLATFORMS = {"g5": "perftest-android-hw-g5", "p2": "perftest-android-hw-p2"}
+_TRY_PLATFORMS = {
+    "g5": "perftest-android-hw-g5",
+    "p2": "perftest-android-hw-p2",
+    "linux": "perftest-linux-try",
+    "mac": "perftest-macosx-try",
+    "win": "perftest-windows-try",
+}
+
+
 HERE = os.path.dirname(__file__)
 
 
@@ -22,6 +31,9 @@ def get_perftest_parser():
 
 @CommandProvider
 class Perftest(MachCommandBase):
+    def get_parser(self):
+        return self.run_perftest._mach_command._parser
+
     @Command(
         "perftest",
         category="testing",
@@ -30,10 +42,65 @@ class Perftest(MachCommandBase):
         parser=get_perftest_parser,
     )
     def run_perftest(self, **kwargs):
+        # original parser that brought us there
+        original_parser = self.get_parser()
+
+        from pathlib import Path
+
+        # user selection with fuzzy UI
+        from mozperftest.utils import ON_TRY
+        from mozperftest.script import ScriptInfo, ScriptType, ParseError
+
+        if not ON_TRY and kwargs.get("tests", []) == []:
+            from moztest.resolve import TestResolver
+            from mozperftest.fzf.fzf import select
+
+            resolver = self._spawn(TestResolver)
+            test_objects = list(resolver.resolve_tests(paths=None, flavor="perftest"))
+
+            def full_path(selection):
+                __, script_name, __, location = selection.split(" ")
+                return str(
+                    Path(
+                        self.topsrcdir.rstrip(os.sep),
+                        location.strip(os.sep),
+                        script_name,
+                    )
+                )
+
+            kwargs["tests"] = [full_path(s) for s in select(test_objects)]
+
+            if kwargs["tests"] == []:
+                print("\nNo selection. Bye!")
+                return
+
+        if len(kwargs["tests"]) > 1:
+            print("\nSorry no support yet for multiple local perftest")
+            return
+
+        sel = "\n".join(kwargs["tests"])
+        print("\nGood job! Best selection.\n%s" % sel)
+
+        # if the script is xpcshell, we can force the flavor here
+        # XXX on multi-selection,  what happens if we have seeveral flavors?
+        try:
+            script_info = ScriptInfo(kwargs["tests"][0])
+        except ParseError as e:
+            if e.exception is IsADirectoryError:
+                script_info = None
+            else:
+                raise
+        else:
+            if script_info.script_type == ScriptType.xpcshell:
+                kwargs["flavor"] = script_info.script_type.name
+            else:
+                # we set the value only if not provided (so "mobile-browser"
+                # can be picked)
+                if "flavor" not in kwargs:
+                    kwargs["flavor"] = "desktop-browser"
+
         push_to_try = kwargs.pop("push_to_try", False)
         if push_to_try:
-            from pathlib import Path
-
             sys.path.append(str(Path(self.topsrcdir, "tools", "tryselect")))
 
             from tryselect.push import push_to_try
@@ -46,10 +113,11 @@ class Perftest(MachCommandBase):
                 raise NotImplementedError("%r not supported yet" % platform)
 
             perftest_parameters = {}
-            parser = get_perftest_parser()()
-            for name, value in kwargs.items():
+            args = script_info.update_args(**original_parser.get_user_args(kwargs))
+
+            for name, value in args.items():
                 # ignore values that are set to default
-                if parser.get_default(name) == value:
+                if original_parser.get_default(name) == value:
                     continue
                 perftest_parameters[name] = value
 
@@ -65,26 +133,29 @@ class Perftest(MachCommandBase):
             push_to_try("perftest", "perftest", try_task_config=task_config)
             return
 
-        # run locally
-        MachCommandBase.activate_virtualenv(self)
-
         from mozperftest.runner import run_tests
 
-        run_tests(mach_cmd=self, **kwargs)
+        run_tests(self, kwargs, original_parser.get_user_args(kwargs))
+
+        print("\nFirefox. Fast For Good.\n")
 
 
 @CommandProvider
 class PerftestTests(MachCommandBase):
-    def _run_python_script(self, module, *args, **kw):
-        """Used to run the scripts in isolation.
-
-        Coverage needs to run in isolation so it's not
-        reimporting modules and produce wrong coverage info.
-        """
+    def _run_script(self, cmd, *args, **kw):
+        """Used to run a command in a subprocess."""
         display = kw.pop("display", False)
         verbose = kw.pop("verbose", False)
-        args = [self.virtualenv_manager.python_path, "-m", module] + list(args)
-        sys.stdout.write("=> %s " % kw.pop("label", module))
+        if isinstance(cmd, str):
+            cmd = shlex.split(cmd)
+        try:
+            joiner = shlex.join
+        except AttributeError:
+            # Python < 3.8
+            joiner = subprocess.list2cmdline
+
+        sys.stdout.write("=> %s " % kw.pop("label", joiner(cmd)))
+        args = cmd + list(args)
         sys.stdout.flush()
         try:
             if verbose:
@@ -105,8 +176,21 @@ class PerftestTests(MachCommandBase):
             sys.stdout.flush()
             return False
 
+    def _run_python_script(self, module, *args, **kw):
+        """Used to run a Python script in isolation.
+
+        Coverage needs to run in isolation so it's not
+        reimporting modules and produce wrong coverage info.
+        """
+        cmd = [self.virtualenv_manager.python_path, "-m", module]
+        if "label" not in kw:
+            kw["label"] = module
+        return self._run_script(cmd, *args, **kw)
+
     @Command(
-        "perftest-test", category="testing", description="Run perftest tests",
+        "perftest-test",
+        category="testing",
+        description="Run perftest tests",
     )
     @CommandArgument(
         "tests", default=None, nargs="*", help="Tests to run. By default will run all"
@@ -119,7 +203,11 @@ class PerftestTests(MachCommandBase):
         help="Skip flake8 and black",
     )
     @CommandArgument(
-        "-v", "--verbose", action="store_true", default=False, help="Verbose mode",
+        "-v",
+        "--verbose",
+        action="store_true",
+        default=False,
+        help="Verbose mode",
     )
     def run_tests(self, **kwargs):
         MachCommandBase.activate_virtualenv(self)
@@ -149,30 +237,20 @@ class PerftestTests(MachCommandBase):
             vendors = ["coverage"]
             if not ON_TRY:
                 vendors.append("attrs")
-            if skip_linters:
-                pypis = []
-            else:
-                pypis = ["flake8"]
-
-            # if we're not on try we want to install black
-            if not ON_TRY and not skip_linters:
-                pypis.append("black")
-
-            # these are the deps we are getting from pypi
-            for dep in pypis:
-                install_package(self.virtualenv_manager, dep)
 
             # pip-installing dependencies that require compilation or special setup
             for dep in vendors:
                 install_package(self.virtualenv_manager, str(Path(pydeps, dep)))
 
         if not ON_TRY and not skip_linters:
-            # formatting the code with black
-            assert self._run_python_script("black", str(HERE))
-
-        # checking flake8 correctness
-        if not (ON_TRY and sys.platform == "darwin") and not skip_linters:
-            assert self._run_python_script("flake8", str(HERE))
+            cmd = "./mach lint "
+            if verbose:
+                cmd += " -v"
+            cmd += " " + str(HERE)
+            if not self._run_script(
+                cmd, label="linters", display=verbose, verbose=verbose
+            ):
+                raise AssertionError("Please fix your code.")
 
         # running pytest with coverage
         # coverage is done in three steps:

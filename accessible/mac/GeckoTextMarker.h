@@ -30,6 +30,9 @@ class GeckoTextMarker final {
 
   GeckoTextMarker() : mContainer(nullptr), mOffset(0) {}
 
+  static GeckoTextMarker MarkerFromIndex(const AccessibleOrProxy& aRoot,
+                                         int32_t aIndex);
+
   id CreateAXTextMarker();
 
   bool Next();
@@ -42,6 +45,8 @@ class GeckoTextMarker final {
   // Return a word range right of the given offset.
   GeckoTextMarkerRange RightWordRange();
 
+  AccessibleOrProxy Leaf();
+
   bool IsValid() const { return !mContainer.IsNull(); };
 
   bool operator<(const GeckoTextMarker& aPoint) const;
@@ -51,7 +56,8 @@ class GeckoTextMarker final {
 
   HyperTextAccessibleWrap* ContainerAsHyperTextWrap() const {
     return mContainer.IsAccessible()
-               ? static_cast<HyperTextAccessibleWrap*>(mContainer.AsAccessible()->AsHyperText())
+               ? static_cast<HyperTextAccessibleWrap*>(
+                     mContainer.AsAccessible()->AsHyperText())
                : nullptr;
   }
 
@@ -63,19 +69,30 @@ class GeckoTextMarker final {
 
 class GeckoTextMarkerRange final {
  public:
-  GeckoTextMarkerRange(const GeckoTextMarker& aStart, const GeckoTextMarker& aEnd)
+  GeckoTextMarkerRange(const GeckoTextMarker& aStart,
+                       const GeckoTextMarker& aEnd)
       : mStart(aStart), mEnd(aEnd) {}
 
-  GeckoTextMarkerRange(AccessibleOrProxy aDoc, AXTextMarkerRangeRef aTextMarkerRange);
+  GeckoTextMarkerRange(AccessibleOrProxy aDoc,
+                       AXTextMarkerRangeRef aTextMarkerRange);
+
+  explicit GeckoTextMarkerRange(const AccessibleOrProxy& aAccessible);
 
   id CreateAXTextMarkerRange();
 
-  bool IsValid() const { return !mStart.mContainer.IsNull() && !mEnd.mContainer.IsNull(); };
+  bool IsValid() const {
+    return !mStart.mContainer.IsNull() && !mEnd.mContainer.IsNull();
+  };
 
   /**
    * Return text enclosed by the range.
    */
   NSString* Text() const;
+
+  /**
+   * Return length of characters enclosed by the range.
+   */
+  int32_t Length() const;
 
   /**
    * Return screen bounds of range.

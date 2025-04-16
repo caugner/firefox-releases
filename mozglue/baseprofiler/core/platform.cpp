@@ -419,7 +419,7 @@ class CorePS {
   PS_GET_LOCKLESS(int, MainThreadId)
 
   // No PSLockRef is needed for this field because it's immutable.
-  PS_GET_LOCKLESS(TimeStamp, ProcessStartTime)
+  PS_GET_LOCKLESS(const TimeStamp&, ProcessStartTime)
 
   // No PSLockRef is needed for this field because it's thread-safe.
   PS_GET_LOCKLESS(ProfileChunkedBuffer&, CoreBuffer)
@@ -567,6 +567,11 @@ class CorePS {
 };
 
 CorePS* CorePS::sInstance = nullptr;
+
+ProfileChunkedBuffer& profiler_get_core_buffer() {
+  MOZ_ASSERT(CorePS::Exists());
+  return CorePS::CoreBuffer();
+}
 
 class SamplerThread;
 
@@ -1752,12 +1757,12 @@ static void AddSharedLibraryInfoToStream(JSONWriter& aWriter,
   aWriter.IntProperty("start", SafeJSInteger(aLib.GetStart()));
   aWriter.IntProperty("end", SafeJSInteger(aLib.GetEnd()));
   aWriter.IntProperty("offset", SafeJSInteger(aLib.GetOffset()));
-  aWriter.StringProperty("name", aLib.GetModuleName().c_str());
-  aWriter.StringProperty("path", aLib.GetModulePath().c_str());
-  aWriter.StringProperty("debugName", aLib.GetDebugName().c_str());
-  aWriter.StringProperty("debugPath", aLib.GetDebugPath().c_str());
-  aWriter.StringProperty("breakpadId", aLib.GetBreakpadId().c_str());
-  aWriter.StringProperty("arch", aLib.GetArch().c_str());
+  aWriter.StringProperty("name", aLib.GetModuleName());
+  aWriter.StringProperty("path", aLib.GetModulePath());
+  aWriter.StringProperty("debugName", aLib.GetDebugName());
+  aWriter.StringProperty("debugPath", aLib.GetDebugPath());
+  aWriter.StringProperty("breakpadId", aLib.GetBreakpadId());
+  aWriter.StringProperty("arch", aLib.GetArch());
   aWriter.EndObject();
 }
 
@@ -2803,7 +2808,7 @@ UniquePtr<char[]> profiler_get_profile(double aSinceTime, bool aIsShuttingDown,
   if (!WriteProfileToJSONWriter(b, aSinceTime, aIsShuttingDown, aOnlyThreads)) {
     return nullptr;
   }
-  return b.ChunkedWriteFunc()->CopyData();
+  return b.ChunkedWriteFunc().CopyData();
 }
 
 void profiler_get_profile_json_into_lazily_allocated_buffer(
@@ -2816,7 +2821,7 @@ void profiler_get_profile_json_into_lazily_allocated_buffer(
     return;
   }
 
-  b.ChunkedWriteFunc()->CopyDataIntoLazilyAllocatedBuffer(aAllocator);
+  b.ChunkedWriteFunc().CopyDataIntoLazilyAllocatedBuffer(aAllocator);
 }
 
 void profiler_get_start_params(int* aCapacity, Maybe<double>* aDuration,
@@ -2927,7 +2932,7 @@ static void locked_profiler_save_profile_to_file(PSLockRef aLock,
       Vector<std::string> exitProfiles = ActivePS::MoveExitProfiles(aLock);
       for (auto& exitProfile : exitProfiles) {
         if (!exitProfile.empty()) {
-          w.Splice(exitProfile.c_str());
+          w.Splice(exitProfile);
         }
       }
       w.EndArray();
@@ -3530,59 +3535,7 @@ double profiler_time() {
   return delta.ToMilliseconds();
 }
 
-static void locked_profiler_fill_backtrace(PSLockRef aLock,
-                                           RegisteredThread& aRegisteredThread,
-                                           ProfileBuffer& aProfileBuffer) {
-  Registers regs;
-#if defined(HAVE_NATIVE_UNWIND)
-  regs.SyncPopulate();
-#else
-  regs.Clear();
-#endif
-
-  DoSyncSample(aLock, aRegisteredThread, TimeStamp::NowUnfuzzed(), regs,
-               aProfileBuffer);
-}
-
-static UniqueProfilerBacktrace locked_profiler_get_backtrace(PSLockRef aLock) {
-  MOZ_RELEASE_ASSERT(CorePS::Exists());
-
-  if (!ActivePS::Exists(aLock)) {
-    return nullptr;
-  }
-
-  RegisteredThread* registeredThread =
-      TLSRegisteredThread::RegisteredThread(aLock);
-  if (!registeredThread) {
-    MOZ_ASSERT(registeredThread);
-    return nullptr;
-  }
-
-  auto bufferManager = MakeUnique<ProfileChunkedBuffer>(
-      ProfileChunkedBuffer::ThreadSafety::WithoutMutex,
-      MakeUnique<ProfileBufferChunkManagerSingle>(scExpectedMaximumStackSize));
-  ProfileBuffer buffer(*bufferManager);
-
-  locked_profiler_fill_backtrace(aLock, *registeredThread, buffer);
-
-  return UniqueProfilerBacktrace(
-      new ProfilerBacktrace("SyncProfile", registeredThread->Info()->ThreadId(),
-                            std::move(bufferManager)));
-}
-
-UniqueProfilerBacktrace profiler_get_backtrace() {
-  MOZ_RELEASE_ASSERT(CorePS::Exists());
-
-  PSAutoLock lock;
-
-  return locked_profiler_get_backtrace(lock);
-}
-
-void ProfilerBacktraceDestructor::operator()(ProfilerBacktrace* aBacktrace) {
-  delete aBacktrace;
-}
-
-bool profiler_capture_backtrace(ProfileChunkedBuffer& aChunkedBuffer) {
+bool profiler_capture_backtrace_into(ProfileChunkedBuffer& aChunkedBuffer) {
   MOZ_RELEASE_ASSERT(CorePS::Exists());
 
   PSAutoLock lock;
@@ -3600,9 +3553,51 @@ bool profiler_capture_backtrace(ProfileChunkedBuffer& aChunkedBuffer) {
 
   ProfileBuffer profileBuffer(aChunkedBuffer);
 
-  locked_profiler_fill_backtrace(lock, *registeredThread, profileBuffer);
+  Registers regs;
+#if defined(HAVE_NATIVE_UNWIND)
+  regs.SyncPopulate();
+#else
+  regs.Clear();
+#endif
+
+  DoSyncSample(lock, *registeredThread, TimeStamp::NowUnfuzzed(), regs,
+               profileBuffer);
 
   return true;
+}
+
+UniquePtr<ProfileChunkedBuffer> profiler_capture_backtrace() {
+  MOZ_RELEASE_ASSERT(CorePS::Exists());
+
+  // Quick is-active check before allocating a buffer.
+  if (!profiler_is_active()) {
+    return nullptr;
+  }
+
+  auto buffer = MakeUnique<ProfileChunkedBuffer>(
+      ProfileChunkedBuffer::ThreadSafety::WithoutMutex,
+      MakeUnique<ProfileBufferChunkManagerSingle>(scExpectedMaximumStackSize));
+
+  if (!profiler_capture_backtrace_into(*buffer)) {
+    return nullptr;
+  }
+
+  return buffer;
+}
+
+UniqueProfilerBacktrace profiler_get_backtrace() {
+  UniquePtr<ProfileChunkedBuffer> buffer = profiler_capture_backtrace();
+
+  if (!buffer) {
+    return nullptr;
+  }
+
+  return UniqueProfilerBacktrace(new ProfilerBacktrace(
+      "SyncProfile", profiler_current_thread_id(), std::move(buffer)));
+}
+
+void ProfilerBacktraceDestructor::operator()(ProfilerBacktrace* aBacktrace) {
+  delete aBacktrace;
 }
 
 bool profiler_is_locked_on_current_thread() {
@@ -3653,16 +3648,11 @@ void profiler_add_marker(const char* aMarkerName,
   racy_profiler_add_marker(aMarkerName, aCategoryPair, &aPayload);
 }
 
-void profiler_add_marker(const char* aMarkerName,
-                         ProfilingCategoryPair aCategoryPair) {
-  racy_profiler_add_marker(aMarkerName, aCategoryPair, nullptr);
-}
-
 // This is a simplified version of profiler_add_marker that can be easily passed
 // into the JS engine.
 void profiler_add_js_marker(const char* aMarkerName) {
-  AUTO_PROFILER_STATS(base_add_marker);
-  profiler_add_marker(aMarkerName, ProfilingCategoryPair::JS);
+  BASE_PROFILER_MARKER_UNTYPED(
+      ProfilerString8View::WrapNullTerminatedString(aMarkerName), JS);
 }
 
 static void maybelocked_profiler_add_marker_for_thread(
@@ -3766,18 +3756,6 @@ void profiler_tracing_marker(const char* aCategoryString,
   profiler_add_marker(aMarkerName, aCategoryPair,
                       TracingMarkerPayload(aCategoryString, aKind,
                                            aInnerWindowID, std::move(aCause)));
-}
-
-void profiler_add_text_marker(const char* aMarkerName, const std::string& aText,
-                              ProfilingCategoryPair aCategoryPair,
-                              const TimeStamp& aStartTime,
-                              const TimeStamp& aEndTime,
-                              const Maybe<uint64_t>& aInnerWindowID,
-                              UniqueProfilerBacktrace aCause) {
-  AUTO_PROFILER_STATS(base_add_marker_with_TextMarkerPayload);
-  profiler_add_marker(aMarkerName, aCategoryPair,
-                      TextMarkerPayload(aText, aStartTime, aEndTime,
-                                        aInnerWindowID, std::move(aCause)));
 }
 
 // NOTE: aCollector's methods will be called while the target thread is paused.

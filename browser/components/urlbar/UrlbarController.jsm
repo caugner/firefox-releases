@@ -179,10 +179,13 @@ class UrlbarController {
       TelemetryStopwatch.finish(TELEMETRY_6_FIRST_RESULTS, queryContext);
     }
 
-    if (queryContext.lastResultCount == 0 && queryContext.results.length) {
-      if (queryContext.results[0].autofill) {
-        this.input.autofillFirstResult(queryContext.results[0]);
+    if (queryContext.firstResultChanged) {
+      // Notify the input so it can make adjustments based on the first result.
+      if (this.input.onFirstResult(queryContext.results[0])) {
+        // The input canceled the query and started a new one.
+        return;
       }
+
       // The first time we receive results try to connect to the heuristic
       // result.
       this.speculativeConnect(
@@ -372,10 +375,14 @@ class UrlbarController {
         }
         event.preventDefault();
         break;
-      case KeyEvent.DOM_VK_LEFT:
       case KeyEvent.DOM_VK_RIGHT:
-      case KeyEvent.DOM_VK_HOME:
       case KeyEvent.DOM_VK_END:
+        this.input.maybePromoteKeywordToSearchMode({
+          entry: "typed",
+        });
+      // Fall through.
+      case KeyEvent.DOM_VK_LEFT:
+      case KeyEvent.DOM_VK_HOME:
         this.view.removeAccessibleFocus();
         break;
       case KeyEvent.DOM_VK_BACK_SPACE:
@@ -725,6 +732,7 @@ class TelemetryEvent {
       return;
     }
     const validEvents = [
+      "click",
       "command",
       "drop",
       "input",

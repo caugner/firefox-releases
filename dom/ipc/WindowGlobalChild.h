@@ -107,9 +107,13 @@ class WindowGlobalChild final : public WindowGlobalActor,
   // Called when a new document is loaded in this WindowGlobalChild.
   void OnNewDocument(Document* aNewDocument);
 
+  bool SameOriginWithTop();
+
   nsISupports* GetParentObject();
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
+
+  void MaybeSendUpdateDocumentWouldPreloadResources();
 
  protected:
   const nsACString& GetRemoteType() override;
@@ -163,6 +167,7 @@ class WindowGlobalChild final : public WindowGlobalActor,
   nsCOMPtr<nsIPrincipal> mDocumentPrincipal;
   nsCOMPtr<nsIURI> mDocumentURI;
   int64_t mBeforeUnloadListeners = 0;
+  bool mDocumentWouldPreloadResources = false;
 };
 
 }  // namespace dom

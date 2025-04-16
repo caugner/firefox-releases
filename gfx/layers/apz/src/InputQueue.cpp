@@ -86,6 +86,7 @@ nsEventStatus InputQueue::ReceiveTouchInput(
     uint64_t* aOutInputBlockId,
     const Maybe<nsTArray<TouchBehaviorFlags>>& aTouchBehaviors) {
   TouchBlockState* block = nullptr;
+  bool waitingForContentResponse = false;
   if (aEvent.mType == MultiTouchInput::MULTITOUCH_START) {
     nsTArray<TouchBehaviorFlags> currentBehaviors;
     bool haveBehaviors = false;
@@ -134,7 +135,7 @@ nsEventStatus InputQueue::ReceiveTouchInput(
 
     CancelAnimationsForNewBlock(block);
 
-    MaybeRequestContentResponse(aTarget, block);
+    waitingForContentResponse = MaybeRequestContentResponse(aTarget, block);
   } else {
     // for touch inputs that don't start a block, APZCTM shouldn't be giving
     // us any touch behaviors.
@@ -182,6 +183,28 @@ nsEventStatus InputQueue::ReceiveTouchInput(
   }
   mQueuedInputs.AppendElement(MakeUnique<QueuedInput>(aEvent, *block));
   ProcessQueue();
+
+  // If this block just started and is waiting for a content response, but
+  // also in a slop state (i.e. touchstart gets delivered to content but
+  // not any touchmoves), then we might end up in a situation where we don't
+  // get the content response until the timeout is hit because we never exit
+  // the slop state. But if that timeout is longer than the long-press timeout,
+  // then the long-press gets delayed too. Avoid that by scheduling a callback
+  // with the long-press timeout that will force the block to get processed.
+  int32_t longTapTimeout = StaticPrefs::ui_click_hold_context_menus_delay();
+  int32_t contentTimeout = StaticPrefs::apz_content_response_timeout();
+  if (waitingForContentResponse && longTapTimeout < contentTimeout &&
+      block->IsInSlop() && GestureEventListener::IsLongTapEnabled()) {
+    MOZ_ASSERT(aEvent.mType == MultiTouchInput::MULTITOUCH_START);
+    MOZ_ASSERT(!block->IsDuringFastFling());
+    RefPtr<Runnable> maybeLongTap = NewRunnableMethod<uint64_t>(
+        "layers::InputQueue::MaybeLongTapTimeout", this,
+        &InputQueue::MaybeLongTapTimeout, block->GetBlockId());
+    INPQ_LOG("scheduling maybe-long-tap timeout for target %p\n",
+             aTarget.get());
+    aTarget->PostDelayedTask(maybeLongTap.forget(), longTapTimeout);
+  }
+
   return result;
 }
 
@@ -220,14 +243,15 @@ nsEventStatus InputQueue::ReceiveMouseInput(
     MOZ_ASSERT(newBlock);
     block = new DragBlockState(aTarget, aFlags, aEvent);
 
-    INPQ_LOG("started new drag block %p id %" PRIu64
-             " for %sconfirmed target %p and %s a scrollthumb\n",
-             block, block->GetBlockId(), aFlags.mTargetConfirmed ? "" : "un",
-             aTarget.get(), aFlags.mHitScrollThumb ? "hits" : "doesn't hit");
+    INPQ_LOG(
+        "started new drag block %p id %" PRIu64
+        "for %sconfirmed target %p; on scrollbar: %d; on scrollthumb: %d\n",
+        block, block->GetBlockId(), aFlags.mTargetConfirmed ? "" : "un",
+        aTarget.get(), aFlags.mHitScrollbar, aFlags.mHitScrollThumb);
 
     mActiveDragBlock = block;
 
-    if (aFlags.mHitScrollThumb) {
+    if (aFlags.mHitScrollThumb || !aFlags.mHitScrollbar) {
       CancelAnimationsForNewBlock(block);
     }
     MaybeRequestContentResponse(aTarget, block);
@@ -483,7 +507,7 @@ void InputQueue::CancelAnimationsForNewBlock(InputBlockState* aBlock,
   }
 }
 
-void InputQueue::MaybeRequestContentResponse(
+bool InputQueue::MaybeRequestContentResponse(
     const RefPtr<AsyncPanZoomController>& aTarget,
     CancelableBlockState* aBlock) {
   bool waitForMainThread = false;
@@ -506,6 +530,7 @@ void InputQueue::MaybeRequestContentResponse(
     // can run.
     ScheduleMainThreadTimeout(aTarget, aBlock);
   }
+  return waitForMainThread;
 }
 
 uint64_t InputQueue::InjectNewTouchBlock(AsyncPanZoomController* aTarget) {
@@ -640,6 +665,12 @@ InputBlockState* InputQueue::GetBlockForId(uint64_t aInputBlockId) {
   return FindBlockForId(aInputBlockId, nullptr);
 }
 
+void InputQueue::AddInputBlockCallback(uint64_t aInputBlockId,
+                                       InputBlockCallback&& aCallback) {
+  mInputBlockCallbacks.insert(
+      InputBlockCallbackMap::value_type(aInputBlockId, std::move(aCallback)));
+}
+
 InputBlockState* InputQueue::FindBlockForId(uint64_t aInputBlockId,
                                             InputData** aOutFirstInput) {
   for (const auto& queuedInput : mQueuedInputs) {
@@ -709,6 +740,27 @@ void InputQueue::MainThreadTimeout(uint64_t aInputBlockId) {
   }
   if (success) {
     ProcessQueue();
+  }
+}
+
+void InputQueue::MaybeLongTapTimeout(uint64_t aInputBlockId) {
+  // It's possible that this function gets called after the controller thread
+  // was discarded during shutdown.
+  if (!APZThreadUtils::IsControllerThreadAlive()) {
+    return;
+  }
+  APZThreadUtils::AssertOnControllerThread();
+
+  INPQ_LOG("got a maybe-long-tap timeout; block=%" PRIu64 "\n", aInputBlockId);
+
+  InputBlockState* inputBlock = FindBlockForId(aInputBlockId, nullptr);
+  MOZ_ASSERT(!inputBlock || inputBlock->AsTouchBlock());
+  if (inputBlock && inputBlock->AsTouchBlock()->IsInSlop()) {
+    // If the block is still in slop, it won't have sent a touchmove to content
+    // and so content will not have sent a content response. But also it means
+    // the touchstart should trigger a long-press gesture so let's force the
+    // block to get processed now.
+    MainThreadTimeout(aInputBlockId);
   }
 }
 
@@ -821,6 +873,18 @@ void InputQueue::ProcessQueue() {
         curBlock, cancelable && cancelable->IsDefaultPrevented(),
         curBlock->ShouldDropEvents(), curBlock->GetTargetApzc().get());
     RefPtr<AsyncPanZoomController> target = curBlock->GetTargetApzc();
+
+    // If there is an input block callback registered for this
+    // input block, invoke it.
+    auto it = mInputBlockCallbacks.find(curBlock->GetBlockId());
+    if (it != mInputBlockCallbacks.end()) {
+      bool handledByRootApzc =
+          !curBlock->ShouldDropEvents() && target && target->IsRootContent();
+      it->second(curBlock->GetBlockId(), handledByRootApzc);
+      // The callback is one-shot; discard it after calling it.
+      mInputBlockCallbacks.erase(it);
+    }
+
     // target may be null here if the initial target was unconfirmed and then
     // we later got a confirmed null target. in that case drop the events.
     if (target) {

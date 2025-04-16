@@ -17,6 +17,7 @@ import org.mozilla.geckoview.GeckoSession;
 import org.mozilla.geckoview.GeckoSessionSettings;
 import org.mozilla.geckoview.GeckoView;
 import org.mozilla.geckoview.GeckoWebExecutor;
+import org.mozilla.geckoview.Image;
 import org.mozilla.geckoview.SlowScriptResponse;
 import org.mozilla.geckoview.WebExtension;
 import org.mozilla.geckoview.WebExtensionController;
@@ -30,12 +31,10 @@ import org.mozilla.geckoview.WebResponse;
 import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
-import android.app.DownloadManager;
 import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
-import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
@@ -47,15 +46,15 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Environment;
 import android.os.SystemClock;
-import android.support.annotation.NonNull;
-import android.support.annotation.Nullable;
-import android.support.v4.app.ActivityCompat;
-import android.support.v4.app.NotificationCompat;
-import android.support.v4.app.NotificationManagerCompat;
-import android.support.v4.content.ContextCompat;
-import android.support.v7.app.ActionBar;
-import android.support.v7.app.AppCompatActivity;
-import android.support.v7.preference.PreferenceManager;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.core.app.ActivityCompat;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
+import androidx.core.content.ContextCompat;
+import androidx.appcompat.app.ActionBar;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.preference.PreferenceManager;
 import android.text.InputType;
 import android.util.Log;
 import android.util.LruCache;
@@ -71,15 +70,20 @@ import android.widget.ProgressBar;
 import android.widget.RelativeLayout;
 
 import java.io.BufferedReader;
+import java.io.BufferedOutputStream;
+import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
 import java.lang.ref.WeakReference;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.Locale;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 interface WebExtensionDelegate {
     default GeckoSession toggleBrowserActionPopup(boolean force) {
@@ -105,7 +109,7 @@ class WebExtensionManager implements WebExtension.ActionDelegate,
                                      TabSessionManager.TabObserver {
     public WebExtension extension;
 
-    private LruCache<WebExtension.Icon, Bitmap> mBitmapCache = new LruCache<>(5);
+    private LruCache<Image, Bitmap> mBitmapCache = new LruCache<>(5);
     private GeckoRuntime mRuntime;
     private WebExtension.Action mDefaultAction;
     private TabSessionManager mTabManager;
@@ -271,7 +275,7 @@ class WebExtensionManager implements WebExtension.ActionDelegate,
                         resolved.badgeBackgroundColor
                 ));
             } else {
-                resolved.icon.get(100).accept(bitmap -> {
+                resolved.icon.getBitmap(100).accept(bitmap -> {
                     mBitmapCache.put(resolved.icon, bitmap);
                     extensionDelegate.onActionButton(new ActionButton(
                         bitmap, resolved.badgeText,
@@ -411,7 +415,7 @@ public class GeckoViewActivity
 
     private ProgressBar mProgressView;
 
-    private LinkedList<GeckoSession.WebResponseInfo> mPendingDownloads = new LinkedList<>();
+    private LinkedList<WebResponse> mPendingDownloads = new LinkedList<>();
 
     private LocationView.CommitListener mCommitListener = new LocationView.CommitListener() {
         @Override
@@ -1182,24 +1186,19 @@ public class GeckoViewActivity
     }
 
     private void continueDownloads() {
-        LinkedList<GeckoSession.WebResponseInfo> downloads = mPendingDownloads;
+       final LinkedList<WebResponse> downloads = mPendingDownloads;
         mPendingDownloads = new LinkedList<>();
 
-        for (GeckoSession.WebResponseInfo response : downloads) {
+        for (final WebResponse response : downloads) {
             downloadFile(response);
         }
     }
 
-    private void downloadFile(GeckoSession.WebResponseInfo response) {
-        mTabSessionManager.getCurrentSession()
-                .getUserAgent()
-                .accept(userAgent -> downloadFile(response, userAgent),
-                        exception -> {
-                    throw new IllegalStateException("Could not get UserAgent string.");
-                });
-    }
+    private void downloadFile(final WebResponse response) {
+        if (response.body == null) {
+            return;
+        }
 
-    private void downloadFile(GeckoSession.WebResponseInfo response, String userAgent) {
         if (ContextCompat.checkSelfPermission(GeckoViewActivity.this,
                 Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
             mPendingDownloads.add(response);
@@ -1209,16 +1208,44 @@ public class GeckoViewActivity
             return;
         }
 
-        final Uri uri = Uri.parse(response.uri);
-        final String filename = response.filename != null ? response.filename : uri.getLastPathSegment();
+        final String filename = getFileName(response);
 
-        DownloadManager manager = (DownloadManager) getSystemService(DOWNLOAD_SERVICE);
-        DownloadManager.Request req = new DownloadManager.Request(uri);
-        req.setMimeType(response.contentType);
-        req.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename);
-        req.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE);
-        req.addRequestHeader("User-Agent", userAgent);
-        manager.enqueue(req);
+        try {
+            String downloadsPath = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+                    .getAbsolutePath() + "/" + filename;
+
+            int bufferSize = 1024; // to read in 1Mb increments
+            byte[] buffer = new byte[bufferSize];
+            try (OutputStream out = new BufferedOutputStream(new FileOutputStream(downloadsPath))) {
+                int len;
+                while ( (len = response.body.read(buffer)) != -1 ) {
+                    out.write(buffer, 0, len);
+                }
+            } catch (Throwable e) {
+                Log.i(LOGTAG, String.valueOf(e.getStackTrace()));
+            }
+        } catch (Throwable e) {
+            Log.i(LOGTAG, String.valueOf(e.getStackTrace()));
+        }
+    }
+
+    private String getFileName(final WebResponse response) {
+        String filename;
+        String contentDispositionHeader;
+        if (response.headers.containsKey("content-disposition")) {
+            contentDispositionHeader = response.headers.get("content-disposition");
+        } else {
+            contentDispositionHeader = response.headers.getOrDefault("Content-Disposition", "default filename=GVDownload");
+        }
+        Pattern pattern = Pattern.compile("(filename=\"?)(.+)(\"?)");
+        Matcher matcher = pattern.matcher(contentDispositionHeader);
+        if (matcher.find()) {
+            filename = matcher.group(2).replaceAll("\\s", "%20");
+        } else {
+            filename = "GVEdownload";
+        }
+
+        return filename;
     }
 
     private String mErrorTemplate;
@@ -1343,14 +1370,8 @@ public class GeckoViewActivity
         }
 
         @Override
-        public void onExternalResponse(GeckoSession session, GeckoSession.WebResponseInfo response) {
-            try {
-                Intent intent = new Intent(Intent.ACTION_VIEW);
-                intent.setDataAndTypeAndNormalize(Uri.parse(response.uri), response.contentType);
-                startActivity(intent);
-            } catch (ActivityNotFoundException e) {
-                downloadFile(response);
-            }
+        public void onExternalResponse(@NonNull GeckoSession session, @NonNull WebResponse response) {
+            downloadFile(response);
         }
 
         @Override

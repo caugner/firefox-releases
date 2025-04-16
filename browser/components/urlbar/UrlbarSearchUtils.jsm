@@ -13,6 +13,9 @@
 
 var EXPORTED_SYMBOLS = ["UrlbarSearchUtils"];
 
+const { XPCOMUtils } = ChromeUtils.import(
+  "resource://gre/modules/XPCOMUtils.jsm"
+);
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 const SEARCH_ENGINE_TOPIC = "browser-search-engine-modified";
@@ -27,6 +30,18 @@ class SearchUtils {
       "nsIObserver",
       "nsISupportsWeakReference",
     ]);
+    XPCOMUtils.defineLazyPreferenceGetter(
+      this,
+      "separatePrivateDefaultUIEnabled",
+      "browser.search.separatePrivateDefault.ui.enabled",
+      false
+    );
+    XPCOMUtils.defineLazyPreferenceGetter(
+      this,
+      "separatePrivateDefault",
+      "browser.search.separatePrivateDefault",
+      false
+    );
   }
 
   /**
@@ -81,17 +96,22 @@ class SearchUtils {
     await this.init();
     let tokenAliasEngines = [];
     for (let engine of await Services.search.getVisibleEngines()) {
-      let tokenAliases = engine.aliases.map(alias => {
-        if (!alias.startsWith("@")) {
-          alias = "@" + alias;
-        }
-        return alias;
-      });
+      let tokenAliases = this._aliasesForEngine(engine).filter(a =>
+        a.startsWith("@")
+      );
       if (tokenAliases.length) {
         tokenAliasEngines.push({ engine, tokenAliases });
       }
     }
     return tokenAliasEngines;
+  }
+
+  getDefaultEngine(isPrivate = false) {
+    return this.separatePrivateDefaultUIEnabled &&
+      this.separatePrivateDefault &&
+      isPrivate
+      ? Services.search.defaultPrivateEngine
+      : Services.search.defaultEngine;
   }
 
   async _initInternal() {
@@ -107,11 +127,36 @@ class SearchUtils {
     this._enginesByAlias = new Map();
     for (let engine of await Services.search.getVisibleEngines()) {
       if (!engine.hidden) {
-        for (let alias of engine.aliases) {
-          this._enginesByAlias.set(alias.toLocaleLowerCase(), engine);
+        for (let alias of this._aliasesForEngine(engine)) {
+          this._enginesByAlias.set(alias, engine);
         }
       }
     }
+  }
+
+  /**
+   * Gets the aliases of an engine.  For the user's convenience, we recognize
+   * token versions of all non-token aliases.  For example, if the user has an
+   * alias of "foo", then we recognize both "foo" and "@foo" as aliases for
+   * foo's engine.  The returned list is therefore a superset of
+   * `engine.aliases`.  Additionally, the returned aliases will be lower-cased
+   * to make lookups and comparisons easier.
+   *
+   * @param {nsISearchEngine} engine
+   *   The aliases of this search engine will be returned.
+   * @returns {array}
+   *   An array of lower-cased string aliases as described above.
+   */
+  _aliasesForEngine(engine) {
+    return engine.aliases.reduce((aliases, aliasWithCase) => {
+      // We store lower-cased aliases to make lookups and comparisons easier.
+      let alias = aliasWithCase.toLocaleLowerCase();
+      aliases.push(alias);
+      if (!alias.startsWith("@")) {
+        aliases.push("@" + alias);
+      }
+      return aliases;
+    }, []);
   }
 
   observe(subject, topic, data) {

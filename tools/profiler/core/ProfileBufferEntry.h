@@ -85,12 +85,12 @@ class UniqueJSONStrings {
   explicit UniqueJSONStrings(const UniqueJSONStrings& aOther);
 
   void SpliceStringTableElements(SpliceableJSONWriter& aWriter) {
-    aWriter.TakeAndSplice(mStringTableWriter.ChunkedWriteFunc());
+    aWriter.TakeAndSplice(mStringTableWriter.TakeChunkedWriteFunc());
   }
 
   void WriteProperty(mozilla::JSONWriter& aWriter, const char* aName,
                      const char* aStr) {
-    aWriter.IntProperty(aName, GetOrAddIndex(aStr));
+    aWriter.IntProperty(mozilla::MakeStringSpan(aName), GetOrAddIndex(aStr));
   }
 
   void WriteElement(mozilla::JSONWriter& aWriter, const char* aStr) {

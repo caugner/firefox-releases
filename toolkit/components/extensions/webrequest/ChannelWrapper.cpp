@@ -265,9 +265,10 @@ void ChannelWrapper::Resume(const nsCString& aText, ErrorResult& aRv) {
     if (nsCOMPtr<nsIChannel> chan = MaybeChannel()) {
       rv = chan->Resume();
 
-      PROFILER_ADD_TEXT_MARKER("Extension Suspend", aText,
-                               JS::ProfilingCategoryPair::NETWORK, mSuspendTime,
-                               mozilla::TimeStamp::NowUnfuzzed());
+      PROFILER_MARKER_TEXT(
+          "Extension Suspend",
+          NETWORK.WithOptions(MarkerTiming::IntervalUntilNowFrom(mSuspendTime)),
+          aText);
     }
     if (NS_FAILED(rv)) {
       aRv.Throw(rv);
@@ -1045,7 +1046,8 @@ void ChannelWrapper::ErrorCheck() {
  *****************************************************************************/
 
 NS_IMPL_ISUPPORTS(ChannelWrapper::RequestListener, nsIStreamListener,
-                  nsIRequestObserver, nsIThreadRetargetableStreamListener)
+                  nsIMultiPartChannelListener, nsIRequestObserver,
+                  nsIThreadRetargetableStreamListener)
 
 ChannelWrapper::RequestListener::~RequestListener() {
   NS_ReleaseOnMainThread("RequestListener::mChannelWrapper",
@@ -1054,7 +1056,8 @@ ChannelWrapper::RequestListener::~RequestListener() {
 
 nsresult ChannelWrapper::RequestListener::Init() {
   if (nsCOMPtr<nsITraceableChannel> chan = mChannelWrapper->QueryChannel()) {
-    return chan->SetNewListener(this, getter_AddRefs(mOrigStreamListener));
+    return chan->SetNewListener(this, false,
+                                getter_AddRefs(mOrigStreamListener));
   }
   return NS_ERROR_UNEXPECTED;
 }
@@ -1091,6 +1094,16 @@ ChannelWrapper::RequestListener::OnDataAvailable(nsIRequest* request,
   MOZ_ASSERT(mOrigStreamListener, "Should have mOrigStreamListener");
   return mOrigStreamListener->OnDataAvailable(request, inStr, sourceOffset,
                                               count);
+}
+
+NS_IMETHODIMP
+ChannelWrapper::RequestListener::OnAfterLastPart(nsresult aStatus) {
+  MOZ_ASSERT(mOrigStreamListener, "Should have mOrigStreamListener");
+  if (nsCOMPtr<nsIMultiPartChannelListener> listener =
+          do_QueryInterface(mOrigStreamListener)) {
+    return listener->OnAfterLastPart(aStatus);
+  }
+  return NS_OK;
 }
 
 NS_IMETHODIMP

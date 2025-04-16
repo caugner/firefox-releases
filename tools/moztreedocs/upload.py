@@ -13,7 +13,6 @@ import botocore
 import boto3
 import concurrent.futures as futures
 import requests
-import datetime
 from pprint import pprint
 
 from mozbuild.util import memoize
@@ -91,12 +90,19 @@ def s3_set_redirects(redirects):
         configuration["RoutingRules"].append(rule)
 
     s3.put_bucket_website(
-        Bucket=bucket, WebsiteConfiguration=configuration,
+        Bucket=bucket,
+        WebsiteConfiguration=configuration,
     )
 
 
 def s3_delete_missing(files, key_prefix=None):
+    """Delete files in the S3 bucket.
 
+    Delete files on the S3 bucket that doesn't match the files
+    given as the param. If the key_prefix is not specified, missing
+    files that has main/ as a prefix will be removed. Otherwise, it
+    will remove files with the same prefix as key_prefix.
+    """
     s3, bucket = create_aws_session()
     files_on_server = get_s3_keys(s3, bucket)
     if key_prefix:
@@ -114,7 +120,10 @@ def s3_delete_missing(files, key_prefix=None):
     while files_to_delete:
         keys_to_remove = [{"Key": key} for key in files_to_delete[:query_size]]
         response = s3.delete_objects(
-            Bucket=bucket, Delete={"Objects": keys_to_remove,},  # NOQA
+            Bucket=bucket,
+            Delete={
+                "Objects": keys_to_remove,
+            },  # NOQA
         )
         pprint(response, indent=2)
         files_to_delete = files_to_delete[query_size:]
@@ -135,18 +144,6 @@ def s3_upload(files, key_prefix=None):
         # Need to flush to avoid buffering/interleaving from multiple threads.
         sys.stdout.write("uploading %s to %s\n" % (path, key))
         sys.stdout.flush()
-        """
-        When running on try, we need to set an
-        expiration date to make sure they
-        don't stay live forever.
-
-        for m-c, we do not want to set any expiration
-        """
-        if os.environ.get("MOZ_SCM_LEVEL") == "1":
-            now = datetime.datetime.now()
-            expires = now + datetime.timedelta(days=7)
-            extra_args["Expires"] = expires
-
         s3.upload_fileobj(f, bucket, key, ExtraArgs=extra_args)
 
     fs = []

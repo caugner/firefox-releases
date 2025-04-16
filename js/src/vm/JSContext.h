@@ -78,8 +78,6 @@ class MOZ_RAII AutoCycleDetector {
 
 struct AutoResolving;
 
-struct HelperThread;
-
 struct ParseTask;
 
 class InternalJobQueue : public JS::JobQueue {
@@ -129,6 +127,8 @@ void ReportOverRecursed(JSContext* cx, unsigned errorNumber);
 extern MOZ_THREAD_LOCAL(JSContext*) TlsContext;
 
 enum class ContextKind {
+  Uninitialized,
+
   // Context for the main thread of a JSRuntime.
   MainThread,
 
@@ -137,6 +137,7 @@ enum class ContextKind {
 };
 
 #ifdef DEBUG
+JSContext* MaybeGetJSContext();
 bool CurrentThreadIsParseThread();
 #endif
 
@@ -200,8 +201,8 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   // currently operating on.
   void setRuntime(JSRuntime* rt);
 
-  void setHelperThread(js::AutoLockHelperThreadState& locked);
-  void clearHelperThread(js::AutoLockHelperThreadState& locked);
+  void setHelperThread(const js::AutoLockHelperThreadState& locked);
+  void clearHelperThread(const js::AutoLockHelperThreadState& locked);
 
   bool contextAvailable(js::AutoLockHelperThreadState& locked) {
     MOZ_ASSERT(kind_ == js::ContextKind::HelperThread);
@@ -218,6 +219,10 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   void setIsMeasuringExecutionTime(bool value) {
     measuringExecutionTime_ = value;
   }
+
+#ifdef DEBUG
+  bool isInitialized() const { return kind_ != js::ContextKind::Uninitialized; }
+#endif
 
   bool isMainThreadContext() const {
     return kind_ == js::ContextKind::MainThread;
@@ -275,13 +280,9 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
 
   // Accessors for immutable runtime data.
   JSAtomState& names() { return *runtime_->commonNames; }
-#ifdef JS_PARSER_ATOMS
   js::frontend::WellKnownParserAtoms& parserNames() {
     return *runtime_->commonParserNames;
   }
-#else
-  JSAtomState& parserNames() { return *runtime_->commonNames; }
-#endif  // JS_PARSER_ATOMS
   js::StaticStrings& staticStrings() { return *runtime_->staticStrings; }
   js::SharedImmutableStringsCache& sharedImmutableStrings() {
     return runtime_->sharedImmutableStrings();
@@ -1169,14 +1170,6 @@ class MOZ_STACK_CLASS AutoAccessAtomsZone {
   MOZ_IMPLICIT AutoAccessAtomsZone(const AutoLockAllAtoms& lock) {}
   MOZ_IMPLICIT AutoAccessAtomsZone(
       const gc::AutoCheckCanAccessAtomsDuringGC& canAccess) {}
-};
-
-class MOZ_RAII AutoKeepAtoms {
-  JSContext* cx;
-
- public:
-  explicit AutoKeepAtoms(JSContext* cx);
-  ~AutoKeepAtoms();
 };
 
 class MOZ_RAII AutoNoteDebuggerEvaluationWithOnNativeCallHook {

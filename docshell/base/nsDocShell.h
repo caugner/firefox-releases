@@ -399,16 +399,22 @@ class nsDocShell final : public nsDocLoader,
 
   /**
    * Loads the given URI. See comments on nsDocShellLoadState members for more
-   * information on information used. aDocShell and aRequest come from
-   * onLinkClickSync, which is triggered during form submission.
+   * information on information used.
+   * `aCacheKey` gets passed to DoURILoad call.
    */
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
-  nsresult InternalLoad(nsDocShellLoadState* aLoadState);
+  nsresult InternalLoad(nsDocShellLoadState* aLoadState,
+                        Maybe<uint32_t> aCacheKey = mozilla::Nothing());
 
   // Clear the document's storage access flag if needed.
   void MaybeClearStorageAccessFlag();
 
+  void MaybeRestoreWindowName();
+
+  void StoreWindowNameToSHEntries();
+
   void SetWillChangeProcess() { mWillChangeProcess = true; }
+  bool WillChangeProcess() { return mWillChangeProcess; }
 
   // Create a content viewer within this nsDocShell for the given
   // `WindowGlobalChild` actor.
@@ -502,6 +508,24 @@ class nsDocShell final : public nsDocLoader,
   void SetLoadingSessionHistoryInfo(
       const mozilla::dom::LoadingSessionHistoryInfo& aLoadingInfo);
 
+  already_AddRefed<nsIInputStream> GetPostDataFromCurrentEntry() const;
+  Maybe<uint32_t> GetCacheKeyFromCurrentEntry() const;
+
+  // Loading and/or active entries are only set when pref
+  // fission.sessionHistoryInParent is on.
+  bool FillLoadStateFromCurrentEntry(nsDocShellLoadState& aLoadState);
+
+  static bool ShouldAddToSessionHistory(nsIURI* aURI, nsIChannel* aChannel);
+
+  bool IsOSHE(nsISHEntry* aEntry) const { return mOSHE == aEntry; }
+
+  mozilla::dom::ChildSHistory* GetSessionHistory() {
+    return mBrowsingContext->GetChildSessionHistory();
+  }
+
+  // This returns true only when using session history in parent.
+  bool IsLoadingFromSessionHistory();
+
  private:  // member functions
   friend class nsDSURIContentListener;
   friend class FramingChecker;
@@ -594,8 +618,6 @@ class nsDocShell final : public nsDocLoader,
   // Session History
   //
 
-  bool ShouldAddToSessionHistory(nsIURI* aURI, nsIChannel* aChannel);
-
   // Either aChannel or aOwner must be null. If aChannel is
   // present, the owner should be gotten from it.
   // If aCloneChildren is true, then our current session history's
@@ -614,6 +636,17 @@ class nsDocShell final : public nsDocLoader,
                                nsIContentSecurityPolicy* aCsp,
                                bool aCloneChildren, nsISHEntry** aNewEntry);
 
+  void UpdateActiveEntry(
+      bool aReplace, const mozilla::Maybe<nsPoint>& aPreviousScrollPos,
+      nsIURI* aURI, nsIURI* aOriginalURI, nsIPrincipal* aTriggeringPrincipal,
+      nsIContentSecurityPolicy* aCsp, const nsAString& aTitle,
+      const mozilla::Maybe<bool>& aScrollRestorationIsManual,
+      nsIStructuredCloneContainer* aData, bool aURIWasModified);
+
+  nsresult AddChildSHEntry(nsISHEntry* aCloneRef, nsISHEntry* aNewEntry,
+                           int32_t aChildOffset, uint32_t aLoadType,
+                           bool aCloneChildren);
+
   nsresult AddChildSHEntryToParent(nsISHEntry* aNewEntry, int32_t aChildOffset,
                                    bool aCloneChildren);
 
@@ -628,10 +661,6 @@ class nsDocShell final : public nsDocLoader,
   // the same as in docshell
   void SetHistoryEntryAndUpdateBC(const Maybe<nsISHEntry*>& aLSHE,
                                   const Maybe<nsISHEntry*>& aOSHE);
-
-  mozilla::dom::ChildSHistory* GetSessionHistory() {
-    return mBrowsingContext->GetChildSessionHistory();
-  }
 
   static nsresult ReloadDocument(
       nsDocShell* aDocShell, mozilla::dom::Document* aDocument,
@@ -655,7 +684,9 @@ class nsDocShell final : public nsDocLoader,
   // originalURI on the channel that does the load. If OriginalURI is null, URI
   // will be set as the originalURI. If LoadReplace is true, LOAD_REPLACE flag
   // will be set on the nsIChannel.
-  nsresult DoURILoad(nsDocShellLoadState* aLoadState, nsIRequest** aRequest);
+  // If `aCacheKey` is supplied, use it for the session history entry.
+  nsresult DoURILoad(nsDocShellLoadState* aLoadState, Maybe<uint32_t> aCacheKey,
+                     nsIRequest** aRequest);
 
   static nsresult AddHeadersToChannel(nsIInputStream* aHeadersData,
                                       nsIChannel* aChannel);
@@ -790,7 +821,8 @@ class nsDocShell final : public nsDocLoader,
   // Sets the current document's current state object to the given SHEntry's
   // state object. The current state object is eventually given to the page
   // in the PopState event.
-  nsresult SetDocCurrentStateObj(nsISHEntry* aShEntry);
+  void SetDocCurrentStateObj(nsISHEntry* aShEntry,
+                             mozilla::dom::SessionHistoryInfo* aInfo);
 
   // Returns true if would have called FireOnLocationChange,
   // but did not because aFireOnLocationChange was false on entry.
@@ -965,7 +997,7 @@ class nsDocShell final : public nsDocLoader,
   bool ShouldDiscardLayoutState(nsIHttpChannel* aChannel);
   bool HasUnloadedParent();
   bool JustStartedNetworkLoad();
-  bool IsPrintingOrPP(bool aDisplayErrorDialog = true);
+  bool NavigationBlockedByPrinting(bool aDisplayErrorDialog = true);
   bool IsNavigationAllowed(bool aDisplayPrintErrorDialog = true,
                            bool aCheckIfUnloadFired = true);
   nsIScrollableFrame* GetRootScrollFrame();
@@ -981,6 +1013,9 @@ class nsDocShell final : public nsDocLoader,
   nsPresContext* GetEldestPresContext();
   nsresult CheckLoadingPermissions();
   nsresult LoadHistoryEntry(nsISHEntry* aEntry, uint32_t aLoadType);
+  nsresult LoadHistoryEntry(
+      const mozilla::dom::LoadingSessionHistoryInfo& aEntry,
+      uint32_t aLoadType);
   nsresult LoadHistoryEntry(nsDocShellLoadState* aLoadState, uint32_t aLoadType,
                             bool aReloadingActiveEntry);
   nsresult GetHttpChannel(nsIChannel* aChannel, nsIHttpChannel** aReturn);
@@ -1000,7 +1035,9 @@ class nsDocShell final : public nsDocLoader,
   // loadType may need to reflect the loadType of the parent document, or in
   // some cases (like reloads), the history load may need to be cancelled. See
   // function comments for in-depth logic descriptions.
-  void MaybeHandleSubframeHistory(nsDocShellLoadState* aLoadState);
+  // Returns true if the method itself deals with the load.
+  bool MaybeHandleSubframeHistory(nsDocShellLoadState* aLoadState,
+                                  bool aContinueHandlingSubframeHistory);
 
   // If we are passed a named target during InternalLoad, this method handles
   // moving the load to the browsing context the target name resolves to.
@@ -1054,6 +1091,14 @@ class nsDocShell final : public nsDocLoader,
                                                   bool aIsManual);
 
   void SetCacheKeyOnHistoryEntry(nsISHEntry* aSHEntry, uint32_t aCacheKey);
+
+  nsresult LoadURI(nsDocShellLoadState* aLoadState, bool aSetNavigating,
+                   bool aContinueHandlingSubframeHistory);
+
+  // Sets the active entry to the current loading entry. If aCommit is true then
+  // SessionHistoryCommit will be called on the CanonicalBrowsingContext
+  // (directly or over IPC).
+  void MoveLoadingToActiveEntry(bool aCommit);
 
  private:  // data members
   nsID mHistoryID;
@@ -1118,6 +1163,8 @@ class nsDocShell final : public nsDocLoader,
 
   // These are only set when fission.sessionHistoryInParent is set.
   mozilla::UniquePtr<mozilla::dom::SessionHistoryInfo> mActiveEntry;
+  bool mActiveEntryIsLoadingFromSessionHistory = false;
+  // mLoadingEntry is set when we're about to start loading.
   mozilla::UniquePtr<mozilla::dom::LoadingSessionHistoryInfo> mLoadingEntry;
 
   // Holds a weak pointer to a RestorePresentationEvent object if any that
@@ -1246,16 +1293,11 @@ class nsDocShell final : public nsDocLoader,
 
   bool mIsExecutingOnLoadHandler : 1;
 
-  // Indicates that a DocShell in this "docshell tree" is printing
-  bool mIsPrintingOrPP : 1;
-
   // Indicates to CreateContentViewer() that it is safe to cache the old
   // presentation of the page, and to SetupNewViewer() that the old viewer
   // should be passed a SHEntry to save itself into.
   bool mSavingOldViewer : 1;
 
-  // @see nsIDocShellHistory::createdDynamically
-  bool mDynamicallyCreated : 1;
   bool mAffectPrivateSessionLifetime : 1;
   bool mInvisible : 1;
   bool mHasLoadedNonBlankURI : 1;

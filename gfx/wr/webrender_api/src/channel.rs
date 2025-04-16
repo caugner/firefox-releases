@@ -2,12 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use crate::api::{Epoch, PipelineId};
+use crate::{Epoch, PipelineId};
 use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::io::{self, Cursor, Error, ErrorKind, Read};
 use std::mem;
-pub use crossbeam_channel::{Sender, Receiver};
+pub use crossbeam_channel::{select, Sender, Receiver};
 
 #[derive(Clone)]
 pub struct Payload {

@@ -10,6 +10,7 @@
 #include "mozilla/Range.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/gfx/Types.h"
+#include "mozilla/layers/ScreenshotGrabber.h"
 
 #include "GLTypes.h"
 #include "nsISupportsImpl.h"
@@ -75,7 +76,7 @@ class NativeLayerRoot {
 // Holds a strong reference to the NativeLayerRoot that created it.
 // On Mac, this owns a GLContext, which wants to be created and destroyed on the
 // same thread.
-class NativeLayerRootSnapshotter {
+class NativeLayerRootSnapshotter : public profiler_screenshots::Window {
  public:
   virtual ~NativeLayerRootSnapshotter() = default;
 

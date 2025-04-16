@@ -1376,8 +1376,6 @@ Document::Document(const char* aContentType)
       mSubDocuments(nullptr),
       mHeaderData(nullptr),
       mFlashClassification(FlashClassification::Unknown),
-      mScrollAnchorAdjustmentLength(0),
-      mScrollAnchorAdjustmentCount(0),
       mServoRestyleRootDirtyBits(0),
       mThrowOnDynamicMarkupInsertionCounter(0),
       mIgnoreOpensDuringUnloadCounter(0),
@@ -6119,11 +6117,10 @@ void Document::SetHeaderData(nsAtom* aHeaderField, const nsAString& aData) {
     SetPreferredStyleSheetSet(aData);
   }
 
-  if (aHeaderField == nsGkAtoms::refresh) {
-    // We get into this code before we have a script global yet, so get to
-    // our container via mDocumentContainer.
-    nsCOMPtr<nsIRefreshURI> refresher(mDocumentContainer);
-    if (refresher) {
+  if (aHeaderField == nsGkAtoms::refresh && !IsStaticDocument()) {
+    // We get into this code before we have a script global yet, so get to our
+    // container via mDocumentContainer.
+    if (nsCOMPtr<nsIRefreshURI> refresher = mDocumentContainer.get()) {
       // Note: using mDocumentURI instead of mBaseURI here, for consistency
       // (used to just use the current URI of our webnavigation, but that
       // should really be the same thing).  Note that this code can run
@@ -6354,6 +6351,14 @@ void Document::SetBFCacheEntry(nsIBFCacheEntry* aEntry) {
     }
   }
   mBFCacheEntry = aEntry;
+}
+
+bool Document::RemoveFromBFCacheSync() {
+  if (nsCOMPtr<nsIBFCacheEntry> entry = GetBFCacheEntry()) {
+    entry->RemoveFromBFCacheSync();
+    return true;
+  }
+  return false;
 }
 
 static void SubDocClearEntry(PLDHashTable* table, PLDHashEntryHdr* entry) {
@@ -8983,6 +8988,8 @@ Document* Document::Open(const Optional<nsAString>& /* unused */,
   // we do anything else, so we can then proceed to later ready state levels.
   SetReadyStateInternal(READYSTATE_UNINITIALIZED,
                         /* updateTimingInformation = */ false);
+  // Reset a flag that affects readyState behavior.
+  mSetCompleteAfterDOMContentLoaded = false;
 
   // Step 13 -- set our compat mode to standards.
   SetCompatibilityMode(eCompatibility_FullStandards);
@@ -9956,11 +9963,6 @@ void Document::RemoveMetaViewportElement(HTMLMetaElement* aElement) {
       return;
     }
   }
-}
-
-void Document::UpdateForScrollAnchorAdjustment(nscoord aLength) {
-  mScrollAnchorAdjustmentLength += abs(aLength);
-  mScrollAnchorAdjustmentCount += 1;
 }
 
 EventListenerManager* Document::GetOrCreateListenerManager() {
@@ -11188,11 +11190,11 @@ nsresult Document::CloneDocHelper(Document* clone) const {
     // document, even if they are only paused.
     MOZ_ASSERT(!clone->GetNavigationTiming(),
                "Navigation time was already set?");
-    MOZ_ASSERT(mTiming,
-               "Timing should have been setup before making a static clone");
-    RefPtr<nsDOMNavigationTiming> timing =
-        mTiming->CloneNavigationTime(nsDocShell::Cast(clone->GetDocShell()));
-    clone->SetNavigationTiming(timing);
+    if (mTiming) {
+      RefPtr<nsDOMNavigationTiming> timing =
+          mTiming->CloneNavigationTime(nsDocShell::Cast(clone->GetDocShell()));
+      clone->SetNavigationTiming(timing);
+    }
     clone->SetCsp(mCSP);
   }
 
@@ -11787,6 +11789,10 @@ void Document::UnsuppressEventHandlingAndFireEvents(bool aFireEvents) {
   }
 }
 
+bool Document::AreClipboardCommandsUnconditionallyEnabled() const {
+  return IsHTMLOrXHTML() && !nsContentUtils::IsChromeDoc(this);
+}
+
 void Document::AddSuspendedChannelEventQueue(net::ChannelEventQueue* aQueue) {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(EventHandlingSuppressed());
@@ -12263,9 +12269,12 @@ static void CachePrintSelectionRanges(const Document& aSourceDoc,
 }
 
 already_AddRefed<Document> Document::CreateStaticClone(
-    nsIDocShell* aCloneContainer) {
+    nsIDocShell* aCloneContainer, nsIContentViewer* aViewer,
+    bool* aOutHasInProcessPrintCallbacks) {
   MOZ_ASSERT(!mCreatingStaticClone);
   MOZ_ASSERT(!GetProperty(nsGkAtoms::adoptedsheetclones));
+  MOZ_DIAGNOSTIC_ASSERT(aViewer);
+
   mCreatingStaticClone = true;
   SetProperty(nsGkAtoms::adoptedsheetclones, new AdoptedStyleSheetCloneCache(),
               nsINode::DeleteProperty<AdoptedStyleSheetCloneCache>);
@@ -12276,8 +12285,10 @@ already_AddRefed<Document> Document::CreateStaticClone(
   });
 
   // Make document use different container during cloning.
+  //
+  // FIXME(emilio): Why is this needed?
   RefPtr<nsDocShell> originalShell = mDocumentContainer.get();
-  SetContainer(static_cast<nsDocShell*>(aCloneContainer));
+  SetContainer(nsDocShell::Cast(aCloneContainer));
   IgnoredErrorResult rv;
   nsCOMPtr<nsINode> clonedNode = this->CloneNode(true, rv);
   SetContainer(originalShell);
@@ -12286,50 +12297,75 @@ already_AddRefed<Document> Document::CreateStaticClone(
   }
 
   nsCOMPtr<Document> clonedDoc = do_QueryInterface(clonedNode);
-  if (clonedDoc) {
-    size_t sheetsCount = SheetCount();
-    for (size_t i = 0; i < sheetsCount; ++i) {
-      RefPtr<StyleSheet> sheet = SheetAt(i);
-      if (sheet) {
-        if (sheet->IsApplicable()) {
-          RefPtr<StyleSheet> clonedSheet =
-              sheet->Clone(nullptr, nullptr, clonedDoc, nullptr);
-          NS_WARNING_ASSERTION(clonedSheet,
-                               "Cloning a stylesheet didn't work!");
-          if (clonedSheet) {
-            clonedDoc->AddStyleSheet(clonedSheet);
-          }
+  if (!clonedDoc) {
+    return nullptr;
+  }
+
+  size_t sheetsCount = SheetCount();
+  for (size_t i = 0; i < sheetsCount; ++i) {
+    RefPtr<StyleSheet> sheet = SheetAt(i);
+    if (sheet) {
+      if (sheet->IsApplicable()) {
+        RefPtr<StyleSheet> clonedSheet =
+            sheet->Clone(nullptr, nullptr, clonedDoc, nullptr);
+        NS_WARNING_ASSERTION(clonedSheet, "Cloning a stylesheet didn't work!");
+        if (clonedSheet) {
+          clonedDoc->AddStyleSheet(clonedSheet);
         }
       }
     }
-    clonedDoc->CloneAdoptedSheetsFrom(*this);
+  }
+  clonedDoc->CloneAdoptedSheetsFrom(*this);
 
-    for (int t = 0; t < AdditionalSheetTypeCount; ++t) {
-      auto& sheets = mAdditionalSheets[additionalSheetType(t)];
-      for (StyleSheet* sheet : sheets) {
-        if (sheet->IsApplicable()) {
-          RefPtr<StyleSheet> clonedSheet =
-              sheet->Clone(nullptr, nullptr, clonedDoc, nullptr);
-          NS_WARNING_ASSERTION(clonedSheet,
-                               "Cloning a stylesheet didn't work!");
-          if (clonedSheet) {
-            clonedDoc->AddAdditionalStyleSheet(additionalSheetType(t),
-                                               clonedSheet);
-          }
+  for (int t = 0; t < AdditionalSheetTypeCount; ++t) {
+    auto& sheets = mAdditionalSheets[additionalSheetType(t)];
+    for (StyleSheet* sheet : sheets) {
+      if (sheet->IsApplicable()) {
+        RefPtr<StyleSheet> clonedSheet =
+            sheet->Clone(nullptr, nullptr, clonedDoc, nullptr);
+        NS_WARNING_ASSERTION(clonedSheet, "Cloning a stylesheet didn't work!");
+        if (clonedSheet) {
+          clonedDoc->AddAdditionalStyleSheet(additionalSheetType(t),
+                                             clonedSheet);
         }
       }
     }
+  }
 
-    // Font faces created with the JS API will not be reflected in the
-    // stylesheets and need to be copied over to the cloned document.
-    if (const FontFaceSet* set = GetFonts()) {
-      set->CopyNonRuleFacesTo(clonedDoc->Fonts());
+  // Font faces created with the JS API will not be reflected in the
+  // stylesheets and need to be copied over to the cloned document.
+  if (const FontFaceSet* set = GetFonts()) {
+    set->CopyNonRuleFacesTo(clonedDoc->Fonts());
+  }
+
+  clonedDoc->mReferrerInfo =
+      static_cast<dom::ReferrerInfo*>(mReferrerInfo.get())->Clone();
+  clonedDoc->mPreloadReferrerInfo = clonedDoc->mReferrerInfo;
+  CachePrintSelectionRanges(*this, *clonedDoc);
+
+  // We're done with the clone, embed ourselves into the document viewer and
+  // clone our children. The order here is pretty important, because our
+  // document our document needs to have an owner global before we can create
+  // the frame loaders for subdocuments.
+  aViewer->SetDocument(clonedDoc);
+
+  *aOutHasInProcessPrintCallbacks |= clonedDoc->HasPrintCallbacks();
+
+  auto pendingClones = std::move(clonedDoc->mPendingFrameStaticClones);
+  for (const auto& clone : pendingClones) {
+    RefPtr<Element> element = do_QueryObject(clone.mElement);
+    RefPtr<nsFrameLoader> frameLoader =
+        nsFrameLoader::Create(element, /* aNetworkCreated */ false);
+
+    if (NS_WARN_IF(!frameLoader)) {
+      continue;
     }
 
-    clonedDoc->mReferrerInfo =
-        static_cast<dom::ReferrerInfo*>(mReferrerInfo.get())->Clone();
-    clonedDoc->mPreloadReferrerInfo = clonedDoc->mReferrerInfo;
-    CachePrintSelectionRanges(*this, *clonedDoc);
+    clone.mElement->SetFrameLoader(frameLoader);
+
+    nsresult rv = frameLoader->FinishStaticClone(
+        clone.mStaticCloneOf, aOutHasInProcessPrintCallbacks);
+    Unused << NS_WARN_IF(NS_FAILED(rv));
   }
 
   return clonedDoc.forget();
@@ -13157,16 +13193,18 @@ class PendingFullscreenChangeList {
   class Iterator {
    public:
     explicit Iterator(Document* aDoc, IteratorOption aOption)
-        : mCurrent(PendingFullscreenChangeList::sList.getFirst()),
-          mRootShellForIteration(aDoc->GetDocShell()) {
+        : mCurrent(PendingFullscreenChangeList::sList.getFirst()) {
       if (mCurrent) {
-        if (mRootShellForIteration && aOption == eDocumentsWithSameRoot) {
-          // Use a temporary to avoid undefined behavior from passing
-          // mRootShellForIteration.
-          nsCOMPtr<nsIDocShellTreeItem> root;
-          mRootShellForIteration->GetInProcessRootTreeItem(
-              getter_AddRefs(root));
-          mRootShellForIteration = std::move(root);
+        if (aDoc->GetBrowsingContext()) {
+          mRootBCForIteration = aDoc->GetBrowsingContext();
+          if (aOption == eDocumentsWithSameRoot) {
+            RefPtr<BrowsingContext> bc =
+                GetParentIgnoreChromeBoundary(mRootBCForIteration);
+            while (bc) {
+              mRootBCForIteration = bc;
+              bc = GetParentIgnoreChromeBoundary(mRootBCForIteration);
+            }
+          }
         }
         SkipToNextMatch();
       }
@@ -13180,6 +13218,16 @@ class PendingFullscreenChangeList {
     bool AtEnd() const { return mCurrent == nullptr; }
 
    private:
+    already_AddRefed<BrowsingContext> GetParentIgnoreChromeBoundary(
+        BrowsingContext* aBC) {
+      // Chrome BrowsingContexts are only available in the parent process, so if
+      // we're in a content process, we only worry about the context tree.
+      if (XRE_IsParentProcess()) {
+        return aBC->Canonical()->GetParentCrossChromeBoundary();
+      }
+      return do_AddRef(aBC->GetParent());
+    }
+
     UniquePtr<T> TakeAndNextInternal() {
       FullscreenChange* thisChange = mCurrent;
       MOZ_ASSERT(thisChange->Type() == T::kType);
@@ -13189,21 +13237,19 @@ class PendingFullscreenChangeList {
     void SkipToNextMatch() {
       while (mCurrent) {
         if (mCurrent->Type() == T::kType) {
-          nsCOMPtr<nsIDocShellTreeItem> docShell =
-              mCurrent->Document()->GetDocShell();
-          if (!docShell) {
+          RefPtr<BrowsingContext> bc =
+              mCurrent->Document()->GetBrowsingContext();
+          if (!bc) {
             // Always automatically drop fullscreen changes which are
             // from a document detached from the doc shell.
             UniquePtr<T> change = TakeAndNextInternal();
             change->MayRejectPromise("Document is not active");
             continue;
           }
-          while (docShell && docShell != mRootShellForIteration) {
-            nsCOMPtr<nsIDocShellTreeItem> parent;
-            docShell->GetInProcessParent(getter_AddRefs(parent));
-            docShell = std::move(parent);
+          while (bc && bc != mRootBCForIteration) {
+            bc = GetParentIgnoreChromeBoundary(bc);
           }
-          if (docShell) {
+          if (bc) {
             break;
           }
         }
@@ -13214,7 +13260,7 @@ class PendingFullscreenChangeList {
     }
 
     FullscreenChange* mCurrent;
-    nsCOMPtr<nsIDocShellTreeItem> mRootShellForIteration;
+    RefPtr<BrowsingContext> mRootBCForIteration;
   };
 
  private:
@@ -13957,6 +14003,7 @@ bool Document::FullscreenElementReadyCheck(FullscreenRequest& aRequest) {
 }
 
 static nsCOMPtr<nsPIDOMWindowOuter> GetRootWindow(Document* aDoc) {
+  MOZ_ASSERT(XRE_IsParentProcess());
   nsIDocShell* docShell = aDoc->GetDocShell();
   if (!docShell) {
     return nullptr;
@@ -14300,14 +14347,16 @@ static const char* GetPointerLockError(Element* aElement, Element* aCurrentLock,
     return "PointerLockDeniedHidden";
   }
 
-  nsCOMPtr<nsPIDOMWindowOuter> top = ownerWindow->GetInProcessScriptableTop();
-  if (!top || !top->GetExtantDoc() || top->GetExtantDoc()->Hidden()) {
+  BrowsingContext* bc = ownerDoc->GetBrowsingContext();
+  BrowsingContext* topBC = bc ? bc->Top() : nullptr;
+  WindowContext* topWC = ownerDoc->GetTopLevelWindowContext();
+  if (!topBC || !topBC->GetIsActive() || !topWC ||
+      topWC != topBC->GetCurrentWindowContext()) {
     return "PointerLockDeniedHidden";
   }
 
   if (!aNoFocusCheck) {
-    mozilla::ErrorResult rv;
-    if (!top->GetExtantDoc()->HasFocus(rv)) {
+    if (!IsInActiveTab(ownerDoc)) {
       return "PointerLockDeniedNotFocused";
     }
   }
@@ -14983,13 +15032,7 @@ void Document::ReportUseCounters() {
   PropagateUseCountersToPage();
 
   if (Telemetry::HistogramUseCounterCount > 0 &&
-      (IsContentDocument() || IsResourceDoc())) {
-    if (NodePrincipal()->SchemeIs("about") ||
-        NodePrincipal()->SchemeIs("chrome") ||
-        NodePrincipal()->SchemeIs("resource")) {
-      return;
-    }
-
+      ShouldIncludeInTelemetry(/* aAllowExtensionURIs = */ true)) {
     if (kDebugUseCounters) {
       nsCString spec;
       NodePrincipal()->GetAsciiSpec(spec);
@@ -15071,34 +15114,24 @@ void Document::ReportUseCounters() {
       }
     }
   }
-
-  if (IsTopLevelContentDocument()) {
-    CSSIntCoord adjustmentLength =
-        CSSPixel::FromAppUnits(mScrollAnchorAdjustmentLength).Rounded();
-    Telemetry::Accumulate(Telemetry::SCROLL_ANCHOR_ADJUSTMENT_LENGTH,
-                          adjustmentLength);
-    Telemetry::Accumulate(Telemetry::SCROLL_ANCHOR_ADJUSTMENT_COUNT,
-                          mScrollAnchorAdjustmentCount);
-  }
 }
 
-void Document::UpdateIntersectionObservations() {
+void Document::UpdateIntersectionObservations(TimeStamp aNowTime) {
   if (mIntersectionObservers.IsEmpty()) {
     return;
   }
 
   DOMHighResTimeStamp time = 0;
-  if (nsPIDOMWindowInner* window = GetInnerWindow()) {
-    Performance* perf = window->GetPerformance();
-    if (perf) {
-      time = perf->Now();
+  if (nsPIDOMWindowInner* win = GetInnerWindow()) {
+    if (Performance* perf = win->GetPerformance()) {
+      time = perf->TimeStampToDOMHighResForRendering(aNowTime);
     }
   }
+
   nsTArray<RefPtr<DOMIntersectionObserver>> observers(
       mIntersectionObservers.Count());
-  for (auto iter = mIntersectionObservers.Iter(); !iter.Done(); iter.Next()) {
-    DOMIntersectionObserver* observer = iter.Get()->GetKey();
-    observers.AppendElement(observer);
+  for (auto& observer : mIntersectionObservers) {
+    observers.AppendElement(observer.GetKey());
   }
   for (const auto& observer : observers) {
     if (observer) {
@@ -16770,13 +16803,6 @@ bool Document::HasRecentlyStartedForegroundLoads() {
   return false;
 }
 
-nsTArray<Document::PendingFrameStaticClone>
-Document::TakePendingFrameStaticClones() {
-  MOZ_ASSERT(mIsStaticDocument,
-             "Cannot have pending frame static clones in non-static documents");
-  return std::move(mPendingFrameStaticClones);
-}
-
 void Document::AddPendingFrameStaticClone(nsFrameLoaderOwner* aElement,
                                           nsFrameLoader* aStaticCloneOf) {
   PendingFrameStaticClone* clone = mPendingFrameStaticClones.AppendElement();
@@ -16785,14 +16811,7 @@ void Document::AddPendingFrameStaticClone(nsFrameLoaderOwner* aElement,
 }
 
 bool Document::ShouldAvoidNativeTheme() const {
-  bool nativeThemeIsPrefDisabled = false;
-
-#ifndef ANDROID
-  nativeThemeIsPrefDisabled =
-      StaticPrefs::widget_disable_native_theme_for_content();
-#endif
-
-  return nativeThemeIsPrefDisabled &&
+  return StaticPrefs::widget_disable_native_theme_for_content() &&
          (!IsInChromeDocShell() || XRE_IsContentProcess());
 }
 
@@ -16827,6 +16846,21 @@ bool Document::HasThirdPartyChannel() {
   }
 
   return false;
+}
+
+bool Document::ShouldIncludeInTelemetry(bool aAllowExtensionURIs) {
+  if (!(IsContentDocument() || IsResourceDoc())) {
+    return false;
+  }
+
+  if (!aAllowExtensionURIs &&
+      NodePrincipal()->GetIsAddonOrExpandedAddonPrincipal()) {
+    return false;
+  }
+
+  return !NodePrincipal()->SchemeIs("about") &&
+         !NodePrincipal()->SchemeIs("chrome") &&
+         !NodePrincipal()->SchemeIs("resource");
 }
 
 void Document::GetConnectedShadowRoots(

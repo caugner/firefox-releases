@@ -198,9 +198,9 @@ bool HttpBackgroundChannelParent::OnTransportAndData(
     return NS_SUCCEEDED(rv);
   }
 
-  std::function<bool(const nsCString&, uint64_t, uint32_t)> sendFunc =
+  nsHttp::SendFunc<nsDependentCSubstring> sendFunc =
       [self = UnsafePtr<HttpBackgroundChannelParent>(this), aChannelStatus,
-       aTransportStatus](const nsCString& aData, uint64_t aOffset,
+       aTransportStatus](const nsDependentCSubstring& aData, uint64_t aOffset,
                          uint32_t aCount) {
         return self->SendOnTransportAndData(aChannelStatus, aTransportStatus,
                                             aOffset, aCount, aData, false);
@@ -342,39 +342,6 @@ bool HttpBackgroundChannelParent::OnStatus(const nsresult aStatus) {
   }
 
   return SendOnStatus(aStatus);
-}
-
-bool HttpBackgroundChannelParent::OnDiversion() {
-  LOG(("HttpBackgroundChannelParent::OnDiversion [this=%p]\n", this));
-  AssertIsInMainProcess();
-
-  if (NS_WARN_IF(!mIPCOpened)) {
-    return false;
-  }
-
-  if (!IsOnBackgroundThread()) {
-    MutexAutoLock lock(mBgThreadMutex);
-    nsresult rv = mBackgroundThread->Dispatch(
-        NewRunnableMethod("net::HttpBackgroundChannelParent::OnDiversion", this,
-                          &HttpBackgroundChannelParent::OnDiversion),
-        NS_DISPATCH_NORMAL);
-
-    MOZ_DIAGNOSTIC_ASSERT(NS_SUCCEEDED(rv));
-
-    return NS_SUCCEEDED(rv);
-  }
-
-  if (!SendFlushedForDiversion()) {
-    return false;
-  }
-
-  // The listener chain should now be setup; tell HttpChannelChild to divert
-  // the OnDataAvailables and OnStopRequest to associated HttpChannelParent.
-  if (!SendDivertMessages()) {
-    return false;
-  }
-
-  return true;
 }
 
 bool HttpBackgroundChannelParent::OnNotifyClassificationFlags(

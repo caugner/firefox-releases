@@ -2119,6 +2119,7 @@ class nsLayoutUtils {
    * popup frame or the root prescontext's root frame.
    */
   static nsIFrame* GetDisplayRootFrame(nsIFrame* aFrame);
+  static const nsIFrame* GetDisplayRootFrame(const nsIFrame* aFrame);
 
   /**
    * Get the reference frame that would be used when constructing a
@@ -2763,7 +2764,7 @@ class nsLayoutUtils {
    * Returns true if the widget owning the given frame has builtin APZ support
    * enabled.
    */
-  static bool AsyncPanZoomEnabled(nsIFrame* aFrame);
+  static bool AsyncPanZoomEnabled(const nsIFrame* aFrame);
 
   /**
    * Returns the current APZ Resolution Scale. When Java Pan/Zoom is
@@ -2903,7 +2904,7 @@ class nsLayoutUtils {
       nsIFrame* aForFrame, nsIFrame* aScrollFrame, nsIContent* aContent,
       const nsIFrame* aReferenceFrame,
       mozilla::layers::LayerManager* aLayerManager, ViewID aScrollParentId,
-      const nsRect& aViewport, const mozilla::Maybe<nsRect>& aClipRect,
+      const nsSize& aScrollPortSize, const mozilla::Maybe<nsRect>& aClipRect,
       bool aIsRoot,
       const mozilla::Maybe<ContainerLayerParameters>& aContainerParameters);
 
@@ -3064,7 +3065,8 @@ class nsLayoutUtils {
 
   static void ComputeSystemFont(nsFont* aSystemFont,
                                 mozilla::LookAndFeel::FontID aFontID,
-                                const nsFont* aDefaultVariableFont);
+                                const nsFont* aDefaultVariableFont,
+                                const mozilla::dom::Document* aDocument);
 
   static uint32_t ParseFontLanguageOverride(const nsAString& aLangTag);
 

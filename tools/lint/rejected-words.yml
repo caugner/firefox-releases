@@ -50,7 +50,7 @@ avoid-blacklist-and-whitelist:
         - browser/components/migration/ChromeMigrationUtils.jsm
         - browser/components/migration/ChromeProfileMigrator.jsm
         - browser/components/newtab/data/content/activity-stream.bundle.js
-        - browser/components/pioneer/content/pioneer.js
+        - browser/components/ion/content/ion.js
         - browser/components/preferences/privacy.inc.xhtml
         - browser/components/preferences/privacy.js
         - browser/components/resistfingerprinting/test/mochitest/test_bug1354633_media_error.html
@@ -149,6 +149,7 @@ avoid-blacklist-and-whitelist:
         - dom/security/test/csp/test_worker_src.html
         - dom/security/test/unit/test_isOriginPotentiallyTrustworthy.js
         - dom/serviceworkers/test/test_error_reporting.html
+        - dom/serviceworkers/test/test_openWindow.html
         - dom/smil/SMILTimeValueSpec.cpp
         - dom/smil/SMILTimeValueSpec.h
         - dom/tests/mochitest/dom-level0/idn_child.html
@@ -326,6 +327,7 @@ avoid-blacklist-and-whitelist:
         - testing/mozharness/configs/unittests/mac_unittest.py
         - testing/mozharness/configs/unittests/win_unittest.py
         - testing/profiles/unittest-required/user.js
+        - testing/raptor/browsertime/browsertime_scenario.js
         - testing/raptor/raptor/control_server.py
         - testing/raptor/raptor/manifest.py
         - testing/specialpowers/content/SpecialPowersChild.jsm
@@ -346,6 +348,7 @@ avoid-blacklist-and-whitelist:
         - toolkit/components/antitracking/StorageAccess.cpp
         - toolkit/components/antitracking/test/browser/antitracking_head.js
         - toolkit/components/antitracking/test/browser/browser_siteSpecificWorkArounds.js
+        - toolkit/components/antitracking/test/browser/browser_socialtracking_save_image.js
         - toolkit/components/antitracking/test/xpcshell/test_rejectForeignAllowList.js
         - toolkit/components/crashes/CrashManager.jsm
         - toolkit/components/crashes/tests/xpcshell/test_crash_manager.js
@@ -442,6 +445,7 @@ avoid-blacklist-and-whitelist:
         - toolkit/mozapps/extensions/test/xpinstall/browser_doorhanger_installs.js
         - toolkit/mozapps/extensions/test/xpinstall/browser_localfile3.js
         - toolkit/mozapps/extensions/test/xpinstall/browser_localfile4.js
+        - toolkit/mozapps/extensions/test/xpinstall/browser_localfile4_postDownload.js
         - toolkit/mozapps/extensions/test/xpinstall/browser_whitelist.js
         - toolkit/mozapps/extensions/test/xpinstall/head.js
         - toolkit/xre/nsAppRunner.cpp

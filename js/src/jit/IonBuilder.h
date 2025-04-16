@@ -23,8 +23,9 @@
 #include "jit/MIRGenerator.h"
 #include "jit/MIRGraph.h"
 #include "jit/TIOracle.h"
-#include "js/ScalarType.h"     // js::Scalar::Type
-#include "vm/SharedStencil.h"  // GCThingIndex
+#include "js/experimental/JitInfo.h"  // JSJitInfo
+#include "js/ScalarType.h"            // js::Scalar::Type
+#include "vm/SharedStencil.h"         // GCThingIndex
 
 namespace js {
 
@@ -791,6 +792,7 @@ class MOZ_STACK_CLASS IonBuilder {
   InliningResult inlineObject(CallInfo& callInfo);
   InliningResult inlineObjectCreate(CallInfo& callInfo);
   InliningResult inlineObjectIs(CallInfo& callInfo);
+  InliningResult inlineObjectIsPrototypeOf(CallInfo& callInfo);
   InliningResult inlineObjectToString(CallInfo& callInfo);
   InliningResult inlineDefineDataProperty(CallInfo& callInfo);
 

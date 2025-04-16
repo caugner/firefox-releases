@@ -46,6 +46,7 @@ use std::slice;
 use std::sync::mpsc::{channel, Sender, Receiver};
 use webrender::DebugFlags;
 use webrender::api::*;
+use webrender::render_api::*;
 use webrender::api::units::*;
 use winit::dpi::{LogicalPosition, LogicalSize};
 use winit::VirtualKeyCode;
@@ -928,21 +929,6 @@ fn render<'a>(
                             let path = PathBuf::from("../captures/wrench");
                             wrench.api.save_capture(path, CaptureBits::all());
                         }
-                        VirtualKeyCode::Up | VirtualKeyCode::Down => {
-                            let mut txn = Transaction::new();
-
-                            let offset = match vk {
-                                winit::VirtualKeyCode::Up => LayoutVector2D::new(0.0, 10.0),
-                                winit::VirtualKeyCode::Down => LayoutVector2D::new(0.0, -10.0),
-                                _ => unreachable!("Should not see non directional keys here.")
-                            };
-
-                            txn.scroll(ScrollLocation::Delta(offset), cursor_position);
-                            txn.generate_frame();
-                            wrench.api.send_transaction(wrench.document_id, txn);
-
-                            do_frame = true;
-                        }
                         VirtualKeyCode::Add => {
                             let current_zoom = wrench.get_page_zoom();
                             let new_zoom_factor = ZoomFactor::new(current_zoom.get() + 0.1);
@@ -960,7 +946,6 @@ fn render<'a>(
                                 wrench.document_id,
                                 None,
                                 cursor_position,
-                                HitTestFlags::FIND_ALL
                             );
 
                             println!("Hit test results:");

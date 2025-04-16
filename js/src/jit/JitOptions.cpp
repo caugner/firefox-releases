@@ -138,9 +138,6 @@ DefaultJitOptions::DefaultJitOptions() {
   // Whether Ion uses WarpBuilder as MIR builder.
   SET_DEFAULT(warpBuilder, false);
 
-  // Whether trial inlining is enabled for WarpBuilder.
-  SET_DEFAULT(warpTrialInlining, false);
-
   // Whether the IonMonkey and Baseline JITs are enabled for Trusted Principals.
   // (Ignored if ion or baselineJit is set to true.)
   SET_DEFAULT(jitForTrustedPrincipals, false);
@@ -172,6 +169,17 @@ DefaultJitOptions::DefaultJitOptions() {
   // How many invocations or loop iterations are needed before functions
   // are considered for trial inlining.
   SET_DEFAULT(trialInliningWarmUpThreshold, 500);
+
+  // The initial warm-up count for ICScripts created by trial inlining.
+  //
+  // Note: the difference between trialInliningInitialWarmUpCount and
+  // trialInliningWarmUpThreshold must be:
+  //
+  // * Small enough to allow inlining multiple levels deep before the outer
+  //   script reaches its normalIonWarmUpThreshold.
+  //
+  // * Greater than inliningEntryThreshold or no scripts can be inlined.
+  SET_DEFAULT(trialInliningInitialWarmUpCount, 250);
 
   // How many invocations or loop iterations are needed before functions
   // are compiled with the Ion compiler at OptimizationLevel::Normal.
@@ -328,6 +336,28 @@ void DefaultJitOptions::setEagerIonCompilation() {
   setEagerBaselineCompilation();
   normalIonWarmUpThreshold = 0;
   fullIonWarmUpThreshold = 0;
+}
+
+void DefaultJitOptions::setFastWarmUp() {
+  baselineInterpreterWarmUpThreshold = 4;
+  baselineJitWarmUpThreshold = 10;
+  trialInliningWarmUpThreshold = 14;
+  trialInliningInitialWarmUpCount = 12;
+  normalIonWarmUpThreshold = 30;
+  fullIonWarmUpThreshold = 65;
+
+  inliningEntryThreshold = 2;
+  smallFunctionMaxBytecodeLength = 2000;
+}
+
+void DefaultJitOptions::setWarpEnabled(bool enable) {
+#ifdef NIGHTLY_BUILD
+  // WarpBuilder requires TI to be disabled and doesn't use optimization levels.
+  typeInference = !enable;
+  warpBuilder = enable;
+  disableOptimizationLevels = enable;
+  normalIonWarmUpThreshold = enable ? 1500 : 1000;
+#endif
 }
 
 void DefaultJitOptions::setNormalIonWarmUpThreshold(uint32_t warmUpThreshold) {

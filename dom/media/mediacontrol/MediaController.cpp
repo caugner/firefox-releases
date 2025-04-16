@@ -176,6 +176,16 @@ bool MediaController::IsPlaying() const { return IsMediaPlaying(); }
 
 bool MediaController::IsActive() const { return mIsActive; };
 
+bool MediaController::ShouldPropagateActionToAllContexts(
+    const MediaControlAction& aAction) const {
+  // These three actions have default action handler for each frame, so we
+  // need to propagate to all contexts. We would handle default handlers in
+  // `ContentMediaController::HandleMediaKey`.
+  return aAction.mKey == MediaControlKey::Play ||
+         aAction.mKey == MediaControlKey::Pause ||
+         aAction.mKey == MediaControlKey::Stop;
+}
+
 void MediaController::UpdateMediaControlActionToContentMediaIfNeeded(
     const MediaControlAction& aAction) {
   // If the controller isn't active or it has been shutdown, we don't need to
@@ -183,15 +193,25 @@ void MediaController::UpdateMediaControlActionToContentMediaIfNeeded(
   if (!mIsActive || mShutdown) {
     return;
   }
-  // If we have an active media session, then we should directly notify the
-  // browsing context where active media session exists in order to let the
-  // session handle media control key events. Otherwises, we would notify the
-  // top-level browsing context to let it handle events.
-  RefPtr<BrowsingContext> context =
-      mActiveMediaSessionContextId
-          ? BrowsingContext::Get(*mActiveMediaSessionContextId)
-          : BrowsingContext::Get(Id());
-  if (context && !context->IsDiscarded()) {
+
+  // For some actions which have default action handler, we want to propagate
+  // them on all contexts in order to trigger the default handler on each
+  // context separately. Otherwise, other action should only be propagated to
+  // the context where active media session exists.
+  const bool propateToAll = ShouldPropagateActionToAllContexts(aAction);
+  const uint64_t targetContextId = propateToAll || !mActiveMediaSessionContextId
+                                       ? Id()
+                                       : *mActiveMediaSessionContextId;
+  RefPtr<BrowsingContext> context = BrowsingContext::Get(targetContextId);
+  if (!context || context->IsDiscarded()) {
+    return;
+  }
+
+  if (propateToAll) {
+    context->PreOrderWalk([&](BrowsingContext* bc) {
+      bc->Canonical()->UpdateMediaControlAction(aAction);
+    });
+  } else {
     context->Canonical()->UpdateMediaControlAction(aAction);
   }
 }
@@ -332,7 +352,14 @@ bool MediaController::ShouldActivateController() const {
 
 bool MediaController::ShouldDeactivateController() const {
   MOZ_ASSERT(!mShutdown);
-  return !IsAnyMediaBeingControlled() && mIsActive;
+  // If we don't have an active media session and no controlled media exists,
+  // then we don't need to keep controller active, because there is nothing to
+  // control. However, if we still have an active media session, then we should
+  // keep controller active in order to receive media keys even if we don't have
+  // any controlled media existing, because a website might start other media
+  // when media session receives media keys.
+  return !IsAnyMediaBeingControlled() && mIsActive &&
+         !mActiveMediaSessionContextId;
 }
 
 void MediaController::Activate() {
@@ -479,6 +506,11 @@ void MediaController::HandleMetadataChanged(
   // to use `getMetadata()` to get metadata, because it would throw an error if
   // we fail to allocate artwork.
   DispatchAsyncEvent(u"metadatachange"_ns);
+  // If metadata change is because of resetting active media session, then we
+  // should check if controller needs to be deactivated.
+  if (ShouldDeactivateController()) {
+    Deactivate();
+  }
 }
 
 void MediaController::DispatchAsyncEvent(const nsAString& aName) {

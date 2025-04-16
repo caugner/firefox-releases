@@ -16,7 +16,6 @@
 #include "jit/JitCode.h"
 #include "jit/shared/Assembler-shared.h"
 #include "util/TrailingArray.h"
-#include "vm/EnvironmentObject.h"
 #include "vm/JSContext.h"
 #include "vm/Realm.h"
 #include "vm/TraceLogging.h"
@@ -472,7 +471,7 @@ struct alignas(uintptr_t) BaselineBailoutInfo {
 
 MOZ_MUST_USE bool BailoutIonToBaseline(
     JSContext* cx, JitActivation* activation, const JSJitFrameIter& iter,
-    bool invalidate, BaselineBailoutInfo** bailoutInfo,
+    BaselineBailoutInfo** bailoutInfo,
     const ExceptionBailoutInfo* exceptionInfo);
 
 MethodStatus BaselineCompile(JSContext* cx, JSScript* script,

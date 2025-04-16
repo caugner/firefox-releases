@@ -89,7 +89,8 @@ class TRRDNSListener {
     expectedSuccess = true,
     delay,
     trrServer = "",
-    expectEarlyFail = false
+    expectEarlyFail = false,
+    options = {}
   ) {
     this.name = name;
     this.expectedAnswer = expectedAnswer;
@@ -98,6 +99,7 @@ class TRRDNSListener {
     this.promise = new Promise(resolve => {
       this.resolve = resolve;
     });
+    this.options = options;
 
     const dns = Cc["@mozilla.org/network/dns-service;1"].getService(
       Ci.nsIDNSService
@@ -113,7 +115,7 @@ class TRRDNSListener {
       this.request = dns.asyncResolve(
         name,
         Ci.nsIDNSService.RESOLVE_TYPE_DEFAULT,
-        0,
+        this.options.flags || 0,
         resolverInfo,
         this,
         currentThread,
@@ -147,6 +149,7 @@ class TRRDNSListener {
       this.expectedAnswer,
       `Checking result for ${this.name}`
     );
+    inRecord.rewind(); // In case the caller also checks the addresses
 
     if (this.delay !== undefined) {
       Assert.greaterOrEqual(
@@ -268,23 +271,39 @@ function trrQueryHandler(req, resp, url) {
 
   function processRequest(req, resp, payload) {
     let dnsQuery = global.dnsPacket.decode(payload);
-    let answers =
+    let response =
       global.dns_query_answers[
         `${dnsQuery.questions[0].name}/${dnsQuery.questions[0].type}`
-      ] || [];
+      ] || {};
 
     let buf = global.dnsPacket.encode({
       type: "response",
       id: dnsQuery.id,
       flags: global.dnsPacket.RECURSION_DESIRED,
       questions: dnsQuery.questions,
-      answers,
+      answers: response.answers || [],
+      additionals: response.additionals || [],
     });
 
-    resp.setHeader("Content-Length", buf.length);
-    resp.writeHead(200, { "Content-Type": "application/dns-message" });
-    resp.write(buf);
-    resp.end("");
+    let writeResponse = (resp, buf) => {
+      resp.setHeader("Content-Length", buf.length);
+      resp.writeHead(200, { "Content-Type": "application/dns-message" });
+      resp.write(buf);
+      resp.end("");
+    };
+
+    if (response.delay) {
+      setTimeout(
+        arg => {
+          writeResponse(arg[0], arg[1]);
+        },
+        response.delay,
+        [resp, buf]
+      );
+      return;
+    }
+
+    writeResponse(resp, buf);
   }
 }
 
@@ -333,10 +352,12 @@ class TRRServer {
   ///          flush: false,
   ///          data: "1.2.3.4",
   ///        }]
-  async registerDoHAnswers(name, type, answers) {
-    let text = `global.dns_query_answers["${name}/${type}"] = ${JSON.stringify(
-      answers
-    )}`;
+  async registerDoHAnswers(name, type, answers, additionals, delay = 0) {
+    let text = `global.dns_query_answers["${name}/${type}"] = ${JSON.stringify({
+      answers,
+      additionals,
+      delay,
+    })}`;
     return this.execute(text);
   }
 }

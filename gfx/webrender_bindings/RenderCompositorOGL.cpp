@@ -17,7 +17,7 @@ namespace wr {
 
 /* static */
 UniquePtr<RenderCompositor> RenderCompositorOGL::Create(
-    RefPtr<widget::CompositorWidget>&& aWidget) {
+    RefPtr<widget::CompositorWidget>&& aWidget, nsACString& aError) {
   RefPtr<gl::GLContext> gl = RenderThread::Get()->SharedGL();
   if (!gl) {
     gl = gl::GLContextProvider::CreateForCompositorWidget(
@@ -34,7 +34,7 @@ UniquePtr<RenderCompositor> RenderCompositorOGL::Create(
 
 RenderCompositorOGL::RenderCompositorOGL(
     RefPtr<gl::GLContext>&& aGL, RefPtr<widget::CompositorWidget>&& aWidget)
-    : RenderCompositor(std::move(aWidget)), mGL(aGL) {
+    : RenderCompositor(std::move(aWidget)), mGL(aGL), mBufferAge(0) {
   MOZ_ASSERT(mGL);
 
   mIsEGL = aGL->GetContextType() == mozilla::gl::GLContextType::EGL;

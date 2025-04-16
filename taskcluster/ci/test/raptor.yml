@@ -16,7 +16,6 @@ job-defaults:
                     .*-ux/.*: 2400
                     default: 1800
     suite: raptor
-    workdir: /home/cltbld
     run-on-projects:
         by-app:
             firefox:
@@ -120,7 +119,6 @@ job-defaults:
                             - linux64-chromium
                 default: []
 
-
 raptor-tp6:
     description: "Raptor (webextension) tp6"
     apps: ["firefox", "chrome", "chromium"]
@@ -196,6 +194,32 @@ raptor-tp6:
                     twitter: 1
                     default: 2
             default: 2
+
+raptor-tp6-live:
+    description: "Raptor (webextension) tp6 on live-sites"
+    apps: ["firefox"]
+    variants: []
+    pageload: "both"
+    treeherder-symbol: Rap-live(tp6)
+    raptor-test: tp6
+    raptor-subtests:
+        - [cnn-ampstories, cnn-amp]
+    run-on-projects:
+        by-pageload:
+            warm:
+                by-test-platform:
+                    (linux|windows|macos)(?!.*shippable).*: []
+                    default: ["mozilla-central"]
+            cold:
+                by-test-platform:
+                    macosx.*64(?:-qr)?/opt: ["mozilla-central"]
+                    (linux|windows|macos)(?!.*shippable).*: []
+                    default: ["mozilla-central", "autoland"]
+    tier: 2
+    mozharness:
+        extra-options:
+            - --no-conditioned-profile
+            - --live-sites
 
 raptor-speedometer-firefox:
     description: "Raptor Speedometer on Firefox"
@@ -633,7 +657,7 @@ raptor-youtube-playback-av1-sfr-firefox:
     max-run-time:
         by-test-platform:
             windows10-aarch64/opt: 3600
-            default: 1800
+            default: 2700
     mozharness:
         extra-options:
             - --test=raptor-youtube-playback-av1-sfr
@@ -651,7 +675,7 @@ raptor-youtube-playback-h264-sfr-firefox:
     max-run-time:
         by-test-platform:
             windows10-aarch64/opt: 3600
-            default: 1800
+            default: 2700
     mozharness:
         extra-options:
             - --test=raptor-youtube-playback-h264-sfr
@@ -685,7 +709,9 @@ raptor-youtube-playback-vp9-sfr-firefox:
     max-run-time:
         by-test-platform:
             windows10-aarch64/opt: 3600
-            default: 1800
+            default: 2700
+    limit-platforms:
+        - android-hw-p2.*
     mozharness:
         extra-options:
             - --test=raptor-youtube-playback-vp9-sfr
@@ -740,6 +766,8 @@ raptor-youtube-playback-widevine-vp9-sfr-firefox:
         by-test-platform:
             windows10-aarch64/opt: 3600
             default: 2700
+    limit-platforms:
+        - android-hw-p2.*
     mozharness:
         extra-options:
             - --test=raptor-youtube-playback-widevine-vp9-sfr

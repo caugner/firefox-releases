@@ -230,9 +230,7 @@ ScriptLoader::~ScriptLoader() {
     mPendingChildLoaders[j]->RemoveParserBlockingScriptExecutionBlocker();
   }
 
-  // Cancel any unused preload requests
   for (size_t i = 0; i < mPreloads.Length(); i++) {
-    mPreloads[i].mRequest->Cancel();
     AccumulateCategorical(LABELS_DOM_SCRIPT_PRELOAD_RESULT::NotUsed);
   }
 }
@@ -2127,7 +2125,8 @@ nsresult ScriptLoader::ProcessOffThreadRequest(ScriptLoadRequest* aRequest) {
   }
 
   // Async scripts and blocking scripts can be executed right away.
-  if (aRequest->IsAsyncScript() || aRequest->IsBlockingScript()) {
+  if ((aRequest->IsAsyncScript() || aRequest->IsBlockingScript()) &&
+      !aRequest->isInList()) {
     return ProcessRequest(aRequest);
   }
 
@@ -2199,6 +2198,9 @@ NotifyOffThreadScriptLoadCompletedRunnable::Run() {
   // function.
   RefPtr<ScriptLoadRequest> request = std::move(mRequest);
 
+  // Runnable pointer should have been cleared in the offthread callback.
+  MOZ_ASSERT(!request->mRunnable);
+
 #ifdef MOZ_GECKO_PROFILER
   if (profiler_is_active()) {
     const char* scriptSourceString;
@@ -2222,16 +2224,19 @@ NotifyOffThreadScriptLoadCompletedRunnable::Run() {
 
   RefPtr<ScriptLoader> loader = std::move(mLoader);
 
-  request->mOffThreadToken = mToken;
-  nsresult rv = loader->ProcessOffThreadRequest(request);
+  // Request was already cancelled at some earlier point.
+  if (!request->mOffThreadToken) {
+    return NS_OK;
+  }
 
-  return rv;
+  return loader->ProcessOffThreadRequest(request);
 }
 
 static void OffThreadScriptLoaderCallback(JS::OffThreadToken* aToken,
                                           void* aCallbackData) {
   RefPtr<NotifyOffThreadScriptLoadCompletedRunnable> aRunnable = dont_AddRef(
       static_cast<NotifyOffThreadScriptLoadCompletedRunnable*>(aCallbackData));
+  MOZ_ASSERT(aRunnable.get() == aRunnable->GetScriptLoadRequest()->mRunnable);
 
 #ifdef MOZ_GECKO_PROFILER
   aRunnable->GetScriptLoadRequest()->mOffThreadParseStopTime =
@@ -2241,6 +2246,12 @@ static void OffThreadScriptLoaderCallback(JS::OffThreadToken* aToken,
   LogRunnable::Run run(aRunnable);
 
   aRunnable->SetToken(aToken);
+
+  // If mRunnable was cleared then request was canceled so do nothing.
+  if (!aRunnable->GetScriptLoadRequest()->mRunnable.exchange(nullptr)) {
+    return;
+  }
+
   NotifyOffThreadScriptLoadCompletedRunnable::Dispatch(aRunnable.forget());
 }
 
@@ -2301,6 +2312,11 @@ nsresult ScriptLoader::AttemptAsyncScriptCompile(ScriptLoadRequest* aRequest,
   aRequest->mOffThreadParseStartTime = TimeStamp::NowUnfuzzed();
 #endif
 
+  // Save the runnable so it can be properly cleared during cancellation.
+  aRequest->mRunnable = runnable.get();
+  auto signalOOM =
+      mozilla::MakeScopeExit([&aRequest]() { aRequest->mRunnable = nullptr; });
+
   if (aRequest->IsModuleRequest()) {
     MOZ_ASSERT(aRequest->IsTextSource());
     MaybeSourceText maybeSource;
@@ -2310,17 +2326,19 @@ nsresult ScriptLoader::AttemptAsyncScriptCompile(ScriptLoadRequest* aRequest,
     if (maybeSource.constructed<SourceText<char16_t>>()
             ? !JS::CompileOffThreadModule(
                   cx, options, maybeSource.ref<SourceText<char16_t>>(),
-                  OffThreadScriptLoaderCallback, static_cast<void*>(runnable))
+                  OffThreadScriptLoaderCallback, static_cast<void*>(runnable),
+                  &aRequest->mOffThreadToken)
             : !JS::CompileOffThreadModule(
                   cx, options, maybeSource.ref<SourceText<Utf8Unit>>(),
-                  OffThreadScriptLoaderCallback,
-                  static_cast<void*>(runnable))) {
+                  OffThreadScriptLoaderCallback, static_cast<void*>(runnable),
+                  &aRequest->mOffThreadToken)) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
   } else if (aRequest->IsBytecode()) {
     if (!JS::DecodeOffThreadScript(
             cx, options, aRequest->mScriptBytecode, aRequest->mBytecodeOffset,
-            OffThreadScriptLoaderCallback, static_cast<void*>(runnable))) {
+            OffThreadScriptLoaderCallback, static_cast<void*>(runnable),
+            &aRequest->mOffThreadToken)) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
   } else {
@@ -2332,14 +2350,16 @@ nsresult ScriptLoader::AttemptAsyncScriptCompile(ScriptLoadRequest* aRequest,
     if (maybeSource.constructed<SourceText<char16_t>>()
             ? !JS::CompileOffThread(
                   cx, options, maybeSource.ref<SourceText<char16_t>>(),
-                  OffThreadScriptLoaderCallback, static_cast<void*>(runnable))
-            : !JS::CompileOffThread(cx, options,
-                                    maybeSource.ref<SourceText<Utf8Unit>>(),
-                                    OffThreadScriptLoaderCallback,
-                                    static_cast<void*>(runnable))) {
+                  OffThreadScriptLoaderCallback, static_cast<void*>(runnable),
+                  &aRequest->mOffThreadToken)
+            : !JS::CompileOffThread(
+                  cx, options, maybeSource.ref<SourceText<Utf8Unit>>(),
+                  OffThreadScriptLoaderCallback, static_cast<void*>(runnable),
+                  &aRequest->mOffThreadToken)) {
       return NS_ERROR_OUT_OF_MEMORY;
     }
   }
+  signalOOM.release();
 
   aRequest->BlockOnload(mDocument);
 
@@ -2357,7 +2377,7 @@ nsresult ScriptLoader::CompileOffThreadOrProcessRequest(
   NS_ASSERTION(nsContentUtils::IsSafeToRunScript(),
                "Processing requests when running scripts is unsafe.");
 
-  if (!aRequest->mOffThreadToken && !aRequest->mWasCompiledOMT) {
+  if (!aRequest->mOffThreadToken && !aRequest->InCompilingStage()) {
     bool couldCompile = false;
     nsresult rv = AttemptAsyncScriptCompile(aRequest, &couldCompile);
     if (NS_FAILED(rv)) {
@@ -2766,12 +2786,17 @@ class MOZ_RAII AutoSetProcessingScriptTag {
 
 static nsresult ExecuteCompiledScript(JSContext* aCx,
                                       ScriptLoadRequest* aRequest,
-                                      nsJSUtils::ExecutionContext& aExec) {
-  JS::Rooted<JSScript*> script(aCx, aExec.MaybeGetScript());
+                                      nsJSUtils::ExecutionContext& aExec,
+                                      ClassicScript* aLoaderScript) {
+  JS::Rooted<JSScript*> script(aCx, aExec.GetScript());
   if (!script) {
     // Compilation succeeds without producing a script if scripting is
     // disabled for the global.
     return NS_OK;
+  }
+
+  if (JS::GetScriptPrivate(script).isUndefined()) {
+    aLoaderScript->AssociateWithScript(script);
   }
 
   return aExec.ExecScript();
@@ -2835,8 +2860,10 @@ nsresult ScriptLoader::EvaluateScript(ScriptLoadRequest* aRequest) {
       // mDataType of the request might remain set to DataType::Unknown.
       MOZ_ASSERT(aRequest->IsTextSource() || aRequest->IsUnknownDataType());
       LOG(("ScriptLoadRequest (%p): Evaluate Module", aRequest));
-      AUTO_PROFILER_TEXT_MARKER_DOCSHELL("ModuleEvaluation",
-                                         profilerLabelString, JS, docShell);
+      AUTO_PROFILER_MARKER_TEXT(
+          "ModuleEvaluation",
+          JS.WithOptions(MarkerInnerWindowIdFromDocShell(docShell)),
+          profilerLabelString);
 
       // currentScript is set to null for modules.
       AutoCurrentScriptUpdater scriptUpdater(this, nullptr);
@@ -2909,18 +2936,21 @@ nsresult ScriptLoader::EvaluateScript(ScriptLoadRequest* aRequest) {
           } else {
             LOG(("ScriptLoadRequest (%p): Decode Bytecode and Execute",
                  aRequest));
-            AUTO_PROFILER_TEXT_MARKER_DOCSHELL(
-                "BytecodeDecodeMainThread", profilerLabelString, JS, docShell);
+            AUTO_PROFILER_MARKER_TEXT(
+                "BytecodeDecodeMainThread",
+                JS.WithOptions(MarkerInnerWindowIdFromDocShell(docShell)),
+                profilerLabelString);
 
             rv = exec.Decode(options, aRequest->mScriptBytecode,
                              aRequest->mBytecodeOffset);
           }
 
           if (rv == NS_OK) {
-            AUTO_PROFILER_TEXT_MARKER_DOCSHELL(
-                "ScriptExecution", profilerLabelString, JS, docShell);
-
-            rv = ExecuteCompiledScript(cx, aRequest, exec);
+            AUTO_PROFILER_MARKER_TEXT(
+                "ScriptExecution",
+                JS.WithOptions(MarkerInnerWindowIdFromDocShell(docShell)),
+                profilerLabelString);
+            rv = ExecuteCompiledScript(cx, aRequest, exec, classicScript);
           }
 
           // We do not expect to be saving anything when we already have some
@@ -2952,9 +2982,10 @@ nsresult ScriptLoader::EvaluateScript(ScriptLoadRequest* aRequest) {
               // Main thread parsing (inline and small scripts)
               LOG(("ScriptLoadRequest (%p): Compile And Exec", aRequest));
               if (aRequest->IsBinASTSource()) {
-                AUTO_PROFILER_TEXT_MARKER_DOCSHELL("BinASTDecodeMainThread",
-                                                   profilerLabelString, JS,
-                                                   docShell);
+                AUTO_PROFILER_MARKER_TEXT(
+                    "BinASTDecodeMainThread",
+                    JS.WithOptions(MarkerInnerWindowIdFromDocShell(docShell)),
+                    profilerLabelString);
 
                 rv = exec.DecodeBinAST(options,
                                        aRequest->ScriptBinASTData().begin(),
@@ -2964,9 +2995,10 @@ nsresult ScriptLoader::EvaluateScript(ScriptLoadRequest* aRequest) {
                 MaybeSourceText maybeSource;
                 rv = GetScriptSource(cx, aRequest, &maybeSource);
                 if (NS_SUCCEEDED(rv)) {
-                  AUTO_PROFILER_TEXT_MARKER_DOCSHELL("ScriptCompileMainThread",
-                                                     profilerLabelString, JS,
-                                                     docShell);
+                  AUTO_PROFILER_MARKER_TEXT(
+                      "ScriptCompileMainThread",
+                      JS.WithOptions(MarkerInnerWindowIdFromDocShell(docShell)),
+                      profilerLabelString);
 
                   rv = maybeSource.constructed<SourceText<char16_t>>()
                            ? exec.Compile(
@@ -2981,12 +3013,11 @@ nsresult ScriptLoader::EvaluateScript(ScriptLoadRequest* aRequest) {
 
             if (rv == NS_OK) {
               script = exec.GetScript();
-              if (script && JS::GetScriptPrivate(script).isUndefined()) {
-                classicScript->AssociateWithScript(script);
-              }
-              AUTO_PROFILER_TEXT_MARKER_DOCSHELL(
-                  "ScriptExecution", profilerLabelString, JS, docShell);
-              rv = ExecuteCompiledScript(cx, aRequest, exec);
+              AUTO_PROFILER_MARKER_TEXT(
+                  "ScriptExecution",
+                  JS.WithOptions(MarkerInnerWindowIdFromDocShell(docShell)),
+                  profilerLabelString);
+              rv = ExecuteCompiledScript(cx, aRequest, exec, classicScript);
             }
           }
 
@@ -3033,6 +3064,7 @@ LoadedScript* ScriptLoader::GetActiveScript(JSContext* aCx) {
 void ScriptLoader::RegisterForBytecodeEncoding(ScriptLoadRequest* aRequest) {
   MOZ_ASSERT(aRequest->mCacheInfo);
   MOZ_ASSERT(aRequest->mScript);
+  MOZ_DIAGNOSTIC_ASSERT(!aRequest->isInList());
   mBytecodeEncodingQueue.AppendElement(aRequest);
 }
 
@@ -3922,6 +3954,11 @@ void ScriptLoader::ParsingComplete(bool aTerminated) {
   if (mParserBlockingRequest) {
     mParserBlockingRequest->Cancel();
     mParserBlockingRequest = nullptr;
+  }
+
+  // Cancel any unused scripts that were compiled speculatively
+  for (size_t i = 0; i < mPreloads.Length(); i++) {
+    mPreloads[i].mRequest->MaybeCancelOffThreadScript();
   }
 
   // Have to call this even if aTerminated so we'll correctly unblock

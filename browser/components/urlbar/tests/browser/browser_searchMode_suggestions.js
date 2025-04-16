@@ -9,9 +9,13 @@
 
 const DEFAULT_ENGINE_NAME = "Test";
 const SUGGESTIONS_ENGINE_NAME = "searchSuggestionEngine.xml";
+const MAX_HISTORICAL_SEARCH_SUGGESTIONS = UrlbarPrefs.get(
+  "maxHistoricalSearchSuggestions"
+);
 
 let suggestionsEngine;
 let defaultEngine;
+let expectedFormHistoryResults = [];
 
 add_task(async function setup() {
   suggestionsEngine = await SearchTestUtils.promiseNewSearchEngine(
@@ -28,13 +32,34 @@ add_task(async function setup() {
   await Services.search.setDefault(defaultEngine);
   await Services.search.moveEngine(suggestionsEngine, 0);
 
-  await PlacesUtils.history.clear();
-  await PlacesUtils.bookmarks.eraseEverything();
+  async function cleanup() {
+    await PlacesUtils.history.clear();
+    await PlacesUtils.bookmarks.eraseEverything();
+  }
+  await cleanup();
+  registerCleanupFunction(cleanup);
 
-  // Add some form history.
+  // Add some form history for our test engine.  Add more than
+  // maxHistoricalSearchSuggestions so we can verify that excess form history is
+  // added after remote suggestions.
+  for (let i = 0; i < MAX_HISTORICAL_SEARCH_SUGGESTIONS + 1; i++) {
+    let value = `hello formHistory ${i}`;
+    await UrlbarTestUtils.formHistory.add([
+      { value, source: suggestionsEngine.name },
+    ]);
+    expectedFormHistoryResults.push({
+      heuristic: false,
+      type: UrlbarUtils.RESULT_TYPE.SEARCH,
+      source: UrlbarUtils.RESULT_SOURCE.HISTORY,
+      searchParams: {
+        suggestion: value,
+        engine: suggestionsEngine.name,
+      },
+    });
+  }
+
+  // Add other form history.
   await UrlbarTestUtils.formHistory.add([
-    { value: "hello formHistory 1", source: suggestionsEngine.name },
-    { value: "hello formHistory 2", source: suggestionsEngine.name },
     { value: "hello formHistory global" },
     { value: "hello formHistory other", source: "other engine" },
   ]);
@@ -56,6 +81,9 @@ add_task(async function setup() {
 
 add_task(async function emptySearch() {
   await BrowserTestUtils.withNewTab("about:robots", async function(browser) {
+    await SpecialPowers.pushPrefEnv({
+      set: [["browser.urlbar.update2.emptySearchBehavior", 2]],
+    });
     await UrlbarTestUtils.promiseAutocompleteResultPopup({
       window,
       value: "",
@@ -64,32 +92,102 @@ add_task(async function emptySearch() {
     Assert.equal(gURLBar.value, "", "Urlbar value should be cleared.");
     // For the empty search case, we expect to get the form history relative to
     // the picked engine and no heuristic.
+    await checkResults(expectedFormHistoryResults);
+    await UrlbarTestUtils.exitSearchMode(window, { clickClose: true });
+    await UrlbarTestUtils.promisePopupClose(window);
+    await SpecialPowers.popPrefEnv();
+  });
+});
+
+add_task(async function emptySearch_withHistory() {
+  // URLs with the same host as the search engine.
+  await PlacesTestUtils.addVisits([
+    `http://mochi.test/`,
+    // Should not be returned because it's a redirect source.
+    `http://mochi.test/redirect`,
+    {
+      uri: `http://mochi.test/target`,
+      transition: PlacesUtils.history.TRANSITIONS.REDIRECT_TEMPORARY,
+      referrer: `http://mochi.test/redirect`,
+    },
+  ]);
+  await BrowserTestUtils.withNewTab("about:robots", async function(browser) {
+    await SpecialPowers.pushPrefEnv({
+      set: [["browser.urlbar.update2.emptySearchBehavior", 2]],
+    });
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window,
+      value: "",
+    });
+    await UrlbarTestUtils.enterSearchMode(window);
+    Assert.equal(gURLBar.value, "", "Urlbar value should be cleared.");
+    // For the empty search case, we expect to get the form history relative to
+    // the picked engine, history without redirects, and no heuristic.
     await checkResults([
+      ...expectedFormHistoryResults,
       {
         heuristic: false,
-        type: UrlbarUtils.RESULT_TYPE.SEARCH,
+        type: UrlbarUtils.RESULT_TYPE.URL,
         source: UrlbarUtils.RESULT_SOURCE.HISTORY,
-        searchParams: {
-          isSearchHistory: true,
-          suggestion: "hello formHistory 1",
-          engine: suggestionsEngine.name,
-        },
+        url: `http://mochi.test/target`,
       },
       {
         heuristic: false,
-        type: UrlbarUtils.RESULT_TYPE.SEARCH,
+        type: UrlbarUtils.RESULT_TYPE.URL,
         source: UrlbarUtils.RESULT_SOURCE.HISTORY,
-        searchParams: {
-          isSearchHistory: true,
-          suggestion: "hello formHistory 2",
-          engine: suggestionsEngine.name,
-        },
+        url: `http://mochi.test/`,
       },
     ]);
 
     await UrlbarTestUtils.exitSearchMode(window, { clickClose: true });
     await UrlbarTestUtils.promisePopupClose(window);
+    await SpecialPowers.popPrefEnv();
   });
+
+  await PlacesUtils.history.clear();
+});
+
+add_task(async function emptySearch_behavior() {
+  // URLs with the same host as the search engine.
+  await PlacesTestUtils.addVisits([`http://mochi.test/`]);
+
+  await BrowserTestUtils.withNewTab("about:robots", async function(browser) {
+    await SpecialPowers.pushPrefEnv({
+      set: [["browser.urlbar.update2.emptySearchBehavior", 0]],
+    });
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window,
+      value: "",
+    });
+    await UrlbarTestUtils.enterSearchMode(window);
+    Assert.equal(gURLBar.value, "", "Urlbar value should be cleared.");
+    // For the empty search case, we expect to get the form history relative to
+    // the picked engine, history without redirects, and no heuristic.
+    await checkResults([]);
+    await UrlbarTestUtils.exitSearchMode(window, { clickClose: true });
+    await UrlbarTestUtils.promisePopupClose(window);
+    await SpecialPowers.popPrefEnv();
+  });
+
+  await BrowserTestUtils.withNewTab("about:robots", async function(browser) {
+    await SpecialPowers.pushPrefEnv({
+      set: [["browser.urlbar.update2.emptySearchBehavior", 1]],
+    });
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window,
+      value: "",
+    });
+    await UrlbarTestUtils.enterSearchMode(window);
+    Assert.equal(gURLBar.value, "", "Urlbar value should be cleared.");
+    // For the empty search case, we expect to get the form history relative to
+    // the picked engine, history without redirects, and no heuristic.
+    await checkResults([...expectedFormHistoryResults]);
+    await UrlbarTestUtils.exitSearchMode(window, { clickClose: true });
+    await UrlbarTestUtils.promisePopupClose(window);
+    await SpecialPowers.popPrefEnv();
+  });
+
+  await PlacesUtils.history.clear();
 });
 
 add_task(async function nonEmptySearch() {
@@ -109,37 +207,16 @@ add_task(async function nonEmptySearch() {
         source: UrlbarUtils.RESULT_SOURCE.SEARCH,
         searchParams: {
           query,
-          isSearchHistory: false,
           engine: suggestionsEngine.name,
         },
       },
-      {
-        heuristic: false,
-        type: UrlbarUtils.RESULT_TYPE.SEARCH,
-        source: UrlbarUtils.RESULT_SOURCE.HISTORY,
-        searchParams: {
-          isSearchHistory: true,
-          suggestion: "hello formHistory 1",
-          engine: suggestionsEngine.name,
-        },
-      },
-      {
-        heuristic: false,
-        type: UrlbarUtils.RESULT_TYPE.SEARCH,
-        source: UrlbarUtils.RESULT_SOURCE.HISTORY,
-        searchParams: {
-          isSearchHistory: true,
-          suggestion: "hello formHistory 2",
-          engine: suggestionsEngine.name,
-        },
-      },
+      ...expectedFormHistoryResults.slice(0, 2),
       {
         heuristic: false,
         type: UrlbarUtils.RESULT_TYPE.SEARCH,
         source: UrlbarUtils.RESULT_SOURCE.SEARCH,
         searchParams: {
           query,
-          isSearchHistory: false,
           suggestion: `${query}foo`,
           engine: suggestionsEngine.name,
         },
@@ -150,11 +227,11 @@ add_task(async function nonEmptySearch() {
         source: UrlbarUtils.RESULT_SOURCE.SEARCH,
         searchParams: {
           query,
-          isSearchHistory: false,
           suggestion: `${query}bar`,
           engine: suggestionsEngine.name,
         },
       },
+      ...expectedFormHistoryResults.slice(2, 4),
     ]);
 
     await UrlbarTestUtils.exitSearchMode(window, { clickClose: true });
@@ -180,7 +257,6 @@ add_task(async function nonEmptySearch_nonMatching() {
         source: UrlbarUtils.RESULT_SOURCE.SEARCH,
         searchParams: {
           query,
-          isSearchHistory: false,
           engine: suggestionsEngine.name,
         },
       },
@@ -190,7 +266,6 @@ add_task(async function nonEmptySearch_nonMatching() {
         source: UrlbarUtils.RESULT_SOURCE.SEARCH,
         searchParams: {
           query,
-          isSearchHistory: false,
           suggestion: `${query}foo`,
           engine: suggestionsEngine.name,
         },
@@ -201,7 +276,6 @@ add_task(async function nonEmptySearch_nonMatching() {
         source: UrlbarUtils.RESULT_SOURCE.SEARCH,
         searchParams: {
           query,
-          isSearchHistory: false,
           suggestion: `${query}bar`,
           engine: suggestionsEngine.name,
         },
@@ -219,6 +293,9 @@ add_task(async function nonEmptySearch_withHistory() {
   await PlacesTestUtils.addVisits([
     `http://mochi.test/${query}`,
     `http://mochi.test/${query}1`,
+    // Should not be returned because it has a different host, even if it
+    // matches the host in the path.
+    `http://example.com/mochi.test/${query}`,
   ]);
 
   await BrowserTestUtils.withNewTab("about:robots", async function(browser) {
@@ -236,7 +313,6 @@ add_task(async function nonEmptySearch_withHistory() {
         source: UrlbarUtils.RESULT_SOURCE.SEARCH,
         searchParams: {
           query,
-          isSearchHistory: false,
           engine: suggestionsEngine.name,
         },
       },
@@ -246,7 +322,6 @@ add_task(async function nonEmptySearch_withHistory() {
         source: UrlbarUtils.RESULT_SOURCE.SEARCH,
         searchParams: {
           query,
-          isSearchHistory: false,
           suggestion: `${query}foo`,
           engine: suggestionsEngine.name,
         },
@@ -257,7 +332,6 @@ add_task(async function nonEmptySearch_withHistory() {
         source: UrlbarUtils.RESULT_SOURCE.SEARCH,
         searchParams: {
           query,
-          isSearchHistory: false,
           suggestion: `${query}bar`,
           engine: suggestionsEngine.name,
         },
@@ -301,7 +375,6 @@ add_task(async function nonEmptySearch_url() {
         source: UrlbarUtils.RESULT_SOURCE.SEARCH,
         searchParams: {
           query,
-          isSearchHistory: false,
           engine: suggestionsEngine.name,
         },
       },

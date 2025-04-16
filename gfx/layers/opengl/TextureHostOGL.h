@@ -450,6 +450,11 @@ class SurfaceTextureHost : public TextureHost {
                         const Range<wr::ImageKey>& aImageKeys,
                         const bool aPreferCompositorSurface) override;
 
+  // gecko does not need deferred deletion with WebRender
+  // GPU/hardware task end could be checked by android fence.
+  // SurfaceTexture uses android fence internally,
+  bool NeedsDeferredDeletion() const override { return false; }
+
  protected:
   bool EnsureAttached();
 
@@ -497,6 +502,11 @@ class AndroidHardwareBufferTextureHost : public TextureHost {
 
   const char* Name() override { return "AndroidHardwareBufferTextureHost"; }
 
+  AndroidHardwareBufferTextureHost* AsAndroidHardwareBufferTextureHost()
+      override {
+    return this;
+  }
+
   void CreateRenderTexture(
       const wr::ExternalImageId& aExternalImageId) override;
 
@@ -512,6 +522,20 @@ class AndroidHardwareBufferTextureHost : public TextureHost {
                         const wr::LayoutRect& aClip, wr::ImageRendering aFilter,
                         const Range<wr::ImageKey>& aImageKeys,
                         const bool aPreferCompositorSurface) override;
+
+  void SetAcquireFence(mozilla::ipc::FileDescriptor&& aFenceFd) override;
+
+  void SetReleaseFence(mozilla::ipc::FileDescriptor&& aFenceFd) override;
+
+  mozilla::ipc::FileDescriptor GetAndResetReleaseFence() override;
+
+  AndroidHardwareBuffer* GetAndroidHardwareBuffer() const override {
+    return mAndroidHardwareBuffer;
+  }
+
+  // gecko does not need deferred deletion with WebRender
+  // GPU/hardware task end could be checked by android fence.
+  bool NeedsDeferredDeletion() const override { return false; }
 
  protected:
   void DestroyEGLImage();

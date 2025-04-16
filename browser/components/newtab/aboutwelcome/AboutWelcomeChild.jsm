@@ -229,16 +229,16 @@ class AboutWelcomeChild extends JSWindowActorChild {
   AWGetStartupData() {
     let experimentData;
     try {
-      // Note that we speciifically don't wait for experiments to be loaded from disk so if
+      // Note that we specifically don't wait for experiments to be loaded from disk so if
       // about:welcome loads outside of the "FirstStartup" scenario this will likely not be ready
       experimentData = ExperimentAPI.getExperiment({
-        group: "aboutwelcome",
+        featureId: "aboutwelcome",
       });
     } catch (e) {
       Cu.reportError(e);
     }
 
-    if (experimentData && experimentData.slug) {
+    if (experimentData?.slug) {
       log.debug(
         `Loading about:welcome with experiment: ${experimentData.slug}`
       );

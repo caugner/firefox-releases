@@ -121,15 +121,18 @@
   skin/classic/browser/protections/breached-password.svg       (../shared/protections/breached-password.svg)
   skin/classic/browser/protections/new-feature.svg             (../shared/protections/new-feature.svg)
 
+  skin/classic/browser/preferences/android-menu.svg            (../shared/preferences/android-menu.svg)
   skin/classic/browser/preferences/bookmark.svg                (../shared/preferences/bookmark.svg)
   skin/classic/browser/preferences/critters-postcard.jpg       (../shared/preferences/critters-postcard.jpg)
   skin/classic/browser/preferences/extensions.svg              (../shared/preferences/extensions.svg)
+  skin/classic/browser/preferences/experiments.svg             (../shared/preferences/experiments.svg)
   skin/classic/browser/preferences/face-sad.svg                (../shared/preferences/face-sad.svg)
   skin/classic/browser/preferences/face-smile.svg              (../shared/preferences/face-smile.svg)
   skin/classic/browser/preferences/formfill.svg                (../shared/preferences/formfill.svg)
   skin/classic/browser/preferences/fxaPairDevice.css           (../shared/preferences/fxaPairDevice.css)
   skin/classic/browser/preferences/general.svg                 (../shared/preferences/general.svg)
   skin/classic/browser/preferences/history.svg                 (../shared/preferences/history.svg)
+  skin/classic/browser/preferences/ios-menu.svg                (../shared/preferences/ios-menu.svg)
   skin/classic/browser/preferences/no-search-bar.svg           (../shared/preferences/no-search-bar.svg)
   skin/classic/browser/preferences/no-search-results.svg       (../shared/preferences/no-search-results.svg)
   skin/classic/browser/preferences/preferences.svg             (../shared/preferences/preferences.svg)
@@ -243,7 +246,7 @@
   skin/classic/browser/window.svg                     (../shared/icons/window.svg)
   skin/classic/browser/zoom-in.svg                    (../shared/icons/zoom-in.svg)
   skin/classic/browser/zoom-out.svg                   (../shared/icons/zoom-out.svg)
-  skin/classic/browser/pioneer.svg                    (../shared/icons/pioneer.svg)
+  skin/classic/browser/ion.svg                        (../shared/icons/ion.svg)
 
 
   skin/classic/browser/search-engine-placeholder.png           (../shared/search/search-engine-placeholder.png)

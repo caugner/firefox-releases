@@ -142,6 +142,14 @@ void CompositorBridgeParentBase::NotifyNotUsed(PTextureParent* aTexture,
     return;
   }
 
+#ifdef MOZ_WIDGET_ANDROID
+  if (texture->GetAndroidHardwareBuffer()) {
+    MOZ_ASSERT(texture->GetFlags() & TextureFlags::RECYCLE);
+    ImageBridgeParent::NotifyBufferNotUsedOfCompositorBridge(
+        GetChildProcessId(), texture, aTransactionId);
+  }
+#endif
+
   if (!(texture->GetFlags() & TextureFlags::RECYCLE) &&
       !(texture->GetFlags() & TextureFlags::WAIT_HOST_USAGE_END)) {
     return;
@@ -1460,7 +1468,7 @@ void CompositorBridgeParent::GetFrameUniformity(const LayersId& aLayersId,
 
 void CompositorBridgeParent::SetConfirmedTargetAPZC(
     const LayersId& aLayersId, const uint64_t& aInputBlockId,
-    const nsTArray<ScrollableLayerGuid>& aTargets) {
+    nsTArray<ScrollableLayerGuid>&& aTargets) {
   if (!mApzcTreeManager || !mApzUpdater) {
     return;
   }
@@ -1468,10 +1476,12 @@ void CompositorBridgeParent::SetConfirmedTargetAPZC(
   void (APZCTreeManager::*setTargetApzcFunc)(
       uint64_t, const nsTArray<ScrollableLayerGuid>&) =
       &APZCTreeManager::SetTargetAPZC;
-  RefPtr<Runnable> task = NewRunnableMethod<
-      uint64_t, StoreCopyPassByConstLRef<CopyableTArray<ScrollableLayerGuid>>>(
-      "layers::CompositorBridgeParent::SetConfirmedTargetAPZC",
-      mApzcTreeManager.get(), setTargetApzcFunc, aInputBlockId, aTargets);
+  RefPtr<Runnable> task =
+      NewRunnableMethod<uint64_t,
+                        StoreCopyPassByRRef<nsTArray<ScrollableLayerGuid>>>(
+          "layers::CompositorBridgeParent::SetConfirmedTargetAPZC",
+          mApzcTreeManager.get(), setTargetApzcFunc, aInputBlockId,
+          std::move(aTargets));
   mApzUpdater->RunOnControllerThread(aLayersId, task.forget());
 }
 
@@ -1894,7 +1904,7 @@ mozilla::ipc::IPCResult CompositorBridgeParent::RecvAdoptChild(
       // Clear the current transforms.
       nsTArray<MatrixMessage> clear;
       clear.AppendElement(MatrixMessage(Nothing(), ScreenRect(), child));
-      oldRootController->NotifyLayerTransforms(clear);
+      oldRootController->NotifyLayerTransforms(std::move(clear));
     }
   }
   if (mApzUpdater) {
@@ -1941,10 +1951,13 @@ PWebRenderBridgeParent* CompositorBridgeParent::AllocPWebRenderBridgeParent(
     // Same, but for the OMTA sampler.
     mOMTASampler->SetWebRenderWindowId(windowId);
   }
+
+  nsCString error("FEATURE_FAILTURE_WEBRENDER_INITIALIZE_UNSPECIFIED");
   RefPtr<wr::WebRenderAPI> api =
-      wr::WebRenderAPI::Create(this, std::move(widget), windowId, aSize);
+      wr::WebRenderAPI::Create(this, std::move(widget), windowId, aSize, error);
   if (!api) {
-    mWrBridge = WebRenderBridgeParent::CreateDestroyed(aPipelineId);
+    mWrBridge =
+        WebRenderBridgeParent::CreateDestroyed(aPipelineId, std::move(error));
     mWrBridge.get()->AddRef();  // IPDL reference
     return mWrBridge;
   }
@@ -2924,8 +2937,7 @@ mozilla::ipc::IPCResult CompositorBridgeParent::RecvBeginRecording(
     mLayerManager->SetCompositionRecorder(
         MakeUnique<CompositionRecorder>(aRecordingStart));
   } else if (mWrBridge) {
-    mWrBridge->SetCompositionRecorder(MakeUnique<WebRenderCompositionRecorder>(
-        aRecordingStart, mWrBridge->PipelineId()));
+    mWrBridge->BeginRecording(aRecordingStart);
   }
 
   mHaveCompositionRecorder = true;

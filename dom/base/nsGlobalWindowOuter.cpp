@@ -26,6 +26,8 @@
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/BrowsingContextBinding.h"
+#include "mozilla/dom/CanonicalBrowsingContext.h"
+#include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/ContentFrameMessageManager.h"
 #include "mozilla/dom/DocumentInlines.h"
 #include "mozilla/dom/EventTarget.h"
@@ -188,6 +190,7 @@
 #include "nsFrameLoaderOwner.h"
 #include "nsXPCOMCID.h"
 #include "mozilla/Logging.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "prenv.h"
 
 #include "mozilla/dom/IDBFactory.h"
@@ -1326,6 +1329,7 @@ nsGlobalWindowOuter::nsGlobalWindowOuter(uint64_t aWindowID)
       mTopLevelOuterContentWindow(false),
       mStorageAccessPermissionGranted(false),
       mDelayedPrintUntilAfterLoad(false),
+      mDelayedCloseForPrinting(false),
       mShouldDelayPrintUntilAfterLoad(false),
 #ifdef DEBUG
       mSerial(0),
@@ -2074,6 +2078,10 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
     return NS_ERROR_UNEXPECTED;
   }
 
+  if (!mBrowsingContext->AncestorsAreCurrent()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
   RefPtr<Document> oldDoc = mDoc;
   MOZ_RELEASE_ASSERT(oldDoc != aDocument);
 
@@ -2103,6 +2111,8 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
     }
   }
 
+  MaybeResetWindowName(aDocument);
+
   /* No mDocShell means we're already been partially closed down.  When that
      happens, setting status isn't a big requirement, so don't. (Doesn't happen
      under normal circumstances, but bug 49615 describes a case.) */
@@ -2123,9 +2133,12 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
   // document.
   mDoc = aDocument;
 
+  nsDocShell::Cast(mDocShell)->MaybeRestoreWindowName();
+
   // We drop the print request for the old document on the floor, it never made
-  // it.
+  // it. We don't close the window here either even if we were asked to.
   mShouldDelayPrintUntilAfterLoad = true;
+  mDelayedCloseForPrinting = false;
   mDelayedPrintUntilAfterLoad = false;
 
   // Take this opportunity to clear mSuspendedDoc. Our old inner window is now
@@ -2430,7 +2443,10 @@ nsresult nsGlobalWindowOuter::SetNewDocument(Document* aDocument,
 
   // Update the current window for our BrowsingContext.
   RefPtr<BrowsingContext> bc = GetBrowsingContext();
-  MOZ_ALWAYS_SUCCEEDS(bc->SetCurrentInnerWindowId(mInnerWindow->WindowID()));
+
+  if (bc->IsOwnedByProcess()) {
+    MOZ_ALWAYS_SUCCEEDS(bc->SetCurrentInnerWindowId(mInnerWindow->WindowID()));
+  }
 
   // We no longer need the old inner window.  Start its destruction if
   // its not being reused and clear our reference.
@@ -4407,12 +4423,12 @@ FullscreenTransitionTask::Run() {
     return NS_OK;
   }
   if (stage == eBeforeToggle) {
-    PROFILER_ADD_MARKER("Fullscreen transition start", DOM);
+    PROFILER_MARKER_UNTYPED("Fullscreen transition start", DOM);
     mWidget->PerformFullscreenTransition(nsIWidget::eBeforeFullscreenToggle,
                                          mDuration.mFadeIn, mTransitionData,
                                          this);
   } else if (stage == eToggleFullscreen) {
-    PROFILER_ADD_MARKER("Fullscreen toggle start", DOM);
+    PROFILER_MARKER_UNTYPED("Fullscreen toggle start", DOM);
     mFullscreenChangeStartTime = TimeStamp::Now();
     if (MOZ_UNLIKELY(mWindow->mFullscreen != mFullscreen)) {
       // This could happen in theory if several fullscreen requests in
@@ -4456,7 +4472,7 @@ FullscreenTransitionTask::Run() {
                                          mDuration.mFadeOut, mTransitionData,
                                          this);
   } else if (stage == eEnd) {
-    PROFILER_ADD_MARKER("Fullscreen transition end", DOM);
+    PROFILER_MARKER_UNTYPED("Fullscreen transition end", DOM);
     mWidget->CleanupFullscreenTransition();
   }
   return NS_OK;
@@ -4477,7 +4493,7 @@ FullscreenTransitionTask::Observer::Observe(nsISupports* aSubject,
       // The paint notification arrives first. Cancel the timer.
       mTask->mTimer->Cancel();
       shouldContinue = true;
-      PROFILER_ADD_MARKER("Fullscreen toggle end", DOM);
+      PROFILER_MARKER_UNTYPED("Fullscreen toggle end", DOM);
     }
   } else {
 #ifdef DEBUG
@@ -4488,7 +4504,7 @@ FullscreenTransitionTask::Observer::Observe(nsISupports* aSubject,
                "Should only trigger this with the timer the task created");
 #endif
     shouldContinue = true;
-    PROFILER_ADD_MARKER("Fullscreen toggle timeout", DOM);
+    PROFILER_MARKER_UNTYPED("Fullscreen toggle timeout", DOM);
   }
   if (shouldContinue) {
     nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
@@ -5119,14 +5135,22 @@ void nsGlobalWindowOuter::FocusOuter(CallerType aCallerType) {
   // Don't look for a presshell if we're a root chrome window that's got
   // about:blank loaded.  We don't want to focus our widget in that case.
   // XXXbz should we really be checking for IsInitialDocument() instead?
-  nsCOMPtr<nsIDocShellTreeItem> parentDsti;
-  mDocShell->GetInProcessParent(getter_AddRefs(parentDsti));
-
-  // set the parent's current focus to the frame containing this window.
-  nsCOMPtr<nsPIDOMWindowOuter> parent =
-      parentDsti ? parentDsti->GetWindow() : nullptr;
+  RefPtr<BrowsingContext> parent;
+  BrowsingContext* bc = GetBrowsingContext();
+  if (bc) {
+    parent = bc->GetParent();
+    if (!parent && XRE_IsParentProcess()) {
+      parent = bc->Canonical()->GetParentCrossChromeBoundary();
+    }
+  }
   if (parent) {
-    nsCOMPtr<Document> parentdoc = parent->GetDoc();
+    if (!parent->IsInProcess()) {
+      ContentChild* contentChild = ContentChild::GetSingleton();
+      MOZ_ASSERT(contentChild);
+      contentChild->SendFinalizeFocusOuter(bc, canFocus, aCallerType);
+      return;
+    }
+    nsCOMPtr<Document> parentdoc = parent->GetDocument();
     if (!parentdoc) {
       return;
     }
@@ -5195,8 +5219,8 @@ static CallState CollectDocuments(Document& aDoc,
   return CallState::Continue;
 }
 
-static void DispatchPrintEventToWindowTree(
-    Document& aDoc, const nsAString& aEvent) {
+static void DispatchPrintEventToWindowTree(Document& aDoc,
+                                           const nsAString& aEvent) {
   if (aDoc.IsStaticDocument()) {
     return;
   }
@@ -5249,6 +5273,19 @@ void nsGlobalWindowOuter::PrintOuter(ErrorResult& aError) {
     return;
   }
 
+  RefPtr<BrowsingContext> top =
+      mBrowsingContext ? mBrowsingContext->Top() : nullptr;
+  bool oldIsPrinting = top && top->GetIsPrinting();
+  if (top) {
+    Unused << top->SetIsPrinting(true);
+  }
+
+  auto unset = MakeScopeExit([&] {
+    if (top) {
+      Unused << top->SetIsPrinting(oldIsPrinting);
+    }
+  });
+
   const bool isPreview = StaticPrefs::print_tab_modal_enabled() &&
                          !StaticPrefs::print_always_print_silent();
   if (isPreview) {
@@ -5260,37 +5297,6 @@ void nsGlobalWindowOuter::PrintOuter(ErrorResult& aError) {
   Print(settings, nullptr, nullptr, IsPreview(isPreview),
         BlockUntilDone(isPreview), nullptr, aError);
 #endif
-}
-
-// Returns whether there's any print callback.
-static bool BuildNestedClones(Document& aJustClonedDoc) {
-  bool hasPrintCallbacks = aJustClonedDoc.HasPrintCallbacks();
-  auto pendingFrameClones = aJustClonedDoc.TakePendingFrameStaticClones();
-  for (const auto& clone : pendingFrameClones) {
-    RefPtr<Element> element = do_QueryObject(clone.mElement);
-    RefPtr<nsFrameLoader> frameLoader =
-        nsFrameLoader::Create(element, /* aNetworkCreated */ false);
-
-    if (NS_WARN_IF(!frameLoader)) {
-      continue;
-    }
-
-    clone.mElement->SetFrameLoader(frameLoader);
-
-    nsCOMPtr<nsIDocShell> docshell;
-    RefPtr<Document> doc;
-    nsresult rv = frameLoader->FinishStaticClone(clone.mStaticCloneOf,
-                                                 getter_AddRefs(docshell),
-                                                 getter_AddRefs(doc));
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      continue;
-    }
-
-    if (doc) {
-      hasPrintCallbacks |= BuildNestedClones(*doc);
-    }
-  }
-  return hasPrintCallbacks;
 }
 
 Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
@@ -5375,6 +5381,8 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
       aError.ThrowNotAllowedError("No browsing context");
       return nullptr;
     }
+
+    Unused << bc->Top()->SetIsPrinting(true);
     nsCOMPtr<nsIDocShell> cloneDocShell = bc->GetDocShell();
     MOZ_DIAGNOSTIC_ASSERT(cloneDocShell);
     cloneDocShell->GetContentViewer(getter_AddRefs(cv));
@@ -5394,6 +5402,7 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
       // subframe.
       MOZ_ALWAYS_SUCCEEDS(
           bc->SetOpenerPolicy(sourceBC->Top()->GetOpenerPolicy()));
+      MOZ_DIAGNOSTIC_ASSERT(bc->Group() == sourceBC->Group());
     }
 
     if (RefPtr<Document> doc = cv->GetDocument()) {
@@ -5410,23 +5419,12 @@ Nullable<WindowProxyHolder> nsGlobalWindowOuter::Print(
     auto dispatchAfterPrint = MakeScopeExit(
         [&] { DispatchPrintEventToWindowTree(*docToPrint, u"afterprint"_ns); });
 
-    RefPtr<Document> clone;
-    {
-      nsAutoScriptBlocker blockScripts;
-      clone = docToPrint->CreateStaticClone(cloneDocShell);
-      if (!clone) {
-        aError.ThrowNotSupportedError("Clone operation for printing failed");
-        return nullptr;
-      }
-
-      // Do this now so that we get a script handling object, and thus can
-      // create our clones.
-      aError = cv->SetDocument(clone);
-      if (aError.Failed()) {
-        return nullptr;
-      }
-
-      hasPrintCallbacks |= BuildNestedClones(*clone);
+    nsAutoScriptBlocker blockScripts;
+    RefPtr<Document> clone =
+        docToPrint->CreateStaticClone(cloneDocShell, cv, &hasPrintCallbacks);
+    if (!clone) {
+      aError.ThrowNotSupportedError("Clone operation for printing failed");
+      return nullptr;
     }
   }
 
@@ -6015,7 +6013,7 @@ bool nsGlobalWindowOuter::GatherPostMessageData(
   if (!callerPrin->IsSystemPrincipal()) {
     nsAutoCString asciiOrigin;
     callerPrin->GetAsciiOrigin(asciiOrigin);
-    aOrigin = NS_ConvertUTF8toUTF16(asciiOrigin);
+    CopyUTF8toUTF16(asciiOrigin, aOrigin);
   } else if (callerInnerWin) {
     if (!*aCallerURI) {
       return false;
@@ -6252,22 +6250,18 @@ bool nsGlobalWindowOuter::CanClose() {
     return true;
   }
 
-  // Ask the content viewer whether the toplevel window can close.
-  // If the content viewer returns false, it is responsible for calling
-  // Close() as soon as it is possible for the window to close.
-  // This allows us to not close the window while printing is happening.
-
   nsCOMPtr<nsIContentViewer> cv;
   mDocShell->GetContentViewer(getter_AddRefs(cv));
   if (cv) {
     bool canClose;
     nsresult rv = cv->PermitUnload(&canClose);
     if (NS_SUCCEEDED(rv) && !canClose) return false;
+  }
 
-    rv = cv->RequestWindowClose(
-        mShouldDelayPrintUntilAfterLoad && mDelayedPrintUntilAfterLoad,
-        &canClose);
-    if (NS_SUCCEEDED(rv) && !canClose) return false;
+  // If we still have to print, we delay the closing until print has happened.
+  if (mShouldDelayPrintUntilAfterLoad && mDelayedPrintUntilAfterLoad) {
+    mDelayedCloseForPrinting = true;
+    return false;
   }
 
   return true;
@@ -6349,10 +6343,11 @@ bool nsGlobalWindowOuter::IsOnlyTopLevelDocumentInSHistory() {
   // Disabled since IsFrame() is buggy in Fission
   // MOZ_ASSERT(mBrowsingContext->IsTop());
 
-  nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(mDocShell));
-  NS_ENSURE_TRUE(webNav, false);
+  if (StaticPrefs::fission_sessionHistoryInParent()) {
+    return mBrowsingContext->GetIsSingleToplevelInHistory();
+  }
 
-  RefPtr<ChildSHistory> csh = webNav->GetSessionHistory();
+  RefPtr<ChildSHistory> csh = nsDocShell::Cast(mDocShell)->GetSessionHistory();
   if (csh && csh->LegacySHistory()) {
     return csh->LegacySHistory()->IsEmptyOrHasEntriesForSingleTopLevelPage();
   }
@@ -7729,6 +7724,63 @@ AbstractThread* nsGlobalWindowOuter::AbstractMainThreadFor(
     return GetDocGroup()->AbstractMainThreadFor(aCategory);
   }
   return DispatcherTrait::AbstractMainThreadFor(aCategory);
+}
+
+void nsGlobalWindowOuter::MaybeResetWindowName(Document* aNewDocument) {
+  MOZ_ASSERT(aNewDocument);
+
+  if (!StaticPrefs::privacy_window_name_update_enabled()) {
+    return;
+  }
+
+  // We only reset the window name for the top-level content as well as storing
+  // in session entries.
+  if (!GetBrowsingContext()->IsTopContent()) {
+    return;
+  }
+
+  // Following implements https://html.spec.whatwg.org/#history-traversal:
+  // Step 4.2. Check if the loading document has a different origin than the
+  // previous document.
+
+  // We don't need to do anything if we haven't loaded a non-initial document.
+  if (!GetBrowsingContext()->GetHasLoadedNonInitialDocument()) {
+    return;
+  }
+
+  // If we have an existing doucment, directly check the document prinicpals
+  // with the new document to know if it is cross-origin.
+  //
+  // When running wpt, we could have an existing about:blank documnet which has
+  // a principal that is the same as the principal of the new document. But the
+  // new document doesn't load an about:blank page. In this case, we should
+  // treat them as cross-origin despite both doucments have same-origin
+  // principals. This only happens when Fission is enabled.
+  if (mDoc && mDoc->NodePrincipal()->Equals(aNewDocument->NodePrincipal()) &&
+      (NS_IsAboutBlank(mDoc->GetDocumentURI()) ==
+       NS_IsAboutBlank(aNewDocument->GetDocumentURI()))) {
+    return;
+  }
+
+  // If we don't have an existing document, and if it's not the initial
+  // about:blank, we could be loading a document because of the
+  // process-switching. In this case, this should be a cross-origin navigation.
+
+  // Step 4.2.1 Store the window.name into all session history entries that have
+  // the same origin as the privious document.
+  nsDocShell::Cast(mDocShell)->StoreWindowNameToSHEntries();
+
+  // Step 4.2.2 Clear the window.name if the browsing context is the top-level
+  // content and doesn't have an opener.
+
+  // We need to reset the window name in case of a cross-origin navigation,
+  // without an opener.
+  RefPtr<BrowsingContext> opener = GetOpenerBrowsingContext();
+  if (opener) {
+    return;
+  }
+
+  Unused << mBrowsingContext->SetName(EmptyString());
 }
 
 nsGlobalWindowOuter::TemporarilyDisableDialogs::TemporarilyDisableDialogs(

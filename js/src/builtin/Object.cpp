@@ -5,6 +5,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "builtin/Object.h"
+#include "js/Object.h"  // JS::GetBuiltinClass
 
 #include "mozilla/MaybeOneOf.h"
 #include "mozilla/Range.h"
@@ -506,7 +507,7 @@ static bool GetBuiltinTagSlow(JSContext* cx, HandleObject obj,
 
   // Steps 6-13.
   ESClass cls;
-  if (!GetBuiltinClass(cx, obj, &cls)) {
+  if (!JS::GetBuiltinClass(cx, obj, &cls)) {
     return false;
   }
 
@@ -1966,7 +1967,8 @@ static const JSFunctionSpec object_methods[] = {
     JS_SELF_HOSTED_FN(js_toLocaleString_str, "Object_toLocaleString", 0, 0),
     JS_SELF_HOSTED_FN(js_valueOf_str, "Object_valueOf", 0, 0),
     JS_SELF_HOSTED_FN(js_hasOwnProperty_str, "Object_hasOwnProperty", 1, 0),
-    JS_FN(js_isPrototypeOf_str, obj_isPrototypeOf, 1, 0),
+    JS_INLINABLE_FN(js_isPrototypeOf_str, obj_isPrototypeOf, 1, 0,
+                    ObjectIsPrototypeOf),
     JS_FN(js_propertyIsEnumerable_str, obj_propertyIsEnumerable, 1, 0),
     JS_SELF_HOSTED_FN(js_defineGetter_str, "ObjectDefineGetter", 2, 0),
     JS_SELF_HOSTED_FN(js_defineSetter_str, "ObjectDefineSetter", 2, 0),

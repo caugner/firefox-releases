@@ -210,7 +210,6 @@ BrowserParent::BrowserParent(ContentParent* aManager, const TabId& aTabId,
       mClientOffset{},
       mChromeOffset{},
       mCreatingWindow(false),
-      mDelayedURL{},
       mDelayedFrameScripts{},
       mCursor(eCursorInvalid),
       mCustomCursor{},
@@ -237,9 +236,6 @@ BrowserParent::BrowserParent(ContentParent* aManager, const TabId& aTabId,
 }
 
 BrowserParent::~BrowserParent() = default;
-
-/* static */
-void BrowserParent::InitializeStatics() { MOZ_ASSERT(XRE_IsParentProcess()); }
 
 /* static */
 BrowserParent* BrowserParent::GetFocused() { return sFocus; }
@@ -658,7 +654,6 @@ mozilla::ipc::IPCResult BrowserParent::RecvEnsureLayersConnected(
 }
 
 mozilla::ipc::IPCResult BrowserParent::Recv__delete__() {
-  MOZ_RELEASE_ASSERT(XRE_IsParentProcess());
   Manager()->NotifyTabDestroyed(mTabId, mMarkedDestroying);
   return IPC_OK();
 }
@@ -701,22 +696,6 @@ void BrowserParent::ActorDestroy(ActorDestroyReason why) {
         CrashReport::Deliver(principal, is_oom);
       }
     }
-  }
-
-  // Prevent executing ContentParent::NotifyTabDestroying in
-  // BrowserParent::Destroy() called by frameLoader->DestroyComplete() below
-  // when tab crashes in contentprocess because ContentParent::ActorDestroy()
-  // in main process will be triggered before this function
-  // and remove the process information that
-  // ContentParent::NotifyTabDestroying need from mContentParentMap.
-
-  // When tab crashes in content process,
-  // there is no need to call ContentParent::NotifyTabDestroying
-  // because the jobs in ContentParent::NotifyTabDestroying
-  // will be done by ContentParent::ActorDestroy.
-  if (XRE_IsContentProcess() && why == AbnormalShutdown && !mIsDestroyed) {
-    DestroyInternal();
-    mIsDestroyed = true;
   }
 
   // If we were shutting down normally, we held a reference to our
@@ -883,25 +862,20 @@ bool BrowserParent::SendLoadRemoteScript(const nsString& aURL,
   return PBrowserParent::SendLoadRemoteScript(aURL, aRunInGlobalScope);
 }
 
-void BrowserParent::LoadURL(nsIURI* aURI, nsIPrincipal* aTriggeringPrincipal) {
-  MOZ_ASSERT(aURI);
-  MOZ_ASSERT(aTriggeringPrincipal);
-
+void BrowserParent::LoadURL(nsDocShellLoadState* aLoadState) {
+  MOZ_ASSERT(aLoadState);
+  MOZ_ASSERT(aLoadState->URI());
   if (mIsDestroyed) {
     return;
   }
-
   nsCString spec;
-  aURI->GetSpec(spec);
-
+  aLoadState->URI()->GetSpec(spec);
   if (mCreatingWindow) {
     // Don't send the message if the child wants to load its own URL.
-    MOZ_ASSERT(mDelayedURL.IsEmpty());
-    mDelayedURL = spec;
     return;
   }
 
-  Unused << SendLoadURL(spec, aTriggeringPrincipal, GetShowInfo());
+  Unused << SendLoadURL(aLoadState, GetShowInfo());
 }
 
 void BrowserParent::ResumeLoad(uint64_t aPendingSwitchID) {
@@ -944,12 +918,10 @@ void BrowserParent::InitRendering() {
   }
 
 #if defined(MOZ_WIDGET_ANDROID)
-  if (XRE_IsParentProcess()) {
-    MOZ_ASSERT(widget);
+  MOZ_ASSERT(widget);
 
-    Unused << SendDynamicToolbarMaxHeightChanged(
-        widget->GetDynamicToolbarMaxHeight());
-  }
+  Unused << SendDynamicToolbarMaxHeightChanged(
+      widget->GetDynamicToolbarMaxHeight());
 #endif
 }
 
@@ -1341,18 +1313,9 @@ IPCResult BrowserParent::RecvIndexedDBPermissionRequest(
 IPCResult BrowserParent::RecvNewWindowGlobal(
     ManagedEndpoint<PWindowGlobalParent>&& aEndpoint,
     const WindowGlobalInit& aInit) {
-  MOZ_DIAGNOSTIC_ASSERT(mBrowsingContext,
-                        "Should not receive messages after being unlinked");
   RefPtr<CanonicalBrowsingContext> browsingContext =
       CanonicalBrowsingContext::Get(aInit.context().mBrowsingContextId);
   if (!browsingContext) {
-    CrashReporter::AutoAnnotateCrashReport autoMissingBCId(
-        CrashReporter::Annotation::NewWindowMissingBCId,
-        static_cast<unsigned int>(aInit.context().mBrowsingContextId));
-    CrashReporter::AutoAnnotateCrashReport autoMissingBCIsTop(
-        CrashReporter::Annotation::NewWindowBCIsTop,
-        aInit.context().mBrowsingContextIsTop);
-
     return IPC_FAIL(this, "Cannot create for missing BrowsingContext");
   }
   if (!aInit.principal()) {
@@ -3518,6 +3481,103 @@ void BrowserParent::StopApzAutoscroll(nsViewID aScrollId,
       widget->StopAsyncAutoscroll(guid);
     }
   }
+}
+
+bool BrowserParent::CanCancelContentJS(
+    nsIRemoteTab::NavigationType aNavigationType, int32_t aNavigationIndex,
+    nsIURI* aNavigationURI) const {
+  // Pre-checking if we can cancel content js in the parent is only
+  // supported when session history in the parent is enabled.
+  if (!StaticPrefs::fission_sessionHistoryInParent()) {
+    // If session history in the parent isn't enabled, this check will
+    // be fully done in BrowserChild::CanCancelContentJS
+    return true;
+  }
+
+  nsCOMPtr<nsISHistory> history = mBrowsingContext->GetSessionHistory();
+
+  if (!history) {
+    // If there is no history we can't possibly know if it's ok to
+    // cancel content js.
+    return false;
+  }
+
+  int32_t current;
+  NS_ENSURE_SUCCESS(history->GetIndex(&current), false);
+
+  if (current == -1) {
+    // This tab has no history! Just return.
+    return false;
+  }
+
+  nsCOMPtr<nsISHEntry> entry;
+  NS_ENSURE_SUCCESS(history->GetEntryAtIndex(current, getter_AddRefs(entry)),
+                    false);
+
+  nsCOMPtr<nsIURI> currentURI = entry->GetURI();
+  if (!currentURI->SchemeIs("http") && !currentURI->SchemeIs("https") &&
+      !currentURI->SchemeIs("file")) {
+    // Only cancel content JS for http(s) and file URIs. Other URIs are probably
+    // internal and we should just let them run to completion.
+    return false;
+  }
+
+  if (aNavigationType == nsIRemoteTab::NAVIGATE_BACK) {
+    aNavigationIndex = current - 1;
+  } else if (aNavigationType == nsIRemoteTab::NAVIGATE_FORWARD) {
+    aNavigationIndex = current + 1;
+  } else if (aNavigationType == nsIRemoteTab::NAVIGATE_URL) {
+    if (!aNavigationURI) {
+      return false;
+    }
+
+    if (aNavigationURI->SchemeIs("javascript")) {
+      // "javascript:" URIs don't (necessarily) trigger navigation to a
+      // different page, so don't allow the current page's JS to terminate.
+      return false;
+    }
+
+    // If navigating directly to a URL (e.g. via hitting Enter in the location
+    // bar), then we can cancel anytime the next URL is different from the
+    // current, *excluding* the ref ("#").
+    bool equals;
+    NS_ENSURE_SUCCESS(currentURI->EqualsExceptRef(aNavigationURI, &equals),
+                      false);
+    return !equals;
+  }
+  // Note: aNavigationType may also be NAVIGATE_INDEX, in which case we don't
+  // need to do anything special.
+
+  int32_t delta = aNavigationIndex > current ? 1 : -1;
+  for (int32_t i = current + delta; i != aNavigationIndex + delta; i += delta) {
+    nsCOMPtr<nsISHEntry> nextEntry;
+    // If `i` happens to be negative, this call will fail (which is what we
+    // would want to happen).
+    NS_ENSURE_SUCCESS(history->GetEntryAtIndex(i, getter_AddRefs(nextEntry)),
+                      false);
+
+    nsCOMPtr<nsISHEntry> laterEntry = delta == 1 ? nextEntry : entry;
+    nsCOMPtr<nsIURI> thisURI = entry->GetURI();
+    nsCOMPtr<nsIURI> nextURI = nextEntry->GetURI();
+
+    // If we changed origin and the load wasn't in a subframe, we know it was
+    // a full document load, so we can cancel the content JS safely.
+    if (!laterEntry->GetIsSubFrame()) {
+      nsAutoCString thisHost;
+      NS_ENSURE_SUCCESS(thisURI->GetPrePath(thisHost), false);
+
+      nsAutoCString nextHost;
+      NS_ENSURE_SUCCESS(nextURI->GetPrePath(nextHost), false);
+
+      if (!thisHost.Equals(nextHost)) {
+        return true;
+      }
+    }
+
+    entry = nextEntry;
+  }
+
+  return false;
 }
 
 void BrowserParent::SuppressDisplayport(bool aEnabled) {

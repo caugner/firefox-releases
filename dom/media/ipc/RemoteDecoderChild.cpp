@@ -154,12 +154,15 @@ RefPtr<MediaDataDecoder::DecodePromise> RemoteDecoderChild::Decode(
                  // We got flushed.
                  return;
                }
-               const auto& response = aValue.ResolveValue();
-               if (response.type() == DecodeResultIPDL::TMediaResult) {
+               auto response = std::move(aValue.ResolveValue());
+               if (response.type() == DecodeResultIPDL::TMediaResult &&
+                   NS_FAILED(response.get_MediaResult())) {
                  mDecodePromise.Reject(response.get_MediaResult(), __func__);
                  return;
                }
-               ProcessOutput(response.get_DecodedOutputIPDL());
+               if (response.type() == DecodeResultIPDL::TDecodedOutputIPDL) {
+                 ProcessOutput(std::move(response.get_DecodedOutputIPDL()));
+               }
                mDecodePromise.Resolve(std::move(mDecodedData), __func__);
                mDecodedData = MediaDataDecoder::DecodedData();
              });
@@ -201,11 +204,14 @@ RefPtr<MediaDataDecoder::DecodePromise> RemoteDecoderChild::Drain() {
           // We got flushed.
           return;
         }
-        if (aResponse.type() == DecodeResultIPDL::TMediaResult) {
+        if (aResponse.type() == DecodeResultIPDL::TMediaResult &&
+            NS_FAILED(aResponse.get_MediaResult())) {
           mDrainPromise.Reject(aResponse.get_MediaResult(), __func__);
           return;
         }
-        ProcessOutput(aResponse.get_DecodedOutputIPDL());
+        if (aResponse.type() == DecodeResultIPDL::TDecodedOutputIPDL) {
+          ProcessOutput(std::move(aResponse.get_DecodedOutputIPDL()));
+        }
         mDrainPromise.Resolve(std::move(mDecodedData), __func__);
         mDecodedData = MediaDataDecoder::DecodedData();
       },

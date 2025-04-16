@@ -4,6 +4,8 @@
 
 "use strict";
 
+const EXPORTED_SYMBOLS = ["evaluate", "sandbox", "Sandboxes"];
+
 const { clearTimeout, setTimeout } = ChromeUtils.import(
   "resource://gre/modules/Timer.jsm"
 );
@@ -11,18 +13,15 @@ const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 
-const { assert } = ChromeUtils.import("chrome://marionette/content/assert.js");
-const { element, WebElement } = ChromeUtils.import(
-  "chrome://marionette/content/element.js"
-);
-const { JavaScriptError, ScriptTimeoutError } = ChromeUtils.import(
-  "chrome://marionette/content/error.js"
-);
-const { Log } = ChromeUtils.import("chrome://marionette/content/log.js");
+XPCOMUtils.defineLazyModuleGetters(this, {
+  assert: "chrome://marionette/content/assert.js",
+  element: "chrome://marionette/content/element.js",
+  error: "chrome://marionette/content/error.js",
+  Log: "chrome://marionette/content/log.js",
+  WebElement: "chrome://marionette/content/element.js",
+});
 
-XPCOMUtils.defineLazyGetter(this, "log", Log.get);
-
-this.EXPORTED_SYMBOLS = ["evaluate", "sandbox", "Sandboxes"];
+XPCOMUtils.defineLazyGetter(this, "logger", () => Log.get());
 
 const ARGUMENTS = "__webDriverArguments";
 const CALLBACK = "__webDriverCallback";
@@ -106,7 +105,7 @@ evaluate.sandbox = function(
   if (timeout !== null) {
     timeoutPromise = new Promise((resolve, reject) => {
       scriptTimeoutID = setTimeout(() => {
-        reject(new ScriptTimeoutError(`Timed out after ${timeout} ms`));
+        reject(new error.ScriptTimeoutError(`Timed out after ${timeout} ms`));
       }, timeout);
     });
   }
@@ -129,7 +128,7 @@ evaluate.sandbox = function(
     }).apply(null, ${ARGUMENTS})`;
 
     unloadHandler = sandbox.cloneInto(
-      () => reject(new JavaScriptError("Document was unloaded")),
+      () => reject(new error.JavaScriptError("Document was unloaded")),
       marionetteSandbox
     );
     marionetteSandbox.window.addEventListener("unload", unloadHandler);
@@ -167,10 +166,10 @@ evaluate.sandbox = function(
   return Promise.race([promise, timeoutPromise])
     .catch(err => {
       // Only raise valid errors for both the sync and async scripts.
-      if (err instanceof ScriptTimeoutError) {
+      if (err instanceof error.ScriptTimeoutError) {
         throw err;
       }
-      throw new JavaScriptError(err);
+      throw new error.JavaScriptError(err);
     })
     .finally(() => {
       clearTimeout(scriptTimeoutID);
@@ -313,7 +312,7 @@ evaluate.toJSON = function(obj, seenEls) {
       rv[prop] = evaluate.toJSON(obj[prop], seenEls);
     } catch (e) {
       if (e.result == Cr.NS_ERROR_NOT_IMPLEMENTED) {
-        log.debug(`Skipping ${prop}: ${e.message}`);
+        logger.debug(`Skipping ${prop}: ${e.message}`);
       } else {
         throw e;
       }

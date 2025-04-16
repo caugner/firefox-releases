@@ -30,7 +30,6 @@ nsPrintSettings::nsPrintSettings()
       mShowPrintProgress(true),
       mShowMarginGuides(false),
       mPrintPageDelay(50),
-      mPaperData(0),
       mPaperWidth(8.5),
       mPaperHeight(11.0),
       mPaperSizeUnit(kPaperSizeInches),
@@ -67,7 +66,10 @@ void nsPrintSettings::InitWithInitializer(
   SetPrinterName(aSettings.mPrinter);
   SetPrintInColor(aSettings.mPrintInColor);
   SetResolution(aSettings.mResolution);
-  SetPaperName(aSettings.mPaperInfo.mName);
+  // The paper ID used by nsPrintSettings is the non-localizable identifier
+  // exposed as "id" by the paper, not the potentially localized human-friendly
+  // "name", which could change, e.g. if the user changes their system locale.
+  SetPaperId(aSettings.mPaperInfo.mId);
   SetPaperWidth(aSettings.mPaperInfo.mSize.Width() * kInchesPerPoint);
   SetPaperHeight(aSettings.mPaperInfo.mSize.Height() * kInchesPerPoint);
   SetPaperSizeUnit(nsIPrintSettings::kPaperSizeInches);
@@ -603,12 +605,12 @@ NS_IMETHODIMP nsPrintSettings::SetShowMarginGuides(bool aShowMarginGuides) {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsPrintSettings::GetPaperName(nsAString& aPaperName) {
-  aPaperName = mPaperName;
+NS_IMETHODIMP nsPrintSettings::GetPaperId(nsAString& aPaperId) {
+  aPaperId = mPaperId;
   return NS_OK;
 }
-NS_IMETHODIMP nsPrintSettings::SetPaperName(const nsAString& aPaperName) {
-  mPaperName = aPaperName;
+NS_IMETHODIMP nsPrintSettings::SetPaperId(const nsAString& aPaperId) {
+  mPaperId = aPaperId;
   return NS_OK;
 }
 
@@ -657,16 +659,6 @@ NS_IMETHODIMP nsPrintSettings::SetPaperSizeUnit(int16_t aPaperSizeUnit) {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsPrintSettings::GetPaperData(int16_t* aPaperData) {
-  NS_ENSURE_ARG_POINTER(aPaperData);
-  *aPaperData = mPaperData;
-  return NS_OK;
-}
-NS_IMETHODIMP nsPrintSettings::SetPaperData(int16_t aPaperData) {
-  mPaperData = aPaperData;
-  return NS_OK;
-}
-
 /** ---------------------------------------------------
  *  See documentation in nsPrintSettingsService.h
  *	@update 6/21/00 dwc
@@ -704,26 +696,12 @@ nsPrintSettings::SetUnwriteableMarginInTwips(nsIntMargin& aUnwriteableMargin) {
   return NS_OK;
 }
 
-/** ---------------------------------------------------
- *  See documentation in nsPrintSettingsService.h
- *	@update 6/21/00 dwc
- */
-NS_IMETHODIMP
-nsPrintSettings::GetMarginInTwips(nsIntMargin& aMargin) {
-  aMargin = mMargin;
-  return NS_OK;
-}
+nsIntMargin nsPrintSettings::GetMarginInTwips() { return mMargin; }
 
-NS_IMETHODIMP
-nsPrintSettings::GetEdgeInTwips(nsIntMargin& aEdge) {
-  aEdge = mEdge;
-  return NS_OK;
-}
+nsIntMargin nsPrintSettings::GetEdgeInTwips() { return mEdge; }
 
-NS_IMETHODIMP
-nsPrintSettings::GetUnwriteableMarginInTwips(nsIntMargin& aUnwriteableMargin) {
-  aUnwriteableMargin = mUnwriteableMargin;
-  return NS_OK;
+nsIntMargin nsPrintSettings::GetUnwriteableMarginInTwips() {
+  return mUnwriteableMargin;
 }
 
 /** ---------------------------------------------------
@@ -806,8 +784,7 @@ nsPrintSettings& nsPrintSettings::operator=(const nsPrintSettings& rhs) {
   mShrinkToFit = rhs.mShrinkToFit;
   mShowPrintProgress = rhs.mShowPrintProgress;
   mShowMarginGuides = rhs.mShowMarginGuides;
-  mPaperName = rhs.mPaperName;
-  mPaperData = rhs.mPaperData;
+  mPaperId = rhs.mPaperId;
   mPaperWidth = rhs.mPaperWidth;
   mPaperHeight = rhs.mPaperHeight;
   mPaperSizeUnit = rhs.mPaperSizeUnit;

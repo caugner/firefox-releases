@@ -20,8 +20,7 @@ PERFHERDER_SCHEMA = pathlib.Path(
 
 
 class Perfherder(Layer):
-    """Output data in the perfherder format.
-    """
+    """Output data in the perfherder format."""
 
     name = "perfherder"
     activated = False
@@ -51,6 +50,14 @@ class Perfherder(Layer):
                 "action": "store_true",
                 "default": False,
                 "help": "If set, browsertime statistics will be reported.",
+            },
+            "timestamp": {
+                "type": float,
+                "default": None,
+                "help": (
+                    "Timestamp to use for the perfherder data. Can be the "
+                    "current date or a past date if needed."
+                ),
             },
         }
     )
@@ -86,9 +93,12 @@ class Perfherder(Layer):
             output,
             prefix,
             metrics=metrics,
+            transformer=self.get_arg("transformer"),
             settings=True,
             exclude=exclusions,
             split_by=self.get_arg("split-by"),
+            simplify_names=self.get_arg("simplify-names"),
+            simplify_exclude=self.get_arg("simplify-exclude"),
         )
 
         if not any([results[name] for name in results]):
@@ -143,6 +153,10 @@ class Perfherder(Layer):
         if prefix:
             # If a prefix was given, store it in the perfherder data as well
             all_perfherder_data["prefix"] = prefix
+
+        timestamp = self.get_arg("timestamp")
+        if timestamp is not None:
+            all_perfherder_data["pushTimestamp"] = timestamp
 
         # Validate the final perfherder data blob
         with pathlib.Path(metadata._mach_cmd.topsrcdir, PERFHERDER_SCHEMA).open() as f:

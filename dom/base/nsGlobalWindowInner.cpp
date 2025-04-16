@@ -21,6 +21,7 @@
 #include "mozilla/dom/CallbackDebuggerNotification.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/ContentFrameMessageManager.h"
+#include "mozilla/dom/ContentMediaController.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/CSPEvalChecker.h"
 #include "mozilla/dom/DebuggerNotification.h"
@@ -1216,6 +1217,8 @@ void nsGlobalWindowInner::FreeInnerObjects() {
   mLocalStorage = nullptr;
   mSessionStorage = nullptr;
   mPerformance = nullptr;
+
+  mContentMediaController = nullptr;
 
   mSharedWorkers.Clear();
 
@@ -2646,6 +2649,14 @@ bool nsPIDOMWindowInner::IsCurrentInnerWindow() const {
 
   nsPIDOMWindowOuter* outer = bc->GetDOMWindow();
   return outer && outer->GetCurrentInnerWindow() == this;
+}
+
+bool nsPIDOMWindowInner::IsFullyActive() const {
+  WindowContext* wc = GetWindowContext();
+  if (!wc || wc->IsDiscarded() || wc->IsCached()) {
+    return false;
+  }
+  return GetBrowsingContext()->AncestorsAreCurrent();
 }
 
 void nsPIDOMWindowInner::SetAudioCapture(bool aCapture) {
@@ -6064,9 +6075,12 @@ bool nsGlobalWindowInner::RunTimeoutHandler(Timeout* aTimeout,
     timeout->mScriptHandler->GetDescription(handlerDescription);
     str.Append(handlerDescription);
   }
-  AUTO_PROFILER_TEXT_MARKER_CAUSE("setTimeout callback", str, JS,
-                                  Some(mWindowID),
-                                  timeout->TakeProfilerBacktrace());
+  AUTO_PROFILER_MARKER_TEXT(
+      "setTimeout callback",
+      JS.WithOptions(
+          MarkerStack::TakeBacktrace(timeout->TakeProfilerBacktrace()),
+          MarkerInnerWindowId(mWindowID)),
+      str);
 #endif
 
   bool abortIntervalHandler;
@@ -7368,6 +7382,18 @@ void nsGlobalWindowInner::StorageAccessPermissionGranted() {
   }
 }
 
+ContentMediaController* nsGlobalWindowInner::GetContentMediaController() {
+  if (mContentMediaController) {
+    return mContentMediaController;
+  }
+  if (!mBrowsingContext) {
+    return nullptr;
+  }
+
+  mContentMediaController = new ContentMediaController(mBrowsingContext->Id());
+  return mContentMediaController;
+}
+
 /* static */
 already_AddRefed<nsGlobalWindowInner> nsGlobalWindowInner::Create(
     nsGlobalWindowOuter* aOuterWindow, bool aIsChrome,
@@ -7403,6 +7429,13 @@ nsIPrincipal* nsPIDOMWindowInner::GetDocumentContentBlockingAllowListPrincipal()
 
 mozilla::dom::WindowContext* nsPIDOMWindowInner::GetWindowContext() const {
   return mWindowGlobalChild ? mWindowGlobalChild->WindowContext() : nullptr;
+}
+
+bool nsPIDOMWindowInner::RemoveFromBFCacheSync() {
+  if (Document* doc = GetExtantDoc()) {
+    return doc->RemoveFromBFCacheSync();
+  }
+  return false;
 }
 
 void nsPIDOMWindowInner::MaybeCreateDoc() {

@@ -11,7 +11,7 @@
 
 #include <functional>
 #include <ostream>
-#include <string>
+#include <string_view>
 
 namespace mozilla {
 namespace baseprofiler {
@@ -37,11 +37,7 @@ class ChunkedJSONWriteFunc final : public JSONWriteFunc {
     return !mChunkPtr;
   }
 
-  void Write(const char* aStr) override {
-    size_t len = strlen(aStr);
-    Write(aStr, len);
-  }
-  void Write(const char* aStr, size_t aLen) override {
+  void Write(const Span<const char>& aStr) override {
     MOZ_ASSERT(mChunkPtr >= mChunkList.back().get() && mChunkPtr <= mChunkEnd);
     MOZ_ASSERT(mChunkEnd >= mChunkList.back().get() + mChunkLengths.back());
     MOZ_ASSERT(*mChunkPtr == '\0');
@@ -50,25 +46,31 @@ class ChunkedJSONWriteFunc final : public JSONWriteFunc {
     // from the content process in e10s) may be huge. If the string is larger
     // than a chunk, allocate its own chunk.
     char* newPtr;
-    if (aLen >= kChunkSize) {
-      AllocChunk(aLen + 1);
-      newPtr = mChunkPtr + aLen;
+    if (aStr.size() >= kChunkSize) {
+      AllocChunk(aStr.size() + 1);
+      newPtr = mChunkPtr + aStr.size();
     } else {
-      newPtr = mChunkPtr + aLen;
+      newPtr = mChunkPtr + aStr.size();
       if (newPtr >= mChunkEnd) {
         AllocChunk(kChunkSize);
-        newPtr = mChunkPtr + aLen;
+        newPtr = mChunkPtr + aStr.size();
       }
     }
 
-    memcpy(mChunkPtr, aStr, aLen);
+    memcpy(mChunkPtr, aStr.data(), aStr.size());
     *newPtr = '\0';
     mChunkPtr = newPtr;
-    mChunkLengths.back() += aLen;
+    mChunkLengths.back() += aStr.size();
   }
   void CopyDataIntoLazilyAllocatedBuffer(
       const std::function<char*(size_t)>& aAllocator) const {
-    size_t totalLen = GetTotalLength();
+    // Request a buffer for the full content plus a null terminator.
+    MOZ_ASSERT(mChunkLengths.length() == mChunkList.length());
+    size_t totalLen = 1;
+    for (size_t i = 0; i < mChunkLengths.length(); i++) {
+      MOZ_ASSERT(strlen(mChunkList[i].get()) == mChunkLengths[i]);
+      totalLen += mChunkLengths[i];
+    }
     char* ptr = aAllocator(totalLen);
 
     if (!ptr) {
@@ -102,17 +104,6 @@ class ChunkedJSONWriteFunc final : public JSONWriteFunc {
     aOther.mChunkEnd = nullptr;
     aOther.mChunkList.clear();
     aOther.mChunkLengths.clear();
-  }
-  // Returns the byte length of the complete combined string, including the
-  // null terminator byte.
-  size_t GetTotalLength() const {
-    MOZ_ASSERT(mChunkLengths.length() == mChunkList.length());
-    size_t totalLen = 1;
-    for (size_t i = 0; i < mChunkLengths.length(); i++) {
-      MOZ_ASSERT(strlen(mChunkList[i].get()) == mChunkLengths[i]);
-      totalLen += mChunkLengths[i];
-    }
-    return totalLen;
   }
 
  private:
@@ -151,8 +142,10 @@ class ChunkedJSONWriteFunc final : public JSONWriteFunc {
 struct OStreamJSONWriteFunc final : public JSONWriteFunc {
   explicit OStreamJSONWriteFunc(std::ostream& aStream) : mStream(aStream) {}
 
-  void Write(const char* aStr) override { mStream << aStr; }
-  void Write(const char* aStr, size_t aLen) override { mStream << aStr; }
+  void Write(const Span<const char>& aStr) override {
+    std::string_view sv(aStr.data(), aStr.size());
+    mStream << sv;
+  }
 
   std::ostream& mStream;
 };
@@ -163,10 +156,10 @@ class SpliceableJSONWriter : public JSONWriter {
       : JSONWriter(std::move(aWriter)) {}
 
   void StartBareList(CollectionStyle aStyle = MultiLineStyle) {
-    StartCollection(nullptr, "", aStyle);
+    StartCollection(scEmptyString, scEmptyString, aStyle);
   }
 
-  void EndBareList() { EndCollection(""); }
+  void EndBareList() { EndCollection(scEmptyString); }
 
   void NullElements(uint32_t aCount) {
     for (uint32_t i = 0; i < aCount; i++) {
@@ -174,30 +167,46 @@ class SpliceableJSONWriter : public JSONWriter {
     }
   }
 
-  void Splice(const char* aStr) {
+  void Splice(const Span<const char>& aStr) {
     Separator();
     WriteFunc()->Write(aStr);
     mNeedComma[mDepth] = true;
   }
 
+  void Splice(const char* aStr, size_t aLen) {
+    Separator();
+    WriteFunc()->Write(Span<const char>(aStr, aLen));
+    mNeedComma[mDepth] = true;
+  }
+
   // Splice the given JSON directly in, without quoting.
-  void SplicedJSONProperty(const char* aMaybePropertyName,
-                           const char* aJsonValue) {
+  void SplicedJSONProperty(const Span<const char>& aMaybePropertyName,
+                           const Span<const char>& aJsonValue) {
     Scalar(aMaybePropertyName, aJsonValue);
+  }
+
+  void CopyAndSplice(const ChunkedJSONWriteFunc& aFunc) {
+    Separator();
+    for (size_t i = 0; i < aFunc.mChunkList.length(); i++) {
+      WriteFunc()->Write(
+          Span<const char>(aFunc.mChunkList[i].get(), aFunc.mChunkLengths[i]));
+    }
+    mNeedComma[mDepth] = true;
   }
 
   // Takes the chunks from aFunc and write them. If move is not possible
   // (e.g., using OStreamJSONWriteFunc), aFunc's chunks are copied and its
   // storage cleared.
-  virtual void TakeAndSplice(ChunkedJSONWriteFunc* aFunc) {
+  virtual void TakeAndSplice(ChunkedJSONWriteFunc&& aFunc) {
     Separator();
-    for (size_t i = 0; i < aFunc->mChunkList.length(); i++) {
-      WriteFunc()->Write(aFunc->mChunkList[i].get());
+    for (size_t i = 0; i < aFunc.mChunkList.length(); i++) {
+      WriteFunc()->Write(
+          Span<const char>(aFunc.mChunkList[i].get(), aFunc.mChunkLengths[i]));
     }
-    aFunc->mChunkPtr = nullptr;
-    aFunc->mChunkEnd = nullptr;
-    aFunc->mChunkList.clear();
-    aFunc->mChunkLengths.clear();
+    aFunc.mChunkPtr = nullptr;
+    aFunc.mChunkEnd = nullptr;
+    aFunc.mChunkList.clear();
+    aFunc.mChunkLengths.clear();
     mNeedComma[mDepth] = true;
   }
 };
@@ -207,18 +216,41 @@ class SpliceableChunkedJSONWriter final : public SpliceableJSONWriter {
   explicit SpliceableChunkedJSONWriter()
       : SpliceableJSONWriter(MakeUnique<ChunkedJSONWriteFunc>()) {}
 
-  ChunkedJSONWriteFunc* ChunkedWriteFunc() const {
-    // The WriteFunc was initialized with a ChunkedJSONWriteFunc in the only
-    // constructor above, so it's safe to cast to ChunkedJSONWriteFunc*.
-    return static_cast<ChunkedJSONWriteFunc*>(WriteFunc());
+  // Access the ChunkedJSONWriteFunc as reference-to-const, usually to copy data
+  // out.
+  const ChunkedJSONWriteFunc& ChunkedWriteFunc() const {
+    MOZ_ASSERT(!mTaken);
+    // The WriteFunc was non-fallibly allocated as a ChunkedJSONWriteFunc in the
+    // only constructor above, so it's safe to cast to ChunkedJSONWriteFunc*.
+    return *static_cast<const ChunkedJSONWriteFunc*>(WriteFunc());
+  }
+
+  // Access the ChunkedJSONWriteFunc as rvalue-reference, usually to take its
+  // data out. This writer shouldn't be used anymore after this.
+  ChunkedJSONWriteFunc&& TakeChunkedWriteFunc() {
+#ifdef DEBUG
+    MOZ_ASSERT(!mTaken);
+    mTaken = true;
+#endif  //
+    // The WriteFunc was non-fallibly allocated as a ChunkedJSONWriteFunc in the
+    // only constructor above, so it's safe to cast to ChunkedJSONWriteFunc*.
+    return std::move(*static_cast<ChunkedJSONWriteFunc*>(WriteFunc()));
   }
 
   // Adopts the chunks from aFunc without copying.
-  void TakeAndSplice(ChunkedJSONWriteFunc* aFunc) override {
+  void TakeAndSplice(ChunkedJSONWriteFunc&& aFunc) override {
+    MOZ_ASSERT(!mTaken);
     Separator();
-    ChunkedWriteFunc()->Take(std::move(*aFunc));
+    // The WriteFunc was non-fallibly allocated as a ChunkedJSONWriteFunc in the
+    // only constructor above, so it's safe to cast to ChunkedJSONWriteFunc*.
+    static_cast<ChunkedJSONWriteFunc*>(WriteFunc())->Take(std::move(aFunc));
     mNeedComma[mDepth] = true;
   }
+
+#ifdef DEBUG
+ private:
+  bool mTaken = false;
+#endif  //
 };
 
 class JSONSchemaWriter {
@@ -231,7 +263,14 @@ class JSONSchemaWriter {
                                 SpliceableJSONWriter::SingleLineStyle);
   }
 
-  void WriteField(const char* aName) { mWriter.IntProperty(aName, mIndex++); }
+  void WriteField(const Span<const char>& aName) {
+    mWriter.IntProperty(aName, mIndex++);
+  }
+
+  template <size_t Np1>
+  void WriteField(const char (&aName)[Np1]) {
+    WriteField(Span<const char>(aName, Np1 - 1));
+  }
 
   ~JSONSchemaWriter() { mWriter.EndObject(); }
 };

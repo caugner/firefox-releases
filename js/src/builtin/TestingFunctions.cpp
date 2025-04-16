@@ -37,6 +37,7 @@
 #ifdef JS_HAS_INTL_API
 #  include "builtin/intl/CommonFunctions.h"
 #endif
+#include "builtin/ModuleObject.h"
 #include "builtin/Promise.h"
 #include "builtin/SelfHostingDefines.h"
 #ifdef DEBUG
@@ -45,9 +46,11 @@
 #include "gc/Allocator.h"
 #include "gc/Zone.h"
 #include "jit/BaselineJIT.h"
+#include "jit/Disassemble.h"
 #include "jit/InlinableNatives.h"
 #include "jit/Ion.h"
 #include "jit/JitRealm.h"
+#include "jit/TrialInlining.h"
 #include "js/Array.h"        // JS::NewArrayObject
 #include "js/ArrayBuffer.h"  // JS::{DetachArrayBuffer,GetArrayBufferLengthAndData,NewArrayBufferWithContents}
 #include "js/CharacterEncoding.h"
@@ -61,10 +64,12 @@
 #include "js/friend/WindowProxy.h"    // js::ToWindowProxyIfWindow
 #include "js/HashTable.h"
 #include "js/LocaleSensitive.h"
+#include "js/OffThreadScriptCompilation.h"  // js::UseOffThreadParseGlobal
 #include "js/PropertySpec.h"
 #include "js/RegExpFlags.h"  // JS::RegExpFlag, JS::RegExpFlags
 #include "js/SourceText.h"
 #include "js/StableStringChars.h"
+#include "js/String.h"  // JS::GetLinearStringLength, JS::StringToLinearString
 #include "js/StructuredClone.h"
 #include "js/UbiNode.h"
 #include "js/UbiNodeBreadthFirst.h"
@@ -86,6 +91,7 @@
 #include "vm/AsyncIteration.h"
 #include "vm/ErrorObject.h"
 #include "vm/GlobalObject.h"
+#include "vm/HelperThreadState.h"
 #include "vm/Interpreter.h"
 #include "vm/Iteration.h"
 #include "vm/JSContext.h"
@@ -172,6 +178,13 @@ static bool GetRealmConfiguration(JSContext* cx, unsigned argc, Value* vp) {
   if (!JS_SetProperty(cx, info, "privateMethods",
                       privateFields && privateMethods ? TrueHandleValue
                                                       : FalseHandleValue)) {
+    return false;
+  }
+
+  bool offThreadParseGlobal = js::UseOffThreadParseGlobal();
+  if (!JS_SetProperty(
+          cx, info, "offThreadParseGlobal",
+          offThreadParseGlobal ? TrueHandleValue : FalseHandleValue)) {
     return false;
   }
 
@@ -493,6 +506,27 @@ static bool IsTypeInferenceEnabled(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
+static bool TrialInline(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  args.rval().setUndefined();
+
+  if (!jit::JitOptions.warpBuilder) {
+    return true;
+  }
+
+  FrameIter iter(cx);
+  if (iter.done() || !iter.isBaseline()) {
+    return true;
+  }
+
+  jit::BaselineFrame* frame = iter.abstractFramePtr().asBaselineFrame();
+  if (!jit::CanIonCompileScript(cx, frame->script())) {
+    return true;
+  }
+
+  return jit::DoTrialInlining(cx, frame);
+}
+
 static bool ReturnStringCopy(JSContext* cx, CallArgs& args,
                              const char* message) {
   JSString* str = JS_NewStringCopyZ(cx, message);
@@ -625,7 +659,10 @@ static bool MinorGC(JSContext* cx, unsigned argc, Value* vp) {
   _("zoneAllocDelayKB", JSGC_ZONE_ALLOC_DELAY_KB, true)                    \
   _("mallocThresholdBase", JSGC_MALLOC_THRESHOLD_BASE, true)               \
   _("mallocGrowthFactor", JSGC_MALLOC_GROWTH_FACTOR, true)                 \
-  _("chunkBytes", JSGC_CHUNK_BYTES, false)
+  _("chunkBytes", JSGC_CHUNK_BYTES, false)                                 \
+  _("helperThreadRatio", JSGC_HELPER_THREAD_RATIO, true)                   \
+  _("maxHelperThreads", JSGC_MAX_HELPER_THREADS, true)                     \
+  _("helperThreadCount", JSGC_HELPER_THREAD_COUNT, false)
 
 static const struct ParamInfo {
   const char* name;
@@ -1050,6 +1087,144 @@ static void captureDisasmText(const char* text) {
   if (!buf->builder.append(text, strlen(text)) || !buf->builder.append('\n')) {
     buf->oom = true;
   }
+}
+
+static bool DisassembleNative(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  args.rval().setUndefined();
+
+  if (args.length() < 1) {
+    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                              JSMSG_MORE_ARGS_NEEDED, "disnative", "1", "",
+                              "0");
+    return false;
+  }
+
+  if (!args[0].isObject() || !args[0].toObject().is<JSFunction>()) {
+    JS_ReportErrorASCII(cx, "The first argument must be a function.");
+    return false;
+  }
+
+  Sprinter sprinter(cx);
+  if (!sprinter.init()) {
+    return false;
+  }
+
+  RootedFunction fun(cx, &args[0].toObject().as<JSFunction>());
+
+  uint8_t* jit_begin = nullptr;
+  uint8_t* jit_end = nullptr;
+
+  if (fun->isAsmJSNative() || fun->isWasmWithJitEntry()) {
+    if (fun->isAsmJSNative() && !sprinter.jsprintf("; backend=asmjs\n")) {
+      return false;
+    }
+    if (!sprinter.jsprintf("; backend=wasm\n")) {
+      return false;
+    }
+
+    const Value& v2 =
+        fun->getExtendedSlot(FunctionExtended::WASM_INSTANCE_SLOT);
+
+    WasmInstanceObject* instobj = &v2.toObject().as<WasmInstanceObject>();
+    js::wasm::Instance& inst = instobj->instance();
+    const js::wasm::Code& code = inst.code();
+    js::wasm::Tier tier = code.bestTier();
+
+    const js::wasm::MetadataTier& meta = inst.metadata(tier);
+
+    const js::wasm::CodeSegment& segment = code.segment(tier);
+    const uint32_t funcIndex = code.getFuncIndex(&*fun);
+    const js::wasm::FuncExport& func = meta.lookupFuncExport(funcIndex);
+    const js::wasm::CodeRange& codeRange = meta.codeRange(func);
+
+    jit_begin = segment.base() + codeRange.begin();
+    jit_end = segment.base() + codeRange.end();
+  } else if (fun->hasJitScript()) {
+    JSScript* script = fun->nonLazyScript();
+    if (script == nullptr) {
+      return false;
+    }
+
+    js::jit::IonScript* ion =
+        script->hasIonScript() ? script->ionScript() : nullptr;
+    js::jit::BaselineScript* baseline =
+        script->hasBaselineScript() ? script->baselineScript() : nullptr;
+    if (ion && ion->method()) {
+      if (!sprinter.jsprintf("; backend=ion\n")) {
+        return false;
+      }
+
+      jit_begin = ion->method()->raw();
+      jit_end = ion->method()->rawEnd();
+    } else if (baseline) {
+      if (!sprinter.jsprintf("; backend=baseline\n")) {
+        return false;
+      }
+
+      jit_begin = baseline->method()->raw();
+      jit_end = baseline->method()->rawEnd();
+    }
+  } else {
+    return false;
+  }
+
+  if (jit_begin == nullptr || jit_end == nullptr) {
+    return false;
+  }
+
+  DisasmBuffer buf(cx);
+  disasmBuf.set(&buf);
+  auto onFinish = mozilla::MakeScopeExit([&] { disasmBuf.set(nullptr); });
+
+  jit::Disassemble(jit_begin, jit_end - jit_begin, &captureDisasmText);
+
+  if (buf.oom) {
+    ReportOutOfMemory(cx);
+    return false;
+  }
+  JSString* sresult = buf.builder.finishString();
+  if (!sresult) {
+    ReportOutOfMemory(cx);
+    return false;
+  }
+  sprinter.putString(sresult);
+
+  if (args.length() > 1 && args[1].isString()) {
+    RootedString str(cx, args[1].toString());
+    JS::UniqueChars fileNameBytes = JS_EncodeStringToUTF8(cx, str);
+
+    const char* fileName = fileNameBytes.get();
+    if (!fileName) {
+      ReportOutOfMemory(cx);
+      return false;
+    }
+
+    FILE* f = fopen(fileName, "w");
+    if (!f) {
+      JS_ReportErrorASCII(cx, "Could not open file for writing.");
+      return false;
+    }
+
+    uintptr_t expected_length = reinterpret_cast<uintptr_t>(jit_end) -
+                                reinterpret_cast<uintptr_t>(jit_begin);
+    if (expected_length != fwrite(jit_begin, jit_end - jit_begin, 1, f)) {
+      JS_ReportErrorASCII(cx, "Did not write all function bytes to the file.");
+      fclose(f);
+      return false;
+    }
+    fclose(f);
+  }
+
+  JSString* str = JS_NewStringCopyZ(cx, sprinter.string());
+  if (!str) {
+    return false;
+  }
+
+  args[0].setUndefined();
+  args.rval().setString(str);
+
+  return true;
 }
 
 static bool WasmDisassemble(JSContext* cx, unsigned argc, Value* vp) {
@@ -1991,15 +2166,15 @@ static bool NewString(JSContext* cx, unsigned argc, Value* vp) {
       return false;
     }
 
+    bool isExternal = true;
     if (forceExternal) {
       dest = JSExternalString::new_(cx, buf.get(), len,
                                     &TestExternalStringCallbacks);
     } else {
-      bool isExternal;
       dest = NewMaybeExternalString(
           cx, buf.get(), len, &TestExternalStringCallbacks, &isExternal, heap);
     }
-    if (dest) {
+    if (dest && isExternal) {
       mozilla::Unused << buf.release();  // Ownership was transferred.
     }
   } else {
@@ -3222,12 +3397,6 @@ static bool GetJitCompilerOptions(JSContext* cx, unsigned argc, Value* vp) {
   return true;
 }
 
-static bool IsWarpEnabled(JSContext* cx, unsigned argc, Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  args.rval().setBoolean(jit::JitOptions.warpBuilder);
-  return true;
-}
-
 static bool SetIonCheckGraphCoherency(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   jit::JitOptions.checkGraphConsistency = ToBoolean(args.get(0));
@@ -4432,13 +4601,14 @@ static bool EvalReturningScope(JSContext* cx, unsigned argc, Value* vp) {
   JS::CompileOptions options(cx);
   options.setFileAndLine(filename.get(), lineno);
   options.setNoScriptRval(true);
+  options.setNonSyntacticScope(true);
 
   JS::SourceText<char16_t> srcBuf;
   if (!srcBuf.init(cx, src, srclen, SourceOwnership::Borrowed)) {
     return false;
   }
 
-  RootedScript script(cx, JS::CompileForNonSyntacticScope(cx, options, srcBuf));
+  RootedScript script(cx, JS::Compile(cx, options, srcBuf));
   if (!script) {
     return false;
   }
@@ -5785,11 +5955,12 @@ JSScript* js::TestingFunctionArgumentToScript(
     JSContext* cx, HandleValue v, JSFunction** funp /* = nullptr */) {
   if (v.isString()) {
     // To convert a string to a script, compile it. Parse it as an ES6 Program.
-    RootedLinearString linearStr(cx, StringToLinearString(cx, v.toString()));
+    RootedLinearString linearStr(cx,
+                                 JS::StringToLinearString(cx, v.toString()));
     if (!linearStr) {
       return nullptr;
     }
-    size_t len = GetLinearStringLength(linearStr);
+    size_t len = JS::GetLinearStringLength(linearStr);
     AutoStableStringChars linearChars(cx);
     if (!linearChars.initTwoByte(cx, linearStr)) {
       return nullptr;
@@ -6114,6 +6285,10 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
 "gcparam(name [, value])",
 "  Wrapper for JS_[GS]etGCParameter. The name is one of:" GC_PARAMETER_ARGS_LIST),
 
+    JS_FN_HELP("disnative", DisassembleNative, 2, 0,
+"disnative(fun,[path])",
+"  Disassemble a function into its native code. Optionally write the native code bytes to a file on disk.\n"),
+
     JS_FN_HELP("relazifyFunctions", RelazifyFunctions, 0, 0,
 "relazifyFunctions(...)",
 "  Perform a GC and allow relazification of functions. Accepts the same\n"
@@ -6136,6 +6311,10 @@ static const JSFunctionSpecWithHelp TestingFunctions[] = {
     JS_FN_HELP("isTypeInferenceEnabled", ::IsTypeInferenceEnabled, 0, 0,
 "isTypeInferenceEnabled()",
 "  Return true if Type Inference is enabled."),
+
+  JS_FN_HELP("trialInline", TrialInline, 0, 0,
+"trialInline()",
+"  Perform trial-inlining for the caller's frame if it's a BaselineFrame."),
 
     JS_FN_HELP("hasChild", HasChild, 0, 0,
 "hasChild(parent, child)",
@@ -6459,10 +6638,6 @@ gc::ZealModeHelpText),
     JS_FN_HELP("getJitCompilerOptions", GetJitCompilerOptions, 0, 0,
 "getJitCompilerOptions()",
 "  Return an object describing some of the JIT compiler options.\n"),
-
-JS_FN_HELP("isWarpEnabled", IsWarpEnabled, 0, 0,
-"isWarpEnabled()",
-"  Return true if the Warp compiler is enabled.\n"),
 
     JS_FN_HELP("isAsmJSModule", IsAsmJSModule, 1, 0,
 "isAsmJSModule(fn)",

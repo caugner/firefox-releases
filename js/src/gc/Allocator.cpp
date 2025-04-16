@@ -127,28 +127,31 @@ template <AllowGC allowGC>
 JSObject* GCRuntime::tryNewTenuredObject(JSContext* cx, AllocKind kind,
                                          size_t thingSize,
                                          size_t nDynamicSlots) {
-  HeapSlot* slots = nullptr;
+  ObjectSlots* slotsHeader = nullptr;
   if (nDynamicSlots) {
-    slots = cx->maybe_pod_malloc<HeapSlot>(nDynamicSlots);
-    if (MOZ_UNLIKELY(!slots)) {
+    HeapSlot* allocation =
+        cx->maybe_pod_malloc<HeapSlot>(ObjectSlots::allocCount(nDynamicSlots));
+    if (MOZ_UNLIKELY(!allocation)) {
       if (allowGC) {
         ReportOutOfMemory(cx);
       }
       return nullptr;
     }
-    Debug_SetSlotRangeToCrashOnTouch(slots, nDynamicSlots);
+
+    slotsHeader = new (allocation) ObjectSlots(nDynamicSlots, 0);
+    Debug_SetSlotRangeToCrashOnTouch(slotsHeader->slots(), nDynamicSlots);
   }
 
   JSObject* obj = tryNewTenuredThing<JSObject, allowGC>(cx, kind, thingSize);
 
   if (obj) {
     if (nDynamicSlots) {
-      static_cast<NativeObject*>(obj)->initSlots(slots);
-      AddCellMemory(obj, nDynamicSlots * sizeof(HeapSlot),
+      static_cast<NativeObject*>(obj)->initSlots(slotsHeader->slots());
+      AddCellMemory(obj, ObjectSlots::allocSize(nDynamicSlots),
                     MemoryUse::ObjectSlots);
     }
   } else {
-    js_free(slots);
+    js_free(slotsHeader);
   }
 
   return obj;
@@ -798,15 +801,17 @@ BackgroundAllocTask::BackgroundAllocTask(GCRuntime* gc, ChunkPool& pool)
       chunkPool_(pool),
       enabled_(CanUseExtraThreads() && GetCPUCount() >= 2) {}
 
-void BackgroundAllocTask::run() {
+void BackgroundAllocTask::run(AutoLockHelperThreadState& lock) {
+  AutoUnlockHelperThreadState unlock(lock);
+
   TraceLoggerThread* logger = TraceLoggerForCurrentThread();
   AutoTraceLog logAllocation(logger, TraceLogger_GCAllocation);
 
-  AutoLockGC lock(gc);
-  while (!cancel_ && gc->wantBackgroundAllocation(lock)) {
+  AutoLockGC gcLock(gc);
+  while (!cancel_ && gc->wantBackgroundAllocation(gcLock)) {
     Chunk* chunk;
     {
-      AutoUnlockGC unlock(lock);
+      AutoUnlockGC unlock(gcLock);
       chunk = Chunk::allocate(gc);
       if (!chunk) {
         break;

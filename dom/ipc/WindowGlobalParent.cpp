@@ -139,8 +139,6 @@ void WindowGlobalParent::Init() {
     Unused << otherContent->SendCreateWindowContext(ipcinit);
   });
 
-  // If there is no current window global, assume we're about to become it
-  // optimistically.
   if (!BrowsingContext()->IsDiscarded()) {
     MOZ_ALWAYS_SUCCEEDS(
         BrowsingContext()->SetCurrentInnerWindowId(InnerWindowId()));
@@ -610,6 +608,73 @@ mozilla::ipc::IPCResult WindowGlobalParent::RecvShare(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult
+WindowGlobalParent::RecvUpdateDocumentWouldPreloadResources() {
+  TopWindowContext()->mDocumentTreeWouldPreloadResources = true;
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult WindowGlobalParent::RecvSubmitLoadEventPreloadTelemetry(
+    TimeStamp aNavigationStart, TimeStamp aLoadEventStart,
+    TimeStamp aLoadEventEnd) {
+  if (!IsTop()) {
+    return IPC_FAIL(this, "submit preload telemetry on non-toplevel document");
+  }
+
+  if (mDocumentTreeWouldPreloadResources) {
+    Telemetry::AccumulateTimeDelta(
+        Telemetry::TIME_TO_LOAD_EVENT_START_PRELOAD_MS, aNavigationStart,
+        aLoadEventStart);
+    Telemetry::AccumulateTimeDelta(Telemetry::TIME_TO_LOAD_EVENT_END_PRELOAD_MS,
+                                   aNavigationStart, aLoadEventEnd);
+  } else {
+    Telemetry::AccumulateTimeDelta(
+        Telemetry::TIME_TO_LOAD_EVENT_START_NO_PRELOAD_MS, aNavigationStart,
+        aLoadEventStart);
+    Telemetry::AccumulateTimeDelta(
+        Telemetry::TIME_TO_LOAD_EVENT_END_NO_PRELOAD_MS, aNavigationStart,
+        aLoadEventEnd);
+  }
+
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+WindowGlobalParent::RecvSubmitTimeToFirstInteractionPreloadTelemetry(
+    uint32_t aMillis) {
+  if (!IsTop()) {
+    return IPC_FAIL(this, "submit preload telemetry on non-toplevel document");
+  }
+
+  if (mDocumentTreeWouldPreloadResources) {
+    Telemetry::Accumulate(Telemetry::TIME_TO_FIRST_INTERACTION_PRELOAD_MS,
+                          aMillis);
+  } else {
+    Telemetry::Accumulate(Telemetry::TIME_TO_FIRST_INTERACTION_NO_PRELOAD_MS,
+                          aMillis);
+  }
+
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+WindowGlobalParent::RecvSubmitLoadInputEventResponsePreloadTelemetry(
+    uint32_t aMillis) {
+  if (!IsTop()) {
+    return IPC_FAIL(this, "submit preload telemetry on non-toplevel document");
+  }
+
+  if (mDocumentTreeWouldPreloadResources) {
+    Telemetry::Accumulate(Telemetry::LOAD_INPUT_EVENT_RESPONSE_PRELOAD_MS,
+                          aMillis);
+  } else {
+    Telemetry::Accumulate(Telemetry::LOAD_INPUT_EVENT_RESPONSE_NO_PRELOAD_MS,
+                          aMillis);
+  }
+
+  return IPC_OK();
+}
+
 already_AddRefed<mozilla::dom::Promise> WindowGlobalParent::DrawSnapshot(
     const DOMRect* aRect, double aScale, const nsACString& aBackgroundColor,
     mozilla::ErrorResult& aRv) {
@@ -627,8 +692,13 @@ already_AddRefed<mozilla::dom::Promise> WindowGlobalParent::DrawSnapshot(
     return nullptr;
   }
 
-  if (!gfx::CrossProcessPaint::Start(this, aRect, (float)aScale, color,
-                                     gfx::CrossProcessPaintFlags::None,
+  gfx::CrossProcessPaintFlags flags = gfx::CrossProcessPaintFlags::None;
+  if (!aRect) {
+    // If no explicit Rect was passed, we want the currently visible viewport.
+    flags = gfx::CrossProcessPaintFlags::DrawView;
+  }
+
+  if (!gfx::CrossProcessPaint::Start(this, aRect, (float)aScale, color, flags,
                                      promise)) {
     aRv = NS_ERROR_FAILURE;
     return nullptr;
@@ -735,14 +805,6 @@ void WindowGlobalParent::ActorDestroy(ActorDestroyReason aWhy) {
     if (GetDocTreeHadAudibleMedia()) {
       ScalarAdd(Telemetry::ScalarID::MEDIA_PAGE_HAD_MEDIA_COUNT, 1);
     }
-  }
-
-  // If there are any non-discarded nested contexts when this WindowContext is
-  // destroyed, tear them down.
-  nsTArray<RefPtr<dom::BrowsingContext>> toDiscard;
-  toDiscard.AppendElements(Children());
-  for (auto& context : toDiscard) {
-    context->Detach(/* aFromIPC */ true);
   }
 
   // Note that our WindowContext has become discarded.

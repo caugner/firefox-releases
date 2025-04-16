@@ -16,7 +16,16 @@ const isFissionEnabled = Services.prefs.getBoolPref("fission.autostart");
 const SAMPLE_SIZE = 10;
 
 add_task(async function test_proc_info() {
-  waitForExplicitFinish();
+  console.log("YORIC", "Test starts");
+  // Open a few `about:home` tabs, they'll end up in `privilegedabout`.
+  let tabsAboutHome = [];
+  for (let i = 0; i < 5; ++i) {
+    let tab = BrowserTestUtils.addTab(gBrowser, "about:home");
+    tabsAboutHome.push(tab);
+    gBrowser.selectedTab = tab;
+    await BrowserTestUtils.browserLoaded(tab.linkedBrowser);
+  }
+
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: DUMMY_URL },
     async function(browser) {
@@ -54,16 +63,6 @@ add_task(async function test_proc_info() {
           parentProc.residentUniqueSize <= parentProc.residentSetSize,
           `Resident-unique-size should be bounded by resident-set-size ${parentProc.residentUniqueSize} <= ${parentProc.residentSetSize}`
         );
-
-        if (AppConstants.platform != "win") {
-          // The definition of `virtualMemorySize` seens to differ between Windows < 7 and >= 7.
-          // Also, under Windows 7+, `virtualMemorySize` is defined as the number of private bytes,
-          // which is entirely unrelated to virtual memory.
-          Assert.ok(
-            parentProc.residentUniqueSize <= parentProc.virtualMemorySize,
-            `Resident-unique-size should be bounded by virtual ${parentProc.residentUniqueSize} <= ${parentProc.virtualMemorySize}`
-          );
-        }
 
         // While it's very unlikely that the parent will disappear while we're running
         // tests, some children can easily vanish. So we go twice through the list of
@@ -108,16 +107,15 @@ add_task(async function test_proc_info() {
         }
 
         // We only check other properties on the `privilegedabout` subprocess, which
-        // as of this writing is hosting the page we test, so should be active and
-        // available. If we ever move `about:processes` to another process type, we'll
-        // need to update this test.
-        var hasSocketProcess = false;
+        // as of this writing is always active and available.
+        var hasPrivilegedAbout = false;
+        var numberOfAboutTabs = 0;
         for (i = 0; i < parentProc.children.length; i++) {
           let childProc = parentProc.children[i];
           if (childProc.type != "privilegedabout") {
             continue;
           }
-          hasSocketProcess = true;
+          hasPrivilegedAbout = true;
           Assert.ok(
             childProc.residentUniqueSize > 0,
             "Resident-unique-size was set"
@@ -127,27 +125,45 @@ add_task(async function test_proc_info() {
             `Resident-unique-size should be bounded by resident-set-size ${childProc.residentUniqueSize} <= ${childProc.residentSetSize}`
           );
 
-          if (AppConstants.platform != "win") {
-            // The definition of `virtualMemorySize` seens to differ between Windows < 7 and >= 7.
-            // Also, under Windows 7+, `virtualMemorySize` is defined as the number of private bytes,
-            // which is entirely unrelated to virtual memory.
+          for (var win of childProc.windows) {
+            if (win.documentURI.spec != "about:home") {
+              // We're only interested in about:home for this test.
+              continue;
+            }
+            numberOfAboutTabs++;
             Assert.ok(
-              childProc.residentUniqueSize <= childProc.virtualMemorySize,
-              `Resident-unique-size should be bounded by virtual memory size ${childProc.residentUniqueSize} <= ${childProc.virtualMemorySize}`
+              win.outerWindowId > 0,
+              `ContentParentID should be > 0 ${win.outerWindowId}`
             );
+            if (win.documentTitle) {
+              // Unfortunately, we sometimes reach this point before the document is fully loaded, so
+              // `win.documentTitle` may still be empty.
+              Assert.equal(win.documentTitle, "New Tab");
+            }
           }
+          Assert.ok(
+            numberOfAboutTabs >= tabsAboutHome.length,
+            "We have found at least as many about:home tabs as we opened"
+          );
 
-          // Once we have found the socket process, bailout.
+          // Once we have verified the privileged about process, bailout.
           break;
         }
 
-        Assert.ok(hasSocketProcess, "We have found the socket process");
+        Assert.ok(
+          hasPrivilegedAbout,
+          "We have found the privileged about process"
+        );
       }
       // see https://bugzilla.mozilla.org/show_bug.cgi?id=1529023
       if (!MAC) {
         Assert.greater(cpuThreads, 0, "Got some cpu time in the threads");
       }
       Assert.greater(cpuUser, 0, "Got some cpu time");
+
+      for (let tab of tabsAboutHome) {
+        BrowserTestUtils.removeTab(tab);
+      }
     }
   );
 });

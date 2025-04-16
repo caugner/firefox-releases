@@ -121,7 +121,9 @@ using namespace mozilla::widget;
 #include "mozilla/layers/IAPZCTreeManager.h"
 
 #ifdef MOZ_X11
+#  include "mozilla/gfx/gfxVars.h"
 #  include "GLContextGLX.h"  // for GLContextGLX::FindVisual()
+#  include "GLContextEGL.h"  // for GLContextEGL::FindVisual()
 #  include "GtkCompositorWidget.h"
 #  include "gfxXlibSurface.h"
 #  include "WindowSurfaceX11Image.h"
@@ -144,6 +146,7 @@ using namespace mozilla;
 using namespace mozilla::gfx;
 using namespace mozilla::widget;
 using namespace mozilla::layers;
+using mozilla::gl::GLContextEGL;
 using mozilla::gl::GLContextGLX;
 
 // Don't put more than this many rects in the dirty region, just fluff
@@ -262,6 +265,7 @@ static SystemTimeConverter<guint32>& TimeConverter() {
 }
 
 nsWindow::CSDSupportLevel nsWindow::sCSDSupportLevel = CSD_SUPPORT_UNKNOWN;
+bool nsWindow::sTransparentMainWindow = false;
 
 namespace mozilla {
 
@@ -594,10 +598,8 @@ void nsWindow::OnDestroy(void) {
   NotifyWindowDestroyed();
 }
 
-bool nsWindow::AreBoundsSane(void) {
-  if (mBounds.width > 0 && mBounds.height > 0) return true;
-
-  return false;
+bool nsWindow::AreBoundsSane() {
+  return mBounds.width > 0 && mBounds.height > 0;
 }
 
 static GtkWidget* EnsureInvisibleContainer() {
@@ -1094,6 +1096,12 @@ void nsWindow::ResizeInt(int aX, int aY, int aWidth, int aHeight, bool aMove,
 
   ConstrainSize(&aWidth, &aHeight);
 
+  // If we used to have insane bounds, we may have skipped actually positioning
+  // the widget in NativeMoveResizeWaylandPopup, in which case we need to
+  // actually position it now as well.
+  const bool hadInsaneWaylandPopupDimensions =
+      !AreBoundsSane() && IsWaylandPopup();
+
   if (aMove) {
     mBounds.x = aX;
     mBounds.y = aY;
@@ -1115,8 +1123,9 @@ void nsWindow::ResizeInt(int aX, int aY, int aWidth, int aHeight, bool aMove,
 
   if (!mCreated) return;
 
-  if (aMove || mPreferredPopupRectFlushed) {
-    LOG(("  Need also to move, flushed? %d\n", mPreferredPopupRectFlushed));
+  if (aMove || mPreferredPopupRectFlushed || hadInsaneWaylandPopupDimensions) {
+    LOG(("  Need also to move, flushed? %d, bounds were insane: %d\n",
+         mPreferredPopupRectFlushed, hadInsaneWaylandPopupDimensions));
     NativeMoveResize();
   } else {
     NativeResize();
@@ -3199,9 +3208,9 @@ void nsWindow::OnLeaveNotifyEvent(GdkEventCrossing* aEvent) {
   event.mRefPoint = GdkEventCoordsToDevicePixels(aEvent->x, aEvent->y);
   event.AssignEventTime(GetWidgetEventTime(aEvent->time));
 
-  event.mExitFrom = is_top_level_mouse_exit(mGdkWindow, aEvent)
-                        ? WidgetMouseEvent::eTopLevel
-                        : WidgetMouseEvent::eChild;
+  event.mExitFrom = Some(is_top_level_mouse_exit(mGdkWindow, aEvent)
+                             ? WidgetMouseEvent::eTopLevel
+                             : WidgetMouseEvent::eChild);
 
   LOG(("OnLeaveNotify: %p\n", (void*)this));
 
@@ -4141,6 +4150,31 @@ gboolean nsWindow::OnTouchEvent(GdkEventTouch* aEvent) {
   return TRUE;
 }
 
+bool nsWindow::IsMainWindowTransparent() {
+  static bool transparencyConfigured = false;
+
+  if (!transparencyConfigured) {
+    GdkScreen* screen = gdk_screen_get_default();
+    if (gdk_screen_is_composited(screen)) {
+      // Some Gtk+ themes use non-rectangular toplevel windows. To fully
+      // support such themes we need to make toplevel window transparent
+      // with ARGB visual.
+      // It may cause performanance issue so make it configurable
+      // and enable it by default for selected window managers.
+      if (Preferences::HasUserValue("mozilla.widget.use-argb-visuals")) {
+        // argb visual is explicitly required so use it
+        sTransparentMainWindow =
+            Preferences::GetBool("mozilla.widget.use-argb-visuals");
+      } else {
+        sTransparentMainWindow = GetSystemCSDSupportLevel() != CSD_SUPPORT_NONE;
+      }
+    }
+    transparencyConfigured = true;
+  }
+
+  return sTransparentMainWindow;
+}
+
 static GdkWindow* CreateGdkWindow(GdkWindow* parent, GtkWidget* widget) {
   GdkWindowAttr attributes;
   gint attributes_mask = GDK_WA_VISUAL;
@@ -4287,35 +4321,11 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
         mCSDSupportLevel = GetSystemCSDSupportLevel(isPopup);
       }
 
+      // Don't use transparency for PictureInPicture windows.
       if (mWindowType == eWindowType_toplevel && !mIsPIPWindow) {
-        // There's no point to configure transparency
-        // on non-composited screens.
-        // Also disable transparency for PictureInPicture windows.
-        GdkScreen* screen = gdk_screen_get_default();
-        if (gdk_screen_is_composited(screen)) {
-          // Some Gtk+ themes use non-rectangular toplevel windows. To fully
-          // support such themes we need to make toplevel window transparent
-          // with ARGB visual.
-          // It may cause performanance issue so make it configurable
-          // and enable it by default for selected window managers.
-          if (Preferences::HasUserValue("mozilla.widget.use-argb-visuals")) {
-            // argb visual is explicitly required so use it
-            needsAlphaVisual =
-                Preferences::GetBool("mozilla.widget.use-argb-visuals");
-          } else if (!mIsX11Display) {
-            // Wayland uses ARGB visual by default
-            needsAlphaVisual = true;
-          } else if (mCSDSupportLevel != CSD_SUPPORT_NONE) {
-            if (mIsAccelerated) {
-              needsAlphaVisual = true;
-            } else {
-              // We want to draw a transparent titlebar but we can't use
-              // ARGB visual due to Bug 1516224.
-              // If we're on Mutter/X.org (Bug 1530252) just give up
-              // and don't render transparent corners at all.
-              mTransparencyBitmapForTitlebar = TitlebarCanUseShapeMask();
-            }
-          }
+        needsAlphaVisual = IsMainWindowTransparent();
+        if (!needsAlphaVisual && mCSDSupportLevel != CSD_SUPPORT_NONE) {
+          mTransparencyBitmapForTitlebar = TitlebarCanUseShapeMask();
         }
       }
 
@@ -4327,17 +4337,29 @@ nsresult nsWindow::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
       // Use GL/WebRender compatible visual only when it is necessary, since
       // the visual consumes more memory.
       if (mIsX11Display && mIsAccelerated) {
-        auto display = GDK_DISPLAY_XDISPLAY(gtk_widget_get_display(mShell));
-        auto screen = gtk_widget_get_screen(mShell);
-        int screenNumber = GDK_SCREEN_XNUMBER(screen);
-        int visualId = 0;
         if (useWebRender) {
           // WebRender rquests AlphaVisual for making readback to work
           // correctly.
           needsAlphaVisual = true;
         }
-        if (GLContextGLX::FindVisual(display, screenNumber, useWebRender,
-                                     needsAlphaVisual, &visualId)) {
+        auto screen = gtk_widget_get_screen(mShell);
+        int visualId = 0;
+        bool haveVisual;
+
+        // See https://bugzilla.mozilla.org/show_bug.cgi?id=1663003
+        // We need to use GLX to get visual even on EGL until
+        // EGL can provide compositable visual:
+        // https://gitlab.freedesktop.org/mesa/mesa/-/issues/149
+        if ((true /* !gfx::gfxVars::UseEGL() */)) {
+          auto display = GDK_DISPLAY_XDISPLAY(gtk_widget_get_display(mShell));
+          int screenNumber = GDK_SCREEN_XNUMBER(screen);
+          haveVisual = GLContextGLX::FindVisual(
+              display, screenNumber, useWebRender, needsAlphaVisual, &visualId);
+        } else {
+          haveVisual = GLContextEGL::FindVisual(useWebRender, needsAlphaVisual,
+                                                &visualId);
+        }
+        if (haveVisual) {
           // If we're using CSD, rendering will go through mContainer, but
           // it will inherit this visual as it is a child of mShell.
           gtk_widget_set_visual(mShell,
@@ -5587,8 +5609,9 @@ void nsWindow::UpdateTitlebarTransparencyBitmap() {
   NS_ASSERTION(mTransparencyBitmapForTitlebar,
                "Transparency bitmap is already used to draw window shape");
 
-  if (!mDrawInTitlebar || (mBounds.width == mTransparencyBitmapWidth &&
-                           mBounds.height == mTransparencyBitmapHeight)) {
+  if (!mGdkWindow || !mDrawInTitlebar ||
+      (mBounds.width == mTransparencyBitmapWidth &&
+       mBounds.height == mTransparencyBitmapHeight)) {
     return;
   }
 
@@ -7718,8 +7741,9 @@ nsWindow::CSDSupportLevel nsWindow::GetSystemCSDSupportLevel(bool aIsPopup) {
     return sCSDSupportLevel;
   }
 
-  // We use CSD titlebar mode on Wayland only
-  if (gfxPlatformGtk::GetPlatform()->IsWaylandDisplay()) {
+  // nsWindow::GetSystemCSDSupportLevel can be called from various threads
+  // so we can't use gfxPlatformGtk here.
+  if (!GDK_IS_X11_DISPLAY(gdk_display_get_default())) {
     sCSDSupportLevel = CSD_SUPPORT_CLIENT;
     return sCSDSupportLevel;
   }
@@ -7761,7 +7785,7 @@ nsWindow::CSDSupportLevel nsWindow::GetSystemCSDSupportLevel(bool aIsPopup) {
     } else if (strstr(currentDesktop, "LXQt") != nullptr) {
       sCSDSupportLevel = CSD_SUPPORT_SYSTEM;
     } else if (strstr(currentDesktop, "Deepin") != nullptr) {
-      sCSDSupportLevel = CSD_SUPPORT_SYSTEM;
+      sCSDSupportLevel = CSD_SUPPORT_CLIENT;
     } else {
 // Release or beta builds are not supposed to be broken
 // so disable titlebar rendering on untested/unknown systems.
@@ -7796,7 +7820,7 @@ bool nsWindow::TitlebarCanUseShapeMask() {
   if (canUseShapeMask != -1) {
     return canUseShapeMask;
   }
-  canUseShapeMask = true;
+  canUseShapeMask = gfxPlatformGtk::GetPlatform()->IsX11Display();
 
   const char* currentDesktop = getenv("XDG_CURRENT_DESKTOP");
   if (!currentDesktop) {
@@ -7826,24 +7850,31 @@ bool nsWindow::HideTitlebarByDefault() {
     return hideTitlebar;
   }
 
+  // We want to hide the system titlebar by default.
+  hideTitlebar = true;
+
+  // Don't hide titlebar when we can't draw round corners.
+  GdkScreen* screen = gdk_screen_get_default();
+  if (!gdk_screen_is_composited(screen) && !TitlebarCanUseShapeMask()) {
+    hideTitlebar = false;
+    return hideTitlebar;
+  }
+  // Don't hide titlebar when it's disabled on current desktop.
   const char* currentDesktop = getenv("XDG_CURRENT_DESKTOP");
-  hideTitlebar =
-      (currentDesktop && GetSystemCSDSupportLevel() != CSD_SUPPORT_NONE);
-
-  // Disable system titlebar for Gnome/ElementaryOS only for now. It uses window
-  // manager decorations and does not suffer from CSD Bugs #1525850, #1527837.
-  if (hideTitlebar) {
-    hideTitlebar =
-        (strstr(currentDesktop, "GNOME-Flashback:GNOME") != nullptr ||
-         strstr(currentDesktop, "GNOME") != nullptr ||
-         strstr(currentDesktop, "Pantheon") != nullptr);
+  if (!currentDesktop || GetSystemCSDSupportLevel() == CSD_SUPPORT_NONE) {
+    hideTitlebar = false;
+    return hideTitlebar;
   }
 
-  // We use shape mask to render the titlebar by default so check for it.
-  if (hideTitlebar) {
-    hideTitlebar = TitlebarCanUseShapeMask();
+  // We hide system titlebar on Gnome/ElementaryOS without any restriction.
+  if ((strstr(currentDesktop, "GNOME-Flashback:GNOME") != nullptr ||
+       strstr(currentDesktop, "GNOME") != nullptr ||
+       strstr(currentDesktop, "Pantheon") != nullptr)) {
+    return hideTitlebar;
   }
 
+  // Don't hide system titlebar by default for other desktops.
+  hideTitlebar = false;
   return hideTitlebar;
 }
 

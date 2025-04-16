@@ -283,6 +283,8 @@ class ContentChild final : public PContentChild,
   mozilla::ipc::IPCResult RecvRegisterChromeItem(
       const ChromeRegistryItem& item);
 
+  mozilla::ipc::IPCResult RecvClearStyleSheetCache(
+      const Maybe<RefPtr<nsIPrincipal>>& aForPrincipal);
   mozilla::ipc::IPCResult RecvClearImageCache(const bool& privateLoader,
                                               const bool& chrome);
 
@@ -729,6 +731,9 @@ class ContentChild final : public PContentChild,
       const MaybeDiscarded<BrowsingContext>& aContext);
   mozilla::ipc::IPCResult RecvSetFocusedElement(
       const MaybeDiscarded<BrowsingContext>& aContext, bool aNeedsFocus);
+  mozilla::ipc::IPCResult RecvFinalizeFocusOuter(
+      const MaybeDiscarded<BrowsingContext>& aContext, bool aCanFocus,
+      CallerType aCallerType);
   mozilla::ipc::IPCResult RecvBlurToChild(
       const MaybeDiscarded<BrowsingContext>& aFocusedBrowsingContext,
       const MaybeDiscarded<BrowsingContext>& aBrowsingContextToClear,
@@ -769,8 +774,8 @@ class ContentChild final : public PContentChild,
       nsDocShellLoadState* aLoadState, bool aSetNavigating,
       LoadURIResolver&& aResolve);
 
-  mozilla::ipc::IPCResult RecvInternalLoad(
-      nsDocShellLoadState* aLoadState, bool aTakeFocus);
+  mozilla::ipc::IPCResult RecvInternalLoad(nsDocShellLoadState* aLoadState,
+                                           bool aTakeFocus);
 
   mozilla::ipc::IPCResult RecvDisplayLoadError(
       const MaybeDiscarded<BrowsingContext>& aContext, const nsAString& aURI);
@@ -805,6 +810,9 @@ class ContentChild final : public PContentChild,
   mozilla::ipc::IPCResult RecvHistoryCommitIndexAndLength(
       const MaybeDiscarded<BrowsingContext>& aContext, const uint32_t& aIndex,
       const uint32_t& aLength, const nsID& aChangeID);
+
+  mozilla::ipc::IPCResult RecvDispatchLocationChangeEvent(
+      const MaybeDiscarded<BrowsingContext>& aContext);
 
   mozilla::ipc::IPCResult RecvFlushFOGData(FlushFOGDataResolver&& aResolver);
 

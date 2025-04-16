@@ -175,6 +175,36 @@ JSScript* js::GetOrCreateFunctionScript(JSContext* cx, HandleFunction fun) {
   return JSFunction::getOrCreateScript(cx, fun);
 }
 
+ArrayObject* js::GetFunctionParameterNamesArray(JSContext* cx,
+                                                HandleFunction fun) {
+  RootedValueVector names(cx);
+
+  // The default value for each argument is |undefined|.
+  if (!names.growBy(fun->nargs())) {
+    return nullptr;
+  }
+
+  if (IsInterpretedNonSelfHostedFunction(fun) && fun->nargs() > 0) {
+    RootedScript script(cx, GetOrCreateFunctionScript(cx, fun));
+    if (!script) {
+      return nullptr;
+    }
+
+    MOZ_ASSERT(fun->nargs() == script->numArgs());
+
+    PositionalFormalParameterIter fi(script);
+    for (size_t i = 0; i < fun->nargs(); i++, fi++) {
+      MOZ_ASSERT(fi.argumentSlot() == i);
+      if (JSAtom* atom = fi.name()) {
+        cx->markAtom(atom);
+        names[i].setString(atom);
+      }
+    }
+  }
+
+  return NewDenseCopiedArray(cx, names.length(), names.begin());
+}
+
 bool js::ValueToIdentifier(JSContext* cx, HandleValue v, MutableHandleId id) {
   if (!ToPropertyKey(cx, v, id)) {
     return false;
@@ -5958,16 +5988,20 @@ bool Debugger::isCompilableUnit(JSContext* cx, unsigned argc, Value* vp) {
   bool result = true;
 
   CompileOptions options(cx);
-  LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  frontend::CompilationInfo compilationInfo(cx, allocScope, options);
-  if (!compilationInfo.init(cx)) {
+  Rooted<frontend::CompilationInfo> compilationInfo(
+      cx, frontend::CompilationInfo(cx, options));
+  if (!compilationInfo.get().input.initForGlobal(cx)) {
     return false;
   }
+
+  LifoAllocScope allocScope(&cx->tempLifoAlloc());
+  frontend::CompilationState compilationState(cx, allocScope, options);
 
   JS::AutoSuppressWarningReporter suppressWarnings(cx);
   frontend::Parser<frontend::FullParseHandler, char16_t> parser(
       cx, options, chars.twoByteChars(), length,
-      /* foldConstants = */ true, compilationInfo, nullptr, nullptr);
+      /* foldConstants = */ true, compilationInfo.get(), compilationState,
+      nullptr, nullptr);
   if (!parser.checkOptions() || !parser.parse()) {
     // We ran into an error. If it was because we ran out of memory we report
     // it in the usual way.

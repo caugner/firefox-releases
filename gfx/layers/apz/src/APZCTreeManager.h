@@ -13,6 +13,7 @@
 #include "HitTestingTreeNode.h"  // for HitTestingTreeNodeAutoLock
 #include "gfxPoint.h"            // for gfxPoint
 #include "mozilla/Assertions.h"  // for MOZ_ASSERT_HELPER2
+#include "mozilla/DataMutex.h"   // for DataMutex
 #include "mozilla/gfx/CompositorHitTestInfo.h"
 #include "mozilla/gfx/Logging.h"              // for gfx::TreeLog
 #include "mozilla/gfx/Matrix.h"               // for Matrix4x4
@@ -425,6 +426,9 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
 
   APZInputBridge* InputBridge() override { return this; }
 
+  void AddInputBlockCallback(uint64_t aInputBlockId,
+                             InputBlockCallback&& aCallback) override;
+
   // Methods to help process WidgetInputEvents (or manage conversion to/from
   // InputData)
 
@@ -558,7 +562,7 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
     // Make it move-only.
     HitTestResult(HitTestResult&&) = default;
     HitTestResult& operator=(HitTestResult&&) = default;
-    bool TargetIsConfirmedRoot() const;
+    Maybe<bool> HandledByRoot() const;
   };
 
   /* Some helper functions to find an APZC given some identifying input. These
@@ -577,6 +581,7 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
   ParentLayerToScreenMatrix4x4 GetApzcToGeckoTransform(
       const AsyncPanZoomController* aApzc) const;
   ScreenPoint GetCurrentMousePosition() const;
+  void SetCurrentMousePosition(const ScreenPoint& aNewPos);
 
   /**
    * Convert a screen point of an event targeting |aApzc| to Gecko
@@ -987,7 +992,7 @@ class APZCTreeManager : public IAPZCTreeManager, public APZInputBridge {
   TouchCounter mTouchCounter;
   /* Stores the current mouse position in screen coordinates.
    */
-  ScreenPoint mCurrentMousePosition;
+  mutable DataMutex<ScreenPoint> mCurrentMousePosition;
   /* Extra margins that should be applied to content that fixed wrt. the
    * RCD-RSF, to account for the dynamic toolbar.
    * Acquire mMapLock before accessing this.

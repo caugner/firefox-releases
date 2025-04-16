@@ -162,7 +162,7 @@
 
 #include "DOMMatrix.h"
 
-#if defined(ACCESSIBILITY) && defined(DEBUG)
+#ifdef ACCESSIBILITY
 #  include "nsAccessibilityService.h"
 #endif
 
@@ -391,6 +391,8 @@ void Element::SetTabIndex(int32_t aTabIndex, mozilla::ErrorResult& aError) {
 
 void Element::SetShadowRoot(ShadowRoot* aShadowRoot) {
   nsExtendedDOMSlots* slots = ExtendedDOMSlots();
+  MOZ_ASSERT(!aShadowRoot || !slots->mShadowRoot,
+             "We shouldn't clear the shadow root without unbind first");
   slots->mShadowRoot = aShadowRoot;
 }
 
@@ -781,6 +783,38 @@ void Element::MozScrollSnap() {
   }
 }
 
+int32_t Element::ScrollTopMin() {
+  nsIScrollableFrame* sf = GetScrollFrame();
+  if (!sf) {
+    return 0;
+  }
+  return CSSPixel::FromAppUnits(sf->GetScrollRange().y).Rounded();
+}
+
+int32_t Element::ScrollTopMax() {
+  nsIScrollableFrame* sf = GetScrollFrame();
+  if (!sf) {
+    return 0;
+  }
+  return CSSPixel::FromAppUnits(sf->GetScrollRange().YMost()).Rounded();
+}
+
+int32_t Element::ScrollLeftMin() {
+  nsIScrollableFrame* sf = GetScrollFrame();
+  if (!sf) {
+    return 0;
+  }
+  return CSSPixel::FromAppUnits(sf->GetScrollRange().x).Rounded();
+}
+
+int32_t Element::ScrollLeftMax() {
+  nsIScrollableFrame* sf = GetScrollFrame();
+  if (!sf) {
+    return 0;
+  }
+  return CSSPixel::FromAppUnits(sf->GetScrollRange().XMost()).Rounded();
+}
+
 static nsSize GetScrollRectSizeForOverflowVisibleFrame(nsIFrame* aFrame) {
   if (!aFrame || aFrame->HasAnyStateBits(NS_FRAME_SVG_LAYOUT)) {
     return nsSize(0, 0);
@@ -1136,6 +1170,9 @@ already_AddRefed<ShadowRoot> Element::AttachShadowWithoutNameChecks(
 void Element::AttachAndSetUAShadowRoot(NotifyUAWidgetSetup aNotify) {
   MOZ_DIAGNOSTIC_ASSERT(!CanAttachShadowDOM(),
                         "Cannot be used to attach UI shadow DOM");
+  if (OwnerDoc()->IsStaticDocument()) {
+    return;
+  }
 
   if (!GetShadowRoot()) {
     RefPtr<ShadowRoot> shadowRoot =
@@ -1151,6 +1188,11 @@ void Element::AttachAndSetUAShadowRoot(NotifyUAWidgetSetup aNotify) {
 
 void Element::NotifyUAWidgetSetupOrChange() {
   MOZ_ASSERT(IsInComposedDoc());
+  Document* doc = OwnerDoc();
+  if (doc->IsStaticDocument()) {
+    return;
+  }
+
   // Schedule a runnable, ensure the event dispatches before
   // returning to content script.
   // This event cause UA Widget to construct or cause onchange callback
@@ -1158,9 +1200,8 @@ void Element::NotifyUAWidgetSetupOrChange() {
   // UA Widget to re-init.
   nsContentUtils::AddScriptRunner(NS_NewRunnableFunction(
       "Element::NotifyUAWidgetSetupOrChange::UAWidgetSetupOrChange",
-      [self = RefPtr<Element>(this),
-       ownerDoc = RefPtr<Document>(OwnerDoc())]() {
-        nsContentUtils::DispatchChromeEvent(ownerDoc, self,
+      [self = RefPtr<Element>(this), doc = RefPtr<Document>(doc)]() {
+        nsContentUtils::DispatchChromeEvent(doc, self,
                                             u"UAWidgetSetupOrChange"_ns,
                                             CanBubble::eYes, Cancelable::eNo);
       }));
@@ -1176,22 +1217,25 @@ void Element::NotifyUAWidgetTeardown(UnattachShadowRoot aUnattachShadowRoot) {
     UnattachShadow();
   }
 
-  // The runnable will dispatch an event to tear down UA Widget,
-  // and unattach the Shadow Root.
+  Document* doc = OwnerDoc();
+  if (doc->IsStaticDocument()) {
+    return;
+  }
+
+  // The runnable will dispatch an event to tear down UA Widget.
   nsContentUtils::AddScriptRunner(NS_NewRunnableFunction(
       "Element::NotifyUAWidgetTeardownAndUnattachShadow::UAWidgetTeardown",
-      [self = RefPtr<Element>(this),
-       ownerDoc = RefPtr<Document>(OwnerDoc())]() {
+      [self = RefPtr<Element>(this), doc = RefPtr<Document>(doc)]() {
         // Bail out if the element is being collected by CC
         bool hasHadScriptObject = true;
         nsIScriptGlobalObject* scriptObject =
-            ownerDoc->GetScriptHandlingObject(hasHadScriptObject);
+            doc->GetScriptHandlingObject(hasHadScriptObject);
         if (!scriptObject && hasHadScriptObject) {
           return;
         }
 
         Unused << nsContentUtils::DispatchChromeEvent(
-            ownerDoc, self, u"UAWidgetTeardown"_ns, CanBubble::eYes,
+            doc, self, u"UAWidgetTeardown"_ns, CanBubble::eYes,
             Cancelable::eNo);
       }));
 }
@@ -1207,6 +1251,17 @@ void Element::UnattachShadow() {
   if (Document* doc = GetComposedDoc()) {
     if (PresShell* presShell = doc->GetPresShell()) {
       presShell->DestroyFramesForAndRestyle(this);
+#ifdef ACCESSIBILITY
+      // We need to notify the accessibility service here explicitly because,
+      // even though we're going to reconstruct the _host_, the shadow root and
+      // its children are never really going to come back. We could plumb that
+      // further down to DestroyFramesForAndRestyle and add a new flag to
+      // nsCSSFrameConstructor::ContentRemoved or such, but this seems simpler
+      // instead.
+      if (nsAccessibilityService* accService = GetAccService()) {
+        accService->ContentRemoved(presShell, shadowRoot);
+      }
+#endif
     }
   }
   MOZ_ASSERT(!GetPrimaryFrame());
@@ -1501,6 +1556,11 @@ void Element::GetElementsWithGrid(nsTArray<RefPtr<Element>>& aElements) {
     // traversal but ignore all the children.
     cur = cur->GetNextNonChildNode(this);
   }
+}
+
+bool Element::HasVisibleScrollbars() {
+  nsIScrollableFrame* scrollFrame = GetScrollFrame();
+  return scrollFrame && scrollFrame->GetScrollbarVisibility();
 }
 
 nsresult Element::BindToTree(BindContext& aContext, nsINode& aParent) {

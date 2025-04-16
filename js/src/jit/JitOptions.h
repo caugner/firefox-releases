@@ -61,7 +61,6 @@ struct DefaultJitOptions {
   bool typeInference;
 #endif
   bool warpBuilder;
-  bool warpTrialInlining;
   bool jitForTrustedPrincipals;
   bool nativeRegExp;
   bool forceInlineCaches;
@@ -87,6 +86,7 @@ struct DefaultJitOptions {
   uint32_t baselineInterpreterWarmUpThreshold;
   uint32_t baselineJitWarmUpThreshold;
   uint32_t trialInliningWarmUpThreshold;
+  uint32_t trialInliningInitialWarmUpCount;
   uint32_t normalIonWarmUpThreshold;
   uint32_t fullIonWarmUpThreshold;
   uint32_t regexpWarmUpThreshold;
@@ -133,6 +133,8 @@ struct DefaultJitOptions {
   void resetNormalIonWarmUpThreshold();
   void resetFullIonWarmUpThreshold();
   void enableGvn(bool val);
+  void setFastWarmUp();
+  void setWarpEnabled(bool enable);
 
   bool eagerIonCompilation() const { return normalIonWarmUpThreshold == 0; }
 };

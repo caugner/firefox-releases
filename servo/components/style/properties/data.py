@@ -334,7 +334,6 @@ class Longhand(object):
                 "BackgroundRepeat",
                 "BorderImageRepeat",
                 "BorderStyle",
-                "ButtonAppearance",
                 "Clear",
                 "ColumnCount",
                 "Contain",
@@ -774,6 +773,7 @@ class PropertyRestrictions:
         return set([
             "color",
             "text-combine-upright",
+            "text-transform",
             "unicode-bidi",
             "direction",
             "content",

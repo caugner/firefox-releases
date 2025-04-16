@@ -48,6 +48,14 @@ template WSScanResult WSRunScanner::ScanNextVisibleNodeOrBlockBoundaryFrom(
     const EditorDOMPoint& aPoint) const;
 template WSScanResult WSRunScanner::ScanNextVisibleNodeOrBlockBoundaryFrom(
     const EditorRawDOMPoint& aPoint) const;
+template EditorDOMPoint WSRunScanner::GetAfterLastVisiblePoint(
+    Text& aTextNode, const Element* aAncestorLimiter);
+template EditorRawDOMPoint WSRunScanner::GetAfterLastVisiblePoint(
+    Text& aTextNode, const Element* aAncestorLimiter);
+template EditorDOMPoint WSRunScanner::GetFirstVisiblePoint(
+    Text& aTextNode, const Element* aAncestorLimiter);
+template EditorRawDOMPoint WSRunScanner::GetFirstVisiblePoint(
+    Text& aTextNode, const Element* aAncestorLimiter);
 
 template nsresult WhiteSpaceVisibilityKeeper::NormalizeVisibleWhiteSpacesAt(
     HTMLEditor& aHTMLEditor, const EditorDOMPoint& aScanStartPoint);
@@ -89,7 +97,8 @@ EditActionResult WhiteSpaceVisibilityKeeper::
     MergeFirstLineOfRightBlockElementIntoDescendantLeftBlockElement(
         HTMLEditor& aHTMLEditor, Element& aLeftBlockElement,
         Element& aRightBlockElement, const EditorDOMPoint& aAtRightBlockChild,
-        const Maybe<nsAtom*>& aListElementTagName) {
+        const Maybe<nsAtom*>& aListElementTagName,
+        const HTMLBRElement* aPrecedingInvisibleBRElement) {
   MOZ_ASSERT(
       EditorUtils::IsDescendantOf(aLeftBlockElement, aRightBlockElement));
   MOZ_ASSERT(&aRightBlockElement == aAtRightBlockChild.GetContainer());
@@ -111,7 +120,7 @@ EditActionResult WhiteSpaceVisibilityKeeper::
     NS_WARNING(
         "WhiteSpaceVisibilityKeeper::DeleteInvisibleASCIIWhiteSpaces() "
         "failed at left block");
-    return EditActionIgnored(rv);
+    return EditActionResult(rv);
   }
 
   OwningNonNull<Element> rightBlockElement = aRightBlockElement;
@@ -125,7 +134,7 @@ EditActionResult WhiteSpaceVisibilityKeeper::
       NS_WARNING(
           "WhiteSpaceVisibilityKeeper::DeleteInvisibleASCIIWhiteSpaces() "
           "failed at right block child");
-      return EditActionIgnored(rv);
+      return EditActionResult(rv);
     }
 
     // XXX AutoTrackDOMPoint instance, tracker, hasn't been destroyed here.
@@ -137,7 +146,7 @@ EditActionResult WhiteSpaceVisibilityKeeper::
       rightBlockElement = *afterRightBlockChild.GetContainerAsElement();
     } else if (NS_WARN_IF(
                    !afterRightBlockChild.GetContainerParentAsElement())) {
-      return EditActionIgnored(NS_ERROR_UNEXPECTED);
+      return EditActionResult(NS_ERROR_UNEXPECTED);
     } else {
       rightBlockElement = *afterRightBlockChild.GetContainerParentAsElement();
     }
@@ -147,7 +156,12 @@ EditActionResult WhiteSpaceVisibilityKeeper::
   RefPtr<HTMLBRElement> invisibleBRElementAtEndOfLeftBlockElement =
       WSRunScanner::GetPrecedingBRElementUnlessVisibleContentFound(
           aHTMLEditor, EditorDOMPoint::AtEndOf(aLeftBlockElement));
+  NS_ASSERTION(
+      aPrecedingInvisibleBRElement == invisibleBRElementAtEndOfLeftBlockElement,
+      "The preceding invisible BR element computation was different");
   EditActionResult ret(NS_OK);
+  // NOTE: Keep syncing with CanMergeLeftAndRightBlockElements() of
+  //       AutoInclusiveAncestorBlockElementsJoiner.
   if (NS_WARN_IF(aListElementTagName.isSome())) {
     // Since 2002, here was the following comment:
     // > The idea here is to take all children in rightListElement that are
@@ -169,17 +183,32 @@ EditActionResult WhiteSpaceVisibilityKeeper::
     // XXX Why do we ignore the result of MoveOneHardLineContents()?
     NS_ASSERTION(rightBlockElement == afterRightBlockChild.GetContainer(),
                  "The relation is not guaranteed but assumed");
+#ifdef DEBUG
+    Result<bool, nsresult> firstLineHasContent =
+        aHTMLEditor.CanMoveOrDeleteSomethingInHardLine(EditorRawDOMPoint(
+            rightBlockElement, afterRightBlockChild.Offset()));
+#endif  // #ifdef DEBUG
     MoveNodeResult moveNodeResult = aHTMLEditor.MoveOneHardLineContents(
         EditorDOMPoint(rightBlockElement, afterRightBlockChild.Offset()),
         EditorDOMPoint(&aLeftBlockElement, 0),
         HTMLEditor::MoveToEndOfContainer::Yes);
     if (NS_WARN_IF(moveNodeResult.EditorDestroyed())) {
-      return ret.SetResult(NS_ERROR_EDITOR_DESTROYED);
+      return EditActionResult(NS_ERROR_EDITOR_DESTROYED);
     }
     NS_WARNING_ASSERTION(moveNodeResult.Succeeded(),
                          "HTMLEditor::MoveOneHardLineContents("
                          "MoveToEndOfContainer::Yes) failed, but ignored");
     if (moveNodeResult.Succeeded()) {
+#ifdef DEBUG
+      MOZ_ASSERT(!firstLineHasContent.isErr());
+      if (firstLineHasContent.inspect()) {
+        NS_ASSERTION(moveNodeResult.Handled(),
+                     "Failed to consider whether moving or not something");
+      } else {
+        NS_ASSERTION(moveNodeResult.Ignored(),
+                     "Failed to consider whether moving or not something");
+      }
+#endif  // #ifdef DEBUG
       ret |= moveNodeResult;
     }
     // Now, all children of rightBlockElement were moved to leftBlockElement.
@@ -194,15 +223,13 @@ EditActionResult WhiteSpaceVisibilityKeeper::
   rv = aHTMLEditor.DeleteNodeWithTransaction(
       *invisibleBRElementAtEndOfLeftBlockElement);
   if (NS_WARN_IF(aHTMLEditor.Destroyed())) {
-    return EditActionIgnored(NS_ERROR_EDITOR_DESTROYED);
+    return EditActionResult(NS_ERROR_EDITOR_DESTROYED);
   }
-  NS_WARNING_ASSERTION(
-      NS_SUCCEEDED(rv),
-      "HTMLEditor::DeleteNodeWithTransaction() failed, but ignored");
-  if (NS_SUCCEEDED(rv)) {
-    ret.MarkAsHandled();
+  if (NS_FAILED(rv)) {
+    NS_WARNING("HTMLEditor::DeleteNodeWithTransaction() failed, but ignored");
+    return EditActionResult(rv);
   }
-  return ret;
+  return EditActionHandled();
 }
 
 // static
@@ -211,7 +238,8 @@ EditActionResult WhiteSpaceVisibilityKeeper::
         HTMLEditor& aHTMLEditor, Element& aLeftBlockElement,
         Element& aRightBlockElement, const EditorDOMPoint& aAtLeftBlockChild,
         nsIContent& aLeftContentInBlock,
-        const Maybe<nsAtom*>& aListElementTagName) {
+        const Maybe<nsAtom*>& aListElementTagName,
+        const HTMLBRElement* aPrecedingInvisibleBRElement) {
   MOZ_ASSERT(
       EditorUtils::IsDescendantOf(aRightBlockElement, aLeftBlockElement));
   MOZ_ASSERT(
@@ -234,7 +262,7 @@ EditActionResult WhiteSpaceVisibilityKeeper::
     NS_WARNING(
         "WhiteSpaceVisibilityKeeper::DeleteInvisibleASCIIWhiteSpaces() failed "
         "at right block");
-    return EditActionIgnored(rv);
+    return EditActionResult(rv);
   }
 
   OwningNonNull<Element> originalLeftBlockElement = aLeftBlockElement;
@@ -251,7 +279,7 @@ EditActionResult WhiteSpaceVisibilityKeeper::
       NS_WARNING(
           "WhiteSpaceVisibilityKeeper::DeleteInvisibleASCIIWhiteSpaces() "
           "failed at left block child");
-      return EditActionIgnored(rv);
+      return EditActionResult(rv);
     }
     // XXX AutoTrackDOMPoint instance, tracker, hasn't been destroyed here.
     //     Do we really need to do update aRightBlockElement here??
@@ -261,7 +289,7 @@ EditActionResult WhiteSpaceVisibilityKeeper::
     if (atLeftBlockChild.GetContainerAsElement()) {
       leftBlockElement = *atLeftBlockChild.GetContainerAsElement();
     } else if (NS_WARN_IF(!atLeftBlockChild.GetContainerParentAsElement())) {
-      return EditActionIgnored(NS_ERROR_UNEXPECTED);
+      return EditActionResult(NS_ERROR_UNEXPECTED);
     } else {
       leftBlockElement = *atLeftBlockChild.GetContainerParentAsElement();
     }
@@ -271,22 +299,41 @@ EditActionResult WhiteSpaceVisibilityKeeper::
   RefPtr<HTMLBRElement> invisibleBRElementBeforeLeftBlockElement =
       WSRunScanner::GetPrecedingBRElementUnlessVisibleContentFound(
           aHTMLEditor, atLeftBlockChild);
+  NS_ASSERTION(
+      aPrecedingInvisibleBRElement == invisibleBRElementBeforeLeftBlockElement,
+      "The preceding invisible BR element computation was different");
   EditActionResult ret(NS_OK);
+  // NOTE: Keep syncing with CanMergeLeftAndRightBlockElements() of
+  //       AutoInclusiveAncestorBlockElementsJoiner.
   if (aListElementTagName.isSome()) {
     // XXX Why do we ignore the error from MoveChildrenWithTransaction()?
     MOZ_ASSERT(originalLeftBlockElement == atLeftBlockChild.GetContainer(),
                "This is not guaranteed, but assumed");
+#ifdef DEBUG
+    Result<bool, nsresult> rightBlockHasContent =
+        aHTMLEditor.CanMoveChildren(aRightBlockElement, aLeftBlockElement);
+#endif  // #ifdef DEBUG
     MoveNodeResult moveNodeResult = aHTMLEditor.MoveChildrenWithTransaction(
         aRightBlockElement, EditorDOMPoint(atLeftBlockChild.GetContainer(),
                                            atLeftBlockChild.Offset()));
     if (NS_WARN_IF(moveNodeResult.EditorDestroyed())) {
-      return ret.SetResult(NS_ERROR_EDITOR_DESTROYED);
+      return EditActionResult(NS_ERROR_EDITOR_DESTROYED);
     }
     NS_WARNING_ASSERTION(
         moveNodeResult.Succeeded(),
         "HTMLEditor::MoveChildrenWithTransaction() failed, but ignored");
     if (moveNodeResult.Succeeded()) {
       ret |= moveNodeResult;
+#ifdef DEBUG
+      MOZ_ASSERT(!rightBlockHasContent.isErr());
+      if (rightBlockHasContent.inspect()) {
+        NS_ASSERTION(moveNodeResult.Handled(),
+                     "Failed to consider whether moving or not children");
+      } else {
+        NS_ASSERTION(moveNodeResult.Ignored(),
+                     "Failed to consider whether moving or not children");
+      }
+#endif  // #ifdef DEBUG
     }
     // atLeftBlockChild was moved to rightListElement.  So, it's invalid now.
     atLeftBlockChild.Clear();
@@ -323,6 +370,12 @@ EditActionResult WhiteSpaceVisibilityKeeper::
     // Because we don't want the moving content to receive the style of the
     // previous content, we split the previous content's style.
 
+#ifdef DEBUG
+    Result<bool, nsresult> firstLineHasContent =
+        aHTMLEditor.CanMoveOrDeleteSomethingInHardLine(
+            EditorRawDOMPoint(&aRightBlockElement, 0));
+#endif  // #ifdef DEBUG
+
     Element* editingHost = aHTMLEditor.GetActiveEditingHost();
     // XXX It's odd to continue handling this edit action if there is no
     //     editing host.
@@ -332,7 +385,7 @@ EditActionResult WhiteSpaceVisibilityKeeper::
                                                           nullptr, nullptr);
       if (splitResult.Failed()) {
         NS_WARNING("HTMLEditor::SplitAncestorStyledInlineElementsAt() failed");
-        return EditActionIgnored(splitResult.Rv());
+        return EditActionResult(splitResult.Rv());
       }
 
       if (splitResult.Handled()) {
@@ -340,24 +393,37 @@ EditActionResult WhiteSpaceVisibilityKeeper::
           atPreviousContent.Set(splitResult.GetNextNode());
           if (!atPreviousContent.IsSet()) {
             NS_WARNING("Next node of split point was orphaned");
-            return EditActionIgnored(NS_ERROR_NULL_POINTER);
+            return EditActionResult(NS_ERROR_NULL_POINTER);
           }
         } else {
           atPreviousContent = splitResult.SplitPoint();
           if (!atPreviousContent.IsSet()) {
             NS_WARNING("Split node was orphaned");
-            return EditActionIgnored(NS_ERROR_NULL_POINTER);
+            return EditActionResult(NS_ERROR_NULL_POINTER);
           }
         }
       }
     }
 
-    ret |= aHTMLEditor.MoveOneHardLineContents(
+    MoveNodeResult moveNodeResult = aHTMLEditor.MoveOneHardLineContents(
         EditorDOMPoint(&aRightBlockElement, 0), atPreviousContent);
-    if (ret.Failed()) {
+    if (moveNodeResult.Failed()) {
       NS_WARNING("HTMLEditor::MoveOneHardLineContents() failed");
-      return ret;
+      return EditActionResult(moveNodeResult.Rv());
     }
+
+#ifdef DEBUG
+    MOZ_ASSERT(!firstLineHasContent.isErr());
+    if (firstLineHasContent.inspect()) {
+      NS_ASSERTION(moveNodeResult.Handled(),
+                   "Failed to consider whether moving or not something");
+    } else {
+      NS_ASSERTION(moveNodeResult.Ignored(),
+                   "Failed to consider whether moving or not something");
+    }
+#endif  // #ifdef DEBUG
+
+    ret |= moveNodeResult;
   }
 
   if (!invisibleBRElementBeforeLeftBlockElement) {
@@ -367,23 +433,21 @@ EditActionResult WhiteSpaceVisibilityKeeper::
   rv = aHTMLEditor.DeleteNodeWithTransaction(
       *invisibleBRElementBeforeLeftBlockElement);
   if (NS_WARN_IF(aHTMLEditor.Destroyed())) {
-    return ret.SetResult(NS_ERROR_EDITOR_DESTROYED);
+    return EditActionResult(NS_ERROR_EDITOR_DESTROYED);
   }
-  NS_WARNING_ASSERTION(
-      NS_SUCCEEDED(rv),
-      "HTMLEditor::DeleteNodeWithTransaction() failed, but ignored");
-  if (NS_SUCCEEDED(rv)) {
-    ret.MarkAsHandled();
+  if (NS_FAILED(rv)) {
+    NS_WARNING("HTMLEditor::DeleteNodeWithTransaction() failed, but ignored");
+    return EditActionResult(rv);
   }
-  return ret;
+  return EditActionHandled();
 }
 
 // static
 EditActionResult WhiteSpaceVisibilityKeeper::
     MergeFirstLineOfRightBlockElementIntoLeftBlockElement(
         HTMLEditor& aHTMLEditor, Element& aLeftBlockElement,
-        Element& aRightBlockElement,
-        const Maybe<nsAtom*>& aListElementTagName) {
+        Element& aRightBlockElement, const Maybe<nsAtom*>& aListElementTagName,
+        const HTMLBRElement* aPrecedingInvisibleBRElement) {
   MOZ_ASSERT(
       !EditorUtils::IsDescendantOf(aLeftBlockElement, aRightBlockElement));
   MOZ_ASSERT(
@@ -406,12 +470,15 @@ EditActionResult WhiteSpaceVisibilityKeeper::
     NS_WARNING(
         "WhiteSpaceVisibilityKeeper::"
         "MakeSureToKeepVisibleStateOfWhiteSpacesAroundDeletingRange() failed");
-    return EditActionIgnored(rv);
+    return EditActionResult(rv);
   }
   // Do br adjustment.
   RefPtr<HTMLBRElement> invisibleBRElementAtEndOfLeftBlockElement =
       WSRunScanner::GetPrecedingBRElementUnlessVisibleContentFound(
           aHTMLEditor, EditorDOMPoint::AtEndOf(aLeftBlockElement));
+  NS_ASSERTION(
+      aPrecedingInvisibleBRElement == invisibleBRElementAtEndOfLeftBlockElement,
+      "The preceding invisible BR element computation was different");
   EditActionResult ret(NS_OK);
   if (aListElementTagName.isSome() ||
       aLeftBlockElement.NodeInfo()->NameAtom() ==
@@ -421,7 +488,7 @@ EditActionResult WhiteSpaceVisibilityKeeper::
     nsresult rv = aHTMLEditor.JoinNearestEditableNodesWithTransaction(
         aLeftBlockElement, aRightBlockElement, &atFirstChildOfRightNode);
     if (NS_WARN_IF(rv == NS_ERROR_EDITOR_DESTROYED)) {
-      return EditActionIgnored(NS_ERROR_EDITOR_DESTROYED);
+      return EditActionResult(NS_ERROR_EDITOR_DESTROYED);
     }
     NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
                          "HTMLEditor::JoinNearestEditableNodesWithTransaction()"
@@ -432,7 +499,7 @@ EditActionResult WhiteSpaceVisibilityKeeper::
               aRightBlockElement, MOZ_KnownLive(*aListElementTagName.ref()),
               *nsGkAtoms::li);
       if (NS_WARN_IF(convertListTypeResult.EditorDestroyed())) {
-        return EditActionIgnored(NS_ERROR_EDITOR_DESTROYED);
+        return EditActionResult(NS_ERROR_EDITOR_DESTROYED);
       }
       NS_WARNING_ASSERTION(
           convertListTypeResult.Succeeded(),
@@ -440,17 +507,35 @@ EditActionResult WhiteSpaceVisibilityKeeper::
     }
     ret.MarkAsHandled();
   } else {
+#ifdef DEBUG
+    Result<bool, nsresult> firstLineHasContent =
+        aHTMLEditor.CanMoveOrDeleteSomethingInHardLine(
+            EditorRawDOMPoint(&aRightBlockElement, 0));
+#endif  // #ifdef DEBUG
+
     // Nodes are dissimilar types.
-    ret |= aHTMLEditor.MoveOneHardLineContents(
+    MoveNodeResult moveNodeResult = aHTMLEditor.MoveOneHardLineContents(
         EditorDOMPoint(&aRightBlockElement, 0),
         EditorDOMPoint(&aLeftBlockElement, 0),
         HTMLEditor::MoveToEndOfContainer::Yes);
-    if (ret.Failed()) {
+    if (moveNodeResult.Failed()) {
       NS_WARNING(
           "HTMLEditor::MoveOneHardLineContents(MoveToEndOfContainer::Yes) "
           "failed");
-      return ret;
+      return EditActionResult(moveNodeResult.Rv());
     }
+
+#ifdef DEBUG
+    MOZ_ASSERT(!firstLineHasContent.isErr());
+    if (firstLineHasContent.inspect()) {
+      NS_ASSERTION(moveNodeResult.Handled(),
+                   "Failed to consider whether moving or not something");
+    } else {
+      NS_ASSERTION(moveNodeResult.Ignored(),
+                   "Failed to consider whether moving or not something");
+    }
+#endif  // #ifdef DEBUG
+    ret |= moveNodeResult;
   }
 
   if (!invisibleBRElementAtEndOfLeftBlockElement) {
@@ -467,9 +552,9 @@ EditActionResult WhiteSpaceVisibilityKeeper::
   //     is respected?
   if (NS_FAILED(rv)) {
     NS_WARNING("HTMLEditor::DeleteNodeWithTransaction() failed");
-    return ret.SetResult(rv);
+    return EditActionResult(rv);
   }
-  return ret.MarkAsHandled();
+  return EditActionHandled();
 }
 
 // static
@@ -1590,6 +1675,46 @@ WSRunScanner::TextFragmentData::InvisibleTrailingWhiteSpaceRangeRef() const {
   return mTrailingWhiteSpaceRange.ref();
 }
 
+EditorDOMRangeInTexts
+WSRunScanner::TextFragmentData::GetNonCollapsedRangeInTexts(
+    const EditorDOMRange& aRange) const {
+  if (!aRange.IsPositioned()) {
+    return EditorDOMRangeInTexts();
+  }
+  if (aRange.IsInTextNodes()) {
+    if (aRange.Collapsed()) {
+      return EditorDOMRangeInTexts();
+    }
+    // Note that this may return a range which don't include any invisible
+    // white-spaces due to empty text nodes.
+    return aRange.GetAsInTexts();
+  }
+
+  EditorDOMPointInText firstPoint =
+      aRange.StartRef().IsInTextNode()
+          ? aRange.StartRef().AsInText()
+          : GetInclusiveNextEditableCharPoint(aRange.StartRef());
+  if (!firstPoint.IsSet()) {
+    return EditorDOMRangeInTexts();
+  }
+  EditorDOMPointInText endPoint;
+  if (aRange.EndRef().IsInTextNode()) {
+    endPoint = aRange.EndRef().AsInText();
+  } else {
+    // FYI: GetPreviousEditableCharPoint() returns last character's point
+    //      of preceding text node if it's not empty, but we need end of
+    //      the text node here.
+    endPoint = GetPreviousEditableCharPoint(aRange.EndRef());
+    if (endPoint.IsSet() && endPoint.IsAtLastContent()) {
+      MOZ_ALWAYS_TRUE(endPoint.AdvanceOffset());
+    }
+  }
+  if (!endPoint.IsSet() || firstPoint == endPoint) {
+    return EditorDOMRangeInTexts();
+  }
+  return EditorDOMRangeInTexts(firstPoint, endPoint);
+}
+
 const WSRunScanner::VisibleWhiteSpacesData&
 WSRunScanner::TextFragmentData::VisibleWhiteSpacesDataRef() const {
   if (mVisibleWhiteSpacesData.isSome()) {
@@ -2251,6 +2376,44 @@ WSRunScanner::TextFragmentData::GetPreviousEditableCharPoint(
             : 0);
   }
   return EditorDOMPointInText();
+}
+
+// static
+template <typename EditorDOMPointType>
+EditorDOMPointType WSRunScanner::GetAfterLastVisiblePoint(
+    Text& aTextNode, const Element* aAncestorLimiter) {
+  if (EditorUtils::IsContentPreformatted(aTextNode)) {
+    return EditorDOMPointType::AtEndOf(aTextNode);
+  }
+  TextFragmentData textFragmentData(
+      EditorDOMPoint(&aTextNode,
+                     aTextNode.Length() ? aTextNode.Length() - 1 : 0),
+      aAncestorLimiter);
+  const EditorDOMRange& invisibleWhiteSpaceRange =
+      textFragmentData.InvisibleTrailingWhiteSpaceRangeRef();
+  if (!invisibleWhiteSpaceRange.IsPositioned() ||
+      invisibleWhiteSpaceRange.Collapsed()) {
+    return EditorDOMPointType::AtEndOf(aTextNode);
+  }
+  return EditorDOMPointType(invisibleWhiteSpaceRange.StartRef());
+}
+
+// static
+template <typename EditorDOMPointType>
+EditorDOMPointType WSRunScanner::GetFirstVisiblePoint(
+    Text& aTextNode, const Element* aAncestorLimiter) {
+  if (EditorUtils::IsContentPreformatted(aTextNode)) {
+    return EditorDOMPointType(&aTextNode, 0);
+  }
+  TextFragmentData textFragmentData(EditorDOMPoint(&aTextNode, 0),
+                                    aAncestorLimiter);
+  const EditorDOMRange& invisibleWhiteSpaceRange =
+      textFragmentData.InvisibleLeadingWhiteSpaceRangeRef();
+  if (!invisibleWhiteSpaceRange.IsPositioned() ||
+      invisibleWhiteSpaceRange.Collapsed()) {
+    return EditorDOMPointType(&aTextNode, 0);
+  }
+  return EditorDOMPointType(invisibleWhiteSpaceRange.EndRef());
 }
 
 EditorDOMPointInText
@@ -3146,6 +3309,294 @@ WSRunScanner::GetRangeInTextNodesToForwardDeleteFrom(
   MOZ_ASSERT(extendedRangeToDelete.IsPositionedAndValid());
   return extendedRangeToDelete.IsPositioned() ? extendedRangeToDelete
                                               : rangeToDelete;
+}
+
+// static
+EditorDOMRange WSRunScanner::GetRangesForDeletingAtomicContent(
+    const HTMLEditor& aHTMLEditor, const nsIContent& aAtomicContent) {
+  if (aAtomicContent.IsHTMLElement(nsGkAtoms::br)) {
+    // Preceding white-spaces should be preserved, but the following
+    // white-spaces should be invisible around `<br>` element.
+    Element* editingHost = aHTMLEditor.GetActiveEditingHost();
+    TextFragmentData textFragmentDataAfterBRElement(
+        EditorDOMPoint::After(aAtomicContent), editingHost);
+    const EditorDOMRangeInTexts followingInvisibleWhiteSpaces =
+        textFragmentDataAfterBRElement.GetNonCollapsedRangeInTexts(
+            textFragmentDataAfterBRElement
+                .InvisibleLeadingWhiteSpaceRangeRef());
+    return followingInvisibleWhiteSpaces.IsPositioned() &&
+                   !followingInvisibleWhiteSpaces.Collapsed()
+               ? EditorDOMRange(
+                     EditorDOMPoint(const_cast<nsIContent*>(&aAtomicContent)),
+                     followingInvisibleWhiteSpaces.EndRef())
+               : EditorDOMRange(
+                     EditorDOMPoint(const_cast<nsIContent*>(&aAtomicContent)),
+                     EditorDOMPoint::After(aAtomicContent));
+  }
+
+  if (!HTMLEditUtils::IsBlockElement(aAtomicContent)) {
+    // Both preceding and following white-spaces around it should be preserved
+    // around inline elements like `<img>`.
+    return EditorDOMRange(
+        EditorDOMPoint(const_cast<nsIContent*>(&aAtomicContent)),
+        EditorDOMPoint::After(aAtomicContent));
+  }
+
+  // Both preceding and following white-spaces can be invisible around a
+  // block element.
+  Element* editingHost = aHTMLEditor.GetActiveEditingHost();
+  TextFragmentData textFragmentDataBeforeAtomicContent(
+      EditorDOMPoint(const_cast<nsIContent*>(&aAtomicContent)), editingHost);
+  const EditorDOMRangeInTexts precedingInvisibleWhiteSpaces =
+      textFragmentDataBeforeAtomicContent.GetNonCollapsedRangeInTexts(
+          textFragmentDataBeforeAtomicContent
+              .InvisibleTrailingWhiteSpaceRangeRef());
+  TextFragmentData textFragmentDataAfterAtomicContent(
+      EditorDOMPoint::After(aAtomicContent), editingHost);
+  const EditorDOMRangeInTexts followingInvisibleWhiteSpaces =
+      textFragmentDataAfterAtomicContent.GetNonCollapsedRangeInTexts(
+          textFragmentDataAfterAtomicContent
+              .InvisibleLeadingWhiteSpaceRangeRef());
+  if (precedingInvisibleWhiteSpaces.StartRef().IsSet() &&
+      followingInvisibleWhiteSpaces.EndRef().IsSet()) {
+    return EditorDOMRange(precedingInvisibleWhiteSpaces.StartRef(),
+                          followingInvisibleWhiteSpaces.EndRef());
+  }
+  if (precedingInvisibleWhiteSpaces.StartRef().IsSet()) {
+    return EditorDOMRange(precedingInvisibleWhiteSpaces.StartRef(),
+                          EditorDOMPoint::After(aAtomicContent));
+  }
+  if (followingInvisibleWhiteSpaces.EndRef().IsSet()) {
+    return EditorDOMRange(
+        EditorDOMPoint(const_cast<nsIContent*>(&aAtomicContent)),
+        followingInvisibleWhiteSpaces.EndRef());
+  }
+  return EditorDOMRange(
+      EditorDOMPoint(const_cast<nsIContent*>(&aAtomicContent)),
+      EditorDOMPoint::After(aAtomicContent));
+}
+
+// static
+EditorDOMRange WSRunScanner::GetRangeForDeletingBlockElementBoundaries(
+    const HTMLEditor& aHTMLEditor, const Element& aLeftBlockElement,
+    const Element& aRightBlockElement,
+    const EditorDOMPoint& aPointContainingTheOtherBlock) {
+  MOZ_ASSERT(&aLeftBlockElement != &aRightBlockElement);
+  MOZ_ASSERT_IF(
+      aPointContainingTheOtherBlock.IsSet(),
+      aPointContainingTheOtherBlock.GetContainer() == &aLeftBlockElement ||
+          aPointContainingTheOtherBlock.GetContainer() == &aRightBlockElement);
+  MOZ_ASSERT_IF(
+      aPointContainingTheOtherBlock.GetContainer() == &aLeftBlockElement,
+      aRightBlockElement.IsInclusiveDescendantOf(
+          aPointContainingTheOtherBlock.GetChild()));
+  MOZ_ASSERT_IF(
+      aPointContainingTheOtherBlock.GetContainer() == &aRightBlockElement,
+      aLeftBlockElement.IsInclusiveDescendantOf(
+          aPointContainingTheOtherBlock.GetChild()));
+  MOZ_ASSERT_IF(
+      !aPointContainingTheOtherBlock.IsSet(),
+      !aRightBlockElement.IsInclusiveDescendantOf(&aLeftBlockElement));
+  MOZ_ASSERT_IF(
+      !aPointContainingTheOtherBlock.IsSet(),
+      !aLeftBlockElement.IsInclusiveDescendantOf(&aRightBlockElement));
+  MOZ_ASSERT_IF(!aPointContainingTheOtherBlock.IsSet(),
+                EditorRawDOMPoint(const_cast<Element*>(&aLeftBlockElement))
+                    .IsBefore(EditorRawDOMPoint(
+                        const_cast<Element*>(&aRightBlockElement))));
+
+  const Element* editingHost = aHTMLEditor.GetActiveEditingHost();
+
+  EditorDOMRange range;
+  // Include trailing invisible white-spaces in aLeftBlockElement.
+  TextFragmentData textFragmentDataAtEndOfLestBlockElement(
+      aPointContainingTheOtherBlock.GetContainer() == &aLeftBlockElement
+          ? aPointContainingTheOtherBlock
+          : EditorDOMPoint::AtEndOf(const_cast<Element&>(aLeftBlockElement)),
+      editingHost);
+  const EditorDOMRange& trailingWhiteSpaceRange =
+      textFragmentDataAtEndOfLestBlockElement
+          .InvisibleTrailingWhiteSpaceRangeRef();
+  if (trailingWhiteSpaceRange.StartRef().IsSet()) {
+    range.SetStart(trailingWhiteSpaceRange.StartRef());
+  } else {
+    range.SetStart(textFragmentDataAtEndOfLestBlockElement.ScanStartRef());
+  }
+  // Include leading invisible white-spaces in aRightBlockElement.
+  TextFragmentData textFragmentDataAtStartOfRightBlockElement(
+      aPointContainingTheOtherBlock.GetContainer() == &aRightBlockElement &&
+              !aPointContainingTheOtherBlock.IsEndOfContainer()
+          ? aPointContainingTheOtherBlock.NextPoint()
+          : EditorDOMPoint(const_cast<Element*>(&aRightBlockElement), 0),
+      editingHost);
+  const EditorDOMRange& leadingWhiteSpaceRange =
+      textFragmentDataAtStartOfRightBlockElement
+          .InvisibleLeadingWhiteSpaceRangeRef();
+  if (leadingWhiteSpaceRange.EndRef().IsSet()) {
+    range.SetEnd(leadingWhiteSpaceRange.EndRef());
+  } else {
+    range.SetEnd(textFragmentDataAtStartOfRightBlockElement.ScanStartRef());
+  }
+  return range;
+}
+
+// static
+EditorDOMRange
+WSRunScanner::GetRangeExtendToContainInvisibleWhiteSpacesAtRangeBoundaries(
+    const HTMLEditor& aHTMLEditor, const EditorDOMRange& aRange) {
+  MOZ_ASSERT(aRange.IsPositionedAndValid());
+  MOZ_ASSERT(aRange.EndRef().IsSetAndValid());
+  MOZ_ASSERT(aRange.StartRef().IsSetAndValid());
+
+  const Element* editingHost = aHTMLEditor.GetActiveEditingHost();
+
+  EditorDOMRange result;
+  TextFragmentData textFragmentDataAtStart(aRange.StartRef(), editingHost);
+  const EditorDOMRangeInTexts invisibleLeadingWhiteSpacesAtStart =
+      textFragmentDataAtStart.GetNonCollapsedRangeInTexts(
+          textFragmentDataAtStart.InvisibleLeadingWhiteSpaceRangeRef());
+  if (invisibleLeadingWhiteSpacesAtStart.IsPositioned() &&
+      !invisibleLeadingWhiteSpacesAtStart.Collapsed()) {
+    MOZ_ASSERT(invisibleLeadingWhiteSpacesAtStart.StartRef().EqualsOrIsBefore(
+        aRange.StartRef()));
+    result.SetStart(invisibleLeadingWhiteSpacesAtStart.StartRef());
+  } else {
+    const EditorDOMRangeInTexts invisibleTrailingWhiteSpacesAtStart =
+        textFragmentDataAtStart.GetNonCollapsedRangeInTexts(
+            textFragmentDataAtStart.InvisibleTrailingWhiteSpaceRangeRef());
+    if (invisibleTrailingWhiteSpacesAtStart.IsPositioned() &&
+        !invisibleTrailingWhiteSpacesAtStart.Collapsed()) {
+      MOZ_ASSERT(
+          invisibleTrailingWhiteSpacesAtStart.StartRef().EqualsOrIsBefore(
+              aRange.StartRef()));
+      result.SetStart(invisibleTrailingWhiteSpacesAtStart.StartRef());
+    }
+  }
+  if (!result.StartRef().IsSet()) {
+    result.SetStart(aRange.StartRef());
+  }
+
+  TextFragmentData textFragmentDataAtEnd(aRange.EndRef(), editingHost);
+  const EditorDOMRangeInTexts invisibleLeadingWhiteSpacesAtEnd =
+      textFragmentDataAtEnd.GetNonCollapsedRangeInTexts(
+          textFragmentDataAtEnd.InvisibleTrailingWhiteSpaceRangeRef());
+  if (invisibleLeadingWhiteSpacesAtEnd.IsPositioned() &&
+      !invisibleLeadingWhiteSpacesAtEnd.Collapsed()) {
+    MOZ_ASSERT(aRange.EndRef().EqualsOrIsBefore(
+        invisibleLeadingWhiteSpacesAtEnd.EndRef()));
+    result.SetEnd(invisibleLeadingWhiteSpacesAtEnd.EndRef());
+  } else {
+    const EditorDOMRangeInTexts invisibleLeadingWhiteSpacesAtEnd =
+        textFragmentDataAtEnd.GetNonCollapsedRangeInTexts(
+            textFragmentDataAtEnd.InvisibleLeadingWhiteSpaceRangeRef());
+    if (invisibleLeadingWhiteSpacesAtEnd.IsPositioned() &&
+        !invisibleLeadingWhiteSpacesAtEnd.Collapsed()) {
+      MOZ_ASSERT(aRange.EndRef().EqualsOrIsBefore(
+          invisibleLeadingWhiteSpacesAtEnd.EndRef()));
+      result.SetEnd(invisibleLeadingWhiteSpacesAtEnd.EndRef());
+    }
+  }
+  if (!result.EndRef().IsSet()) {
+    result.SetEnd(aRange.EndRef());
+  }
+  MOZ_ASSERT(result.IsPositionedAndValid());
+  return result;
+}
+
+/******************************************************************************
+ * Utilities for other things.
+ ******************************************************************************/
+
+// static
+Result<bool, nsresult>
+WSRunScanner::ShrinkRangeIfStartsFromOrEndsAfterAtomicContent(
+    const HTMLEditor& aHTMLEditor, nsRange& aRange,
+    const Element* aEditingHost) {
+  MOZ_ASSERT(aRange.IsPositioned());
+  MOZ_ASSERT(!aRange.IsInSelection(),
+             "Changing range in selection may cause running script");
+
+  if (NS_WARN_IF(!aRange.GetStartContainer()) ||
+      NS_WARN_IF(!aRange.GetEndContainer())) {
+    return Err(NS_ERROR_FAILURE);
+  }
+
+  if (!aRange.GetStartContainer()->IsContent() ||
+      !aRange.GetEndContainer()->IsContent()) {
+    return false;
+  }
+
+  // If the range crosses a block boundary, we should do nothing for now
+  // because it hits a bug of inserting a padding `<br>` element after
+  // joining the blocks.
+  if (HTMLEditUtils::GetInclusiveAncestorBlockElementExceptHRElement(
+          *aRange.GetStartContainer()->AsContent(), aEditingHost) !=
+      HTMLEditUtils::GetInclusiveAncestorBlockElementExceptHRElement(
+          *aRange.GetEndContainer()->AsContent(), aEditingHost)) {
+    return false;
+  }
+
+  nsIContent* startContent = nullptr;
+  if (aRange.GetStartContainer() && aRange.GetStartContainer()->IsText() &&
+      aRange.GetStartContainer()->AsText()->Length() == aRange.StartOffset()) {
+    // If next content is a visible `<br>` element, special inline content
+    // (e.g., `<img>`, non-editable text node, etc) or a block level void
+    // element like `<hr>`, the range should start with it.
+    TextFragmentData textFragmentDataAtStart(
+        EditorRawDOMPoint(aRange.StartRef()), aEditingHost);
+    if (textFragmentDataAtStart.EndsByBRElement()) {
+      if (aHTMLEditor.IsVisibleBRElement(
+              textFragmentDataAtStart.EndReasonBRElementPtr())) {
+        startContent = textFragmentDataAtStart.EndReasonBRElementPtr();
+      }
+    } else if (textFragmentDataAtStart.EndsBySpecialContent() ||
+               (textFragmentDataAtStart.EndsByOtherBlockElement() &&
+                !HTMLEditUtils::IsContainerNode(
+                    *textFragmentDataAtStart
+                         .EndReasonOtherBlockElementPtr()))) {
+      startContent = textFragmentDataAtStart.GetEndReasonContent();
+    }
+  }
+
+  nsIContent* endContent = nullptr;
+  if (aRange.GetEndContainer() && aRange.GetEndContainer()->IsText() &&
+      !aRange.EndOffset()) {
+    // If previous content is a visible `<br>` element, special inline content
+    // (e.g., `<img>`, non-editable text node, etc) or a block level void
+    // element like `<hr>`, the range should end after it.
+    TextFragmentData textFragmentDataAtEnd(EditorRawDOMPoint(aRange.EndRef()),
+                                           aEditingHost);
+    if (textFragmentDataAtEnd.StartsFromBRElement()) {
+      if (aHTMLEditor.IsVisibleBRElement(
+              textFragmentDataAtEnd.StartReasonBRElementPtr())) {
+        endContent = textFragmentDataAtEnd.StartReasonBRElementPtr();
+      }
+    } else if (textFragmentDataAtEnd.StartsFromSpecialContent() ||
+               (textFragmentDataAtEnd.StartsFromOtherBlockElement() &&
+                !HTMLEditUtils::IsContainerNode(
+                    *textFragmentDataAtEnd
+                         .StartReasonOtherBlockElementPtr()))) {
+      endContent = textFragmentDataAtEnd.GetStartReasonContent();
+    }
+  }
+
+  if (!startContent && !endContent) {
+    return false;
+  }
+
+  nsresult rv = aRange.SetStartAndEnd(
+      startContent ? RangeBoundary(
+                         startContent->GetParentNode(),
+                         startContent->GetPreviousSibling())  // at startContent
+                   : aRange.StartRef(),
+      endContent ? RangeBoundary(endContent->GetParentNode(),
+                                 endContent)  // after endContent
+                 : aRange.EndRef());
+  if (NS_FAILED(rv)) {
+    NS_WARNING("nsRange::SetStartAndEnd() failed");
+    return Err(rv);
+  }
+  return true;
 }
 
 }  // namespace mozilla

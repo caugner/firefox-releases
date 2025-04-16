@@ -26,7 +26,8 @@
 #include "js/BuildId.h"                 // JS::BuildIdCharVector
 #include "js/experimental/TypedData.h"  // JS_NewUint8Array
 #include "threading/LockGuard.h"
-#include "vm/PlainObject.h"  // js::PlainObject
+#include "vm/HelperThreadState.h"  // Tier2GeneratorTask
+#include "vm/PlainObject.h"        // js::PlainObject
 #include "wasm/WasmBaselineCompile.h"
 #include "wasm/WasmCompile.h"
 #include "wasm/WasmInstance.h"
@@ -67,10 +68,11 @@ class Module::Tier2GeneratorTaskImpl : public Tier2GeneratorTask {
 
   void cancel() override { cancelled_ = true; }
 
-  void runTaskLocked(AutoLockHelperThreadState& locked) override {
+  void runHelperThreadTask(AutoLockHelperThreadState& locked) override {
     {
       AutoUnlockHelperThreadState unlock(locked);
-      runTask();
+      CompileTier2(*compileArgs_, bytecode_->bytes, *module_, &cancelled_,
+                   telemetrySender_);
     }
 
     // During shutdown the main thread will wait for any ongoing (cancelled)
@@ -82,10 +84,6 @@ class Module::Tier2GeneratorTaskImpl : public Tier2GeneratorTask {
     js_delete(this);
   }
 
-  void runTask() {
-    CompileTier2(*compileArgs_, bytecode_->bytes, *module_, &cancelled_,
-                 telemetrySender_);
-  }
   ThreadType threadType() override {
     return ThreadType::THREAD_TYPE_WASM_TIER2;
   }

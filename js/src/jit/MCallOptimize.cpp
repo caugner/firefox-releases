@@ -20,8 +20,9 @@
 #include "jit/Lowering.h"
 #include "jit/MIR.h"
 #include "jit/MIRGraph.h"
-#include "js/RegExpFlags.h"  // JS::RegExpFlag, JS::RegExpFlags
-#include "js/ScalarType.h"   // js::Scalar::Type
+#include "js/experimental/JitInfo.h"  // JSJitInfo
+#include "js/RegExpFlags.h"           // JS::RegExpFlag, JS::RegExpFlags
+#include "js/ScalarType.h"            // js::Scalar::Type
 #include "vm/ArgumentsObject.h"
 #include "vm/ArrayBufferObject.h"
 #include "vm/JSObject.h"
@@ -325,6 +326,8 @@ IonBuilder::InliningResult IonBuilder::inlineNativeCall(CallInfo& callInfo,
       return inlineObjectCreate(callInfo);
     case InlinableNative::ObjectIs:
       return inlineObjectIs(callInfo);
+    case InlinableNative::ObjectIsPrototypeOf:
+      return inlineObjectIsPrototypeOf(callInfo);
     case InlinableNative::ObjectToString:
       return inlineObjectToString(callInfo);
 
@@ -429,6 +432,9 @@ IonBuilder::InliningResult IonBuilder::inlineNativeCall(CallInfo& callInfo,
     case InlinableNative::IntrinsicTypedArrayElementShift:
       return inlineTypedArrayElementShift(callInfo);
 
+    case InlinableNative::NumberToString:
+    case InlinableNative::StringToString:
+    case InlinableNative::StringValueOf:
     case InlinableNative::IntrinsicIsSuspendedGenerator:
       // Not supported in Ion.
       return InliningStatus_NotInlined;
@@ -2558,6 +2564,32 @@ IonBuilder::InliningResult IonBuilder::inlineObjectIs(CallInfo& callInfo) {
     current->add(ins);
     current->push(ins);
   }
+
+  callInfo.setImplicitlyUsedUnchecked();
+  return InliningStatus_Inlined;
+}
+
+IonBuilder::InliningResult IonBuilder::inlineObjectIsPrototypeOf(
+    CallInfo& callInfo) {
+  if (callInfo.constructing() || callInfo.argc() != 1) {
+    return InliningStatus_NotInlined;
+  }
+
+  if (getInlineReturnType() != MIRType::Boolean) {
+    return InliningStatus_NotInlined;
+  }
+
+  MDefinition* thisArg = callInfo.thisArg();
+  if (thisArg->type() != MIRType::Object) {
+    return InliningStatus_NotInlined;
+  }
+
+  MDefinition* arg = callInfo.getArg(0);
+
+  auto* ins = MInstanceOf::New(alloc(), arg, thisArg);
+  current->add(ins);
+  current->push(ins);
+  MOZ_TRY(resumeAfter(ins));
 
   callInfo.setImplicitlyUsedUnchecked();
   return InliningStatus_Inlined;

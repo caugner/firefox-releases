@@ -85,11 +85,11 @@ RefPtr<ProcInfoPromise> GetProcInfo(nsTArray<ProcInfoRequest>&& aRequests) {
           info.childId = request.childId;
           info.type = request.processType;
           info.origin = request.origin;
+          info.windows = std::move(request.windowInfo);
           info.filename.Assign(filename);
           info.cpuKernel = ToNanoSeconds(kernelTime);
           info.cpuUser = ToNanoSeconds(userTime);
           info.residentSetSize = memoryCounters.WorkingSetSize;
-          info.virtualMemorySize = memoryCounters.PagefileUsage;
 
           // Computing the resident unique size is somewhat tricky,
           // so we use about:memory's implementation. This implementation

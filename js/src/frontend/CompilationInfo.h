@@ -24,6 +24,7 @@
 #include "js/SourceText.h"
 #include "js/Vector.h"
 #include "js/WasmModule.h"
+#include "vm/GlobalObject.h"  // GlobalObject
 #include "vm/JSContext.h"
 #include "vm/JSFunction.h"  // JSFunction
 #include "vm/JSScript.h"    // SourceExtent
@@ -60,9 +61,20 @@ struct ScopeContext {
   // We may be an combination of arrow and eval context within the constructor.
   mozilla::Maybe<MemberInitializers> memberInitializers = {};
 
-  explicit ScopeContext(Scope* scope, JSObject* enclosingEnv = nullptr) {
+  // If this eval is in response to Debugger.Frame.eval, we may have an
+  // incomplete scope chain. In order to determine a better 'this' binding, as
+  // well as to ensure we can provide better static error semantics for private
+  // names, we use the environment chain to attempt to find a more effective
+  // scope than the enclosing scope.
+  // If there is no more effective scope, this will just be the scope given in
+  // the constructor.
+  JS::Rooted<Scope*> effectiveScope;
+
+  explicit ScopeContext(JSContext* cx, Scope* scope,
+                        JSObject* enclosingEnv = nullptr)
+      : effectiveScope(cx, determineEffectiveScope(scope, enclosingEnv)) {
     computeAllowSyntax(scope);
-    computeThisBinding(scope, enclosingEnv);
+    computeThisBinding(effectiveScope);
     computeInWith(scope);
     computeExternalInitializers(scope);
     computeInClass(scope);
@@ -70,131 +82,142 @@ struct ScopeContext {
 
  private:
   void computeAllowSyntax(Scope* scope);
-  void computeThisBinding(Scope* scope, JSObject* environment = nullptr);
+  void computeThisBinding(Scope* scope);
   void computeInWith(Scope* scope);
   void computeExternalInitializers(Scope* scope);
   void computeInClass(Scope* scope);
+
+  static Scope* determineEffectiveScope(Scope* scope, JSObject* environment);
 };
 
-struct CompilationInfo;
-
-class ScriptStencilIterable {
- public:
-  class ScriptAndFunction {
-   public:
-    ScriptStencil& stencil;
-    HandleFunction function;
-    FunctionIndex functionIndex;
-
-    ScriptAndFunction() = delete;
-    ScriptAndFunction(ScriptStencil& stencil, HandleFunction function,
-                      FunctionIndex functionIndex)
-        : stencil(stencil), function(function), functionIndex(functionIndex) {}
-  };
-
-  class Iterator {
-    enum class State {
-      TopLevel,
-      Functions,
-    };
-    State state_ = State::TopLevel;
-    size_t index_ = 0;
-    CompilationInfo* compilationInfo_;
-
-    Iterator(CompilationInfo* compilationInfo, State state, size_t index)
-        : state_(state), index_(index), compilationInfo_(compilationInfo) {
-      skipNonFunctions();
-    }
-
-   public:
-    explicit Iterator(CompilationInfo* compilationInfo)
-        : compilationInfo_(compilationInfo) {
-      skipNonFunctions();
-    }
-
-    Iterator operator++() {
-      next();
-      skipNonFunctions();
-      return *this;
-    }
-
-    inline void next();
-
-    inline void skipNonFunctions();
-
-    bool operator!=(const Iterator& other) const {
-      return state_ != other.state_ || index_ != other.index_;
-    }
-
-    inline ScriptAndFunction operator*();
-
-    static inline Iterator end(CompilationInfo* compilationInfo);
-  };
-
-  CompilationInfo* compilationInfo_;
-
-  explicit ScriptStencilIterable(CompilationInfo* compilationInfo)
-      : compilationInfo_(compilationInfo) {}
-
-  Iterator begin() const { return Iterator(compilationInfo_); }
-
-  Iterator end() const { return Iterator::end(compilationInfo_); }
-};
-
-// CompilationInfo owns a number of pieces of information about script
-// compilation as well as controls the lifetime of parse nodes and other data by
-// controling the mark and reset of the LifoAlloc.
-struct MOZ_RAII CompilationInfo : public JS::CustomAutoRooter {
-  static constexpr FunctionIndex TopLevelFunctionIndex = FunctionIndex(0);
-
-  JSContext* cx;
+// Input of the compilation, including source and enclosing context.
+struct CompilationInput {
   const JS::ReadOnlyCompileOptions& options;
 
+  // Atoms lowered into or converted from CompilationStencil.parserAtoms.
+  //
+  // This field is here instead of in CompilationGCOutput because atoms lowered
+  // from JSAtom is part of input (enclosing scope bindings, lazy function name,
+  // etc), and having 2 vectors in both input/output is error prone.
+  JS::GCVector<JSAtom*, 0, js::SystemAllocPolicy> atoms;
+
+  BaseScript* lazy = nullptr;
+
+  ScriptSourceHolder source_;
+
+  //  * If we're compiling standalone function, the non-null enclosing scope of
+  //    the function
+  //  * If we're compiling eval, the non-null enclosing scope of the `eval`.
+  //  * If we're compiling module, null that means empty global scope
+  //    (See EmitterScope::checkEnvironmentChainLength)
+  //  * If we're compiling self-hosted JS, an empty global scope.
+  //    This scope is also used for EmptyGlobalScopeType in
+  //    CompilationStencil.gcThings.
+  //    See the comment in initForSelfHostingGlobal.
+  //  * Null otherwise
+  Scope* enclosingScope = nullptr;
+
+  explicit CompilationInput(const JS::ReadOnlyCompileOptions& options)
+      : options(options) {}
+
+ private:
+  bool initScriptSource(JSContext* cx);
+
+ public:
+  bool initForGlobal(JSContext* cx) { return initScriptSource(cx); }
+
+  bool initForSelfHostingGlobal(JSContext* cx) {
+    if (!initScriptSource(cx)) {
+      return false;
+    }
+
+    // This enclosing scope is also recorded as EmptyGlobalScopeType in
+    // CompilationStencil.gcThings even though corresponding ScopeStencil
+    // isn't generated.
+    //
+    // Store the enclosing scope here in order to access it from
+    // inner scopes' ScopeStencil::enclosing.
+    enclosingScope = &cx->global()->emptyGlobalScope();
+    return true;
+  }
+
+  bool initForStandaloneFunction(JSContext* cx,
+                                 HandleScope functionEnclosingScope) {
+    if (!initScriptSource(cx)) {
+      return false;
+    }
+    enclosingScope = functionEnclosingScope;
+    return true;
+  }
+
+  bool initForEval(JSContext* cx, HandleScope evalEnclosingScope) {
+    if (!initScriptSource(cx)) {
+      return false;
+    }
+    enclosingScope = evalEnclosingScope;
+    return true;
+  }
+
+  bool initForModule(JSContext* cx) {
+    if (!initScriptSource(cx)) {
+      return false;
+    }
+    // The `enclosingScope` is the emptyGlobalScope.
+    return true;
+  }
+
+  void initFromLazy(BaseScript* lazyScript) {
+    lazy = lazyScript;
+    enclosingScope = lazy->function()->enclosingScope();
+  }
+
+  ScriptSource* source() { return source_.get(); }
+
+ private:
+  void setSource(ScriptSource* ss) { return source_.reset(ss); }
+
+ public:
+  template <typename Unit>
+  MOZ_MUST_USE bool assignSource(JSContext* cx,
+                                 JS::SourceText<Unit>& sourceBuffer) {
+    return source()->assignSource(cx, options, sourceBuffer);
+  }
+
+  void trace(JSTracer* trc);
+} JS_HAZ_GC_POINTER;
+
+struct MOZ_RAII CompilationState {
   // Until we have dealt with Atoms in the front end, we need to hold
   // onto them.
-  AutoKeepAtoms keepAtoms;
-
-  // Table of parser atoms for this compilation.
-  ParserAtomsTable parserAtoms;
-
   Directives directives;
 
   ScopeContext scopeContext;
 
-  // List of function contexts for GC tracing. These are allocated in the
-  // LifoAlloc and still require tracing.
-  FunctionBox* traceListHead = nullptr;
-
-  // The resulting outermost script for the compilation powered
-  // by this CompilationInfo.
-  JS::Rooted<JSScript*> script;
-  JS::Rooted<BaseScript*> lazy;
-
-  // The resulting module object if there is one.
-  JS::Rooted<ModuleObject*> module;
-
   UsedNameTracker usedNames;
   LifoAllocScope& allocScope;
 
+  CompilationState(JSContext* cx, LifoAllocScope& alloc,
+                   const JS::ReadOnlyCompileOptions& options,
+                   Scope* enclosingScope = nullptr,
+                   JSObject* enclosingEnv = nullptr)
+      : directives(options.forceStrictMode()),
+        scopeContext(cx, enclosingScope, enclosingEnv),
+        usedNames(cx),
+        allocScope(alloc) {}
+};
+
+// The top level struct of stencil.
+struct CompilationStencil {
   // Hold onto the RegExpStencil, BigIntStencil, and ObjLiteralStencil that are
   // allocated during parse to ensure correct destruction.
-  Vector<RegExpStencil> regExpData;
-  Vector<BigIntStencil> bigIntData;
-  Vector<ObjLiteralStencil> objLiteralData;
+  Vector<RegExpStencil, 0, js::SystemAllocPolicy> regExpData;
+  Vector<BigIntStencil, 0, js::SystemAllocPolicy> bigIntData;
+  Vector<ObjLiteralStencil, 0, js::SystemAllocPolicy> objLiteralData;
 
-  // A Rooted vector to handle tracing of JSFunction*
-  // and Atoms within.
-  JS::RootedVector<JSFunction*> functions;
-  JS::RootedVector<ScriptStencil> funcData;
-
-  // The enclosing scope of the function if we're compiling standalone function.
-  // The enclosing scope of the `eval` if we're compiling eval.
-  // Null otherwise.
-  JS::Rooted<Scope*> enclosingScope;
-
-  // Stencil for top-level script. This includes standalone functions and
-  // functions being delazified.
-  JS::Rooted<ScriptStencil> topLevel;
+  // Stencil for all function and non-function scripts. The TopLevelIndex is
+  // reserved for the top-level script. This top-level may or may not be a
+  // function.
+  Vector<ScriptStencil, 0, js::SystemAllocPolicy> scriptData;
 
   // A rooted list of scopes created during this parse.
   //
@@ -205,25 +228,149 @@ struct MOZ_RAII CompilationInfo : public JS::CustomAutoRooter {
   //
   // References to scopes are controlled via AbstractScopePtr, which holds onto
   // an index (and CompilationInfo reference).
-  JS::RootedVector<js::Scope*> scopes;
-  JS::RootedVector<ScopeStencil> scopeData;
+  Vector<ScopeStencil, 0, js::SystemAllocPolicy> scopeData;
 
   // Module metadata if this is a module compile.
-  JS::Rooted<StencilModuleMetadata> moduleMetadata;
+  StencilModuleMetadata moduleMetadata;
 
   // AsmJS modules generated by parsing.
-  HashMap<FunctionIndex, RefPtr<const JS::WasmModule>> asmJS;
+  HashMap<FunctionIndex, RefPtr<const JS::WasmModule>,
+          mozilla::DefaultHasher<FunctionIndex>, js::SystemAllocPolicy>
+      asmJS;
+
+  // Table of parser atoms for this compilation.
+  ParserAtomsTable parserAtoms;
+
+  explicit CompilationStencil(JSRuntime* rt) : parserAtoms(rt) {}
+
+#if defined(DEBUG) || defined(JS_JITSPEW)
+  void dump();
+  void dump(js::JSONPrinter& json);
+#endif
+};
+
+// The output of GC allocation from stencil.
+struct MOZ_RAII CompilationGCOutput {
+  // The resulting outermost script for the compilation powered
+  // by this CompilationInfo.
+  JS::Rooted<JSScript*> script;
+
+  // The resulting module object if there is one.
+  JS::Rooted<ModuleObject*> module;
+
+  // A Rooted vector to handle tracing of JSFunction* and Atoms within.
+  //
+  // If the top level script isn't a function, the item at TopLevelIndex is
+  // nullptr.
+  JS::RootedVector<JSFunction*> functions;
+
+  // References to scopes are controlled via AbstractScopePtr, which holds onto
+  // an index (and CompilationInfo reference).
+  JS::RootedVector<js::Scope*> scopes;
 
   // The result ScriptSourceObject. This is unused in delazifying parses.
-  JS::Rooted<ScriptSourceHolder> source_;
   JS::Rooted<ScriptSourceObject*> sourceObject;
+
+  explicit CompilationGCOutput(JSContext* cx)
+      : script(cx), module(cx), functions(cx), scopes(cx), sourceObject(cx) {}
+};
+
+class ScriptStencilIterable {
+ public:
+  class ScriptAndFunction {
+   public:
+    ScriptStencil& script;
+    HandleFunction function;
+    FunctionIndex functionIndex;
+
+    ScriptAndFunction() = delete;
+    ScriptAndFunction(ScriptStencil& script, HandleFunction function,
+                      FunctionIndex functionIndex)
+        : script(script), function(function), functionIndex(functionIndex) {}
+  };
+
+  class Iterator {
+    size_t index_ = 0;
+    CompilationStencil& stencil_;
+    CompilationGCOutput& gcOutput_;
+
+    Iterator(CompilationStencil& stencil, CompilationGCOutput& gcOutput,
+             size_t index)
+        : index_(index), stencil_(stencil), gcOutput_(gcOutput) {
+      skipNonFunctions();
+    }
+
+   public:
+    explicit Iterator(CompilationStencil& stencil,
+                      CompilationGCOutput& gcOutput)
+        : stencil_(stencil), gcOutput_(gcOutput) {
+      skipNonFunctions();
+    }
+
+    Iterator operator++() {
+      next();
+      skipNonFunctions();
+      return *this;
+    }
+
+    void next() {
+      MOZ_ASSERT(index_ < stencil_.scriptData.length());
+      index_++;
+    }
+
+    void skipNonFunctions() {
+      size_t length = stencil_.scriptData.length();
+      while (index_ < length) {
+        if (stencil_.scriptData[index_].isFunction()) {
+          return;
+        }
+
+        index_++;
+      }
+    }
+
+    bool operator!=(const Iterator& other) const {
+      return index_ != other.index_;
+    }
+
+    ScriptAndFunction operator*() {
+      ScriptStencil& script = stencil_.scriptData[index_];
+
+      FunctionIndex functionIndex = FunctionIndex(index_);
+      return ScriptAndFunction(script, gcOutput_.functions[functionIndex],
+                               functionIndex);
+    }
+
+    static Iterator end(CompilationStencil& stencil,
+                        CompilationGCOutput& gcOutput) {
+      return Iterator(stencil, gcOutput, stencil.scriptData.length());
+    }
+  };
+
+  CompilationStencil& stencil_;
+  CompilationGCOutput& gcOutput_;
+
+  explicit ScriptStencilIterable(CompilationStencil& stencil,
+                                 CompilationGCOutput& gcOutput)
+      : stencil_(stencil), gcOutput_(gcOutput) {}
+
+  Iterator begin() const { return Iterator(stencil_, gcOutput_); }
+
+  Iterator end() const { return Iterator::end(stencil_, gcOutput_); }
+};
+
+// Input and output of compilation to stencil.
+struct CompilationInfo {
+  static constexpr FunctionIndex TopLevelIndex = FunctionIndex(0);
+
+  CompilationInput input;
+  CompilationStencil stencil;
 
   // Track the state of key allocations and roll them back as parts of parsing
   // get retried. This ensures iteration during stencil instantiation does not
   // encounter discarded frontend state.
   struct RewindToken {
-    FunctionBox* funbox = nullptr;
-    size_t funcDataLength = 0;
+    size_t scriptDataLength = 0;
     size_t asmJSCount = 0;
   };
 
@@ -231,130 +378,34 @@ struct MOZ_RAII CompilationInfo : public JS::CustomAutoRooter {
   void rewind(const RewindToken& pos);
 
   // Construct a CompilationInfo
-  CompilationInfo(JSContext* cx, LifoAllocScope& alloc,
-                  const JS::ReadOnlyCompileOptions& options,
-                  Scope* enclosingScope = nullptr,
-                  JSObject* enclosingEnv = nullptr)
-      : JS::CustomAutoRooter(cx),
-        cx(cx),
-        options(options),
-        keepAtoms(cx),
-        parserAtoms(cx),
-        directives(options.forceStrictMode()),
-        scopeContext(enclosingScope, enclosingEnv),
-        script(cx),
-        lazy(cx),
-        module(cx),
-        usedNames(cx),
-        allocScope(alloc),
-        regExpData(cx),
-        bigIntData(cx),
-        objLiteralData(cx),
-        functions(cx),
-        funcData(cx),
-        enclosingScope(cx),
-        topLevel(cx),
-        scopes(cx),
-        scopeData(cx),
-        moduleMetadata(cx),
-        asmJS(cx),
-        source_(cx),
-        sourceObject(cx) {}
+  CompilationInfo(JSContext* cx, const JS::ReadOnlyCompileOptions& options)
+      : input(options), stencil(cx->runtime()) {}
 
-  bool init(JSContext* cx);
+  MOZ_MUST_USE bool instantiateStencils(JSContext* cx,
+                                        CompilationGCOutput& gcOutput);
 
-  bool initForStandaloneFunction(JSContext* cx, HandleScope enclosingScope) {
-    if (!init(cx)) {
-      return false;
-    }
-    this->enclosingScope = enclosingScope;
-    return true;
+  JSAtom* liftParserAtomToJSAtom(JSContext* cx, const ParserAtom* parserAtom) {
+    return parserAtom->toJSAtom(cx, *this).unwrapOr(nullptr);
+  }
+  const ParserAtom* lowerJSAtomToParserAtom(JSContext* cx, JSAtom* atom) {
+    auto result = stencil.parserAtoms.internJSAtom(cx, *this, atom);
+    return result.unwrapOr(nullptr);
   }
 
-  void initFromLazy(BaseScript* lazy) {
-    this->lazy = lazy;
-    this->enclosingScope = lazy->function()->enclosingScope();
-  }
+  // Move constructor is necessary to use Rooted.
+  CompilationInfo(CompilationInfo&&) = default;
 
-  void setEnclosingScope(Scope* scope) { enclosingScope = scope; }
-
-  ScriptSource* source() { return source_.get().get(); }
-  void setSource(ScriptSource* ss) { return source_.get().reset(ss); }
-
-  template <typename Unit>
-  MOZ_MUST_USE bool assignSource(JS::SourceText<Unit>& sourceBuffer) {
-    return source()->assignSource(cx, options, sourceBuffer);
-  }
-
-  MOZ_MUST_USE bool instantiateStencils();
-
-  void trace(JSTracer* trc) final;
-
-  // To avoid any misuses, make sure this is neither copyable,
-  // movable or assignable.
+  // To avoid any misuses, make sure this is neither copyable or assignable.
   CompilationInfo(const CompilationInfo&) = delete;
-  CompilationInfo(CompilationInfo&&) = delete;
   CompilationInfo& operator=(const CompilationInfo&) = delete;
   CompilationInfo& operator=(CompilationInfo&&) = delete;
 
-  ScriptStencilIterable functionScriptStencils() {
-    return ScriptStencilIterable(this);
+  ScriptStencilIterable functionScriptStencils(CompilationGCOutput& gcOutput) {
+    return ScriptStencilIterable(stencil, gcOutput);
   }
 
-#if defined(DEBUG) || defined(JS_JITSPEW)
-  void dumpStencil();
-  void dumpStencil(js::JSONPrinter& json);
-#endif
+  void trace(JSTracer* trc);
 };
-
-inline void ScriptStencilIterable::Iterator::next() {
-  if (state_ == State::TopLevel) {
-    state_ = State::Functions;
-  } else {
-    MOZ_ASSERT(index_ < compilationInfo_->funcData.length());
-    index_++;
-  }
-}
-
-inline void ScriptStencilIterable::Iterator::skipNonFunctions() {
-  if (state_ == State::TopLevel) {
-    if (compilationInfo_->topLevel.get().isFunction()) {
-      return;
-    }
-
-    next();
-  }
-
-  size_t length = compilationInfo_->funcData.length();
-  while (index_ < length) {
-    // NOTE: If topLevel is a function, funcData can contain unused item,
-    //       and the item isn't marked as a function.
-    if (compilationInfo_->funcData[index_].get().isFunction()) {
-      return;
-    }
-
-    index_++;
-  }
-}
-
-inline ScriptStencilIterable::ScriptAndFunction
-ScriptStencilIterable::Iterator::operator*() {
-  ScriptStencil& stencil = state_ == State::TopLevel
-                               ? compilationInfo_->topLevel.get()
-                               : compilationInfo_->funcData[index_].get();
-
-  FunctionIndex functionIndex = FunctionIndex(
-      state_ == State::TopLevel ? CompilationInfo::TopLevelFunctionIndex
-                                : index_);
-  return ScriptAndFunction(stencil, compilationInfo_->functions[functionIndex],
-                           functionIndex);
-}
-
-/* static */ inline ScriptStencilIterable::Iterator
-ScriptStencilIterable::Iterator::end(CompilationInfo* compilationInfo) {
-  return Iterator(compilationInfo, State::Functions,
-                  compilationInfo->funcData.length());
-}
 
 }  // namespace frontend
 }  // namespace js

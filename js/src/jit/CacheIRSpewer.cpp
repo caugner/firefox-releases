@@ -99,9 +99,11 @@ class MOZ_RAII CacheIROpsJitSpewer {
     out_.printf("%s %u", name, val);
   }
   void spewCallFlagsImm(const char* name, CallFlags flags) {
-    out_.printf("%s (format %u, isConstructing %u, isSameRealm %u)", name,
-                flags.getArgFormat(), flags.isConstructing(),
-                flags.isSameRealm());
+    out_.printf(
+        "%s (format %u%s%s%s)", name, flags.getArgFormat(),
+        flags.isConstructing() ? ", isConstructing" : "",
+        flags.isSameRealm() ? ", isSameRealm" : "",
+        flags.needsUninitializedThis() ? ", needsUninitializedThis" : "");
   }
   void spewJSWhyMagicImm(const char* name, JSWhyMagic magic) {
     out_.printf("%s JSWhyMagic(%u)", name, unsigned(magic));
@@ -339,9 +341,9 @@ bool CacheIRSpewer::init(const char* filename) {
   if (!output_.init(name)) {
     return false;
   }
-  output_.put("[");
 
   json_.emplace(output_);
+  json_->beginList();
   return true;
 }
 

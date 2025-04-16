@@ -676,6 +676,12 @@ nsresult nsWindowWatcher::OpenWindowInternal(
     return NS_ERROR_DOM_INVALID_ACCESS_ERR;
   }
 
+  // If our target BrowsingContext is still pending initialization, ignore the
+  // navigation request targeting it.
+  if (newBC && NS_WARN_IF(newBC->GetPendingInitialization())) {
+    return NS_ERROR_ABORT;
+  }
+
   // no extant window? make a new one.
 
   // If no parent, consider it chrome when running in the parent process.
@@ -813,7 +819,10 @@ nsresult nsWindowWatcher::OpenWindowInternal(
       if (Document* doc = parentWindow->GetDoc()) {
         // Save sandbox flags for copying to new browsing context (docShell).
         activeDocsSandboxFlags = doc->GetSandboxFlags();
-        if (activeDocsSandboxFlags & SANDBOXED_AUXILIARY_NAVIGATION) {
+        // Check to see if this frame is allowed to navigate, but don't check if
+        // we're printing, as that's not a real navigation.
+        if (aPrintKind == PRINT_NONE &&
+            (activeDocsSandboxFlags & SANDBOXED_AUXILIARY_NAVIGATION)) {
           return NS_ERROR_DOM_INVALID_ACCESS_ERR;
         }
       }

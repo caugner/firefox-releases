@@ -5,6 +5,7 @@
 #include "PreloaderBase.h"
 
 #include "mozilla/dom/Document.h"
+#include "mozilla/Telemetry.h"
 #include "nsContentUtils.h"
 #include "nsIAsyncVerifyRedirectCallback.h"
 #include "nsIChannel.h"
@@ -21,11 +22,31 @@ PreloaderBase::UsageTimer::UsageTimer(PreloaderBase* aPreload,
                                       dom::Document* aDocument)
     : mDocument(aDocument), mPreload(aPreload) {}
 
+class PreloaderBase::RedirectSink final : public nsIInterfaceRequestor,
+                                          public nsIChannelEventSink,
+                                          public nsIRedirectResultListener {
+  RedirectSink() = delete;
+  virtual ~RedirectSink();
+
+ public:
+  NS_DECL_THREADSAFE_ISUPPORTS
+  NS_DECL_NSIINTERFACEREQUESTOR
+  NS_DECL_NSICHANNELEVENTSINK
+  NS_DECL_NSIREDIRECTRESULTLISTENER
+
+  RedirectSink(PreloaderBase* aPreloader, nsIInterfaceRequestor* aCallbacks);
+
+ private:
+  MainThreadWeakPtr<PreloaderBase> mPreloader;
+  nsCOMPtr<nsIInterfaceRequestor> mCallbacks;
+  nsCOMPtr<nsIChannel> mRedirectChannel;
+};
+
 PreloaderBase::RedirectSink::RedirectSink(PreloaderBase* aPreloader,
                                           nsIInterfaceRequestor* aCallbacks)
-    : mPreloader(new nsMainThreadPtrHolder<PreloaderBase>(
-          "RedirectSink.mPreloader", aPreloader)),
-      mCallbacks(aCallbacks) {}
+    : mPreloader(aPreloader), mCallbacks(aCallbacks) {}
+
+PreloaderBase::RedirectSink::~RedirectSink() = default;
 
 NS_IMPL_ISUPPORTS(PreloaderBase::RedirectSink, nsIInterfaceRequestor,
                   nsIChannelEventSink, nsIRedirectResultListener)
@@ -33,13 +54,17 @@ NS_IMPL_ISUPPORTS(PreloaderBase::RedirectSink, nsIInterfaceRequestor,
 NS_IMETHODIMP PreloaderBase::RedirectSink::AsyncOnChannelRedirect(
     nsIChannel* aOldChannel, nsIChannel* aNewChannel, uint32_t aFlags,
     nsIAsyncVerifyRedirectCallback* aCallback) {
+  MOZ_DIAGNOSTIC_ASSERT(NS_IsMainThread());
+
   mRedirectChannel = aNewChannel;
 
   // Deliberately adding this before confirmation.
   nsCOMPtr<nsIURI> uri;
   aNewChannel->GetOriginalURI(getter_AddRefs(uri));
-  mPreloader->mRedirectRecords.AppendElement(
-      RedirectRecord(aFlags, uri.forget()));
+  if (mPreloader) {
+    mPreloader->mRedirectRecords.AppendElement(
+        RedirectRecord(aFlags, uri.forget()));
+  }
 
   if (mCallbacks) {
     nsCOMPtr<nsIChannelEventSink> sink(do_GetInterface(mCallbacks));
@@ -115,6 +140,8 @@ void PreloaderBase::NotifyOpen(const PreloadHashKey& aKey,
     NS_NewTimerWithCallback(getter_AddRefs(mUsageTimer), callback, 10000,
                             nsITimer::TYPE_ONE_SHOT);
   }
+
+  ReportUsageTelemetry();
 }
 
 void PreloaderBase::NotifyOpen(const PreloadHashKey& aKey, nsIChannel* aChannel,
@@ -155,6 +182,7 @@ void PreloaderBase::NotifyUsage(LoadBackground aLoadBackground) {
   }
 
   mIsUsed = true;
+  ReportUsageTelemetry();
   CancelUsageTimer();
 }
 
@@ -270,6 +298,27 @@ void PreloaderBase::CancelUsageTimer() {
   }
 }
 
+void PreloaderBase::ReportUsageTelemetry() {
+  if (mUsageTelementryReported) {
+    return;
+  }
+  mUsageTelementryReported = true;
+
+  if (mKey.As() == PreloadHashKey::ResourceType::NONE) {
+    return;
+  }
+
+  // The labels are structured as type1-used, type1-unused, type2-used, ...
+  // The first "as" resource type is NONE with value 0.
+  auto index = (static_cast<uint32_t>(mKey.As()) - 1) * 2;
+  if (!mIsUsed) {
+    ++index;
+  }
+
+  auto label = static_cast<Telemetry::LABELS_REL_PRELOAD_MISS_RATIO>(index);
+  Telemetry::AccumulateCategorical(label);
+}
+
 nsresult PreloaderBase::AsyncConsume(nsIStreamListener* aListener) {
   // We want to return an error so that consumers can't ever use a preload to
   // consume data unless it's properly implemented.
@@ -308,6 +357,8 @@ NS_IMETHODIMP PreloaderBase::UsageTimer::Notify(nsITimer* aTimer) {
     // don't want to emit a warning for this preload then.
     return NS_OK;
   }
+
+  mPreload->ReportUsageTelemetry();
 
   // PreloadHashKey overrides GetKey, we need to use the nsURIHashKey one to get
   // the URI.

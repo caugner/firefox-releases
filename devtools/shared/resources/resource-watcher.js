@@ -171,23 +171,22 @@ class ResourceWatcher {
    * It will only listen for types which are defined by `TargetList.startListening`.
    */
   async _watchAllTargets() {
-    if (this._isWatchingTargets) {
-      return;
+    if (!this._watchTargetsPromise) {
+      this._watchTargetsPromise = this.targetList.watchTargets(
+        this.targetList.ALL_TYPES,
+        this._onTargetAvailable,
+        this._onTargetDestroyed
+      );
     }
-    this._isWatchingTargets = true;
-    await this.targetList.watchTargets(
-      this.targetList.ALL_TYPES,
-      this._onTargetAvailable,
-      this._onTargetDestroyed
-    );
+    return this._watchTargetsPromise;
   }
 
-  async _unwatchAllTargets() {
-    if (!this._isWatchingTargets) {
+  _unwatchAllTargets() {
+    if (!this._watchTargetsPromise) {
       return;
     }
-    this._isWatchingTargets = false;
-    await this.targetList.unwatchTargets(
+    this._watchTargetsPromise = null;
+    this.targetList.unwatchTargets(
       this.targetList.ALL_TYPES,
       this._onTargetAvailable,
       this._onTargetDestroyed
@@ -295,6 +294,8 @@ class ResourceWatcher {
    *        which describes the resource.
    */
   async _onResourceAvailable({ targetFront, watcherFront }, resources) {
+    let currentType = null;
+    let resourceBuffer = [];
     for (let resource of resources) {
       const { resourceType } = resource;
 
@@ -320,14 +321,23 @@ class ResourceWatcher {
         });
       }
 
-      this._availableListeners.emit(resourceType, {
-        // XXX: We may want to read resource.resourceType instead of passing this resourceType argument?
-        resourceType,
-        targetFront,
-        resource,
-      });
+      if (!currentType) {
+        currentType = resourceType;
+      }
+      // Flush the current list of buffered resource if we switch to another type
+      else if (currentType != resourceType) {
+        this._availableListeners.emit(currentType, resourceBuffer);
+        currentType = resourceType;
+        resourceBuffer = [];
+      }
+      resourceBuffer.push(resource);
 
       this._cache.push(resource);
+    }
+
+    // Flush the buffered resources if there is any
+    if (resourceBuffer.length > 0) {
+      this._availableListeners.emit(currentType, resourceBuffer);
     }
   }
 
@@ -337,35 +347,100 @@ class ResourceWatcher {
    * - target actors RDP events
    * Called everytime a resource is updated in the remote target.
    *
-   * See _onResourceAvailable for the argument description.
+   * @param {Object} source
+   *        Please see _onResourceAvailable for this parameter.
+   * @param {Array<Object>} updates
+   *        Depending on the listener.
+   *
+   *        Among the element in the array, the following attributes are given special handling.
+   *          - resourceType {String}:
+   *            The type of resource to be updated.
+   *          - resourceId {String}:
+   *            The id of resource to be updated.
+   *          - resourceUpdates {Object}:
+   *            If resourceUpdates is in the element, a cached resource specified by resourceType
+   *            and resourceId is updated by Object.assign(cachedResource, resourceUpdates).
+   *          - nestedResourceUpdates {Object}:
+   *            If `nestedResourceUpdates` is passed, update one nested attribute with a new value
+   *            This allows updating one attribute of an object stored in a resource's attribute,
+   *            as well as adding new elements to arrays.
+   *            `path` is an array mentioning all nested attribute to walk through.
+   *            `value` is the new nested attribute value to set.
+   *
+   *        And also, the element is passed to the listener as it is as “update” object.
+   *        So if we don't want to update a cached resource but have information want to
+   *        pass on to the listener, can pass it on using attributes other than the ones
+   *        listed above.
+   *        For example, if the element consists of like
+   *        "{ resourceType:… resourceId:…, testValue: “test”, }”,
+   *        the listener can receive the value as follows.
+   *
+   *        onResourceUpdate({ update }) {
+   *          console.log(update.testValue); // “test” should be displayed
+   *        }
    */
-  async _onResourceUpdated({ targetFront, watcherFront }, resources) {
-    for (const resource of resources) {
-      const { resourceType, resourceId } = resource;
+  async _onResourceUpdated({ targetFront, watcherFront }, updates) {
+    let currentType = null;
+    let resourceBuffer = [];
+    for (const update of updates) {
+      const {
+        resourceType,
+        resourceId,
+        resourceUpdates,
+        nestedResourceUpdates,
+      } = update;
+
+      const existingResource = this._cache.find(
+        cachedResource =>
+          cachedResource.resourceType === resourceType &&
+          cachedResource.resourceId === resourceId
+      );
+
+      if (!existingResource) {
+        continue;
+      }
 
       if (watcherFront) {
-        targetFront = await this._getTargetForWatcherResource(resource);
+        targetFront = await this._getTargetForWatcherResource(existingResource);
         if (!targetFront) {
           continue;
         }
       }
 
-      if (resourceId) {
-        const index = this._cache.findIndex(
-          cachedResource =>
-            cachedResource.resourceType == resourceType &&
-            cachedResource.resourceId == resourceId
-        );
-        if (index != -1) {
-          this._cache.splice(index, 1, resource);
+      if (resourceUpdates) {
+        Object.assign(existingResource, resourceUpdates);
+      }
+
+      if (nestedResourceUpdates) {
+        for (const { path, value } of nestedResourceUpdates) {
+          let target = existingResource;
+
+          for (let i = 0; i < path.length - 1; i++) {
+            target = target[path[i]];
+          }
+
+          target[path[path.length - 1]] = value;
         }
       }
 
-      this._updatedListeners.emit(resourceType, {
-        resourceType,
-        targetFront,
-        resource,
+      if (!currentType) {
+        currentType = resourceType;
+      }
+      // Flush the current list of buffered resource if we switch to another type
+      if (currentType != resourceType) {
+        this._updatedListeners.emit(currentType, resourceBuffer);
+        currentType = resourceType;
+        resourceBuffer = [];
+      }
+      resourceBuffer.push({
+        resource: existingResource,
+        update,
       });
+    }
+
+    // Flush the buffered resources if there is any
+    if (resourceBuffer.length > 0) {
+      this._updatedListeners.emit(currentType, resourceBuffer);
     }
   }
 
@@ -374,6 +449,8 @@ class ResourceWatcher {
    * See _onResourceAvailable for the argument description.
    */
   async _onResourceDestroyed({ targetFront, watcherFront }, resources) {
+    let currentType = null;
+    let resourceBuffer = [];
     for (const resource of resources) {
       const { resourceType, resourceId } = resource;
 
@@ -402,11 +479,21 @@ class ResourceWatcher {
         );
       }
 
-      this._destroyedListeners.emit(resourceType, {
-        resourceType,
-        targetFront,
-        resource,
-      });
+      if (!currentType) {
+        currentType = resourceType;
+      }
+      // Flush the current list of buffered resource if we switch to another type
+      if (currentType != resourceType) {
+        this._destroyedListeners.emit(currentType, resourceBuffer);
+        currentType = resourceType;
+        resourceBuffer = [];
+      }
+      resourceBuffer.push(resource);
+    }
+
+    // Flush the buffered resources if there is any
+    if (resourceBuffer.length > 0) {
+      this._destroyedListeners.emit(currentType, resourceBuffer);
     }
   }
 
@@ -487,14 +574,11 @@ class ResourceWatcher {
   }
 
   async _forwardCachedResources(resourceTypes, onAvailable) {
-    for (const resource of this._cache) {
-      if (resourceTypes.includes(resource.resourceType)) {
-        await onAvailable({
-          resourceType: resource.resourceType,
-          targetFront: resource.targetFront,
-          resource,
-        });
-      }
+    const cachedResources = this._cache.filter(resource =>
+      resourceTypes.includes(resource.resourceType)
+    );
+    if (cachedResources.length > 0) {
+      await onAvailable(cachedResources);
     }
   }
 
@@ -590,6 +674,7 @@ ResourceWatcher.TYPES = ResourceWatcher.prototype.TYPES = {
   STYLESHEET: "stylesheet",
   NETWORK_EVENT: "network-event",
   WEBSOCKET: "websocket",
+  NETWORK_EVENT_STACKTRACE: "network-event-stacktrace",
 };
 module.exports = { ResourceWatcher };
 
@@ -632,6 +717,8 @@ const LegacyListeners = {
     .NETWORK_EVENT]: require("devtools/shared/resources/legacy-listeners/network-events"),
   [ResourceWatcher.TYPES
     .WEBSOCKET]: require("devtools/shared/resources/legacy-listeners/websocket"),
+  [ResourceWatcher.TYPES
+    .NETWORK_EVENT_STACKTRACE]: require("devtools/shared/resources/legacy-listeners/network-event-stacktraces"),
 };
 
 // Optional transformers for each type of resource.

@@ -4,9 +4,9 @@
 
 use api::{BuiltDisplayList, DisplayListWithCache, ColorF, DynamicProperties, Epoch, FontRenderMode};
 use api::{PipelineId, PropertyBinding, PropertyBindingId, PropertyValue, MixBlendMode, StackingContext};
-use api::MemoryReport;
 use api::units::*;
 use malloc_size_of::{MallocSizeOf, MallocSizeOfOps};
+use crate::render_api::MemoryReport;
 use crate::composite::CompositorKind;
 use crate::clip::{ClipStore, ClipDataStore};
 use crate::spatial_tree::SpatialTree;
@@ -301,6 +301,7 @@ impl BuiltScene {
                 gpu_supports_fast_clears: false,
                 gpu_supports_advanced_blend: false,
                 advanced_blend_is_coherent: false,
+                gpu_supports_render_target_partial_update: true,
                 batch_lookback_count: 0,
                 background_color: None,
                 compositor_kind: CompositorKind::default(),

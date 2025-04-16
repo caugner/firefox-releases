@@ -214,9 +214,8 @@ extern JS_PUBLIC_API bool JS_IsBuiltinFunctionConstructor(JSFunction* fun);
 // Compartment
 // -----------
 // Security membrane; when an object from compartment A is used in compartment
-// B, a cross-compartment wrapper (a kind of proxy) is used. In the browser each
-// compartment currently contains one global/realm, but we want to change that
-// so each compartment contains multiple same-origin realms (bug 1357862).
+// B, a cross-compartment wrapper (a kind of proxy) is used. In the browser,
+// same-origin realms can share a compartment.
 //
 // Zone
 // ----
@@ -228,7 +227,11 @@ extern JS_PUBLIC_API bool JS_IsBuiltinFunctionConstructor(JSFunction* fun);
 // Context
 // -------
 // JSContext represents a thread: there must be exactly one JSContext for each
-// thread running JS/Wasm. Internally, helper threads have their own JSContext.
+// thread running JS/Wasm.
+//
+// Internally, helper threads can also have a JSContext. They do not always have
+// an active context, but one may be requested by AutoSetHelperThreadContext,
+// which activates a pre-allocated JSContext for the duration of its lifetime.
 //
 // Runtime
 // -------
@@ -774,8 +777,6 @@ extern JS_PUBLIC_API JSObject* JS_InitClass(
 extern JS_PUBLIC_API bool JS_LinkConstructorAndPrototype(
     JSContext* cx, JS::Handle<JSObject*> ctor, JS::Handle<JSObject*> proto);
 
-extern JS_PUBLIC_API const JSClass* JS_GetClass(JSObject* obj);
-
 extern JS_PUBLIC_API bool JS_InstanceOf(JSContext* cx,
                                         JS::Handle<JSObject*> obj,
                                         const JSClass* clasp,
@@ -803,10 +804,6 @@ extern JS_PUBLIC_API bool InstanceofOperator(JSContext* cx, HandleObject obj,
                                              HandleValue v, bool* bp);
 
 }  // namespace JS
-
-extern JS_PUBLIC_API void* JS_GetPrivate(JSObject* obj);
-
-extern JS_PUBLIC_API void JS_SetPrivate(JSObject* obj, void* data);
 
 extern JS_PUBLIC_API void JS_InitPrivate(JSObject* obj, void* data,
                                          size_t nbytes, JS::MemoryUse use);
@@ -931,7 +928,7 @@ extern JS_PUBLIC_API bool JS_FreezeObject(JSContext* cx,
  */
 
 /**
- * Get the prototype of obj, storing it in result.
+ * Get the prototype of |obj|, storing it in |proto|.
  *
  * Implements: ES6 [[GetPrototypeOf]] internal method.
  */
@@ -1609,9 +1606,6 @@ extern JS_PUBLIC_API bool IsSetObject(JSContext* cx, JS::HandleObject obj,
  */
 JS_PUBLIC_API void JS_SetAllNonReservedSlotsToUndefined(JS::HandleObject obj);
 
-extern JS_PUBLIC_API JS::Value JS_GetReservedSlot(JSObject* obj,
-                                                  uint32_t index);
-
 extern JS_PUBLIC_API void JS_SetReservedSlot(JSObject* obj, uint32_t index,
                                              const JS::Value& v);
 
@@ -2128,14 +2122,14 @@ extern JS_PUBLIC_API size_t JS_PutEscapedString(JSContext* cx, char* buffer,
  *
  *   // In an infallible context, for the same 'str'.
  *   AutoCheckCannotGC nogc;
- *   const char16_t* chars = JS_GetTwoByteLinearStringChars(nogc, lstr)
+ *   const char16_t* chars = JS::GetTwoByteLinearStringChars(nogc, lstr)
  *   MOZ_ASSERT(chars);
  *
  * Note: JS strings (including linear strings and atoms) are not
  * null-terminated!
  *
  * Additionally, string characters are stored as either Latin1Char (8-bit)
- * or char16_t (16-bit). Clients can use JS_StringHasLatin1Chars and can then
+ * or char16_t (16-bit). Clients can use JS::StringHasLatin1Chars and can then
  * call either the Latin1* or TwoByte* functions. Some functions like
  * JS_CopyStringChars and JS_GetStringCharAt accept both Latin1 and TwoByte
  * strings.
@@ -2144,9 +2138,6 @@ extern JS_PUBLIC_API size_t JS_PutEscapedString(JSContext* cx, char* buffer,
 extern JS_PUBLIC_API size_t JS_GetStringLength(JSString* str);
 
 extern JS_PUBLIC_API bool JS_StringIsLinear(JSString* str);
-
-/** Returns true iff the string's characters are stored as Latin1. */
-extern JS_PUBLIC_API bool JS_StringHasLatin1Chars(JSString* str);
 
 extern JS_PUBLIC_API const JS::Latin1Char* JS_GetLatin1StringCharsAndLength(
     JSContext* cx, const JS::AutoRequireNoGC& nogc, JSString* str,
@@ -2158,9 +2149,6 @@ extern JS_PUBLIC_API const char16_t* JS_GetTwoByteStringCharsAndLength(
 
 extern JS_PUBLIC_API bool JS_GetStringCharAt(JSContext* cx, JSString* str,
                                              size_t index, char16_t* res);
-
-extern JS_PUBLIC_API char16_t JS_GetLinearStringCharAt(JSLinearString* str,
-                                                       size_t index);
 
 extern JS_PUBLIC_API const char16_t* JS_GetTwoByteExternalStringChars(
     JSString* str);
@@ -2179,12 +2167,6 @@ extern JS_PUBLIC_API JS::UniqueTwoByteChars JS_CopyStringCharsZ(JSContext* cx,
 
 extern JS_PUBLIC_API JSLinearString* JS_EnsureLinearString(JSContext* cx,
                                                            JSString* str);
-
-extern JS_PUBLIC_API const JS::Latin1Char* JS_GetLatin1LinearStringChars(
-    const JS::AutoRequireNoGC& nogc, JSLinearString* str);
-
-extern JS_PUBLIC_API const char16_t* JS_GetTwoByteLinearStringChars(
-    const JS::AutoRequireNoGC& nogc, JSLinearString* str);
 
 static MOZ_ALWAYS_INLINE JSLinearString* JSID_TO_LINEAR_STRING(jsid id) {
   MOZ_ASSERT(JSID_IS_STRING(id));
@@ -2282,7 +2264,7 @@ MOZ_MUST_USE JS_PUBLIC_API bool JS_EncodeStringToBuffer(JSContext* cx,
  * into the caller-provided buffer replacing unpaired surrogates
  * with the REPLACEMENT CHARACTER.
  *
- * If JS_StringHasLatin1Chars(str) returns true, the function
+ * If JS::StringHasLatin1Chars(str) returns true, the function
  * is guaranteed to convert the entire string if
  * buffer.Length() >= 2 * JS_GetStringLength(str). Otherwise,
  * the function is guaranteed to convert the entire string if
@@ -2703,6 +2685,7 @@ extern JS_PUBLIC_API void JS_SetOffthreadIonCompilationEnabled(JSContext* cx,
   Register(SPECTRE_STRING_MITIGATIONS, "spectre.string-mitigations") \
   Register(SPECTRE_VALUE_MASKING, "spectre.value-masking") \
   Register(SPECTRE_JIT_TO_CXX_CALLS, "spectre.jit-to-C++-calls") \
+  Register(WARP_ENABLE, "warp.enable") \
   Register(WASM_FOLD_OFFSETS, "wasm.fold-offsets") \
   Register(WASM_DELAY_TIER2, "wasm.delay-tier2") \
   Register(WASM_JIT_BASELINE, "wasm.baseline") \

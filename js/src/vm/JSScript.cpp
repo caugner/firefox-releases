@@ -58,8 +58,8 @@
 #include "vm/BytecodeLocation.h"
 #include "vm/BytecodeUtil.h"
 #include "vm/Compression.h"
-#include "vm/FunctionFlags.h"  // js::FunctionFlags
-#include "vm/HelperThreads.h"  // js::RunPendingSourceCompressions
+#include "vm/FunctionFlags.h"      // js::FunctionFlags
+#include "vm/HelperThreadState.h"  // js::RunPendingSourceCompressions
 #include "vm/JSAtom.h"
 #include "vm/JSContext.h"
 #include "vm/JSFunction.h"
@@ -2367,7 +2367,7 @@ bool ScriptSource::assignSource(JSContext* cx,
     return true;
   }
 
-  JSRuntime* runtime = cx->zone()->runtimeFromAnyThread();
+  JSRuntime* runtime = cx->runtime();
   auto& cache = runtime->sharedImmutableStrings();
   auto deduped = cache.getOrCreate(srcBuf.get(), srcBuf.length(), [&srcBuf]() {
     using CharT = typename SourceTypeTraits<Unit>::CharT;
@@ -2545,7 +2545,8 @@ void SourceCompressionTask::runTask() {
   source->performTaskWork(this);
 }
 
-void SourceCompressionTask::runTaskLocked(AutoLockHelperThreadState& locked) {
+void SourceCompressionTask::runHelperThreadTask(
+    AutoLockHelperThreadState& locked) {
   {
     AutoUnlockHelperThreadState unlock(locked);
     this->runTask();
@@ -2554,7 +2555,7 @@ void SourceCompressionTask::runTaskLocked(AutoLockHelperThreadState& locked) {
   {
     AutoEnterOOMUnsafeRegion oomUnsafe;
     if (!HelperThreadState().compressionFinishedList(locked).append(this)) {
-      oomUnsafe.crash("SourceCompressionTask::runTaskLocked");
+      oomUnsafe.crash("SourceCompressionTask::runHelperThreadTask");
     }
   }
 }
@@ -3208,7 +3209,7 @@ bool ScriptSource::initFromOptions(JSContext* cx,
 template <typename SharedT, typename CharT>
 static Maybe<SharedT> GetOrCreateStringZ(
     JSContext* cx, UniquePtr<CharT[], JS::FreePolicy>&& str) {
-  JSRuntime* rt = cx->zone()->runtimeFromAnyThread();
+  JSRuntime* rt = cx->runtime();
   size_t lengthWithNull = std::char_traits<CharT>::length(str.get()) + 1;
   auto res =
       rt->sharedImmutableStrings().getOrCreate(std::move(str), lengthWithNull);
@@ -3518,8 +3519,9 @@ PrivateScriptData* PrivateScriptData::new_(JSContext* cx, uint32_t ngcthings) {
 bool PrivateScriptData::InitFromStencil(
     JSContext* cx, js::HandleScript script,
     js::frontend::CompilationInfo& compilationInfo,
-    const frontend::ScriptStencil& stencil) {
-  uint32_t ngcthings = stencil.gcThings.length();
+    js::frontend::CompilationGCOutput& gcOutput,
+    const frontend::ScriptStencil& scriptStencil) {
+  uint32_t ngcthings = scriptStencil.gcThings.length();
 
   MOZ_ASSERT(ngcthings <= INDEX_LIMIT);
 
@@ -3530,14 +3532,14 @@ bool PrivateScriptData::InitFromStencil(
 
   js::PrivateScriptData* data = script->data_;
   if (ngcthings) {
-    if (!EmitScriptThingsVector(cx, compilationInfo, stencil.gcThings,
-                                data->gcthings())) {
+    if (!EmitScriptThingsVector(cx, compilationInfo, gcOutput,
+                                scriptStencil.gcThings, data->gcthings())) {
       return false;
     }
   }
 
-  if (stencil.memberInitializers) {
-    script->setMemberInitializers(*stencil.memberInitializers);
+  if (scriptStencil.memberInitializers) {
+    script->setMemberInitializers(*scriptStencil.memberInitializers);
   }
 
   return true;
@@ -3612,8 +3614,9 @@ bool JSScript::createPrivateScriptData(JSContext* cx, HandleScript script,
 /* static */
 bool JSScript::fullyInitFromStencil(JSContext* cx,
                                     frontend::CompilationInfo& compilationInfo,
+                                    js::frontend::CompilationGCOutput& gcOutput,
                                     HandleScript script,
-                                    frontend::ScriptStencil& stencil,
+                                    frontend::ScriptStencil& scriptStencil,
                                     HandleFunction fun) {
   ImmutableScriptFlags lazyFlags;
   MutableScriptFlags lazyMutableFlags;
@@ -3664,24 +3667,24 @@ bool JSScript::fullyInitFromStencil(JSContext* cx,
   });
 
   /* The counts of indexed things must be checked during code generation. */
-  MOZ_ASSERT(stencil.gcThings.length() <= INDEX_LIMIT);
+  MOZ_ASSERT(scriptStencil.gcThings.length() <= INDEX_LIMIT);
 
   // Note: These flags should already be correct when the BaseScript was
   // allocated.
-  MOZ_ASSERT(script->immutableFlags() == stencil.immutableFlags);
-  script->resetImmutableFlags(stencil.immutableFlags);
+  MOZ_ASSERT(script->immutableFlags() == scriptStencil.immutableFlags);
+  script->resetImmutableFlags(scriptStencil.immutableFlags);
 
   // Derive initial mutable flags
   script->resetArgsUsageAnalysis();
 
   // Create and initialize PrivateScriptData
-  if (!PrivateScriptData::InitFromStencil(cx, script, compilationInfo,
-                                          stencil)) {
+  if (!PrivateScriptData::InitFromStencil(cx, script, compilationInfo, gcOutput,
+                                          scriptStencil)) {
     return false;
   }
 
   // Create and initialize RuntimeScriptData/ImmutableScriptData
-  if (!RuntimeScriptData::InitFromStencil(cx, script, stencil)) {
+  if (!RuntimeScriptData::InitFromStencil(cx, script, scriptStencil)) {
     return false;
   }
   if (!script->shareScriptData(cx)) {
@@ -3725,9 +3728,10 @@ bool JSScript::fullyInitFromStencil(JSContext* cx,
 
 JSScript* JSScript::fromStencil(JSContext* cx,
                                 frontend::CompilationInfo& compilationInfo,
-                                frontend::ScriptStencil& stencil,
+                                js::frontend::CompilationGCOutput& gcOutput,
+                                frontend::ScriptStencil& scriptStencil,
                                 HandleFunction fun) {
-  MOZ_ASSERT(stencil.immutableScriptData,
+  MOZ_ASSERT(scriptStencil.immutableScriptData,
              "Need generated bytecode to use JSScript::fromStencil");
 
   RootedObject functionOrGlobal(cx, cx->global());
@@ -3735,14 +3739,15 @@ JSScript* JSScript::fromStencil(JSContext* cx,
     functionOrGlobal = fun;
   }
 
-  RootedScript script(cx,
-                      Create(cx, functionOrGlobal, compilationInfo.sourceObject,
-                             stencil.extent, stencil.immutableFlags));
+  RootedScript script(
+      cx, Create(cx, functionOrGlobal, gcOutput.sourceObject,
+                 scriptStencil.extent, scriptStencil.immutableFlags));
   if (!script) {
     return nullptr;
   }
 
-  if (!fullyInitFromStencil(cx, compilationInfo, script, stencil, fun)) {
+  if (!fullyInitFromStencil(cx, compilationInfo, gcOutput, script,
+                            scriptStencil, fun)) {
     return nullptr;
   }
 
@@ -4433,14 +4438,15 @@ js::UniquePtr<ImmutableScriptData> ImmutableScriptData::new_(
 }
 
 /* static */
-bool RuntimeScriptData::InitFromStencil(JSContext* cx, js::HandleScript script,
-                                        frontend::ScriptStencil& stencil) {
+bool RuntimeScriptData::InitFromStencil(
+    JSContext* cx, js::HandleScript script,
+    frontend::ScriptStencil& scriptStencil) {
   // Allocate RuntimeScriptData
   if (!script->createScriptData(cx)) {
     return false;
   }
 
-  script->initImmutableScriptData(std::move(stencil.immutableScriptData));
+  script->initImmutableScriptData(std::move(scriptStencil.immutableScriptData));
   return true;
 }
 

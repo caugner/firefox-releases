@@ -111,10 +111,12 @@ ChromeUtils.defineModuleGetter(
 
 const REGION_STORIES_CONFIG =
   "browser.newtabpage.activity-stream.discoverystream.region-stories-config";
+const REGION_STORIES_BLOCK =
+  "browser.newtabpage.activity-stream.discoverystream.region-stories-block";
 const REGION_SPOCS_CONFIG =
   "browser.newtabpage.activity-stream.discoverystream.region-spocs-config";
-const REGION_LAYOUT_CONFIG =
-  "browser.newtabpage.activity-stream.discoverystream.region-layout-config";
+const REGION_BASIC_CONFIG =
+  "browser.newtabpage.activity-stream.discoverystream.region-basic-config";
 const LOCALE_LIST_CONFIG =
   "browser.newtabpage.activity-stream.discoverystream.locale-list-config";
 
@@ -438,7 +440,6 @@ const PREFS_CONFIG = new Map([
         enabled: true,
         type: "remote-settings",
         bucket: "cfr-fxa",
-        frequency: { custom: [{ period: "daily", cap: 1 }] },
         updateCycleInMs: 3600000,
       }),
     },
@@ -500,12 +501,12 @@ const PREFS_CONFIG = new Map([
       title: "Decision to use basic layout based on region.",
       getValue: ({ geo }) => {
         const preffedRegionsString =
-          Services.prefs.getStringPref(REGION_LAYOUT_CONFIG) || "";
+          Services.prefs.getStringPref(REGION_BASIC_CONFIG) || "";
         const preffedRegions = preffedRegionsString
           .split(",")
           .map(s => s.trim());
 
-        return !preffedRegions.includes(geo);
+        return preffedRegions.includes(geo);
       },
     },
   ],
@@ -581,10 +582,15 @@ const FEEDS_DATA = [
       "System pref that fetches content recommendations from a configurable content provider",
     // Dynamically determine if Pocket should be shown for a geo / locale
     getValue: ({ geo, locale }) => {
+      const preffedRegionsBlockString =
+        Services.prefs.getStringPref(REGION_STORIES_BLOCK) || "";
       const preffedRegionsString =
         Services.prefs.getStringPref(REGION_STORIES_CONFIG) || "";
       const preffedLocaleListString =
         Services.prefs.getStringPref(LOCALE_LIST_CONFIG) || "";
+      const preffedBlockRegions = preffedRegionsBlockString
+        .split(",")
+        .map(s => s.trim());
       const preffedRegions = preffedRegionsString.split(",").map(s => s.trim());
       const preffedLocales = preffedLocaleListString
         .split(",")
@@ -608,10 +614,12 @@ const FEEDS_DATA = [
         PL: ["pl"],
         JP: ["ja", "ja-JP-mac"],
       }[geo];
-      return (
-        (locale && preffedLocales.includes(locale)) ||
-        (preffedRegions.includes(geo) && !!locales && locales.includes(locale))
-      );
+
+      const regionBlocked = preffedBlockRegions.includes(geo);
+      const localeEnabled = locale && preffedLocales.includes(locale);
+      const regionEnabled =
+        preffedRegions.includes(geo) && !!locales && locales.includes(locale);
+      return !regionBlocked && (localeEnabled || regionEnabled);
     },
   },
   {

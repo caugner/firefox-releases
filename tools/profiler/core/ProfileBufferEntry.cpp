@@ -6,8 +6,10 @@
 
 #include "ProfileBufferEntry.h"
 
+#include "mozilla/ProfilerMarkers.h"
 #include "platform.h"
 #include "ProfileBuffer.h"
+#include "ProfilerBacktrace.h"
 #include "ProfilerMarkerPayload.h"
 
 #include "jsapi.h"
@@ -217,9 +219,8 @@ UniqueJSONStrings::UniqueJSONStrings(const UniqueJSONStrings& aOther) {
       mStringHashToIndexMap.putNewInfallible(iter.get().key(),
                                              iter.get().value());
     }
-    UniquePtr<char[]> stringTableJSON =
-        aOther.mStringTableWriter.ChunkedWriteFunc()->CopyData();
-    mStringTableWriter.Splice(stringTableJSON.get());
+    mStringTableWriter.CopyAndSplice(
+        aOther.mStringTableWriter.ChunkedWriteFunc());
   }
 }
 
@@ -233,7 +234,7 @@ uint32_t UniqueJSONStrings::GetOrAddIndex(const char* aStr) {
   }
 
   MOZ_RELEASE_ASSERT(mStringHashToIndexMap.add(entry, hash, count));
-  mStringTableWriter.StringElement(aStr);
+  mStringTableWriter.StringElement(MakeStringSpan(aStr));
   return count;
 }
 
@@ -357,7 +358,7 @@ UniqueStacks::LookupFramesForJITAddressFromBufferPos(void* aJITAddress,
       auto frameJSON =
           jitFrameInfoRange.mJITFrameToFrameJSONMap.lookup(jitFrameKey);
       MOZ_RELEASE_ASSERT(frameJSON, "Should have cached JSON for this frame");
-      mFrameTableWriter.Splice(frameJSON->value().get());
+      mFrameTableWriter.Splice(frameJSON->value());
       MOZ_RELEASE_ASSERT(mFrameToIndexMap.add(entry, frameKey, index));
     }
     MOZ_RELEASE_ASSERT(frameKeys.append(std::move(frameKey)));
@@ -380,12 +381,12 @@ uint32_t UniqueStacks::GetOrAddFrameIndex(const FrameKey& aFrame) {
 
 void UniqueStacks::SpliceFrameTableElements(SpliceableJSONWriter& aWriter) {
   mFrameTableWriter.EndBareList();
-  aWriter.TakeAndSplice(mFrameTableWriter.ChunkedWriteFunc());
+  aWriter.TakeAndSplice(mFrameTableWriter.TakeChunkedWriteFunc());
 }
 
 void UniqueStacks::SpliceStackTableElements(SpliceableJSONWriter& aWriter) {
   mStackTableWriter.EndBareList();
-  aWriter.TakeAndSplice(mStackTableWriter.ChunkedWriteFunc());
+  aWriter.TakeAndSplice(mStackTableWriter.TakeChunkedWriteFunc());
 }
 
 void UniqueStacks::StreamStack(const StackKey& aStack) {
@@ -487,10 +488,7 @@ struct CStringWriteFunc : public JSONWriteFunc {
   nsACString& mBuffer;  // The struct must not outlive this buffer
   explicit CStringWriteFunc(nsACString& aBuffer) : mBuffer(aBuffer) {}
 
-  void Write(const char* aStr) override { mBuffer.Append(aStr); }
-  void Write(const char* aStr, size_t aLen) override {
-    mBuffer.Append(aStr, aLen);
-  }
+  void Write(const Span<const char>& aStr) override { mBuffer.Append(aStr); }
 };
 
 static nsCString JSONForJITFrame(JSContext* aContext,
@@ -672,6 +670,7 @@ class EntryGetter {
 //         */
 //   )
 //   | MarkerData
+//   | Marker
 //   | ( /* Counters */
 //       CounterId
 //       Time
@@ -1181,51 +1180,83 @@ void ProfileBuffer::StreamMarkersToJSON(SpliceableJSONWriter& aWriter,
     MOZ_ASSERT(static_cast<ProfileBufferEntry::KindUnderlyingType>(type) <
                static_cast<ProfileBufferEntry::KindUnderlyingType>(
                    ProfileBufferEntry::Kind::MODERN_LIMIT));
-    if (type == ProfileBufferEntry::Kind::MarkerData &&
-        aER.ReadObject<int>() == aThreadId) {
-      aWriter.StartArrayElement();
-      {
-        // Extract the information from the buffer:
-        // Each entry is made up of the following:
-        //
-        // [
-        //   ProfileBufferEntry::Kind::MarkerData,  <- already read
-        //   threadId,                              <- already read
-        //   name,                                  <- next location in entries
-        //   startTime,
-        //   endTime,
-        //   phase,
-        //   categoryPair,
-        //   payload,
-        // ]
-        auto name = aER.ReadObject<std::string>();
-        auto startTime = aER.ReadObject<double>();
-        auto endTime = aER.ReadObject<double>();
-        auto phase = aER.ReadObject<uint8_t>();
-        const JS::ProfilingCategoryPairInfo& info =
-            GetProfilingCategoryPairInfo(static_cast<JS::ProfilingCategoryPair>(
-                aER.ReadObject<uint32_t>()));
-        auto payload = aER.ReadObject<UniquePtr<ProfilerMarkerPayload>>();
-
-        MOZ_ASSERT(aER.RemainingBytes() == 0);
-
-        // Now write this information to JSON with the following schema:
-        // [name, startTime, endTime, phase, category, data]
-        aUniqueStacks.mUniqueStrings->WriteElement(aWriter, name.c_str());
-        aWriter.DoubleElement(startTime);
-        aWriter.DoubleElement(endTime);
-        aWriter.IntElement(phase);
-        aWriter.IntElement(unsigned(info.mCategory));
-        if (payload) {
-          aWriter.StartObjectElement(SpliceableJSONWriter::SingleLineStyle);
-          { payload->StreamPayload(aWriter, aProcessStartTime, aUniqueStacks); }
-          aWriter.EndObject();
+    // Code should *return* from the switch if the entry was fully read.
+    // Code should *break* from the switch if the entry was not fully read (we
+    // then need to adjust the reader position to the end of the entry, as
+    // expected by the reader code.)
+    switch (type) {
+      case ProfileBufferEntry::Kind::MarkerData:
+        if (aER.ReadObject<int>() != aThreadId) {
+          break;  // Entry not fully read.
         }
-      }
-      aWriter.EndArray();
-    } else {
-      aER.SetRemainingBytes(0);
+        aWriter.StartArrayElement();
+        {
+          // Extract the information from the buffer:
+          // Each entry is made up of the following:
+          //
+          // [
+          //   ProfileBufferEntry::Kind::MarkerData, <- already read
+          //   threadId,                             <- already read
+          //   name,                                 <- next location in entries
+          //   startTime,
+          //   endTime,
+          //   phase,
+          //   categoryPair,
+          //   payload
+          // ]
+          auto name = aER.ReadObject<std::string>();
+          auto startTime = aER.ReadObject<double>();
+          auto endTime = aER.ReadObject<double>();
+          auto phase = aER.ReadObject<uint8_t>();
+          const JS::ProfilingCategoryPairInfo& info =
+              GetProfilingCategoryPairInfo(
+                  static_cast<JS::ProfilingCategoryPair>(
+                      aER.ReadObject<uint32_t>()));
+          auto payload = aER.ReadObject<UniquePtr<ProfilerMarkerPayload>>();
+
+          MOZ_ASSERT(aER.RemainingBytes() == 0);
+
+          // Now write this information to JSON with the following schema:
+          // [name, startTime, endTime, phase, category, data]
+          aUniqueStacks.mUniqueStrings->WriteElement(aWriter, name.c_str());
+          aWriter.DoubleElement(startTime);
+          aWriter.DoubleElement(endTime);
+          aWriter.IntElement(phase);
+          aWriter.IntElement(unsigned(info.mCategory));
+          if (payload) {
+            aWriter.StartObjectElement(SpliceableJSONWriter::SingleLineStyle);
+            {
+              payload->StreamPayload(aWriter, aProcessStartTime, aUniqueStacks);
+            }
+            aWriter.EndObject();
+          }
+        }
+        aWriter.EndArray();
+        return;  // Entry fully read.
+
+      case ProfileBufferEntry::Kind::Marker:
+        if (mozilla::base_profiler_markers_detail::
+                DeserializeAfterKindAndStream(
+                    aER, aWriter, aThreadId,
+                    [&](const mozilla::ProfilerString8View& aName) {
+                      aUniqueStacks.mUniqueStrings->WriteElement(
+                          aWriter, aName.String().c_str());
+                    },
+                    [&](ProfileChunkedBuffer& aChunkedBuffer) {
+                      ProfilerBacktrace backtrace("", aThreadId,
+                                                  &aChunkedBuffer);
+                      backtrace.StreamJSON(aWriter, aProcessStartTime,
+                                           aUniqueStacks);
+                    })) {
+          return;  // Entry fully read.
+        }
+        break;  // Entry not fully read.
+
+      default:
+        break;  // Entry not fully read.
     }
+
+    aER.SetRemainingBytes(0);
   });
 }
 
@@ -1479,9 +1510,11 @@ void ProfileBuffer::StreamCountersToJSON(SpliceableJSONWriter& aWriter,
           static_cast<const BaseProfilerCount*>(iter.get().key());
 
       aWriter.Start();
-      aWriter.StringProperty("name", base_counter->mLabel);
-      aWriter.StringProperty("category", base_counter->mCategory);
-      aWriter.StringProperty("description", base_counter->mDescription);
+      aWriter.StringProperty("name", MakeStringSpan(base_counter->mLabel));
+      aWriter.StringProperty("category",
+                             MakeStringSpan(base_counter->mCategory));
+      aWriter.StringProperty("description",
+                             MakeStringSpan(base_counter->mDescription));
 
       aWriter.StartArrayProperty("sample_groups");
       for (auto counter_iter = counter.iter(); !counter_iter.done();
@@ -1562,7 +1595,7 @@ static void AddPausedRange(SpliceableJSONWriter& aWriter, const char* aReason,
   } else {
     aWriter.NullProperty("endTime");
   }
-  aWriter.StringProperty("reason", aReason);
+  aWriter.StringProperty("reason", MakeStringSpan(aReason));
   aWriter.End();
 }
 

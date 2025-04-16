@@ -53,6 +53,7 @@ async function selectAndPaste(str, win = window) {
 
 /**
  * Updates the Top Sites feed.
+ *
  * @param {function} condition
  *   A callback that returns true after Top Sites are successfully updated.
  * @param {boolean} searchShortcuts
@@ -79,18 +80,53 @@ async function updateTopSites(condition, searchShortcuts = false) {
 }
 
 /**
- * Simple convenience method to append a space to a token alias if update2 is
- * off. When the update2 pref is removed, this method can be removed and its
- * callers can simply use the passed string
- * (e.g. change foo(getAutofillSearchString("@test")) to foo("@test")).
+ * Simple convenience method to append a space to token aliases but not to other
+ * values.
+ *
+ * TODO (Bug 1661882): Remove this function and simply use the passed-in string
+ * directly.
+ *
  * @param {string} val
  * @returns {string}
- *   `val` with a space appended if update2 is disabled. Returns `val` if it
- *    does not start with "@".
+ *   `val` with a space appended if it's a token alias, or just `val` otherwise.
  */
 function getAutofillSearchString(val) {
   if (!val.startsWith("@")) {
     return val;
   }
-  return val + (UrlbarPrefs.get("update2") ? "" : " ");
+  return val + " ";
+}
+
+/**
+ * Waits for a load in any browser or a timeout, whichever comes first.
+ *
+ * @param {window} win
+ *   The top-level browser window to listen in.
+ * @param {number} timeoutMs
+ *   The timeout in ms.
+ * @returns {event|null}
+ *   If a load event was detected before the timeout fired, then the event is
+ *   returned.  event.target will be the browser in which the load occurred.  If
+ *   the timeout fired before a load was detected, null is returned.
+ */
+async function waitForLoadOrTimeout(win = window, timeoutMs = 1000) {
+  let event;
+  let listener;
+  let timeout;
+  let eventName = "BrowserTestUtils:ContentEvent:load";
+  try {
+    event = await Promise.race([
+      new Promise(resolve => {
+        listener = resolve;
+        win.addEventListener(eventName, listener, true);
+      }),
+      new Promise(resolve => {
+        timeout = win.setTimeout(resolve, timeoutMs);
+      }),
+    ]);
+  } finally {
+    win.removeEventListener(eventName, listener, true);
+    win.clearTimeout(timeout);
+  }
+  return event || null;
 }

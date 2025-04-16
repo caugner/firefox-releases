@@ -25,7 +25,8 @@
 #include "jit/MIRGraph.h"
 #include "jit/RangeAnalysis.h"
 #include "js/Conversions.h"
-#include "js/ScalarType.h"  // js::Scalar::Type
+#include "js/experimental/JitInfo.h"  // JSJitInfo, JSTypedMethodJitInfo
+#include "js/ScalarType.h"            // js::Scalar::Type
 #include "util/Text.h"
 #include "util/Unicode.h"
 #include "vm/PlainObject.h"  // js::PlainObject
@@ -817,6 +818,9 @@ void MDefinition::justReplaceAllUsesWith(MDefinition* dom) {
   // with the graph.
   if (isUseRemoved()) {
     dom->setUseRemovedUnchecked();
+  }
+  if (isImplicitlyUsed()) {
+    dom->setImplicitlyUsedUnchecked();
   }
 
   for (MUseIterator i(usesBegin()), e(usesEnd()); i != e; ++i) {
@@ -5291,6 +5295,18 @@ void MStoreDynamicSlot::printOpcode(GenericPrinter& out) const {
 }
 #endif
 
+MDefinition* MGuardFunctionScript::foldsTo(TempAllocator& alloc) {
+  if (input()->isLambda() &&
+      input()->toLambda()->info().baseScript == expected()) {
+    return input();
+  }
+  if (input()->isLambdaArrow() &&
+      input()->toLambdaArrow()->info().baseScript == expected()) {
+    return input();
+  }
+  return this;
+}
+
 MDefinition* MFunctionEnvironment::foldsTo(TempAllocator& alloc) {
   if (input()->isLambda()) {
     return input()->toLambda()->environmentChain();
@@ -5964,6 +5980,14 @@ MDefinition* MGuardShape::foldsTo(TempAllocator& alloc) {
     return this;
   }
 
+  auto AssertShape = [](TempAllocator& alloc, MGuardShape* ins) {
+#ifdef DEBUG
+    auto* assert = MAssertShape::New(alloc, ins->object(),
+                                     const_cast<Shape*>(ins->shape()));
+    ins->block()->insertBefore(ins, assert);
+#endif
+  };
+
   if (ins->isAddAndStoreSlot()) {
     auto* add = ins->toAddAndStoreSlot();
 
@@ -5972,7 +5996,7 @@ MDefinition* MGuardShape::foldsTo(TempAllocator& alloc) {
       return this;
     }
 
-    // TODO(Warp): Here and below add MAssertShape.
+    AssertShape(alloc, this);
     return object();
   }
 
@@ -5984,6 +6008,7 @@ MDefinition* MGuardShape::foldsTo(TempAllocator& alloc) {
       return this;
     }
 
+    AssertShape(alloc, this);
     return object();
   }
 
@@ -6004,6 +6029,7 @@ MDefinition* MGuardShape::foldsTo(TempAllocator& alloc) {
       return this;
     }
 
+    AssertShape(alloc, this);
     return object();
   }
 
@@ -6126,6 +6152,62 @@ MDefinition* MGuardSpecificSymbol::foldsTo(TempAllocator& alloc) {
   return this;
 }
 
+MDefinition* MGuardIsNotProxy::foldsTo(TempAllocator& alloc) {
+  KnownClass known = GetObjectKnownClass(object());
+  if (known == KnownClass::None) {
+    return this;
+  }
+
+  MOZ_ASSERT(!GetObjectKnownJSClass(object())->isProxy());
+  AssertKnownClass(alloc, this, object());
+  return object();
+}
+
+MDefinition* MGuardStringToIndex::foldsTo(TempAllocator& alloc) {
+  if (!string()->isConstant()) {
+    return this;
+  }
+
+  JSAtom* atom = &string()->toConstant()->toString()->asAtom();
+
+  int32_t index = GetIndexFromString(atom);
+  if (index < 0) {
+    return this;
+  }
+
+  return MConstant::New(alloc, Int32Value(index));
+}
+
+MDefinition* MGuardStringToInt32::foldsTo(TempAllocator& alloc) {
+  if (!string()->isConstant()) {
+    return this;
+  }
+
+  JSAtom* atom = &string()->toConstant()->toString()->asAtom();
+  if (!atom->hasIndexValue()) {
+    return this;
+  }
+
+  uint32_t index = atom->getIndexValue();
+  MOZ_ASSERT(index <= INT32_MAX);
+  return MConstant::New(alloc, Int32Value(index));
+}
+
+MDefinition* MGuardStringToDouble::foldsTo(TempAllocator& alloc) {
+  if (!string()->isConstant()) {
+    return this;
+  }
+
+  JSAtom* atom = &string()->toConstant()->toString()->asAtom();
+  if (!atom->hasIndexValue()) {
+    return this;
+  }
+
+  uint32_t index = atom->getIndexValue();
+  MOZ_ASSERT(index <= INT32_MAX);
+  return MConstant::New(alloc, DoubleValue(index));
+}
+
 MDefinition* MGuardToClass::foldsTo(TempAllocator& alloc) {
   const JSClass* clasp = GetObjectKnownJSClass(object());
   if (!clasp || getClass() != clasp) {
@@ -6172,6 +6254,25 @@ MDefinition* MIsArray::foldsTo(TempAllocator& alloc) {
 
   AssertKnownClass(alloc, this, input());
   return MConstant::New(alloc, BooleanValue(known == KnownClass::Array));
+}
+
+MDefinition* MGuardIsNotArrayBufferMaybeShared::foldsTo(TempAllocator& alloc) {
+  switch (GetObjectKnownClass(object())) {
+    case KnownClass::PlainObject:
+    case KnownClass::Array:
+    case KnownClass::Function:
+    case KnownClass::RegExp:
+    case KnownClass::ArrayIterator:
+    case KnownClass::StringIterator:
+    case KnownClass::RegExpStringIterator: {
+      AssertKnownClass(alloc, this, object());
+      return object();
+    }
+    case KnownClass::None:
+      break;
+  }
+
+  return this;
 }
 
 MDefinition* MCheckIsObj::foldsTo(TempAllocator& alloc) {

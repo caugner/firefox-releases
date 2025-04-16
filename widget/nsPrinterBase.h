@@ -34,6 +34,7 @@ class nsPrinterBase : public nsIPrinter {
   NS_IMETHOD CreateDefaultSettings(JSContext*, Promise**) final;
   NS_IMETHOD GetSupportsDuplex(JSContext*, Promise**) final;
   NS_IMETHOD GetSupportsColor(JSContext*, Promise**) final;
+  NS_IMETHOD GetSupportsMonochrome(JSContext*, Promise**) final;
   NS_IMETHOD GetSupportsCollation(JSContext*, Promise**) final;
   NS_IMETHOD GetPaperList(JSContext*, Promise**) final;
 
@@ -44,7 +45,7 @@ class nsPrinterBase : public nsIPrinter {
   nsPrinterBase(const nsPrinterBase&) = delete;
   nsPrinterBase(nsPrinterBase&&) = delete;
 
-  void QueryMarginsForPaper(Promise&, uint64_t aPaperId);
+  void QueryMarginsForPaper(Promise&, const nsString& aPaperId);
 
   /**
    * Caches the argument by copying it into mPrintSettingsInitializer.
@@ -59,6 +60,7 @@ class nsPrinterBase : public nsIPrinter {
     // nsPrinterBase::AsyncPromiseAttributeGetter.
     SupportsDuplex = 0,
     SupportsColor,
+    SupportsMonochrome,
     SupportsCollation,
     PaperList,
     // Just a guard.
@@ -90,9 +92,10 @@ class nsPrinterBase : public nsIPrinter {
   virtual PrintSettingsInitializer DefaultSettings() const = 0;
   virtual bool SupportsDuplex() const = 0;
   virtual bool SupportsColor() const = 0;
+  virtual bool SupportsMonochrome() const = 0;
   virtual bool SupportsCollation() const = 0;
   virtual nsTArray<mozilla::PaperInfo> PaperList() const = 0;
-  virtual MarginDouble GetMarginsForPaper(uint64_t aPaperId) const = 0;
+  virtual MarginDouble GetMarginsForPaper(nsString aPaperId) const = 0;
 
  private:
   mozilla::EnumeratedArray<AsyncAttribute, AsyncAttribute::Last,

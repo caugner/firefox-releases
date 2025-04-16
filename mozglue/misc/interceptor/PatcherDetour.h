@@ -36,6 +36,8 @@ enum class DetourFlags : uint32_t {
   eEnable10BytePatch = 1,  // Allow 10-byte patches when conditions allow
   eTestOnlyForceShortPatch =
       2,  // Force short patches at all times (x86-64 and arm64 testing only)
+  eDontResolveRedirection =
+      4,  // Don't resolve the redirection of JMP (e.g. kernel32 -> kernelbase)
 };
 
 MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(DetourFlags)
@@ -126,6 +128,10 @@ class WindowsDllDetourPatcher final
   using PrimitiveT = WindowsDllDetourPatcherPrimitive<MMPolicyT>;
   Maybe<DetourFlags> mFlags;
 
+#if defined(NIGHTLY_BUILD)
+  Maybe<DetourError> mLastError;
+#endif  // defined(NIGHTLY_BUILD)
+
  public:
   template <typename... Args>
   explicit WindowsDllDetourPatcher(Args&&... aArgs)
@@ -137,6 +143,10 @@ class WindowsDllDetourPatcher final
   WindowsDllDetourPatcher(WindowsDllDetourPatcher&&) = delete;
   WindowsDllDetourPatcher& operator=(const WindowsDllDetourPatcher&) = delete;
   WindowsDllDetourPatcher& operator=(WindowsDllDetourPatcher&&) = delete;
+
+#if defined(NIGHTLY_BUILD)
+  const Maybe<DetourError>& GetLastError() const { return mLastError; }
+#endif  // defined(NIGHTLY_BUILD)
 
   void Clear() {
     if (!this->mVMPolicy.ShouldUnhookUponDestruction()) {
@@ -425,7 +435,10 @@ class WindowsDllDetourPatcher final
 
   bool AddHook(FARPROC aTargetFn, intptr_t aHookDest, void** aOrigFunc) {
     ReadOnlyTargetFunction<MMPolicyT> target(
-        this->ResolveRedirectedAddress(aTargetFn));
+        (mFlags.value() & DetourFlags::eDontResolveRedirection)
+            ? ReadOnlyTargetFunction<MMPolicyT>(
+                  this->mVMPolicy, reinterpret_cast<uintptr_t>(aTargetFn))
+            : this->ResolveRedirectedAddress(aTargetFn));
 
     TrampPoolT* trampPool = nullptr;
 
@@ -893,17 +906,41 @@ class WindowsDllDetourPatcher final
       return;
     }
 
-    auto clearInstanceOnFailure = MakeScopeExit([aOutTramp, &tramp]() -> void {
+    auto clearInstanceOnFailure = MakeScopeExit([this, aOutTramp, &tramp,
+                                                 &origBytes]() -> void {
       // *aOutTramp is not set until CreateTrampoline has completed
       // successfully, so we can use that to check for success.
       if (*aOutTramp) {
         return;
       }
 
-      // Clear the instance pointer so that we don't try to reset a nonexistent
-      // hook.
+      // Clear the instance pointer so that we don't try to reset a
+      // nonexistent hook.
       tramp.Rewind();
       tramp.WriteEncodedPointer(nullptr);
+
+#if defined(NIGHTLY_BUILD)
+      origBytes.Rewind();
+      mLastError = Some(DetourError());
+      size_t bytesToCapture = std::min(
+          ArrayLength(mLastError->mOrigBytes),
+          static_cast<size_t>(PrimitiveT::GetWorstCaseRequiredBytesToPatch()));
+#  if defined(_M_ARM64)
+      size_t numInstructionsToCapture = bytesToCapture / sizeof(uint32_t);
+      auto origBytesDst = reinterpret_cast<uint32_t*>(mLastError->mOrigBytes);
+      for (size_t i = 0; i < numInstructionsToCapture; ++i) {
+        origBytesDst[i] = origBytes.ReadNextInstruction();
+      }
+#  else
+      for (size_t i = 0; i < bytesToCapture; ++i) {
+        mLastError->mOrigBytes[i] = origBytes[i];
+      }
+#  endif  // defined(_M_ARM64)
+#else
+      // Silence -Wunused-lambda-capture in non-Nightly.
+      Unused << this;
+      Unused << origBytes;
+#endif  // defined(NIGHTLY_BUILD)
     });
 
     tramp.WritePointer(origBytes.AsEncodedPtr());

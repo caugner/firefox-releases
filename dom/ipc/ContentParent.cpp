@@ -60,6 +60,7 @@
 #include "mozilla/HangDetails.h"
 #include "mozilla/LoginReputationIPC.h"
 #include "mozilla/LookAndFeel.h"
+#include "mozilla/NullPrincipal.h"
 #include "mozilla/PerformanceMetricsCollector.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
@@ -206,13 +207,11 @@
 #include "nsIParentChannel.h"
 #include "nsIScriptError.h"
 #include "nsIScriptSecurityManager.h"
-#include "nsISearchService.h"
 #include "nsIServiceWorkerManager.h"
 #include "nsISiteSecurityService.h"
 #include "nsISound.h"
 #include "nsIStringBundle.h"
 #include "nsITimer.h"
-#include "nsIURIFixup.h"
 #include "nsIURL.h"
 #include "nsIWebBrowserChrome.h"
 #include "nsIX509Cert.h"
@@ -225,6 +224,7 @@
 #include "nsPluginTags.h"
 #include "nsQueryObject.h"
 #include "nsReadableUtils.h"
+#include "nsSHistory.h"
 #include "nsScriptError.h"
 #include "nsSerializationHelper.h"
 #include "nsServiceManagerUtils.h"
@@ -731,6 +731,10 @@ bool IsWebRemoteType(const nsACString& aContentProcessType) {
 bool IsWebCoopCoepRemoteType(const nsACString& aContentProcessType) {
   return StringBeginsWith(aContentProcessType,
                           WITH_COOP_COEP_REMOTE_TYPE_PREFIX);
+}
+
+bool IsPriviligedMozillaRemoteType(const nsACString& aContentProcessType) {
+  return aContentProcessType == PRIVILEGEDMOZILLA_REMOTE_TYPE;
 }
 
 /*static*/
@@ -1930,8 +1934,11 @@ void ContentParent::ActorDestroy(ActorDestroyReason why) {
   a11y::AccessibleWrap::ReleaseContentProcessIdFor(ChildID());
 #endif
 
-  // As this process is going away, ensure that every BrowsingContextGroup has
-  // been fully unsubscribed.
+  // As this process is going away, ensure that every BrowsingContext hosted by
+  // it has been detached, and every BrowsingContextGroup has been fully
+  // unsubscribed.
+  BrowsingContext::DiscardFromContentParent(this);
+
   nsTHashtable<nsRefPtrHashKey<BrowsingContextGroup>> groups;
   mGroups.SwapElements(groups);
   for (auto& group : groups) {
@@ -4460,90 +4467,6 @@ nsresult ContentParent::DoSendAsyncMessage(const nsAString& aMessage,
   return NS_OK;
 }
 
-mozilla::ipc::IPCResult ContentParent::RecvKeywordToURI(
-    const nsCString& aKeyword, const bool& aIsPrivateContext,
-    nsString* aProviderName, RefPtr<nsIInputStream>* aPostData,
-    RefPtr<nsIURI>* aURI) {
-  *aPostData = nullptr;
-  *aURI = nullptr;
-  nsCOMPtr<nsIURIFixup> fixup = components::URIFixup::Service();
-  if (!fixup) {
-    return IPC_OK();
-  }
-
-  nsCOMPtr<nsIURIFixupInfo> info;
-
-  if (NS_FAILED(fixup->KeywordToURI(aKeyword, aIsPrivateContext,
-                                    getter_AddRefs(*aPostData),
-                                    getter_AddRefs(info)))) {
-    return IPC_OK();
-  }
-  info->GetKeywordProviderName(*aProviderName);
-  nsCOMPtr<nsIURI> uri;
-  info->GetPreferredURI(getter_AddRefs(uri));
-  *aURI = uri;
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult ContentParent::RecvGetFixupURIInfo(
-    const nsString& aURIString, const uint32_t& aFixupFlags,
-    bool aAllowThirdPartyFixup, nsString* aProviderName,
-    RefPtr<nsIInputStream>* aPostData, RefPtr<nsIURI>* aPreferredURI) {
-  *aPostData = nullptr;
-  *aPreferredURI = nullptr;
-  nsCOMPtr<nsIURIFixup> fixup = components::URIFixup::Service();
-  if (!fixup) {
-    return IPC_OK();
-  }
-
-  NS_ConvertUTF16toUTF8 uriString(aURIString);
-  // Cleanup the empty spaces that might be on each end.
-  uriString.Trim(" ");
-  // Eliminate embedded newlines, which single-line text fields now allow:
-  uriString.StripCRLF();
-
-  nsCOMPtr<nsIURIFixupInfo> info;
-  if (NS_FAILED(fixup->GetFixupURIInfo(uriString, aFixupFlags,
-                                       getter_AddRefs(*aPostData),
-                                       getter_AddRefs(info)))) {
-    return IPC_OK();
-  }
-  info->GetKeywordProviderName(*aProviderName);
-  nsCOMPtr<nsIURI> uri;
-  info->GetPreferredURI(getter_AddRefs(uri));
-  *aPreferredURI = uri;
-
-  if (aAllowThirdPartyFixup) {
-    nsCOMPtr<nsIObserverService> serv = services::GetObserverService();
-    if (serv) {
-      serv->NotifyObservers(info, "keyword-uri-fixup",
-                            PromiseFlatString(aURIString).get());
-    }
-  }
-
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult ContentParent::RecvNotifyKeywordSearchLoading(
-    const nsString& aProvider, const nsString& aKeyword) {
-  nsCOMPtr<nsISearchService> searchSvc =
-      do_GetService("@mozilla.org/browser/search-service;1");
-  if (searchSvc) {
-    nsCOMPtr<nsISearchEngine> searchEngine;
-    searchSvc->GetEngineByName(aProvider, getter_AddRefs(searchEngine));
-    if (searchEngine) {
-      nsCOMPtr<nsIObserverService> obsSvc =
-          mozilla::services::GetObserverService();
-      if (obsSvc) {
-        // Note that "keyword-search" refers to a search via the url
-        // bar, not a bookmarks keyword search.
-        obsSvc->NotifyObservers(searchEngine, "keyword-search", aKeyword.get());
-      }
-    }
-  }
-  return IPC_OK();
-}
-
 mozilla::ipc::IPCResult ContentParent::RecvCopyFavicon(
     nsIURI* aOldURI, nsIURI* aNewURI, const IPC::Principal& aLoadingPrincipal,
     const bool& aInPrivateBrowsing) {
@@ -5208,7 +5131,7 @@ mozilla::ipc::IPCResult ContentParent::RecvCreateWindow(
     }
   }
 
-  BrowserParent::AutoUseNewTab aunt(newTab, &cwi.urlToLoad());
+  BrowserParent::AutoUseNewTab aunt(newTab);
 
   nsCOMPtr<nsIRemoteTab> newRemoteTab;
   int32_t openLocation = nsIBrowserDOMWindow::OPEN_NEWWINDOW;
@@ -5678,6 +5601,13 @@ void ContentParent::CancelContentJSExecutionIfRunning(
   if (!mHangMonitorActor) {
     return;
   }
+
+  if (!aBrowserParent->CanCancelContentJS(aNavigationType,
+                                          aCancelContentJSOptions.mIndex,
+                                          aCancelContentJSOptions.mUri)) {
+    return;
+  }
+
   ProcessHangMonitor::CancelContentJSExecutionIfRunning(
       mHangMonitorActor, aBrowserParent, aNavigationType,
       aCancelContentJSOptions);
@@ -6666,6 +6596,26 @@ mozilla::ipc::IPCResult ContentParent::RecvSetFocusedElement(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult ContentParent::RecvFinalizeFocusOuter(
+    const MaybeDiscarded<BrowsingContext>& aContext, bool aCanFocus,
+    CallerType aCallerType) {
+  if (aContext.IsNullOrDiscarded()) {
+    MOZ_LOG(
+        BrowsingContext::GetLog(), LogLevel::Debug,
+        ("ParentIPC: Trying to send a message to dead or detached context"));
+    return IPC_OK();
+  }
+  CanonicalBrowsingContext* context = aContext.get_canonical();
+  ContentProcessManager* cpm = ContentProcessManager::GetSingleton();
+
+  ContentParent* cp =
+      cpm->GetContentProcessById(ContentParentId(context->EmbedderProcessId()));
+  if (cp) {
+    Unused << cp->SendFinalizeFocusOuter(context, aCanFocus, aCallerType);
+  }
+  return IPC_OK();
+}
+
 mozilla::ipc::IPCResult ContentParent::RecvBlurToParent(
     const MaybeDiscarded<BrowsingContext>& aFocusedBrowsingContext,
     const MaybeDiscarded<BrowsingContext>& aBrowsingContextToClear,
@@ -6886,27 +6836,21 @@ mozilla::ipc::IPCResult ContentParent::RecvNotifyOnHistoryReload(
 
 mozilla::ipc::IPCResult ContentParent::RecvHistoryCommit(
     const MaybeDiscarded<BrowsingContext>& aContext, const uint64_t& aLoadID,
-    const nsID& aChangeID) {
+    const nsID& aChangeID, const uint32_t& aLoadType) {
   if (!aContext.IsDiscarded()) {
-    aContext.get_canonical()->SessionHistoryCommit(aLoadID, aChangeID);
+    aContext.get_canonical()->SessionHistoryCommit(aLoadID, aChangeID,
+                                                   aLoadType);
   }
 
   return IPC_OK();
 }
 
 mozilla::ipc::IPCResult ContentParent::RecvHistoryGo(
-    const MaybeDiscarded<BrowsingContext>& aContext, int32_t aOffset,
+    const MaybeDiscarded<BrowsingContext>& aContext, int32_t aIndex,
     HistoryGoResolver&& aResolveRequestedIndex) {
   if (!aContext.IsDiscarded()) {
-    nsSHistory* shistory =
-        static_cast<nsSHistory*>(aContext.get_canonical()->GetSessionHistory());
-    nsTArray<nsSHistory::LoadEntryResult> loadResults;
-    nsresult rv = shistory->GotoIndex(aOffset, loadResults);
-    if (NS_FAILED(rv)) {
-      return IPC_FAIL(this, "GotoIndex failed");
-    }
-    aResolveRequestedIndex(shistory->GetRequestedIndex());
-    shistory->LoadURIs(loadResults);
+    aContext.get_canonical()->HistoryGo(aIndex,
+                                        std::move(aResolveRequestedIndex));
   }
   return IPC_OK();
 }
@@ -6973,6 +6917,29 @@ ContentParent::RecvSessionHistoryEntryScrollRestorationIsManual(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult
+ContentParent::RecvSessionHistoryEntryStoreWindowNameInContiguousEntries(
+    const MaybeDiscarded<BrowsingContext>& aContext, const nsString& aName) {
+  if (aContext.IsNullOrDiscarded()) {
+    return IPC_OK();
+  }
+
+  // Per https://html.spec.whatwg.org/#history-traversal 4.2.1, we need to set
+  // the name to all contiguous entries. This has to be called before
+  // CanonicalBrowsingContext::SessionHistoryCommit(), so the active entry is
+  // still the old entry that we want to set.
+
+  SessionHistoryEntry* entry =
+      aContext.get_canonical()->GetActiveSessionHistoryEntry();
+
+  if (entry) {
+    nsSHistory::WalkContiguousEntries(
+        entry, [&](nsISHEntry* aEntry) { aEntry->SetName(aName); });
+  }
+
+  return IPC_OK();
+}
+
 mozilla::ipc::IPCResult ContentParent::RecvSessionHistoryEntryCacheKey(
     const MaybeDiscarded<BrowsingContext>& aContext,
     const uint32_t& aCacheKey) {
@@ -6984,6 +6951,86 @@ mozilla::ipc::IPCResult ContentParent::RecvSessionHistoryEntryCacheKey(
       aContext.get_canonical()->GetActiveSessionHistoryEntry();
   if (entry) {
     entry->SetCacheKey(aCacheKey);
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+ContentParent::RecvGetLoadingSessionHistoryInfoFromParent(
+    const MaybeDiscarded<BrowsingContext>& aContext,
+    GetLoadingSessionHistoryInfoFromParentResolver&& aResolver) {
+  if (aContext.IsNullOrDiscarded()) {
+    return IPC_OK();
+  }
+
+  Maybe<LoadingSessionHistoryInfo> info;
+  int32_t requestedIndex = -1;
+  int32_t sessionHistoryLength = 0;
+  aContext.get_canonical()->GetLoadingSessionHistoryInfoFromParent(
+      info, &requestedIndex, &sessionHistoryLength);
+  aResolver(
+      Tuple<const mozilla::Maybe<LoadingSessionHistoryInfo>&, const int32_t&,
+            const int32_t&>(info, requestedIndex, sessionHistoryLength));
+
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentParent::RecvSetActiveSessionHistoryEntryForTop(
+    const MaybeDiscarded<BrowsingContext>& aContext,
+    const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo&& aInfo,
+    uint32_t aLoadType, const nsID& aChangeID) {
+  if (!aContext.IsDiscarded()) {
+    aContext.get_canonical()->SetActiveSessionHistoryEntryForTop(
+        aPreviousScrollPos, &aInfo, aLoadType, aChangeID);
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentParent::RecvSetActiveSessionHistoryEntryForFrame(
+    const MaybeDiscarded<BrowsingContext>& aContext,
+    const Maybe<nsPoint>& aPreviousScrollPos, SessionHistoryInfo&& aInfo,
+    int32_t aChildOffset, const nsID& aChangeID) {
+  if (!aContext.IsDiscarded()) {
+    aContext.get_canonical()->SetActiveSessionHistoryEntryForFrame(
+        aPreviousScrollPos, &aInfo, aChildOffset, aChangeID);
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentParent::RecvReplaceActiveSessionHistoryEntry(
+    const MaybeDiscarded<BrowsingContext>& aContext,
+    SessionHistoryInfo&& aInfo) {
+  if (!aContext.IsDiscarded()) {
+    aContext.get_canonical()->ReplaceActiveSessionHistoryEntry(&aInfo);
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult
+ContentParent::RecvRemoveDynEntriesFromActiveSessionHistoryEntry(
+    const MaybeDiscarded<BrowsingContext>& aContext) {
+  if (!aContext.IsDiscarded()) {
+    aContext.get_canonical()->RemoveDynEntriesFromActiveSessionHistoryEntry();
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentParent::RecvRemoveFromSessionHistory(
+    const MaybeDiscarded<BrowsingContext>& aContext) {
+  if (!aContext.IsDiscarded()) {
+    aContext.get_canonical()->RemoveFromSessionHistory();
+  }
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult ContentParent::RecvHistoryReload(
+    const MaybeDiscarded<BrowsingContext>& aContext,
+    const uint32_t aReloadFlags) {
+  if (!aContext.IsDiscarded()) {
+    nsISHistory* shistory = aContext.get_canonical()->GetSessionHistory();
+    if (shistory) {
+      shistory->Reload(aReloadFlags);
+    }
   }
   return IPC_OK();
 }

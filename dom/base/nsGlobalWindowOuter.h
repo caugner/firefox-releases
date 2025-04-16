@@ -1046,9 +1046,15 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
 
   bool IsOnlyTopLevelDocumentInSHistory();
 
+  void MaybeResetWindowName(Document* aNewDocument);
+
  public:
   bool DelayedPrintUntilAfterLoad() const {
     return mDelayedPrintUntilAfterLoad;
+  }
+
+  bool DelayedCloseForPrinting() const {
+    return mDelayedCloseForPrinting;
   }
 
   void StopDelayingPrintingUntilAfterLoad() {
@@ -1104,6 +1110,9 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
 
   // Whether we've delayed a print until after load.
   bool mDelayedPrintUntilAfterLoad : 1;
+  // Whether we've delayed a close() operation because there was a pending
+  // print() operation.
+  bool mDelayedCloseForPrinting : 1;
   // Whether we should delay printing until after load.
   bool mShouldDelayPrintUntilAfterLoad : 1;
 

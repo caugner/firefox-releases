@@ -40,8 +40,9 @@
 #include "util/StringBuffer.h"
 #include "util/Text.h"
 #include "vm/ErrorObject.h"
-#include "vm/FunctionFlags.h"  // js::FunctionFlags
-#include "vm/GlobalObject.h"   // js::GlobalObject
+#include "vm/FunctionFlags.h"      // js::FunctionFlags
+#include "vm/GlobalObject.h"       // js::GlobalObject
+#include "vm/HelperThreadState.h"  // js::PromiseHelperTask
 #include "vm/Interpreter.h"
 #include "vm/PlainObject.h"    // js::PlainObject
 #include "vm/PromiseObject.h"  // js::PromiseObject
@@ -134,9 +135,6 @@ static inline bool WasmGcFlag(JSContext* cx) {
 }
 
 static inline bool WasmThreadsFlag(JSContext* cx) {
-  if (IsFuzzingCranelift(cx)) {
-    return false;
-  }
   return cx->realm() &&
          cx->realm()->creationOptions().getSharedMemoryAndAtomicsEnabled();
 }
@@ -300,14 +298,9 @@ bool wasm::CraneliftAvailable(JSContext* cx) {
 
 bool wasm::CraneliftDisabledByFeatures(JSContext* cx, bool* isDisabled,
                                        JSStringBuilder* reason) {
-  // Cranelift has no debugging support, no gc support, no simd, and
-  // on x64, no threads support.
+  // Cranelift has no debugging support, no gc support, no simd.
   bool debug = WasmDebuggerActive(cx);
   bool gc = WasmGcFlag(cx);
-  bool threadsOnX64 = false;
-#if defined(JS_CODEGEN_X64)
-  threadsOnX64 = WasmThreadsFlag(cx);
-#endif
   bool simd = WasmSimdFlag(cx);
   if (reason) {
     char sep = 0;
@@ -317,14 +310,11 @@ bool wasm::CraneliftDisabledByFeatures(JSContext* cx, bool* isDisabled,
     if (gc && !Append(reason, "gc", &sep)) {
       return false;
     }
-    if (threadsOnX64 && !Append(reason, "threads", &sep)) {
-      return false;
-    }
     if (simd && !Append(reason, "simd", &sep)) {
       return false;
     }
   }
-  *isDisabled = debug || gc || threadsOnX64 || simd;
+  *isDisabled = debug || gc || simd;
   return true;
 }
 
@@ -1912,8 +1902,13 @@ bool WasmInstanceObject::getExportedFunction(
     // Some applications eagerly access all table elements which currently
     // triggers worst-case behavior for lazy stubs, since each will allocate a
     // separate 4kb code page. Most eagerly-accessed functions are not called,
-    // so instead wait until Instance::callExport() to create the entry stubs.
-    if (funcExport.hasEagerStubs() && funcExport.canHaveJitEntry()) {
+    // so use the JIT's interpreter-trampoline (a call into the VM) as JitEntry
+    // and wait until Instance::callExport() to create the entry stubs.
+    if (funcExport.canHaveJitEntry()) {
+      if (!funcExport.hasEagerStubs()) {
+        void* interpStub = cx->runtime()->jitRuntime()->interpreterStub().value;
+        instance.code().setJitEntryIfNull(funcIndex, interpStub);
+      }
       fun->setWasmJitEntry(instance.code().getAddressOfJitEntry(funcIndex));
     } else {
       fun->setWasmFuncIndex(funcIndex);

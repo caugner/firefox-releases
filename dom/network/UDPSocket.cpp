@@ -62,7 +62,7 @@ already_AddRefed<UDPSocket> UDPSocket::Constructor(const GlobalObject& aGlobal,
 
   nsCString remoteAddress;
   if (aOptions.mRemoteAddress.WasPassed()) {
-    remoteAddress = NS_ConvertUTF16toUTF8(aOptions.mRemoteAddress.Value());
+    CopyUTF16toUTF8(aOptions.mRemoteAddress.Value(), remoteAddress);
   } else {
     remoteAddress.SetIsVoid(true);
   }
@@ -303,7 +303,7 @@ bool UDPSocket::Send(const StringOrBlobOrArrayBufferOrArrayBufferView& aData,
   // arguments, throw InvalidAccessError.
   nsCString remoteAddress;
   if (aRemoteAddress.WasPassed()) {
-    remoteAddress = NS_ConvertUTF16toUTF8(aRemoteAddress.Value());
+    CopyUTF16toUTF8(aRemoteAddress.Value(), remoteAddress);
     UDPSOCKET_LOG(("%s: Send to %s", __FUNCTION__, remoteAddress.get()));
   } else if (!mRemoteAddress.IsVoid()) {
     remoteAddress = mRemoteAddress;
@@ -406,8 +406,7 @@ nsresult UDPSocket::InitLocal(const nsAString& aLocalAddress,
     UDPSOCKET_LOG(("%s: %s:%u", __FUNCTION__,
                    NS_ConvertUTF16toUTF8(aLocalAddress).get(), aLocalPort));
 
-    mozilla::net::NetAddr addr;
-    PRNetAddrToNetAddr(&prAddr, &addr);
+    mozilla::net::NetAddr addr(&prAddr);
     rv = sock->InitWithAddress(&addr, principal, mAddressReuse,
                                /* optionalArgc = */ 1);
   }
@@ -434,7 +433,7 @@ nsresult UDPSocket::InitLocal(const nsAString& aLocalAddress,
   if (NS_FAILED(rv)) {
     return rv;
   }
-  mLocalAddress = NS_ConvertUTF8toUTF16(localAddress);
+  CopyUTF8toUTF16(localAddress, mLocalAddress);
 
   uint16_t localPort;
   rv = localAddr->GetPort(&localPort);
@@ -599,7 +598,7 @@ nsresult UDPSocket::DispatchReceivedData(const nsACString& aRemoteAddress,
 
   // Create DOM event
   RootedDictionary<UDPMessageEventInit> init(cx);
-  init.mRemoteAddress = NS_ConvertUTF8toUTF16(aRemoteAddress);
+  CopyUTF8toUTF16(aRemoteAddress, init.mRemoteAddress);
   init.mRemotePort = aRemotePort;
   init.mData = jsData;
 
@@ -686,7 +685,7 @@ UDPSocket::CallListenerOpened() {
   MOZ_ASSERT(mSocketChild);
 
   // Get real local address and local port
-  mLocalAddress = NS_ConvertUTF8toUTF16(mSocketChild->LocalAddress());
+  CopyUTF8toUTF16(mSocketChild->LocalAddress(), mLocalAddress);
 
   mLocalPort.SetValue(mSocketChild->LocalPort());
 

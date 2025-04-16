@@ -34,6 +34,7 @@ from mozbuild.base import (
     MachCommandConditions as conditions,
     MozbuildObject,
 )
+from mozbuild.util import MOZBUILD_METRICS_PATH
 
 here = os.path.abspath(os.path.dirname(__file__))
 
@@ -174,7 +175,7 @@ class Doctor(MachCommandBase):
         return doctor.check_all()
 
 
-@CommandProvider
+@CommandProvider(metrics_path=MOZBUILD_METRICS_PATH)
 class Clobber(MachCommandBase):
     NO_AUTO_LOG = True
     CLOBBER_CHOICES = set(['objdir', 'python', 'gradle'])
@@ -802,6 +803,8 @@ def _get_desktop_run_parser():
                        help='Command-line arguments to be passed through to the program. Not '
                        'specifying a --profile or -P option will result in a temporary profile '
                        'being used.')
+    group.add_argument('--packaged', action='store_true',
+                       help='Run a packaged build.')
     group.add_argument('--remote', '-r', action='store_true',
                        help='Do not pass the --no-remote argument by default.')
     group.add_argument('--background', '-b', action='store_true',
@@ -1012,21 +1015,30 @@ class RunProgram(MachCommandBase):
         return self.run_process(args=args, ensure_exit_code=False,
                                 pass_thru=True, append_env=extra_env)
 
-    def _run_desktop(self, params, remote, background, noprofile, disable_e10s,
-                     enable_crash_reporter, enable_fission, setpref, temp_profile,
-                     macos_open, debug, debugger, debugger_args, dmd, mode, stacks,
-                     show_dump_stats):
+    def _run_desktop(self, params, packaged, remote, background, noprofile,
+                     disable_e10s, enable_crash_reporter, enable_fission, setpref,
+                     temp_profile, macos_open, debug, debugger, debugger_args, dmd,
+                     mode, stacks, show_dump_stats):
         from mozprofile import Profile, Preferences
 
         try:
-            binpath = self.get_binary_path('app')
+            if packaged:
+                binpath = self.get_binary_path(where='staged-package')
+            else:
+                binpath = self.get_binary_path('app')
         except BinaryNotFoundException as e:
             self.log(logging.ERROR, 'run',
                      {'error': str(e)},
                      'ERROR: {error}')
-            self.log(logging.INFO, 'run',
-                     {'help': e.help()},
-                     '{help}')
+            if packaged:
+                self.log(logging.INFO, 'run',
+                         {'help': "It looks like your build isn\'t packaged. "
+                                  "You can run |./mach package| to package it."},
+                         '{help}')
+            else:
+                self.log(logging.INFO, 'run',
+                         {'help': e.help()},
+                         '{help}')
             return 1
 
         args = []
@@ -1426,6 +1438,14 @@ class L10NCommands(MachCommandBase):
     @CommandArgument('--verbose', action='store_true',
                      help='Log informative status messages.')
     def package_l10n(self, verbose=False, locales=[]):
+        if 'RecursiveMake' not in self.substs['BUILD_BACKENDS']:
+            print('Artifact builds do not support localization. '
+                  'If you know what you are doing, you can use:\n'
+                  'ac_add_options --disable-compile-environment\n'
+                  'export BUILD_BACKENDS=FasterMake,RecursiveMake\n'
+                  'in your mozconfig.')
+            return 1
+
         if 'en-US' not in locales:
             self.log(logging.WARN, 'package-multi-locale', {'locales': locales},
                      'List of locales does not include default locale "en-US": '
@@ -1434,6 +1454,9 @@ class L10NCommands(MachCommandBase):
         locales = list(sorted(locales))
 
         append_env = {
+            # We are only (re-)packaging, we don't want to (re-)build
+            # anything inside Gradle.
+            'GRADLE_INVOKED_WITHIN_MACH_BUILD': '1',
             'MOZ_CHROME_MULTILOCALE': ' '.join(locales),
         }
 
@@ -1495,15 +1518,17 @@ class CreateMachEnvironment(MachCommandBase):
                  'default when entering from `mach`), create both a python3 '
                  'and python2.7 virtualenv. If executed with python2, only '
                  'create the python2.7 virtualenv.'))
-    def create_mach_environment(self):
-        from mozboot.util import get_state_dir
+    @CommandArgument(
+        '-f', '--force', action='store_true',
+        help=('Force re-creating the virtualenv even if it is already '
+              'up-to-date.'))
+    def create_mach_environment(self, force=False):
+        from mozboot.util import get_mach_virtualenv_root
         from mozbuild.pythonutil import find_python2_executable
         from mozbuild.virtualenv import VirtualenvManager
-        from six import PY3
+        from six import PY2
 
-        state_dir = get_state_dir()
-        virtualenv_path = os.path.join(state_dir, '_virtualenvs',
-                                       'mach' if PY3 else 'mach_py2')
+        virtualenv_path = get_mach_virtualenv_root(py2=PY2)
         if sys.executable.startswith(virtualenv_path):
             print('You can only create a mach environment with the system '
                   'Python. Re-run this `mach` command with the system Python.',
@@ -1515,15 +1540,19 @@ class CreateMachEnvironment(MachCommandBase):
             os.path.join(self.topsrcdir, 'build',
                          'mach_virtualenv_packages.txt'),
             populate_local_paths=False)
-        manager.build(sys.executable)
+
+        if manager.up_to_date(sys.executable) and not force:
+            print('virtualenv at %s is already up to date.' % virtualenv_path)
+        else:
+            manager.build(sys.executable)
 
         manager.install_pip_package('zstandard>=0.9.0,<=0.13.0')
 
-        if PY3:
+        if not PY2:
             # This can fail on some platforms. See
             # https://bugzilla.mozilla.org/show_bug.cgi?id=1660120
             try:
-                manager.install_pip_package('glean_sdk~=31.5.0')
+                manager.install_pip_package('glean_sdk~=32.3.1')
             except subprocess.CalledProcessError:
                 print('Could not install glean_sdk, so telemetry will not be '
                       'collected. Continuing.')
@@ -1533,9 +1562,13 @@ class CreateMachEnvironment(MachCommandBase):
                 print('WARNING! Could not find a Python 2 executable to create '
                       'a Python 2 virtualenv', file=sys.stderr)
                 return 0
-            ret = subprocess.call([
+            args = [
                 python2, os.path.join(self.topsrcdir, 'mach'),
-                'create-mach-environment'])
+                'create-mach-environment'
+            ]
+            if force:
+                args.append('-f')
+            ret = subprocess.call(args)
             if ret:
                 print('WARNING! Failed to create a Python 2 mach environment.',
                       file=sys.stderr)

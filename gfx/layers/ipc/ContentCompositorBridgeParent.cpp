@@ -237,8 +237,9 @@ ContentCompositorBridgeParent::AllocPWebRenderBridgeParent(
         nsPrintfCString("Created child without a matching parent? root %p",
                         root.get())
             .get());
+    nsCString error("NO_PARENT");
     WebRenderBridgeParent* parent =
-        WebRenderBridgeParent::CreateDestroyed(aPipelineId);
+        WebRenderBridgeParent::CreateDestroyed(aPipelineId, std::move(error));
     parent->AddRef();  // IPDL reference
     return parent;
   }
@@ -573,7 +574,7 @@ void ContentCompositorBridgeParent::GetFrameUniformity(
 
 void ContentCompositorBridgeParent::SetConfirmedTargetAPZC(
     const LayersId& aLayersId, const uint64_t& aInputBlockId,
-    const nsTArray<ScrollableLayerGuid>& aTargets) {
+    nsTArray<ScrollableLayerGuid>&& aTargets) {
   MOZ_ASSERT(aLayersId.IsValid());
   const CompositorBridgeParent::LayerTreeState* state =
       CompositorBridgeParent::GetIndirectShadowTree(aLayersId);
@@ -581,7 +582,8 @@ void ContentCompositorBridgeParent::SetConfirmedTargetAPZC(
     return;
   }
 
-  state->mParent->SetConfirmedTargetAPZC(aLayersId, aInputBlockId, aTargets);
+  state->mParent->SetConfirmedTargetAPZC(aLayersId, aInputBlockId,
+                                         std::move(aTargets));
 }
 
 AsyncCompositionManager* ContentCompositorBridgeParent::GetCompositionManager(

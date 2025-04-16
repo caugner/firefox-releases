@@ -8,7 +8,6 @@
 #include "mozilla/Sprintf.h"
 #include "mozilla/Logging.h"
 #include "mozilla/ipc/GeckoChildProcessHost.h"
-#include "nsAutoRef.h"
 #include "nsLocalFile.h"
 #include "nsMemoryReporterManager.h"
 #include "nsNetCID.h"
@@ -20,12 +19,6 @@
 #include <dirent.h>
 
 #define NANOPERSEC 1000000000.
-
-template <>
-class nsAutoRefTraits<DIR> : public nsPointerRefTraits<DIR> {
- public:
-  static void Release(DIR* dirHandle) { closedir(dirHandle); }
-};
 
 namespace mozilla {
 
@@ -93,11 +86,6 @@ class StatReader {
         // Amount of time that this process has been scheduled
         // in kernel mode, measured in clock ticks
         aInfo.cpuKernel = GetCPUTime(aToken, &rv);
-        NS_ENSURE_SUCCESS(rv, rv);
-        break;
-      case 22:
-        // Virtual memory size in bytes.
-        aInfo.virtualMemorySize = Get64Value(aToken, &rv);
         NS_ENSURE_SUCCESS(rv, rv);
         break;
       case 23:
@@ -253,11 +241,12 @@ RefPtr<ProcInfoPromise> GetProcInfo(nsTArray<ProcInfoRequest>&& aRequests) {
           info.childId = request.childId;
           info.type = request.processType;
           info.origin = request.origin;
+          info.windows = std::move(request.windowInfo);
 
           // Let's look at the threads
           nsCString taskPath;
           taskPath.AppendPrintf("/proc/%u/task", request.pid);
-          nsAutoRef<DIR> dirHandle(opendir(taskPath.get()));
+          DIR* dirHandle = opendir(taskPath.get());
           if (!dirHandle) {
             // For some reason, we have no data on the threads for this process.
             // Most likely reason is that we have just lost a race condition and
@@ -265,6 +254,7 @@ RefPtr<ProcInfoPromise> GetProcInfo(nsTArray<ProcInfoRequest>&& aRequests) {
             // Let's stop here and ignore the entire process.
             continue;
           }
+          auto cleanup = mozilla::MakeScopeExit([&] { closedir(dirHandle); });
 
           // If we can't read some thread info, we ignore that thread.
           dirent* entry;

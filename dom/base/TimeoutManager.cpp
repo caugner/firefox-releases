@@ -243,13 +243,18 @@ TimeDuration TimeoutManager::MinSchedulingDelay() const {
       isBackground ? TimeDuration::FromMilliseconds(
                          StaticPrefs::dom_min_background_timeout_value())
                    : TimeDuration();
-  if (BudgetThrottlingEnabled(isBackground) &&
-      mExecutionBudget < TimeDuration()) {
+  bool budgetThrottlingEnabled = BudgetThrottlingEnabled(isBackground);
+  if (budgetThrottlingEnabled && mExecutionBudget < TimeDuration()) {
     // Only throttle if execution budget is less than 0
     double factor = 1.0 / GetRegenerationFactor(mWindow.IsBackgroundInternal());
     return TimeDuration::Max(unthrottled, -mExecutionBudget.MultDouble(factor));
   }
-  //
+  if (!budgetThrottlingEnabled && isBackground) {
+    return TimeDuration::FromMilliseconds(
+        StaticPrefs::
+            dom_min_background_timeout_value_without_budget_throttling());
+  }
+
   return unthrottled;
 }
 

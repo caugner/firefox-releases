@@ -127,6 +127,12 @@ class nsSHistory : public mozilla::LinkedListElement<nsSHistory>,
                                      WalkHistoryEntriesFunc aCallback,
                                      void* aData);
 
+  // This function finds all entries that are contiguous and same-origin with
+  // the aEntry. And call the aCallback on them, including the aEntry. This only
+  // works for the root entries. It will do nothing for non-root entries.
+  static void WalkContiguousEntries(
+      nsISHEntry* aEntry, const std::function<void(nsISHEntry*)>& aCallback);
+
   nsTArray<nsCOMPtr<nsISHEntry>>& Entries() { return mEntries; }
 
   void RemoveEntries(nsTArray<nsID>& aIDs, int32_t aStartIndex,
@@ -166,6 +172,13 @@ class nsSHistory : public mozilla::LinkedListElement<nsSHistory>,
 
   void SetBrowsingContext(mozilla::dom::BrowsingContext* aRootBC) {
     mRootBC = aRootBC;
+  }
+
+  int32_t GetIndexForReplace() {
+    // Replace current entry in session history; If the requested index is
+    // valid, it indicates the loading was triggered by a history load, and
+    // we should replace the entry at requested index instead.
+    return mRequestedIndex == -1 ? mIndex : mRequestedIndex;
   }
 
  protected:
@@ -229,6 +242,10 @@ class nsSHistory : public mozilla::LinkedListElement<nsSHistory>,
   static void HandleEntriesToSwapInDocShell(mozilla::dom::BrowsingContext* aBC,
                                             nsISHEntry* aOldEntry,
                                             nsISHEntry* aNewEntry);
+
+  // Update the root browsing context state when adding, removing or
+  // replacing entries.
+  void UpdateRootBrowsingContextState();
 
  protected:
   bool mHasOngoingUpdate;

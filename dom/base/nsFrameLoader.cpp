@@ -49,6 +49,7 @@
 #include "nsQueryObject.h"
 #include "ReferrerInfo.h"
 #include "nsIOpenWindowInfo.h"
+#include "nsISHistory.h"
 
 #include "nsIURI.h"
 #include "nsNetUtil.h"
@@ -75,6 +76,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/PresShellInlines.h"
+#include "mozilla/StaticPrefs_fission.h"
 #include "mozilla/Unused.h"
 #include "mozilla/dom/ChromeMessageSender.h"
 #include "mozilla/dom/Element.h"
@@ -368,8 +370,10 @@ static already_AddRefed<BrowsingContextGroup> InitialBrowsingContextGroup(
   // will only ever use 53 bits of precision, so it can be round-tripped through
   // a JS number.
   nsresult rv = NS_OK;
-  int64_t signedGroupId{attrString.ToInteger(&rv, 10)};
+  int64_t signedGroupId = attrString.ToInteger64(&rv, 10);
   if (NS_FAILED(rv) || signedGroupId <= 0) {
+    MOZ_DIAGNOSTIC_ASSERT(
+        false, "we intended to have a particular id, but failed to parse it!");
     return nullptr;
   }
 
@@ -410,6 +414,14 @@ already_AddRefed<nsFrameLoader> nsFrameLoader::Create(
   RefPtr<BrowsingContext> context =
       CreateBrowsingContext(aOwner, aOpenWindowInfo, group);
   NS_ENSURE_TRUE(context, nullptr);
+
+  if (XRE_IsParentProcess() && aOpenWindowInfo) {
+    MOZ_ASSERT(context->IsTopContent());
+    if (RefPtr<BrowsingContext> crossGroupOpener =
+            aOpenWindowInfo->GetParent()) {
+      context->Canonical()->SetCrossGroupOpenerId(crossGroupOpener->Id());
+    }
+  }
 
   bool isRemoteFrame = InitialLoadIsRemote(aOwner);
   RefPtr<nsFrameLoader> fl =
@@ -620,6 +632,60 @@ nsresult nsFrameLoader::ReallyStartLoadingInternal() {
                   mOwnerContent->IsInComposedDoc());
 
   AUTO_PROFILER_LABEL("nsFrameLoader::ReallyStartLoadingInternal", OTHER);
+  RefPtr<nsDocShellLoadState> loadState;
+  if (!mPendingSwitchID) {
+    loadState = new nsDocShellLoadState(mURIToLoad);
+    loadState->SetOriginalFrameSrc(mLoadingOriginalSrc);
+
+    // The triggering principal could be null if the frame is loaded other
+    // than the src attribute, for example, the frame is sandboxed. In that
+    // case we use the principal of the owner content, which is needed to
+    // prevent XSS attaches on documents loaded in subframes.
+    if (mTriggeringPrincipal) {
+      loadState->SetTriggeringPrincipal(mTriggeringPrincipal);
+    } else {
+      loadState->SetTriggeringPrincipal(mOwnerContent->NodePrincipal());
+    }
+
+    // If we have an explicit CSP, we set it. If not, we only query it from
+    // the document in case there was no explicit triggeringPrincipal.
+    // Otherwise it's possible that the original triggeringPrincipal did not
+    // have a CSP which causes the CSP on the Principal and explicit CSP
+    // to be out of sync.
+    if (mCsp) {
+      loadState->SetCsp(mCsp);
+    } else if (!mTriggeringPrincipal) {
+      nsCOMPtr<nsIContentSecurityPolicy> csp = mOwnerContent->GetCsp();
+      loadState->SetCsp(csp);
+    }
+
+    nsAutoString srcdoc;
+    bool isSrcdoc =
+        mOwnerContent->IsHTMLElement(nsGkAtoms::iframe) &&
+        mOwnerContent->GetAttr(kNameSpaceID_None, nsGkAtoms::srcdoc, srcdoc);
+
+    if (isSrcdoc) {
+      loadState->SetSrcdocData(srcdoc);
+      loadState->SetBaseURI(mOwnerContent->GetBaseURI());
+    }
+
+    auto referrerInfo = MakeRefPtr<ReferrerInfo>(*mOwnerContent);
+    loadState->SetReferrerInfo(referrerInfo);
+
+    loadState->SetIsFromProcessingFrameAttributes();
+
+    // Default flags:
+    int32_t flags = nsIWebNavigation::LOAD_FLAGS_NONE;
+
+    // Flags for browser frame:
+    if (OwnerIsMozBrowserFrame()) {
+      flags = nsIWebNavigation::LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP |
+              nsIWebNavigation::LOAD_FLAGS_DISALLOW_INHERIT_PRINCIPAL;
+    }
+    loadState->SetLoadFlags(flags);
+
+    loadState->SetFirstParty(false);
+  }
 
   if (IsRemoteFrame()) {
     if (!EnsureRemoteBrowser()) {
@@ -631,15 +697,7 @@ nsresult nsFrameLoader::ReallyStartLoadingInternal() {
       mRemoteBrowser->ResumeLoad(mPendingSwitchID);
       mPendingSwitchID = 0;
     } else {
-      // The triggering principal could be null if the frame is loaded other
-      // than the src attribute, for example, the frame is sandboxed. In the
-      // case we use the principal of the owner content, which is needed to
-      // prevent XSS attaches on documents loaded in subframes.
-      if (mTriggeringPrincipal) {
-        mRemoteBrowser->LoadURL(mURIToLoad, mTriggeringPrincipal);
-      } else {
-        mRemoteBrowser->LoadURL(mURIToLoad, mOwnerContent->NodePrincipal());
-      }
+      mRemoteBrowser->LoadURL(loadState);
     }
 
     if (!mRemoteBrowserShown) {
@@ -677,65 +735,12 @@ nsresult nsFrameLoader::ReallyStartLoadingInternal() {
   rv = CheckURILoad(mURIToLoad, mTriggeringPrincipal);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  RefPtr<nsDocShellLoadState> loadState = new nsDocShellLoadState(mURIToLoad);
-
-  loadState->SetOriginalFrameSrc(mLoadingOriginalSrc);
   mLoadingOriginalSrc = false;
-
-  // If this frame is sandboxed with respect to origin we will set it up with
-  // a null principal later in nsDocShell::DoURILoad.
-  // We do it there to correctly sandbox content that was loaded into
-  // the frame via other methods than the src attribute.
-  // We'll use our principal, not that of the document loaded inside us.  This
-  // is very important; needed to prevent XSS attacks on documents loaded in
-  // subframes!
-  if (mTriggeringPrincipal) {
-    loadState->SetTriggeringPrincipal(mTriggeringPrincipal);
-  } else {
-    loadState->SetTriggeringPrincipal(mOwnerContent->NodePrincipal());
-  }
-
-  // If we have an explicit CSP, we set it. If not, we only query it from
-  // the document in case there was no explicit triggeringPrincipal.
-  // Otherwise it's possible that the original triggeringPrincipal did not
-  // have a CSP which causes the CSP on the Principal and explicit CSP
-  // to be out of sync.
-  if (mCsp) {
-    loadState->SetCsp(mCsp);
-  } else if (!mTriggeringPrincipal) {
-    nsCOMPtr<nsIContentSecurityPolicy> csp = mOwnerContent->GetCsp();
-    loadState->SetCsp(csp);
-  }
-
-  nsAutoString srcdoc;
-  bool isSrcdoc =
-      mOwnerContent->IsHTMLElement(nsGkAtoms::iframe) &&
-      mOwnerContent->GetAttr(kNameSpaceID_None, nsGkAtoms::srcdoc, srcdoc);
-
-  if (isSrcdoc) {
-    loadState->SetSrcdocData(srcdoc);
-    loadState->SetBaseURI(mOwnerContent->GetBaseURI());
-  }
-
-  auto referrerInfo = MakeRefPtr<ReferrerInfo>(*mOwnerContent);
-  loadState->SetReferrerInfo(referrerInfo);
-
-  // Default flags:
-  int32_t flags = nsIWebNavigation::LOAD_FLAGS_NONE;
-
-  // Flags for browser frame:
-  if (OwnerIsMozBrowserFrame()) {
-    flags = nsIWebNavigation::LOAD_FLAGS_ALLOW_THIRD_PARTY_FIXUP |
-            nsIWebNavigation::LOAD_FLAGS_DISALLOW_INHERIT_PRINCIPAL;
-  }
-
-  loadState->SetIsFromProcessingFrameAttributes();
 
   // Kick off the load...
   bool tmpState = mNeedsAsyncDestroy;
   mNeedsAsyncDestroy = true;
-  loadState->SetLoadFlags(flags);
-  loadState->SetFirstParty(false);
+
   rv = GetDocShell()->LoadURI(loadState, false);
   mNeedsAsyncDestroy = tmpState;
   mURIToLoad = nullptr;
@@ -1228,7 +1233,7 @@ nsresult nsFrameLoader::SwapWithOtherRemoteLoader(
   rv = aOther->PopulateOriginContextIdsFromAttributes(otherOriginAttributes);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (ourOriginAttributes != otherOriginAttributes) {
+  if (!ourOriginAttributes.EqualsIgnoringFPD(otherOriginAttributes)) {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
 
@@ -1872,8 +1877,19 @@ void nsFrameLoader::StartDestroy(bool aForProcessSwitch) {
 
   // Seems like this is a dynamic frame removal.
   if (dynamicSubframeRemoval) {
-    if (GetDocShell()) {
-      GetDocShell()->RemoveFromSessionHistory();
+    BrowsingContext* browsingContext = GetExtantBrowsingContext();
+    if (browsingContext) {
+      RefPtr<ChildSHistory> childSHistory =
+          browsingContext->Top()->GetChildSessionHistory();
+      if (childSHistory) {
+        if (StaticPrefs::fission_sessionHistoryInParent()) {
+          browsingContext->RemoveFromSessionHistory();
+        } else {
+          AutoTArray<nsID, 16> ids({browsingContext->GetHistoryID()});
+          childSHistory->LegacySHistory()->RemoveEntries(
+              ids, childSHistory->Index());
+        }
+      }
     }
   }
 
@@ -2748,9 +2764,8 @@ void nsFrameLoader::ActivateFrameEvent(const nsAString& aType, bool aCapture,
   }
 }
 
-nsresult nsFrameLoader::FinishStaticClone(nsFrameLoader* aStaticCloneOf,
-                                          nsIDocShell** aCloneDocShell,
-                                          Document** aCloneDocument) {
+nsresult nsFrameLoader::FinishStaticClone(
+    nsFrameLoader* aStaticCloneOf, bool* aOutHasInProcessPrintCallbacks) {
   MOZ_DIAGNOSTIC_ASSERT(
       !nsContentUtils::IsSafeToRunScript(),
       "A script blocker should be on the stack while FinishStaticClone is run");
@@ -2766,6 +2781,7 @@ nsresult nsFrameLoader::FinishStaticClone(nsFrameLoader* aStaticCloneOf,
   if (NS_WARN_IF(IsDead())) {
     return NS_ERROR_UNEXPECTED;
   }
+
   if (NS_WARN_IF(aStaticCloneOf->IsRemoteFrame())) {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
@@ -2781,18 +2797,15 @@ nsresult nsFrameLoader::FinishStaticClone(nsFrameLoader* aStaticCloneOf,
   docShell->GetContentViewer(getter_AddRefs(viewer));
   NS_ENSURE_STATE(viewer);
 
-  nsIDocShell* origDocShell = aStaticCloneOf->GetDocShell(IgnoreErrors());
+  nsIDocShell* origDocShell = aStaticCloneOf->GetDocShell();
   NS_ENSURE_STATE(origDocShell);
 
   nsCOMPtr<Document> doc = origDocShell->GetDocument();
   NS_ENSURE_STATE(doc);
 
-  nsCOMPtr<Document> clonedDoc = doc->CreateStaticClone(docShell);
+  nsCOMPtr<Document> clonedDoc =
+      doc->CreateStaticClone(docShell, viewer, aOutHasInProcessPrintCallbacks);
 
-  viewer->SetDocument(clonedDoc);
-
-  docShell.forget(aCloneDocShell);
-  clonedDoc.forget(aCloneDocument);
   return NS_OK;
 }
 

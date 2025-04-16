@@ -6,7 +6,7 @@
 SearchTestUtils.initXPCShellAddonManager(this);
 
 add_task(async function setup() {
-  await useTestEngines("simple-engines");
+  await SearchTestUtils.useTestEngines("simple-engines");
   await AddonTestUtils.promiseStartupManager();
   await Services.search.init();
 });
@@ -102,5 +102,5 @@ add_task(async function test_mozParamsFailForNonAppProvided() {
   check("{moz:locale}", "{moz:locale}");
 
   await extension.unload();
-  await promiseAfterCache();
+  await promiseAfterSettings();
 });

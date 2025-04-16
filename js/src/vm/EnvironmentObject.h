@@ -9,13 +9,11 @@
 
 #include <type_traits>
 
-#include "builtin/ModuleObject.h"
 #include "frontend/NameAnalysisTypes.h"
 #include "gc/Barrier.h"
 #include "gc/WeakMap.h"
 #include "js/GCHashTable.h"
 #include "vm/ArgumentsObject.h"
-#include "vm/GeneratorObject.h"
 #include "vm/GlobalObject.h"
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
@@ -24,7 +22,10 @@
 
 namespace js {
 
+class AbstractGeneratorObject;
+class IndirectBindingMap;
 class ModuleObject;
+
 using HandleModuleObject = Handle<ModuleObject*>;
 
 /*
@@ -1128,7 +1129,7 @@ inline bool IsFrameInitialEnvironment(AbstractFramePtr frame,
   // start of execution in the frame.
   //
   // This logic must be in sync with the HAS_INITIAL_ENV logic in
-  // InitFromBailout.
+  // BaselineStackBuilder::buildBaselineFrame.
 
   // A function frame's CallObject, if present, is always the initial
   // environment.

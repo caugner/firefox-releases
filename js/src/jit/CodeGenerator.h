@@ -66,6 +66,7 @@ class OutOfLineRegExpInstanceOptimizable;
 class OutOfLineNaNToZero;
 class OutOfLineZeroIfNaN;
 class OutOfLineTypedArrayIndexToInt32;
+class OutOfLineBoxNonStrictThis;
 
 class CodeGenerator final : public CodeGeneratorSpecific {
   void generateArgumentsChecks(bool assert = false);
@@ -138,6 +139,8 @@ class CodeGenerator final : public CodeGeneratorSpecific {
 
   void visitOutOfLineUnboxFloatingPoint(OutOfLineUnboxFloatingPoint* ool);
   void visitOutOfLineStoreElementHole(OutOfLineStoreElementHole* ool);
+
+  void visitOutOfLineBoxNonStrictThis(OutOfLineBoxNonStrictThis* ool);
 
   void visitOutOfLineICFallback(OutOfLineICFallback* ool);
 
@@ -215,7 +218,7 @@ class CodeGenerator final : public CodeGeneratorSpecific {
                 Register temp0, Register temp1, unsigned numFormals,
                 JSObject* templateObject, bool saveAndRestore,
                 Register resultreg);
-  void emitInstanceOf(LInstruction* ins, JSObject* prototypeObject);
+  void emitInstanceOf(LInstruction* ins, const LAllocation* prototypeObject);
 
   void loadJSScriptForBlock(MBasicBlock* block, Register reg);
   void loadOutermostJSScript(Register reg);

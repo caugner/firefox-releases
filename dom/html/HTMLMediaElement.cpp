@@ -13,7 +13,7 @@
 #include "AudioStreamTrack.h"
 #include "AutoplayPolicy.h"
 #include "ChannelMediaDecoder.h"
-#include "CrossGraphTrack.h"
+#include "CrossGraphPort.h"
 #include "DOMMediaStream.h"
 #include "DecoderDoctorDiagnostics.h"
 #include "DecoderDoctorLogger.h"
@@ -760,53 +760,6 @@ class HTMLMediaElement::MediaStreamTrackListener
 };
 
 /**
- * This listener observes the first video frame to arrive with a non-empty size,
- * and renders it to its VideoFrameContainer.
- */
-class HTMLMediaElement::FirstFrameListener : public VideoOutput {
- public:
-  FirstFrameListener(VideoFrameContainer* aContainer,
-                     AbstractThread* aMainThread)
-      : VideoOutput(aContainer, aMainThread) {
-    MOZ_ASSERT(NS_IsMainThread());
-  }
-
-  // NB that this overrides VideoOutput::NotifyRealtimeTrackData, so we can
-  // filter out all frames but the first one with a real size. This allows us to
-  // later re-use the logic in VideoOutput for rendering that frame.
-  void NotifyRealtimeTrackData(MediaTrackGraph* aGraph, TrackTime aTrackOffset,
-                               const MediaSegment& aMedia) override {
-    MOZ_ASSERT(aMedia.GetType() == MediaSegment::VIDEO);
-
-    if (mInitialSizeFound) {
-      return;
-    }
-
-    const VideoSegment& video = static_cast<const VideoSegment&>(aMedia);
-    for (VideoSegment::ConstChunkIterator c(video); !c.IsEnded(); c.Next()) {
-      if (c->mFrame.GetIntrinsicSize() != gfx::IntSize(0, 0)) {
-        mInitialSizeFound = true;
-
-        // Pick the first frame and run it through the rendering code.
-        VideoSegment segment;
-        segment.AppendFrame(do_AddRef(c->mFrame.GetImage()),
-                            c->mFrame.GetIntrinsicSize(),
-                            c->mFrame.GetPrincipalHandle(),
-                            c->mFrame.GetForceBlack(), c->mTimeStamp);
-        VideoOutput::NotifyRealtimeTrackData(aGraph, aTrackOffset, segment);
-        return;
-      }
-    }
-  }
-
- private:
-  // Whether a frame with a concrete size has been received. May only be
-  // accessed on the MTG's appending thread. (this is a direct listener so we
-  // get called by whoever is producing this track's data)
-  bool mInitialSizeFound = false;
-};
-
-/**
  * Helper class that manages audio and video outputs for all enabled tracks in a
  * media element. It also manages calculating the current time when playing a
  * MediaStream.
@@ -818,10 +771,17 @@ class HTMLMediaElement::MediaStreamRenderer
 
   MediaStreamRenderer(AbstractThread* aMainThread,
                       VideoFrameContainer* aVideoContainer,
+                      FirstFrameVideoOutput* aFirstFrameVideoOutput,
                       void* aAudioOutputKey)
       : mVideoContainer(aVideoContainer),
         mAudioOutputKey(aAudioOutputKey),
-        mWatchManager(this, aMainThread) {}
+        mWatchManager(this, aMainThread),
+        mFirstFrameVideoOutput(aFirstFrameVideoOutput) {
+    if (mFirstFrameVideoOutput) {
+      mWatchManager.Watch(mFirstFrameVideoOutput->mFirstFrameRendered,
+                          &MediaStreamRenderer::SetFirstFrameRendered);
+    }
+  }
 
   void Shutdown() {
     for (const auto& t : mAudioTracks.Clone()) {
@@ -833,11 +793,25 @@ class HTMLMediaElement::MediaStreamRenderer
       RemoveTrack(mVideoTrack->AsVideoStreamTrack());
     }
     mWatchManager.Shutdown();
+    mFirstFrameVideoOutput = nullptr;
   }
 
   void UpdateGraphTime() {
     mGraphTime =
         mGraphTimeDummy->mTrack->Graph()->CurrentTime() - *mGraphTimeOffset;
+  }
+
+  void SetFirstFrameRendered() {
+    if (!mFirstFrameVideoOutput) {
+      return;
+    }
+    if (mVideoTrack) {
+      mVideoTrack->AsVideoStreamTrack()->RemoveVideoOutput(
+          mFirstFrameVideoOutput);
+    }
+    mWatchManager.Unwatch(mFirstFrameVideoOutput->mFirstFrameRendered,
+                          &MediaStreamRenderer::SetFirstFrameRendered);
+    mFirstFrameVideoOutput = nullptr;
   }
 
   void SetProgressingCurrentTime(bool aProgress) {
@@ -976,6 +950,12 @@ class HTMLMediaElement::MediaStreamRenderer
     }
     mVideoTrack = aTrack;
     EnsureGraphTimeDummy();
+    if (mFirstFrameVideoOutput) {
+      // Add the first frame output even if we are rendering. It will only
+      // accept one frame. If we are rendering, then the main output will
+      // overwrite that with the same frame (and possibly more frames).
+      aTrack->AddVideoOutput(mFirstFrameVideoOutput);
+    }
     if (mRendering) {
       aTrack->AddVideoOutput(mVideoContainer);
     }
@@ -992,6 +972,9 @@ class HTMLMediaElement::MediaStreamRenderer
     MOZ_DIAGNOSTIC_ASSERT(mVideoTrack == aTrack);
     if (!mVideoContainer) {
       return;
+    }
+    if (mFirstFrameVideoOutput) {
+      aTrack->RemoveVideoOutput(mFirstFrameVideoOutput);
     }
     if (mRendering) {
       aTrack->RemoveVideoOutput(mVideoContainer);
@@ -1079,6 +1062,11 @@ class HTMLMediaElement::MediaStreamRenderer
 
   // Currently selected (and rendered) video track.
   WeakPtr<MediaStreamTrack> mVideoTrack;
+
+  // Holds a reference to the first-frame-getting video output attached to
+  // mVideoTrack. Set by the constructor, unset when the media element tells us
+  // it has rendered the first frame.
+  RefPtr<FirstFrameVideoOutput> mFirstFrameVideoOutput;
 };
 
 class HTMLMediaElement::MediaElementTrackSource
@@ -2009,9 +1997,16 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(HTMLMediaElement,
     if (tmp->mSelectedVideoStreamTrack) {
       tmp->mSelectedVideoStreamTrack->RemovePrincipalChangeObserver(tmp);
     }
-    if (tmp->mFirstFrameListener) {
-      tmp->mSelectedVideoStreamTrack->RemoveVideoOutput(
-          tmp->mFirstFrameListener);
+    if (tmp->mMediaStreamRenderer) {
+      tmp->mMediaStreamRenderer->Shutdown();
+      // We null out mMediaStreamRenderer here since Shutdown() will shut down
+      // its WatchManager, and UpdateSrcStreamPotentiallyPlaying() contains a
+      // guard for this.
+      tmp->mMediaStreamRenderer = nullptr;
+    }
+    if (tmp->mSecondaryMediaStreamRenderer) {
+      tmp->mSecondaryMediaStreamRenderer->Shutdown();
+      tmp->mSecondaryMediaStreamRenderer = nullptr;
     }
     if (tmp->mMediaStreamTrackListener) {
       tmp->mSrcStream->UnregisterTrackListener(
@@ -2215,7 +2210,6 @@ void HTMLMediaElement::ShutdownDecoder() {
   mDecoder->Shutdown();
   DDUNLINKCHILD(mDecoder.get());
   mDecoder = nullptr;
-  ReportAudioTrackSilenceProportionTelemetry();
 }
 
 void HTMLMediaElement::ReportPlayedTimeAfterBlockedTelemetry() {
@@ -2288,15 +2282,6 @@ void HTMLMediaElement::AbortExistingLoads() {
 
   bool fireTimeUpdate = false;
 
-  // We need to remove FirstFrameListener before VideoTracks get emptied.
-  if (mFirstFrameListener) {
-    if (mSelectedVideoStreamTrack) {
-      // Unlink might have removed the selected video track.
-      mSelectedVideoStreamTrack->RemoveVideoOutput(mFirstFrameListener);
-    }
-    mFirstFrameListener = nullptr;
-  }
-
   if (mDecoder) {
     fireTimeUpdate = mDecoder->GetCurrentTime() != 0.0;
     ShutdownDecoder();
@@ -2336,7 +2321,6 @@ void HTMLMediaElement::AbortExistingLoads() {
   SetAudibleState(false);
 
   mTags = nullptr;
-  mAudioTrackSilenceStartedTime = 0.0;
 
   if (mNetworkState != NETWORK_EMPTY) {
     NS_ASSERTION(!mDecoder && !mSrcStream,
@@ -2578,6 +2562,12 @@ void HTMLMediaElement::ResetState() {
     mMediaStreamRenderer->Shutdown();
     mMediaStreamRenderer = nullptr;
   }
+  if (mSecondaryMediaStreamRenderer) {
+    // mSecondaryMediaStreamRenderer, has a strong reference to
+    // the secondary VideoFrameContainer.
+    mSecondaryMediaStreamRenderer->Shutdown();
+    mSecondaryMediaStreamRenderer = nullptr;
+  }
 }
 
 void HTMLMediaElement::SelectResourceWrapper() {
@@ -2714,23 +2704,11 @@ void HTMLMediaElement::NotifyMediaTrackEnabled(dom::MediaTrack* aTrack) {
       if (mMediaStreamRenderer) {
         mMediaStreamRenderer->AddTrack(mSelectedVideoStreamTrack);
       }
+      if (mSecondaryMediaStreamRenderer) {
+        mSecondaryMediaStreamRenderer->AddTrack(mSelectedVideoStreamTrack);
+      }
       nsContentUtils::CombineResourcePrincipals(
           &mSrcStreamVideoPrincipal, mSelectedVideoStreamTrack->GetPrincipal());
-      if (VideoFrameContainer* container = GetVideoFrameContainer()) {
-        HTMLVideoElement* self = static_cast<HTMLVideoElement*>(this);
-        if (mSrcStreamIsPlaying) {
-          MaybeBeginCloningVisually();
-        } else if (self->VideoWidth() <= 1 && self->VideoHeight() <= 1) {
-          // MediaInfo uses dummy values of 1 for width and height to
-          // mark video as valid. We need a new first-frame listener
-          // if size is 0x0 or 1x1.
-          if (!mFirstFrameListener) {
-            mFirstFrameListener =
-                new FirstFrameListener(container, mAbstractMainThread);
-          }
-          mSelectedVideoStreamTrack->AddVideoOutput(mFirstFrameListener);
-        }
-      }
     }
   }
 
@@ -2779,12 +2757,11 @@ void HTMLMediaElement::NotifyMediaTrackDisabled(dom::MediaTrack* aTrack) {
     if (mSrcStream) {
       MOZ_DIAGNOSTIC_ASSERT(mSelectedVideoStreamTrack ==
                             aTrack->AsVideoTrack()->GetVideoStreamTrack());
-      if (mFirstFrameListener) {
-        mSelectedVideoStreamTrack->RemoveVideoOutput(mFirstFrameListener);
-        mFirstFrameListener = nullptr;
-      }
       if (mMediaStreamRenderer) {
         mMediaStreamRenderer->RemoveTrack(mSelectedVideoStreamTrack);
+      }
+      if (mSecondaryMediaStreamRenderer) {
+        mSecondaryMediaStreamRenderer->RemoveTrack(mSelectedVideoStreamTrack);
       }
       mSelectedVideoStreamTrack->RemovePrincipalChangeObserver(this);
       mSelectedVideoStreamTrack = nullptr;
@@ -3305,18 +3282,6 @@ void HTMLMediaElement::Seek(double aTime, SeekTarget::Type aSeekType,
   //       MediaDecoderReaders.
 
   mPlayingBeforeSeek = IsPotentiallyPlaying();
-
-  // If the audio track is silent before seeking, we should end current silence
-  // range and start a new range after seeking. Since seek() could be called
-  // multiple times before seekEnd() executed, we should only calculate silence
-  // range when first time seek() called. Calculating on other seek() calls
-  // would cause a wrong result. In order to get correct time, this checking
-  // should be called before decoder->seek().
-  if (IsAudioTrackCurrentlySilent() &&
-      !mHasAccumulatedSilenceRangeBeforeSeekEnd) {
-    AccumulateAudioTrackSilence();
-    mHasAccumulatedSilenceRangeBeforeSeekEnd = true;
-  }
 
   // The media backend is responsible for dispatching the timeupdate
   // event if it changes the playback position as a result of the seek.
@@ -4869,6 +4834,29 @@ void HTMLMediaElement::ReportTelemetry() {
     LOG(LogLevel::Debug,
         ("%p VIDEO_HIDDEN_PLAY_TIME_MS = %f", this, hiddenPlayTime));
 
+    if (this->IsEncrypted()) {
+      Telemetry::Accumulate(Telemetry::VIDEO_ENCRYPTED_PLAY_TIME_MS,
+                            SECONDS_TO_MS(playTime));
+      LOG(LogLevel::Debug,
+          ("%p VIDEO_ENCRYPTED_PLAY_TIME_MS = %f", this, playTime));
+    }
+
+    if (mMediaKeys) {
+      nsAutoString keySystem;
+      mMediaKeys->GetKeySystem(keySystem);
+      if (IsClearkeyKeySystem(keySystem)) {
+        Telemetry::Accumulate(Telemetry::VIDEO_CLEARKEY_PLAY_TIME_MS,
+                              SECONDS_TO_MS(playTime));
+        LOG(LogLevel::Debug,
+            ("%p VIDEO_CLEARKEY_PLAY_TIME_MS = %f", this, playTime));
+      } else if (IsWidevineKeySystem(keySystem)) {
+        Telemetry::Accumulate(Telemetry::VIDEO_WIDEVINE_PLAY_TIME_MS,
+                              SECONDS_TO_MS(playTime));
+        LOG(LogLevel::Debug,
+            ("%p VIDEO_WIDEVINE_PLAY_TIME_MS = %f", this, playTime));
+      }
+    }
+
     if (playTime > 0.0) {
       // We have actually played something -> Report some valid-video telemetry.
 
@@ -5261,9 +5249,8 @@ void HTMLMediaElement::UpdateSrcMediaStreamPlaying(uint32_t aFlags) {
     if (mMediaStreamRenderer) {
       mMediaStreamRenderer->Start();
     }
-
-    if (mSelectedVideoStreamTrack && GetVideoFrameContainer()) {
-      MaybeBeginCloningVisually();
+    if (mSecondaryMediaStreamRenderer) {
+      mSecondaryMediaStreamRenderer->Start();
     }
 
     SetCapturedOutputStreamsEnabled(true);  // Unmute
@@ -5274,21 +5261,9 @@ void HTMLMediaElement::UpdateSrcMediaStreamPlaying(uint32_t aFlags) {
     if (mMediaStreamRenderer) {
       mMediaStreamRenderer->Stop();
     }
-    VideoFrameContainer* container = GetVideoFrameContainer();
-    if (mSelectedVideoStreamTrack && container) {
-      HTMLVideoElement* self = static_cast<HTMLVideoElement*>(this);
-      if (self->VideoWidth() <= 1 && self->VideoHeight() <= 1) {
-        // MediaInfo uses dummy values of 1 for width and height to
-        // mark video as valid. We need a new first-frame listener
-        // if size is 0x0 or 1x1.
-        if (!mFirstFrameListener) {
-          mFirstFrameListener =
-              new FirstFrameListener(container, mAbstractMainThread);
-        }
-        mSelectedVideoStreamTrack->AddVideoOutput(mFirstFrameListener);
-      }
+    if (mSecondaryMediaStreamRenderer) {
+      mSecondaryMediaStreamRenderer->Stop();
     }
-
     SetCapturedOutputStreamsEnabled(false);  // Mute
   }
 }
@@ -5314,13 +5289,17 @@ void HTMLMediaElement::UpdateSrcStreamTime() {
 }
 
 void HTMLMediaElement::SetupSrcMediaStreamPlayback(DOMMediaStream* aStream) {
-  NS_ASSERTION(!mSrcStream && !mFirstFrameListener,
-               "Should have been ended already");
+  NS_ASSERTION(!mSrcStream, "Should have been ended already");
 
   mSrcStream = aStream;
 
+  VideoFrameContainer* container = GetVideoFrameContainer();
+  RefPtr<FirstFrameVideoOutput> firstFrameOutput =
+      container
+          ? MakeAndAddRef<FirstFrameVideoOutput>(container, mAbstractMainThread)
+          : nullptr;
   mMediaStreamRenderer = MakeAndAddRef<MediaStreamRenderer>(
-      mAbstractMainThread, GetVideoFrameContainer(), this);
+      mAbstractMainThread, container, firstFrameOutput, this);
   mWatchManager.Watch(mPaused,
                       &HTMLMediaElement::UpdateSrcStreamPotentiallyPlaying);
   mWatchManager.Watch(mReadyState,
@@ -5366,15 +5345,10 @@ void HTMLMediaElement::EndSrcMediaStreamPlayback() {
   if (mSelectedVideoStreamTrack) {
     mSelectedVideoStreamTrack->RemovePrincipalChangeObserver(this);
   }
-  if (mFirstFrameListener) {
-    if (mSelectedVideoStreamTrack) {
-      // Unlink might have removed the selected video track.
-      mSelectedVideoStreamTrack->RemoveVideoOutput(mFirstFrameListener);
-    }
-  }
   mSelectedVideoStreamTrack = nullptr;
-  mFirstFrameListener = nullptr;
 
+  MOZ_ASSERT_IF(mSecondaryMediaStreamRenderer,
+                !mMediaStreamRenderer == !mSecondaryMediaStreamRenderer);
   if (mMediaStreamRenderer) {
     mWatchManager.Unwatch(mPaused,
                           &HTMLMediaElement::UpdateSrcStreamPotentiallyPlaying);
@@ -5389,6 +5363,10 @@ void HTMLMediaElement::EndSrcMediaStreamPlayback() {
                           &HTMLMediaElement::UpdateSrcStreamTime);
     mMediaStreamRenderer->Shutdown();
     mMediaStreamRenderer = nullptr;
+  }
+  if (mSecondaryMediaStreamRenderer) {
+    mSecondaryMediaStreamRenderer->Shutdown();
+    mSecondaryMediaStreamRenderer = nullptr;
   }
 
   mSrcStream->UnregisterTrackListener(mMediaStreamTrackListener.get());
@@ -5702,13 +5680,6 @@ void HTMLMediaElement::SeekCompleted() {
   AddRemoveSelfReference();
   if (mCurrentPlayRangeStart == -1.0) {
     mCurrentPlayRangeStart = CurrentTime();
-  }
-
-  // After seeking completed, if the audio track is silent, start another new
-  // silence range.
-  mHasAccumulatedSilenceRangeBeforeSeekEnd = false;
-  if (IsAudioTrackCurrentlySilent()) {
-    UpdateAudioTrackSilenceRange(mIsAudioTrackAudible);
   }
 
   if (mSeekDOMPromise) {
@@ -6522,15 +6493,6 @@ void HTMLMediaElement::UpdateMediaSize(const nsIntSize& aSize) {
 
   mMediaInfo.mVideo.mDisplay = aSize;
   mWatchManager.ManualNotify(&HTMLMediaElement::UpdateReadyStateInternal);
-
-  if (mFirstFrameListener) {
-    if (mSelectedVideoStreamTrack) {
-      // Unlink might have removed the selected video track.
-      mSelectedVideoStreamTrack->RemoveVideoOutput(mFirstFrameListener);
-    }
-    // The first-frame listener won't be needed again for this stream.
-    mFirstFrameListener = nullptr;
-  }
 }
 
 void HTMLMediaElement::SuspendOrResumeElement(bool aSuspendElement) {
@@ -6548,15 +6510,6 @@ void HTMLMediaElement::SuspendOrResumeElement(bool aSuspendElement) {
     mCurrentLoadPlayTime.Pause();
     ReportTelemetry();
 
-    // For EME content, we may force destruction of the CDM client (and CDM
-    // instance if this is the last client for that CDM instance) and
-    // the CDM's decoder. This ensures the CDM gets reliable and prompt
-    // shutdown notifications, as it may have book-keeping it needs
-    // to do on shutdown.
-    if (mMediaKeys) {
-      nsAutoString keySystem;
-      mMediaKeys->GetKeySystem(keySystem);
-    }
     if (mDecoder) {
       mDecoder->Pause();
       mDecoder->Suspend();
@@ -7376,74 +7329,10 @@ bool HTMLMediaElement::IsCurrentlyPlaying() const {
 
 void HTMLMediaElement::SetAudibleState(bool aAudible) {
   if (mIsAudioTrackAudible != aAudible) {
-    UpdateAudioTrackSilenceRange(aAudible);
     mIsAudioTrackAudible = aAudible;
     NotifyAudioPlaybackChanged(
         AudioChannelService::AudibleChangedReasons::eDataAudibleChanged);
   }
-}
-
-bool HTMLMediaElement::IsAudioTrackCurrentlySilent() const {
-  return HasAudio() && !mIsAudioTrackAudible;
-}
-
-void HTMLMediaElement::UpdateAudioTrackSilenceRange(bool aAudible) {
-  if (!HasAudio()) {
-    return;
-  }
-
-  if (!aAudible) {
-    mAudioTrackSilenceStartedTime = CurrentTime();
-    return;
-  }
-
-  AccumulateAudioTrackSilence();
-}
-
-void HTMLMediaElement::AccumulateAudioTrackSilence() {
-  MOZ_ASSERT(HasAudio());
-  const double current = CurrentTime();
-  if (current < mAudioTrackSilenceStartedTime) {
-    return;
-  }
-  const auto start =
-      media::TimeUnit::FromSeconds(mAudioTrackSilenceStartedTime);
-  const auto end = media::TimeUnit::FromSeconds(current);
-  mSilenceTimeRanges += media::TimeInterval(start, end);
-}
-
-void HTMLMediaElement::ReportAudioTrackSilenceProportionTelemetry() {
-  if (!HasAudio()) {
-    return;
-  }
-
-  // Add last silence range to our ranges set.
-  if (!mIsAudioTrackAudible) {
-    AccumulateAudioTrackSilence();
-  }
-
-  RefPtr<TimeRanges> ranges = Played();
-  const uint32_t lengthPlayedRange = ranges->Length();
-  const uint32_t lengthSilenceRange = mSilenceTimeRanges.Length();
-  if (!lengthPlayedRange || !lengthSilenceRange) {
-    return;
-  }
-
-  double playedTime = 0.0, silenceTime = 0.0;
-  for (uint32_t idx = 0; idx < lengthPlayedRange; idx++) {
-    playedTime += ranges->End(idx) - ranges->Start(idx);
-  }
-
-  for (uint32_t idx = 0; idx < lengthSilenceRange; idx++) {
-    silenceTime += mSilenceTimeRanges.End(idx).ToSeconds() -
-                   mSilenceTimeRanges.Start(idx).ToSeconds();
-  }
-
-  double silenceProportion = (silenceTime / playedTime) * 100;
-  // silenceProportion should be in the range [0, 100]
-  silenceProportion = std::min(100.0, std::max(silenceProportion, 0.0));
-  Telemetry::Accumulate(Telemetry::AUDIO_TRACK_SILENCE_PROPORTION,
-                        silenceProportion);
 }
 
 void HTMLMediaElement::NotifyAudioPlaybackChanged(
@@ -7780,13 +7669,13 @@ already_AddRefed<Promise> HTMLMediaElement::SetSinkId(const nsAString& aSinkId,
       ->GetSinkDevice(win, sinkId)
       ->Then(
           mAbstractMainThread, __func__,
-          [self = RefPtr<HTMLMediaElement>(this)](
-              RefPtr<AudioDeviceInfo>&& aInfo) {
+          [self = RefPtr<HTMLMediaElement>(this),
+           this](RefPtr<AudioDeviceInfo>&& aInfo) {
             // Sink found switch output device.
             MOZ_ASSERT(aInfo);
-            if (self->mDecoder) {
-              RefPtr<SinkInfoPromise> p = self->mDecoder->SetSink(aInfo)->Then(
-                  self->mAbstractMainThread, __func__,
+            if (mDecoder) {
+              RefPtr<SinkInfoPromise> p = mDecoder->SetSink(aInfo)->Then(
+                  mAbstractMainThread, __func__,
                   [aInfo](const GenericPromise::ResolveOrRejectValue& aValue) {
                     if (aValue.IsResolve()) {
                       return SinkInfoPromise::CreateAndResolve(aInfo, __func__);
@@ -7796,11 +7685,11 @@ already_AddRefed<Promise> HTMLMediaElement::SetSinkId(const nsAString& aSinkId,
                   });
               return p;
             }
-            if (self->mSrcStream) {
-              MOZ_ASSERT(self->mMediaStreamRenderer);
+            if (mSrcStream) {
+              MOZ_ASSERT(mMediaStreamRenderer);
               RefPtr<SinkInfoPromise> p =
-                  self->mMediaStreamRenderer->SetAudioOutputDevice(aInfo)->Then(
-                      self->mAbstractMainThread, __func__,
+                  mMediaStreamRenderer->SetAudioOutputDevice(aInfo)->Then(
+                      mAbstractMainThread, __func__,
                       [aInfo](const GenericPromise::AllPromiseType::
                                   ResolveOrRejectValue& aValue) {
                         if (aValue.IsResolve()) {
@@ -7820,10 +7709,10 @@ already_AddRefed<Promise> HTMLMediaElement::SetSinkId(const nsAString& aSinkId,
             return SinkInfoPromise::CreateAndReject(res, __func__);
           })
       ->Then(mAbstractMainThread, __func__,
-             [promise, self = RefPtr<HTMLMediaElement>(this),
+             [promise, self = RefPtr<HTMLMediaElement>(this), this,
               sinkId](const SinkInfoPromise::ResolveOrRejectValue& aValue) {
                if (aValue.IsResolve()) {
-                 self->mSink = std::pair(sinkId, aValue.ResolveValue());
+                 mSink = std::pair(sinkId, aValue.ResolveValue());
                  promise->MaybeResolveWithUndefined();
                } else {
                  switch (aValue.RejectValue()) {
@@ -7969,6 +7858,27 @@ void HTMLMediaElement::StartMediaControlKeyListenerIfNeeded() {
     return;
   }
   mMediaControlKeyListener->Start();
+}
+
+void HTMLMediaElement::SetSecondaryMediaStreamRenderer(
+    VideoFrameContainer* aContainer,
+    FirstFrameVideoOutput* aFirstFrameOutput /* = nullptr */) {
+  MOZ_ASSERT(mSrcStream);
+  MOZ_ASSERT(mMediaStreamRenderer);
+  if (mSecondaryMediaStreamRenderer) {
+    mSecondaryMediaStreamRenderer->Shutdown();
+    mSecondaryMediaStreamRenderer = nullptr;
+  }
+  if (aContainer) {
+    mSecondaryMediaStreamRenderer = MakeAndAddRef<MediaStreamRenderer>(
+        mAbstractMainThread, aContainer, aFirstFrameOutput, this);
+    if (mSrcStreamIsPlaying) {
+      mSecondaryMediaStreamRenderer->Start();
+    }
+    if (mSelectedVideoStreamTrack) {
+      mSecondaryMediaStreamRenderer->AddTrack(mSelectedVideoStreamTrack);
+    }
+  }
 }
 
 void HTMLMediaElement::UpdateMediaControlAfterPictureInPictureModeChanged() {
