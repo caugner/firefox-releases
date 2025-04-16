@@ -7,7 +7,6 @@
 #include "nsGlobalWindowInner.h"
 
 #include <inttypes.h>
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,7 +17,6 @@
 #include "AudioChannelService.h"
 #include "AutoplayPolicy.h"
 #include "Crypto.h"
-#include "GeckoProfiler.h"
 #include "MainThreadUtils.h"
 #include "Navigator.h"
 #include "PaintWorkletImpl.h"
@@ -72,8 +70,6 @@
 #include "mozilla/ProcessHangMonitor.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/Result.h"
-#include "mozilla/ScopeExit.h"
-#include "mozilla/ScrollOrigin.h"
 #include "mozilla/ScrollTypes.h"
 #include "mozilla/Components.h"
 #include "mozilla/SizeOfState.h"
@@ -151,7 +147,6 @@
 #include "mozilla/dom/PopupBlocker.h"
 #include "mozilla/dom/PrimitiveConversions.h"
 #include "mozilla/dom/Promise.h"
-#include "mozilla/dom/ProxyHandlerUtils.h"
 #include "mozilla/dom/RootedDictionary.h"
 #include "mozilla/dom/WebTaskSchedulerMainThread.h"
 #include "mozilla/dom/ScriptLoader.h"
@@ -167,7 +162,6 @@
 #include "mozilla/dom/StorageNotifierService.h"
 #include "mozilla/dom/StorageUtils.h"
 #include "mozilla/dom/TabMessageTypes.h"
-#include "mozilla/dom/TestUtils.h"
 #include "mozilla/dom/Timeout.h"
 #include "mozilla/dom/TimeoutHandler.h"
 #include "mozilla/dom/TimeoutManager.h"
@@ -189,6 +183,8 @@
 #include "mozilla/dom/XRPermissionRequest.h"
 #include "mozilla/dom/cache/CacheStorage.h"
 #include "mozilla/dom/cache/Types.h"
+#include "mozilla/glean/bindings/Glean.h"
+#include "mozilla/glean/bindings/GleanPings.h"
 #include "mozilla/extensions/WebExtensionPolicy.h"
 #include "mozilla/fallible.h"
 #include "mozilla/gfx/BasePoint.h"
@@ -273,7 +269,6 @@
 #include "nsIThread.h"
 #include "nsITimedChannel.h"
 #include "nsIURI.h"
-#include "nsIVariant.h"
 #include "nsIWeakReference.h"
 #include "nsIWebBrowserChrome.h"
 #include "nsIWebNavigation.h"
@@ -292,7 +287,6 @@
 #include "nsPoint.h"
 #include "nsPresContext.h"
 #include "nsQueryObject.h"
-#include "nsRefPtrHashtable.h"
 #include "nsSandboxFlags.h"
 #include "nsScreen.h"
 #include "nsServiceManagerUtils.h"
@@ -317,11 +311,9 @@
 #include "xpcpublic.h"
 
 #include "nsIDOMXULControlElement.h"
-#include "nsMenuPopupFrame.h"
 
 #ifdef NS_PRINTING
 #  include "nsIPrintSettings.h"
-#  include "nsIPrintSettingsService.h"
 #endif
 
 #ifdef MOZ_WEBSPEECH
@@ -3254,6 +3246,18 @@ bool nsGlobalWindowInner::DeviceSensorsEnabled(JSContext*, JSObject*) {
 bool nsGlobalWindowInner::ContentPropertyEnabled(JSContext* aCx, JSObject*) {
   return StaticPrefs::dom_window_content_untrusted_enabled() ||
          nsContentUtils::IsSystemCaller(aCx);
+}
+
+/* static */
+bool nsGlobalWindowInner::CachesEnabled(JSContext* aCx, JSObject*) {
+  if (!StaticPrefs::dom_caches_enabled()) {
+    return false;
+  }
+  if (!JS::GetIsSecureContext(js::GetContextRealm(aCx))) {
+    return StaticPrefs::dom_caches_testing_enabled() ||
+           StaticPrefs::dom_serviceWorkers_testing_enabled();
+  }
+  return true;
 }
 
 nsDOMOfflineResourceList* nsGlobalWindowInner::GetApplicationCache(
@@ -7516,53 +7520,37 @@ void nsGlobalWindowInner::SetReplaceableWindowCoord(
     if (innerWidthSpecified || innerHeightSpecified || outerWidthSpecified ||
         outerHeightSpecified) {
       nsCOMPtr<nsIBaseWindow> treeOwnerAsWin = outer->GetTreeOwnerWindow();
-      nsCOMPtr<nsIScreen> screen;
       nsCOMPtr<nsIScreenManager> screenMgr(
           do_GetService("@mozilla.org/gfx/screenmanager;1"));
-      int32_t winLeft = 0;
-      int32_t winTop = 0;
-      int32_t winWidth = 0;
-      int32_t winHeight = 0;
-      double scale = 1.0;
 
       if (treeOwnerAsWin && screenMgr) {
         // Acquire current window size.
-        treeOwnerAsWin->GetUnscaledDevicePixelsPerCSSPixel(&scale);
-        treeOwnerAsWin->GetPositionAndSize(&winLeft, &winTop, &winWidth,
-                                           &winHeight);
-        winLeft = NSToIntRound(winHeight / scale);
-        winTop = NSToIntRound(winWidth / scale);
-        winWidth = NSToIntRound(winWidth / scale);
-        winHeight = NSToIntRound(winHeight / scale);
+        //
+        // FIXME: This needs to account for full zoom like the outer window code
+        // does! Ideally move there?
+        auto cssScale = treeOwnerAsWin->UnscaledDevicePixelsPerCSSPixel();
+        LayoutDeviceIntRect devWinRect = treeOwnerAsWin->GetPositionAndSize();
+        CSSIntRect cssWinRect = RoundedToInt(devWinRect / cssScale);
 
         // Acquire content window size.
         CSSSize contentSize;
         outer->GetInnerSize(contentSize);
 
-        screenMgr->ScreenForRect(winLeft, winTop, winWidth, winHeight,
-                                 getter_AddRefs(screen));
-
+        nsCOMPtr<nsIScreen> screen = screenMgr->ScreenForRect(RoundedToInt(
+            devWinRect / treeOwnerAsWin->DevicePixelsPerDesktopPixel()));
         if (screen) {
           int32_t roundedValue = std::round(value);
           int32_t* targetContentWidth = nullptr;
           int32_t* targetContentHeight = nullptr;
-          int32_t screenWidth = 0;
-          int32_t screenHeight = 0;
-          int32_t chromeWidth = 0;
-          int32_t chromeHeight = 0;
           int32_t inputWidth = 0;
           int32_t inputHeight = 0;
           int32_t unused = 0;
 
-          // Get screen dimensions (in device pixels)
-          screen->GetAvailRect(&unused, &unused, &screenWidth, &screenHeight);
-          // Convert them to CSS pixels
-          screenWidth = NSToIntRound(screenWidth / scale);
-          screenHeight = NSToIntRound(screenHeight / scale);
+          CSSIntSize availScreenSize =
+              RoundedToInt(screen->GetAvailRect().Size() / cssScale);
 
           // Calculate the chrome UI size.
-          chromeWidth = winWidth - contentSize.width;
-          chromeHeight = winHeight - contentSize.height;
+          CSSIntSize chromeSize = cssWinRect.Size() - RoundedToInt(contentSize);
 
           if (innerWidthSpecified || outerWidthSpecified) {
             inputWidth = value;
@@ -7575,9 +7563,10 @@ void nsGlobalWindowInner::SetReplaceableWindowCoord(
           }
 
           nsContentUtils::CalcRoundedWindowSizeForResistingFingerprinting(
-              chromeWidth, chromeHeight, screenWidth, screenHeight, inputWidth,
-              inputHeight, outerWidthSpecified, outerHeightSpecified,
-              targetContentWidth, targetContentHeight);
+              chromeSize.width, chromeSize.height, availScreenSize.width,
+              availScreenSize.height, inputWidth, inputHeight,
+              outerWidthSpecified, outerHeightSpecified, targetContentWidth,
+              targetContentHeight);
           value = T(roundedValue);
         }
       }
