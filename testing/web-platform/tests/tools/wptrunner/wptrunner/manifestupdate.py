@@ -1,4 +1,3 @@
-from __future__ import print_function
 import os
 from urllib.parse import urljoin, urlsplit
 from collections import namedtuple, defaultdict, deque
@@ -617,7 +616,8 @@ class PropertyUpdate(object):
                     except ConditionError:
                         expr = make_expr(prop_set, value)
                         error = ConditionError(expr)
-                    expr = make_expr(prop_set, value)
+                    else:
+                        expr = make_expr(prop_set, value)
                 else:
                     # The root node needs special handling
                     expr = None
@@ -922,7 +922,7 @@ def make_value_node(value):
     elif hasattr(value, "__iter__"):
         node = ListNode()
         for item in value:
-            node.append(make_node(item))
+            node.append(make_value_node(item))
     else:
         raise ValueError("Don't know how to convert %s into node" % type(value))
     return node

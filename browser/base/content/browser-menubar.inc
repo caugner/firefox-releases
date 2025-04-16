@@ -143,8 +143,7 @@
             </menu>
 
             <menu id="view-menu" data-l10n-id="menu-view">
-              <menupopup id="menu_viewPopup"
-                         onpopupshowing="updateCharacterEncodingMenuState();">
+              <menupopup id="menu_viewPopup">
                 <menu id="viewToolbarsMenu" data-l10n-id="menu-view-toolbars-menu">
                   <menupopup id="view-menu-popup" onpopupshowing="onViewToolbarsPopupShowing(event);">
                     <menuseparator/>
@@ -201,12 +200,10 @@
                     <menuseparator/>
                   </menupopup>
                 </menu>
-                <menu id="charsetMenu"
-                    oncommand="BrowserSetForcedCharacterSet(event.target.getAttribute('charset'));"
-                    onpopupshowing="CharsetMenu.build(event.target); UpdateCurrentCharset(this);" data-l10n-id="menu-view-charset">
-                  <menupopup>
-                  </menupopup>
-                </menu>
+                <menuitem id="repair-text-encoding"
+                          disabled="true"
+                          oncommand="BrowserForceEncodingDetection();"
+                          data-l10n-id="menu-view-repair-text-encoding"/>
                 <menuseparator/>
 #ifdef XP_MACOSX
                 <menuitem id="enterFullScreenItem"
@@ -321,7 +318,7 @@
       <menuitem id="bookmarksShowAll"
                 command="Browser:ShowAllBookmarks"
                 key="manBookmarkKb"
-                data-l10n-id="menu-bookmarks-show-all"/>
+                data-l10n-id="menu-bookmarks-manage"/>
       <menuseparator id="organizeBookmarksSeparator"/>
       <menuitem id="menu_bookmarkThisPage"
                 command="Browser:AddBookmarkAs"

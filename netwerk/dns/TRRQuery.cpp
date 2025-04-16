@@ -3,15 +3,18 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "TRRQuery.h"
+
+#include "mozilla/StaticPrefs_network.h"
+#include "mozilla/Telemetry.h"
+#include "nsQueryObject.h"
 #include "TRR.h"
+#include "TRRService.h"
 #include "ODoH.h"
+// Put DNSLogging.h at the end to avoid LOG being overwritten by other headers.
+#include "DNSLogging.h"
 
 namespace mozilla {
 namespace net {
-
-#undef LOG
-extern mozilla::LazyLogModule gHostResolverLog;
-#define LOG(args) MOZ_LOG(gHostResolverLog, mozilla::LogLevel::Debug, args)
 
 static already_AddRefed<AddrInfo> merge_rrset(AddrInfo* rrto,
                                               AddrInfo* rrfrom) {
@@ -38,15 +41,12 @@ void TRRQuery::Cancel(nsresult aStatus) {
   MutexAutoLock trrlock(mTrrLock);
   if (mTrrA) {
     mTrrA->Cancel(aStatus);
-    mTrrA = nullptr;
   }
   if (mTrrAAAA) {
     mTrrAAAA->Cancel(aStatus);
-    mTrrAAAA = nullptr;
   }
   if (mTrrByType) {
     mTrrByType->Cancel(aStatus);
-    mTrrByType = nullptr;
   }
 }
 
@@ -133,10 +133,12 @@ nsresult TRRQuery::DispatchLookup(TRR* pushedTRR, bool aUseODoH) {
       }
     } while (sendAgain);
 
+    mTRRRequestCounter = requestsToSend.Length();
     for (const auto& request : requestsToSend) {
       if (NS_SUCCEEDED(gTRRService->DispatchTRRRequest(request))) {
         madeQuery = true;
       } else {
+        mTRRRequestCounter--;
         MutexAutoLock trrlock(mTrrLock);
         if (request == mTrrA) {
           mTrrA = nullptr;
@@ -195,8 +197,6 @@ AHostResolver::LookupStatus TRRQuery::CompleteLookup(
 
   RefPtr<AddrInfo> newRRSet(aNewRRSet);
   DNSResolverType resolverType = newRRSet->ResolverType();
-  bool pendingARequest = false;
-  bool pendingAAAARequest = false;
   {
     MutexAutoLock trrlock(mTrrLock);
     if (newRRSet->TRRType() == TRRTYPE_A) {
@@ -212,12 +212,6 @@ AHostResolver::LookupStatus TRRQuery::CompleteLookup(
     } else {
       MOZ_ASSERT(0);
     }
-    if (mTrrA) {
-      pendingARequest = true;
-    }
-    if (mTrrAAAA) {
-      pendingAAAARequest = true;
-    }
   }
 
   if (NS_SUCCEEDED(status)) {
@@ -230,8 +224,14 @@ AHostResolver::LookupStatus TRRQuery::CompleteLookup(
     }
   }
 
-  if (pendingARequest ||
-      pendingAAAARequest) {  // There are other outstanding requests
+  bool pendingRequest = false;
+  if (mTRRRequestCounter) {
+    mTRRRequestCounter--;
+    pendingRequest = (mTRRRequestCounter != 0);
+  } else {
+    MOZ_DIAGNOSTIC_ASSERT(false, "Request counter is messed up");
+  }
+  if (pendingRequest) {  // There are other outstanding requests
     mFirstTRRresult = status;
     if (NS_FAILED(status)) {
       return LOOKUP_OK;  // wait for outstanding

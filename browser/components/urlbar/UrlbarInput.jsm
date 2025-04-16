@@ -85,7 +85,6 @@ class UrlbarInput {
             </html:div>
           </html:div>
           <hbox class="search-one-offs"
-                compact="true"
                 includecurrentengine="true"
                 disabletab="true"/>
         </vbox>
@@ -326,10 +325,11 @@ class UrlbarInput {
     let value = this.window.gBrowser.userTypedValue;
     let valid = false;
 
-    // Explicitly check for nulled out value. We don't want to reset the URL
-    // bar if the user has deleted the URL and we'd just put the same URL
-    // back. See bug 304198.
-    if (value === null) {
+    // Restore the selected browser's current URI if `value` is null or if it's
+    // an empty string and we're switching tabs. In the latter case, when the
+    // user makes the input empty, switches tabs, and switches back, we want the
+    // URI to become visible again so the user knows what URI they're viewing.
+    if (value === null || (!value && dueToTabSwitch)) {
       uri = uri || this.window.gBrowser.currentURI;
       // Strip off usernames and passwords for the location bar
       try {
@@ -2868,6 +2868,9 @@ class UrlbarInput {
         this.focusedViaMousedown = !this.focused;
         this._preventClickSelectsAll = this.focused;
 
+        // Keep the focus status, since the attribute may be changed
+        // upon calling this.focus().
+        const hasFocus = this.hasAttribute("focused");
         if (event.target != this.inputField) {
           this.focus();
         }
@@ -2892,7 +2895,7 @@ class UrlbarInput {
           // user has Top Sites disabled, creating a flashing effect.
           this.view.autoOpen({
             event,
-            suppressFocusBorder: !this.hasAttribute("focused"),
+            suppressFocusBorder: !hasFocus,
           });
         }
         break;
@@ -3543,7 +3546,7 @@ class AddSearchEngineHelper {
    * them in a submenu.
    */
   get maxInlineEngines() {
-    return 3;
+    return this.shortcutButtons._maxInlineAddEngines;
   }
 
   /**
@@ -3556,21 +3559,7 @@ class AddSearchEngineHelper {
     let engines = browser.engines?.slice() || [];
     if (!this._sameEngines(this.engines, engines)) {
       this.engines = engines;
-
-      // Update shortcut buttons. We only add `maxInlineEngines` engines, to
-      // cover the most common cases, others can be added from the context menu.
-      this.shortcutButtons.updateWebEngines(
-        engines.slice(0, this.maxInlineEngines).map(e => ({
-          name: e.title,
-          uri: e.uri,
-          get icon() {
-            // The icon is actually the browser favicon, that may not be in
-            // place yet, it will be fetched from the browser when the ui
-            // element is built.
-            return e.icon;
-          },
-        }))
-      );
+      this.shortcutButtons.updateWebEngines(engines);
     }
   }
 

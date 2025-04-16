@@ -157,8 +157,8 @@ impl ImageData {
             None => PrimitiveOpacity::opaque(),
         };
 
-        if self.stretch_size.width >= common.prim_rect.size.width &&
-            self.stretch_size.height >= common.prim_rect.size.height {
+        if self.stretch_size.width >= common.prim_rect.width() &&
+            self.stretch_size.height >= common.prim_rect.height() {
 
             common.may_need_repetition = false;
         }
@@ -332,10 +332,10 @@ impl ImageData {
                 for image_tiling::Repetition { origin, edge_flags } in repetitions {
                     let edge_flags = base_edge_flags | edge_flags;
 
-                    let layout_image_rect = LayoutRect {
+                    let layout_image_rect = LayoutRect::from_origin_and_size(
                         origin,
-                        size: self.stretch_size,
-                    };
+                        self.stretch_size,
+                    );
 
                     let tiles = image_tiling::tiles(
                         &layout_image_rect,
@@ -603,9 +603,10 @@ impl YuvImageData {
     }
 
     pub fn write_prim_gpu_blocks(&self, request: &mut GpuDataRequest) {
+        let ranged_color_space = self.color_space.with_range(self.color_range);
         request.push([
-            self.color_depth.rescaling_factor(),
-            pack_as_float(self.color_space as u32),
+            pack_as_float(self.color_depth.bit_depth()),
+            pack_as_float(ranged_color_space as u32),
             pack_as_float(self.format as u32),
             0.0
         ]);
@@ -676,6 +677,6 @@ fn test_struct_sizes() {
     assert_eq!(mem::size_of::<ImageTemplate>(), 72, "ImageTemplate size changed");
     assert_eq!(mem::size_of::<ImageKey>(), 52, "ImageKey size changed");
     assert_eq!(mem::size_of::<YuvImage>(), 32, "YuvImage size changed");
-    assert_eq!(mem::size_of::<YuvImageTemplate>(), 72, "YuvImageTemplate size changed");
+    assert_eq!(mem::size_of::<YuvImageTemplate>(), 84, "YuvImageTemplate size changed");
     assert_eq!(mem::size_of::<YuvImageKey>(), 52, "YuvImageKey size changed");
 }

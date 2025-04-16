@@ -206,7 +206,7 @@ void nsHTMLDocument::TryUserForcedCharset(nsIContentViewer* aCv,
                                           nsIDocShell* aDocShell,
                                           int32_t& aCharsetSource,
                                           NotNull<const Encoding*>& aEncoding) {
-  if (kCharsetFromUserForced <= aCharsetSource) {
+  if (aCharsetSource >= kCharsetFromXmlDeclarationUtf16) {
     return;
   }
 
@@ -215,20 +215,11 @@ void nsHTMLDocument::TryUserForcedCharset(nsIContentViewer* aCv,
     return;
   }
 
-  if (aDocShell) {
+  if (aDocShell && nsDocShell::Cast(aDocShell)->GetForcedAutodetection()) {
     // This is the Character Encoding menu code path in Firefox
-    auto encoding = nsDocShell::Cast(aDocShell)->GetForcedCharset();
-
-    if (encoding) {
-      if (!IsAsciiCompatible(encoding)) {
-        return;
-      }
-      aEncoding = WrapNotNull(encoding);
-      aCharsetSource = nsDocShell::Cast(aDocShell)->GetForcedAutodetection()
-                           ? kCharsetFromPendingUserForcedAutoDetection
-                           : kCharsetFromUserForced;
-      aDocShell->SetCharset(""_ns);
-    }
+    aEncoding = WINDOWS_1252_ENCODING;
+    aCharsetSource = kCharsetFromPendingUserForcedAutoDetection;
+    nsDocShell::Cast(aDocShell)->ResetForcedAutodetection();
   }
 }
 
@@ -238,7 +229,7 @@ void nsHTMLDocument::TryParentCharset(nsIDocShell* aDocShell,
   if (!aDocShell) {
     return;
   }
-  if (aCharsetSource >= kCharsetFromUserForced) {
+  if (aCharsetSource >= kCharsetFromXmlDeclarationUtf16) {
     return;
   }
 
@@ -250,9 +241,7 @@ void nsHTMLDocument::TryParentCharset(nsIDocShell* aDocShell,
   if (!parentCharset) {
     return;
   }
-  if (kCharsetFromUserForced == parentSource ||
-      kCharsetFromUserForcedJapaneseAutoDetection == parentSource ||
-      kCharsetFromPendingUserForcedAutoDetection == parentSource ||
+  if (kCharsetFromPendingUserForcedAutoDetection == parentSource ||
       kCharsetFromInitialUserForcedAutoDetection == parentSource ||
       kCharsetFromFinalUserForcedAutoDetection == parentSource) {
     if (WillIgnoreCharsetOverride() ||
@@ -261,11 +250,7 @@ void nsHTMLDocument::TryParentCharset(nsIDocShell* aDocShell,
       return;
     }
     aEncoding = WrapNotNull(parentCharset);
-    aCharsetSource =
-        (kCharsetFromUserForced == parentSource ||
-         kCharsetFromUserForcedJapaneseAutoDetection == parentSource)
-            ? kCharsetFromUserForced
-            : kCharsetFromPendingUserForcedAutoDetection;
+    aCharsetSource = kCharsetFromPendingUserForcedAutoDetection;
     return;
   }
 
@@ -689,7 +674,37 @@ bool nsHTMLDocument::WillIgnoreCharsetOverride() {
       return true;
     }
   }
-  return false;
+
+  switch (mCharacterSetSource) {
+    case kCharsetUninitialized:
+    case kCharsetFromFallback:
+    case kCharsetFromDocTypeDefault:
+    case kCharsetFromInitialAutoDetectionWouldHaveBeenUTF8:
+    case kCharsetFromInitialAutoDetectionWouldNotHaveBeenUTF8DependedOnTLD:
+    case kCharsetFromFinalAutoDetectionWouldHaveBeenUTF8:
+    case kCharsetFromFinalAutoDetectionWouldNotHaveBeenUTF8DependedOnTLD:
+    case kCharsetFromParentFrame:
+    case kCharsetFromXmlDeclaration:
+    case kCharsetFromMetaPrescan:
+    case kCharsetFromMetaTag:
+    case kCharsetFromChannel:
+      return false;
+  }
+
+  bool potentialEffect = false;
+  nsIPrincipal* parentPrincipal = NodePrincipal();
+
+  auto subDoc = [&potentialEffect, parentPrincipal](Document& aSubDoc) {
+    if (parentPrincipal->Equals(aSubDoc.NodePrincipal()) &&
+        !aSubDoc.WillIgnoreCharsetOverride()) {
+      potentialEffect = true;
+      return CallState::Stop;
+    }
+    return CallState::Continue;
+  };
+  EnumerateSubDocuments(subDoc);
+
+  return !potentialEffect;
 }
 
 void nsHTMLDocument::GetFormsAndFormControls(nsContentList** aFormList,

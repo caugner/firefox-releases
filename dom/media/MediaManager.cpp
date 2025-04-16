@@ -1064,11 +1064,15 @@ void MediaDevice::GetSettings(MediaTrackSettings& aOutSettings) const {
   mSource->GetSettings(aOutSettings);
 }
 
-// Threadsafe since mSource is const.
+// Threadsafe since mKind and mSource are const.
 NS_IMETHODIMP
 MediaDevice::GetMediaSource(nsAString& aMediaSource) {
-  aMediaSource.AssignASCII(
-      dom::MediaSourceEnumValues::GetString(GetMediaSource()));
+  if (mKind == MediaDeviceKind::Audiooutput) {
+    aMediaSource.Truncate();
+  } else {
+    aMediaSource.AssignASCII(
+        dom::MediaSourceEnumValues::GetString(GetMediaSource()));
+  }
   return NS_OK;
 }
 
@@ -3209,6 +3213,14 @@ RefPtr<MediaManager::DevicePromise> MediaManager::SelectAudioOutput(
                   MakeRefPtr<MediaMgrError>(MediaMgrError::Name::AbortError),
                   __func__);
             }
+            if (devices->IsEmpty()) {
+              LOG("SelectAudioOutput: no devices found");
+              auto error = nsContentUtils::ResistFingerprinting(aCallerType)
+                               ? MediaMgrError::Name::NotAllowedError
+                               : MediaMgrError::Name::NotFoundError;
+              return DevicePromise::CreateAndReject(
+                  MakeRefPtr<MediaMgrError>(error), __func__);
+            }
             MozPromiseHolder<DevicePromise> holder;
             RefPtr<DevicePromise> p = holder.Ensure(__func__);
             auto task = MakeRefPtr<SelectAudioOutputTask>(
@@ -3243,79 +3255,6 @@ RefPtr<MediaManager::DevicePromise> MediaManager::SelectAudioOutput(
             LOG("SelectAudioOutput: EnumerateDevicesImpl "
                 "failure callback called!");
             return DevicePromise::CreateAndReject(std::move(aError), __func__);
-          });
-}
-
-RefPtr<AudioDeviceInfo> CopyWithNullDeviceId(AudioDeviceInfo* aDeviceInfo) {
-  MOZ_ASSERT(aDeviceInfo->Preferred());
-
-  nsString vendor;
-  aDeviceInfo->GetVendor(vendor);
-  uint16_t type;
-  aDeviceInfo->GetType(&type);
-  uint16_t state;
-  aDeviceInfo->GetState(&state);
-  uint16_t pref;
-  aDeviceInfo->GetPreferred(&pref);
-  uint16_t supportedFormat;
-  aDeviceInfo->GetSupportedFormat(&supportedFormat);
-  uint16_t defaultFormat;
-  aDeviceInfo->GetDefaultFormat(&defaultFormat);
-  uint32_t maxChannels;
-  aDeviceInfo->GetMaxChannels(&maxChannels);
-  uint32_t defaultRate;
-  aDeviceInfo->GetDefaultRate(&defaultRate);
-  uint32_t maxRate;
-  aDeviceInfo->GetMaxRate(&maxRate);
-  uint32_t minRate;
-  aDeviceInfo->GetMinRate(&minRate);
-  uint32_t maxLatency;
-  aDeviceInfo->GetMaxLatency(&maxLatency);
-  uint32_t minLatency;
-  aDeviceInfo->GetMinLatency(&minLatency);
-
-  return MakeRefPtr<AudioDeviceInfo>(
-      nullptr, aDeviceInfo->Name(), aDeviceInfo->GroupID(), vendor, type, state,
-      pref, supportedFormat, defaultFormat, maxChannels, defaultRate, maxRate,
-      minRate, maxLatency, minLatency);
-}
-
-RefPtr<SinkInfoPromise> MediaManager::GetSinkDevice(nsPIDOMWindowInner* aWindow,
-                                                    const nsString& aDeviceId) {
-  MOZ_ASSERT(NS_IsMainThread());
-  MOZ_ASSERT(aWindow);
-
-  bool isSecure = aWindow->IsSecureContext();
-  auto devices = MakeRefPtr<MediaDeviceSetRefCnt>();
-  return EnumerateDevicesImpl(aWindow, MediaSourceEnum::Other,
-                              MediaSourceEnum::Other, MediaSinkEnum::Speaker,
-                              DeviceEnumerationType::Normal,
-                              DeviceEnumerationType::Normal, true, devices)
-      ->Then(
-          GetCurrentSerialEventTarget(), __func__,
-          [aDeviceId, isSecure, devices](bool) {
-            for (RefPtr<MediaDevice>& device : *devices) {
-              if (aDeviceId.IsEmpty() && device->mSinkInfo->Preferred()) {
-                return SinkInfoPromise::CreateAndResolve(
-                    CopyWithNullDeviceId(device->mSinkInfo), __func__);
-              }
-              if (device->mID.Equals(aDeviceId)) {
-                // TODO: Check if the application is authorized to play audio
-                // through this device (Bug 1493982).
-                if (isSecure || device->mSinkInfo->Preferred()) {
-                  return SinkInfoPromise::CreateAndResolve(device->mSinkInfo,
-                                                           __func__);
-                }
-                return SinkInfoPromise::CreateAndReject(
-                    NS_ERROR_DOM_MEDIA_NOT_ALLOWED_ERR, __func__);
-              }
-            }
-            return SinkInfoPromise::CreateAndReject(NS_ERROR_NOT_AVAILABLE,
-                                                    __func__);
-          },
-          [](RefPtr<MediaMgrError>&& aError) {
-            return SinkInfoPromise::CreateAndReject(NS_ERROR_NOT_AVAILABLE,
-                                                    __func__);
           });
 }
 
@@ -3821,15 +3760,7 @@ nsresult MediaManager::Observe(nsISupports* aSubject, const char* aTopic,
     }
     if (SelectAudioOutputTask* outputTask = task->AsSelectAudioOutputTask()) {
       if (!audioOutput) {
-        // selectAudioOutput() has checked for "denied" permission state
-        // before reporting no devices.  (This differs from getUserMedia(),
-        // which checks for no devices before checking permission.)  However,
-        // selectAudioOutput() still does not prompt before reporting no
-        // devices, so hide this information when resisting fingerprinting.
-        auto error = nsContentUtils::ResistFingerprinting(task->CallerType())
-                         ? MediaMgrError::Name::NotAllowedError
-                         : MediaMgrError::Name::NotFoundError;
-        task->Denied(error);
+        task->Denied(MediaMgrError::Name::NotAllowedError);
         return NS_OK;
       }
       outputTask->Allowed(std::move(audioOutput));

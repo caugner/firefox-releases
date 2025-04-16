@@ -327,9 +327,9 @@ class nsDocShell final : public nsDocLoader,
   void SetInFrameSwap(bool aInSwap) { mInFrameSwap = aInSwap; }
   bool InFrameSwap();
 
-  const mozilla::Encoding* GetForcedCharset() { return mForcedCharset; }
-
   bool GetForcedAutodetection() { return mForcedAutodetection; }
+
+  void ResetForcedAutodetection() { mForcedAutodetection = false; }
 
   mozilla::HTMLEditor* GetHTMLEditorInternal();
   nsresult SetHTMLEditorInternal(mozilla::HTMLEditor* aHTMLEditor);
@@ -494,6 +494,10 @@ class nsDocShell final : public nsDocLoader,
 
   void SetLoadingSessionHistoryInfo(
       const mozilla::dom::LoadingSessionHistoryInfo& aLoadingInfo);
+  const mozilla::dom::LoadingSessionHistoryInfo*
+  GetLoadingSessionHistoryInfo() {
+    return mLoadingEntry.get();
+  }
 
   already_AddRefed<nsIInputStream> GetPostDataFromCurrentEntry() const;
   mozilla::Maybe<uint32_t> GetCacheKeyFromCurrentEntry() const;
@@ -952,7 +956,6 @@ class nsDocShell final : public nsDocLoader,
   void SetupReferrerInfoFromChannel(nsIChannel* aChannel);
   void SetReferrerInfo(nsIReferrerInfo* aReferrerInfo);
   void ReattachEditorToWindow(nsISHEntry* aSHEntry);
-  void RecomputeCanExecuteScripts();
   void ClearFrameHistory(nsISHEntry* aEntry);
   // Determine if this type of load should update history.
   static bool ShouldUpdateGlobalHistory(uint32_t aLoadType);
@@ -1056,7 +1059,7 @@ class nsDocShell final : public nsDocLoader,
   // LoadGroup.
   void SetLoadGroupDefaultLoadFlags(nsLoadFlags aLoadFlags);
 
-  void SetTitleOnHistoryEntry();
+  void SetTitleOnHistoryEntry(bool aUpdateEntryInSessionHistory);
 
   void SetScrollRestorationIsManualOnHistoryEntry(nsISHEntry* aSHEntry,
                                                   bool aIsManual);
@@ -1190,7 +1193,6 @@ class nsDocShell final : public nsDocLoader,
 
   mozilla::UniquePtr<mozilla::gfx::Matrix5x4> mColorMatrix;
 
-  const mozilla::Encoding* mForcedCharset;
   const mozilla::Encoding* mParentCharset;
 
   // WEAK REFERENCES BELOW HERE.
@@ -1245,7 +1247,6 @@ class nsDocShell final : public nsDocLoader,
 
   bool mInitialized : 1;
   bool mAllowSubframes : 1;
-  bool mAllowJavascript : 1;
   bool mAllowMetaRedirects : 1;
   bool mAllowImages : 1;
   bool mAllowMedia : 1;
@@ -1259,11 +1260,6 @@ class nsDocShell final : public nsDocLoader,
   bool mDeviceSizeIsPageSize : 1;
   bool mWindowDraggingAllowed : 1;
   bool mInFrameSwap : 1;
-
-  // Because scriptability depends on the mAllowJavascript values of our
-  // ancestors, we cache the effective scriptability and recompute it when
-  // it might have changed;
-  bool mCanExecuteScripts : 1;
 
   // This boolean is set to true right before we fire pagehide and generally
   // unset when we embed a new content viewer. While it's true no navigation
@@ -1286,7 +1282,6 @@ class nsDocShell final : public nsDocLoader,
   // should be passed a SHEntry to save itself into.
   bool mSavingOldViewer : 1;
 
-  bool mAffectPrivateSessionLifetime : 1;
   bool mInvisible : 1;
   bool mHasLoadedNonBlankURI : 1;
 

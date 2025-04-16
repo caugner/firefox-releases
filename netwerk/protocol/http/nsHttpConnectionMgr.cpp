@@ -53,35 +53,7 @@ NS_IMPL_ISUPPORTS(nsHttpConnectionMgr, nsIObserver)
 
 //-----------------------------------------------------------------------------
 
-nsHttpConnectionMgr::nsHttpConnectionMgr()
-    : mReentrantMonitor("nsHttpConnectionMgr.mReentrantMonitor"),
-      mMaxUrgentExcessiveConns(0),
-      mMaxConns(0),
-      mMaxPersistConnsPerHost(0),
-      mMaxPersistConnsPerProxy(0),
-      mMaxRequestDelay(0),
-      mThrottleEnabled(false),
-      mThrottleVersion(2),
-      mThrottleSuspendFor(0),
-      mThrottleResumeFor(0),
-      mThrottleReadLimit(0),
-      mThrottleReadInterval(0),
-      mThrottleHoldTime(0),
-      mThrottleMaxTime(0),
-      mBeConservativeForProxy(true),
-      mIsShuttingDown(false),
-      mNumActiveConns(0),
-      mNumIdleConns(0),
-      mNumSpdyHttp3ActiveConns(0),
-      mNumDnsAndConnectSockets(0),
-      mTimeOfNextWakeUp(UINT64_MAX),
-      mPruningNoTraffic(false),
-      mTimeoutTickArmed(false),
-      mTimeoutTickNext(1),
-      mCurrentTopBrowsingContextId(0),
-      mThrottlingInhibitsReading(false),
-      mActiveTabTransactionsExist(false),
-      mActiveTabUnthrottledTransactionsExist(false) {
+nsHttpConnectionMgr::nsHttpConnectionMgr() {
   LOG(("Creating nsHttpConnectionMgr @%p\n", this));
 }
 
@@ -148,11 +120,11 @@ nsresult nsHttpConnectionMgr::Init(
 
 class BoolWrapper : public ARefBase {
  public:
-  BoolWrapper() : mBool(false) {}
+  BoolWrapper() = default;
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(BoolWrapper, override)
 
  public:  // intentional!
-  bool mBool;
+  bool mBool{false};
 
  private:
   virtual ~BoolWrapper() = default;
@@ -248,8 +220,9 @@ void nsHttpConnectionMgr::PruneDeadConnectionsAfter(uint32_t timeInSeconds) {
 void nsHttpConnectionMgr::ConditionallyStopPruneDeadConnectionsTimer() {
   // Leave the timer in place if there are connections that potentially
   // need management
-  if (mNumIdleConns || (mNumActiveConns && gHttpHandler->IsSpdyEnabled()))
+  if (mNumIdleConns || (mNumActiveConns && gHttpHandler->IsSpdyEnabled())) {
     return;
+  }
 
   LOG(("nsHttpConnectionMgr::StopPruneDeadConnectionsTimer\n"));
 
@@ -412,13 +385,13 @@ nsresult nsHttpConnectionMgr::DoShiftReloadConnectionCleanupWithConnInfo(
 
 class SpeculativeConnectArgs : public ARefBase {
  public:
-  SpeculativeConnectArgs() : mFetchHTTPSRR(false) {}
+  SpeculativeConnectArgs() = default;
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(SpeculativeConnectArgs, override)
 
  public:  // intentional!
   RefPtr<SpeculativeTransaction> mTrans;
 
-  bool mFetchHTTPSRR;
+  bool mFetchHTTPSRR{false};
 
  private:
   virtual ~SpeculativeConnectArgs() = default;
@@ -1249,18 +1222,19 @@ nsresult nsHttpConnectionMgr::MakeNewConnection(
   outerLoopEnd:;
   }
 
-  if (AtActiveConnectionLimit(ent, trans->Caps()))
+  if (AtActiveConnectionLimit(ent, trans->Caps())) {
     return NS_ERROR_NOT_AVAILABLE;
+  }
 
-  nsresult rv =
-      CreateTransport(ent, trans, trans->Caps(), false, false,
-                      trans->ClassOfService() & nsIClassOfService::UrgentStart,
-                      true, pendingTransInfo);
+  nsresult rv = ent->CreateDnsAndConnectSocket(
+      trans, trans->Caps(), false, false,
+      trans->ClassOfService() & nsIClassOfService::UrgentStart, true,
+      pendingTransInfo);
   if (NS_FAILED(rv)) {
     /* hard failure */
     LOG(
         ("nsHttpConnectionMgr::MakeNewConnection [ci = %s trans = %p] "
-         "CreateTransport() hard failure.\n",
+         "CreateDnsAndConnectSocket() hard failure.\n",
          ent->mConnInfo->HashKey().get(), trans));
     trans->Close(rv);
     if (rv == NS_ERROR_NOT_AVAILABLE) rv = NS_ERROR_FAILURE;
@@ -1409,7 +1383,7 @@ nsresult nsHttpConnectionMgr::TryDispatchTransaction(
 
   // Don't dispatch if this transaction is waiting for HTTPS RR.
   // Note that this is only used in test currently.
-  if (caps & NS_HTTP_WAIT_HTTPSSVC_RESULT) {
+  if (caps & NS_HTTP_FORCE_WAIT_HTTP_RR) {
     return NS_ERROR_NOT_AVAILABLE;
   }
 
@@ -1614,14 +1588,15 @@ nsresult nsHttpConnectionMgr::DispatchAbstractTransaction(
 void nsHttpConnectionMgr::ReportProxyTelemetry(ConnectionEntry* ent) {
   enum { PROXY_NONE = 1, PROXY_HTTP = 2, PROXY_SOCKS = 3, PROXY_HTTPS = 4 };
 
-  if (!ent->mConnInfo->UsingProxy())
+  if (!ent->mConnInfo->UsingProxy()) {
     Telemetry::Accumulate(Telemetry::HTTP_PROXY_TYPE, PROXY_NONE);
-  else if (ent->mConnInfo->UsingHttpsProxy())
+  } else if (ent->mConnInfo->UsingHttpsProxy()) {
     Telemetry::Accumulate(Telemetry::HTTP_PROXY_TYPE, PROXY_HTTPS);
-  else if (ent->mConnInfo->UsingHttpProxy())
+  } else if (ent->mConnInfo->UsingHttpProxy()) {
     Telemetry::Accumulate(Telemetry::HTTP_PROXY_TYPE, PROXY_HTTP);
-  else
+  } else {
     Telemetry::Accumulate(Telemetry::HTTP_PROXY_TYPE, PROXY_SOCKS);
+  }
 }
 
 nsresult nsHttpConnectionMgr::ProcessNewTransaction(nsHttpTransaction* trans) {
@@ -1756,36 +1731,6 @@ void nsHttpConnectionMgr::RecvdConnect() {
   }
 
   ConditionallyStopTimeoutTick();
-}
-
-nsresult nsHttpConnectionMgr::CreateTransport(
-    ConnectionEntry* ent, nsAHttpTransaction* trans, uint32_t caps,
-    bool speculative, bool isFromPredictor, bool urgentStart, bool allow1918,
-    PendingTransactionInfo* pendingTransInfo) {
-  MOZ_ASSERT(OnSocketThread(), "not on socket thread");
-  MOZ_ASSERT((speculative && !pendingTransInfo) ||
-             (!speculative && pendingTransInfo));
-
-  RefPtr<DnsAndConnectSocket> sock = new DnsAndConnectSocket(
-      ent, trans, caps, speculative, isFromPredictor, urgentStart);
-
-  if (speculative) {
-    sock->SetAllow1918(allow1918);
-  }
-  // The socket stream holds the reference to the half open
-  // socket - so if the stream fails to init the half open
-  // will go away.
-  nsresult rv = sock->Init();
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  if (pendingTransInfo) {
-    DebugOnly<bool> claimed =
-        pendingTransInfo->TryClaimingDnsAndConnectSocket(sock);
-    MOZ_ASSERT(claimed);
-  }
-
-  ent->InsertIntoDnsAndConnectSockets(sock);
-  return NS_OK;
 }
 
 void nsHttpConnectionMgr::DispatchSpdyPendingQ(
@@ -3334,9 +3279,9 @@ void nsHttpConnectionMgr::DoSpeculativeConnectionInternal(
     if (aFetchHTTPSRR) {
       Unused << aTrans->FetchHTTPSRR();
     }
-    DebugOnly<nsresult> rv =
-        CreateTransport(aEnt, aTrans, aTrans->Caps(), true, isFromPredictor,
-                        false, allow1918, nullptr);
+    DebugOnly<nsresult> rv = aEnt->CreateDnsAndConnectSocket(
+        aTrans, aTrans->Caps(), true, isFromPredictor, false, allow1918,
+        nullptr);
     MOZ_ASSERT(NS_SUCCEEDED(rv));
   } else {
     LOG(
@@ -3512,12 +3457,11 @@ void nsHttpConnectionMgr::MoveToWildCardConnEntry(
   ent->MoveConnection(proxyConn, wcEnt);
 }
 
-bool nsHttpConnectionMgr::MoveTransToNewConnEntry(
-    nsHttpTransaction* aTrans, nsHttpConnectionInfo* aNewCI) {
+bool nsHttpConnectionMgr::RemoveTransFromConnEntry(nsHttpTransaction* aTrans) {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
 
-  LOG(("nsHttpConnectionMgr::MoveTransToNewConnEntry: trans=%p aNewCI=%s",
-       aTrans, aNewCI->HashKey().get()));
+  LOG(("nsHttpConnectionMgr::RemoveTransFromConnEntry: trans=%p ci=%s", aTrans,
+       aTrans->ConnectionInfo()->HashKey().get()));
 
   // Step 1: Get the transaction's connection entry.
   ConnectionEntry* entry = mCT.GetWeak(aTrans->ConnectionInfo()->HashKey());
@@ -3526,14 +3470,7 @@ bool nsHttpConnectionMgr::MoveTransToNewConnEntry(
   }
 
   // Step 2: Try to find the undispatched transaction.
-  if (!entry->RemoveTransFromPendingQ(aTrans)) {
-    return false;
-  }
-
-  // Step 3: Add the transaction.
-  aTrans->UpdateConnectionInfo(aNewCI);
-  Unused << ProcessNewTransaction(aTrans);
-  return true;
+  return entry->RemoveTransFromPendingQ(aTrans);
 }
 
 void nsHttpConnectionMgr::IncreaseNumDnsAndConnectSockets() {
@@ -3567,6 +3504,11 @@ nsHttpConnectionMgr::FindTransactionHelper(bool removeWhenFound,
   return info.forget();
 }
 
+already_AddRefed<ConnectionEntry> nsHttpConnectionMgr::FindConnectionEntry(
+    const nsHttpConnectionInfo* ci) {
+  return mCT.Get(ci->HashKey());
+}
+
 nsHttpConnectionMgr* nsHttpConnectionMgr::AsHttpConnectionMgr() { return this; }
 
 HttpConnectionMgrParent* nsHttpConnectionMgr::AsHttpConnectionMgrParent() {
@@ -3579,8 +3521,9 @@ void nsHttpConnectionMgr::NewIdleConnectionAdded(uint32_t timeToLive) {
   // If the added connection was first idle connection or has shortest
   // time to live among the watched connections, pruning dead
   // connections needs to be done when it can't be reused anymore.
-  if (!mTimer || NowInSeconds() + timeToLive < mTimeOfNextWakeUp)
+  if (!mTimer || NowInSeconds() + timeToLive < mTimeOfNextWakeUp) {
     PruneDeadConnectionsAfter(timeToLive);
+  }
 }
 
 void nsHttpConnectionMgr::DecrementNumIdleConns() {

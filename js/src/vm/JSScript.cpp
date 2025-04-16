@@ -1096,15 +1096,6 @@ XDRResult js::XDRScript(XDRState<mode>* xdr, HandleScope scriptEnclosingScope,
 
   bool isFunctionScript = funOrMod && funOrMod->is<JSFunction>();
 
-  // Instrumented scripts cannot be encoded, as they have extra instructions
-  // which are not normally present. Globals with instrumentation enabled must
-  // compile scripts via the bytecode emitter, which will insert these
-  // instructions.
-  if (xdr->hasOptions() ? !!xdr->options().instrumentationKinds
-                        : !!cx->global()->getInstrumentationHolder()) {
-    return xdr->fail(JS::TranscodeResult::Failure);
-  }
-
   if (mode == XDR_ENCODE) {
     script = scriptp.get();
 
@@ -4066,7 +4057,7 @@ out:
   return script->offsetToPC(offset);
 }
 
-JS_FRIEND_API unsigned js::GetScriptLineExtent(JSScript* script) {
+JS_PUBLIC_API unsigned js::GetScriptLineExtent(JSScript* script) {
   unsigned lineno = script->lineno();
   unsigned maxLineNo = lineno;
   for (SrcNoteIterator iter(script->notes()); !iter.atEnd(); ++iter) {
@@ -4838,6 +4829,10 @@ void JSScript::resetWarmUpCounterToDelayIonCompilation() {
       warmUpData_.toJitScript()->resetWarmUpCount(newCount);
     }
   }
+}
+
+gc::AllocSite* JSScript::createAllocSite() {
+  return jitScript()->createAllocSite(this);
 }
 
 void JSScript::AutoDelazify::holdScript(JS::HandleFunction fun) {

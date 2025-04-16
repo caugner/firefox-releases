@@ -8,64 +8,29 @@
 
 const TEST_URL = "https://example.com/";
 const TEST_URL2 = "https://example.com/browser";
-
-add_task(async function setup() {
-  sinon.spy(Interactions, "_updateDatabase");
-
-  registerCleanupFunction(() => {
-    sinon.restore();
-  });
-});
-
-async function assertDatabaseValues(args, expected) {
-  await BrowserTestUtils.waitForCondition(
-    () => Interactions._updateDatabase.callCount == expected.length,
-    "Should have saved to the database"
-  );
-
-  for (let i = 0; i < expected.length; i++) {
-    let actual = args[i][0];
-    Assert.equal(
-      actual.url,
-      expected[i].url,
-      "Should have saved the page into the database"
-    );
-    if (expected[i].exactTotalViewTime) {
-      Assert.equal(
-        actual.totalViewTime,
-        expected[i].exactTotalViewTime,
-        "Should have kept the exact time."
-      );
-    } else {
-      Assert.greater(
-        actual.totalViewTime,
-        expected[i].totalViewTime,
-        "Should have stored the interaction time."
-      );
-    }
-  }
-}
+const TEST_URL3 = "https://example.com/browser/browser";
+const TEST_URL4 = "https://example.com/browser/browser/components";
 
 add_task(async function test_interactions_simple_load_and_navigate_away() {
   await BrowserTestUtils.withNewTab(TEST_URL, async browser => {
-    Interactions._lastUpdateTime = Cu.now() - 10000;
+    Interactions._pageViewStartTime = Cu.now() - 10000;
 
     BrowserTestUtils.loadURI(browser, TEST_URL2);
     await BrowserTestUtils.browserLoaded(browser, false, TEST_URL2);
 
-    await assertDatabaseValues(Interactions._updateDatabase.args, [
+    await assertDatabaseValues([
       {
         url: TEST_URL,
         totalViewTime: 10000,
       },
     ]);
 
-    Interactions._lastUpdateTime = Cu.now() - 20000;
+    Interactions._pageViewStartTime = Cu.now() - 20000;
 
     BrowserTestUtils.loadURI(browser, "about:blank");
     await BrowserTestUtils.browserLoaded(browser, false, "about:blank");
 
-    await assertDatabaseValues(Interactions._updateDatabase.args, [
+    await assertDatabaseValues([
       {
         url: TEST_URL,
         totalViewTime: 10000,
@@ -78,13 +43,30 @@ add_task(async function test_interactions_simple_load_and_navigate_away() {
   });
 });
 
-add_task(async function test_interactions_close_tab() {
-  sinon.reset();
+add_task(async function test_interactions_simple_load_and_change_to_non_http() {
+  await Interactions.reset();
   await BrowserTestUtils.withNewTab(TEST_URL, async browser => {
-    Interactions._lastUpdateTime = Cu.now() - 20000;
+    Interactions._pageViewStartTime = Cu.now() - 10000;
+
+    BrowserTestUtils.loadURI(browser, "about:support");
+    await BrowserTestUtils.browserLoaded(browser, false, "about:support");
+
+    await assertDatabaseValues([
+      {
+        url: TEST_URL,
+        totalViewTime: 10000,
+      },
+    ]);
+  });
+});
+
+add_task(async function test_interactions_close_tab() {
+  await Interactions.reset();
+  await BrowserTestUtils.withNewTab(TEST_URL, async browser => {
+    Interactions._pageViewStartTime = Cu.now() - 20000;
   });
 
-  await assertDatabaseValues(Interactions._updateDatabase.args, [
+  await assertDatabaseValues([
     {
       url: TEST_URL,
       totalViewTime: 20000,
@@ -93,7 +75,7 @@ add_task(async function test_interactions_close_tab() {
 });
 
 add_task(async function test_interactions_background_tab() {
-  sinon.reset();
+  await Interactions.reset();
   let tab1 = await BrowserTestUtils.openNewForegroundTab({
     gBrowser,
     url: TEST_URL,
@@ -102,24 +84,24 @@ add_task(async function test_interactions_background_tab() {
   let tab2 = BrowserTestUtils.addTab(gBrowser, TEST_URL2);
   await BrowserTestUtils.browserLoaded(tab2.linkedBrowser, false, TEST_URL2);
 
-  Interactions._lastUpdateTime = Cu.now() - 10000;
+  Interactions._pageViewStartTime = Cu.now() - 10000;
 
   BrowserTestUtils.removeTab(tab2);
 
   // This is checking a non-action, so let the event queue clear to try and
-  // detect any unexpected database writes.
+  // detect any unexpected database writes. We wait for a few ticks to
+  // make it more likely. however if this fails it may show up as an
+  // intermittent.
+  await TestUtils.waitForTick();
+  await TestUtils.waitForTick();
   await TestUtils.waitForTick();
 
-  Assert.equal(
-    Interactions._updateDatabase.callCount,
-    0,
-    "Should not have recorded any interactions."
-  );
+  await assertDatabaseValues([]);
 
   BrowserTestUtils.removeTab(tab1);
 
   // Only the interaction in the visible tab should have been recorded.
-  await assertDatabaseValues(Interactions._updateDatabase.args, [
+  await assertDatabaseValues([
     {
       url: TEST_URL,
       totalViewTime: 10000,
@@ -128,7 +110,7 @@ add_task(async function test_interactions_background_tab() {
 });
 
 add_task(async function test_interactions_switch_tabs() {
-  sinon.reset();
+  await Interactions.reset();
   let tab1 = await BrowserTestUtils.openNewForegroundTab({
     gBrowser,
     url: TEST_URL,
@@ -138,24 +120,24 @@ add_task(async function test_interactions_switch_tabs() {
   await BrowserTestUtils.browserLoaded(tab2.linkedBrowser, false, TEST_URL2);
 
   info("Switch to second tab");
-  Interactions._lastUpdateTime = Cu.now() - 10000;
+  Interactions._pageViewStartTime = Cu.now() - 10000;
   gBrowser.selectedTab = tab2;
 
   // Only the interaction of the first tab should be recorded so far.
-  await assertDatabaseValues(Interactions._updateDatabase.args, [
+  await assertDatabaseValues([
     {
       url: TEST_URL,
       totalViewTime: 10000,
     },
   ]);
-  let tab1ViewTime = Interactions._updateDatabase.args[0][0].totalViewTime;
+  let tab1ViewTime = await getDatabaseValue(TEST_URL, "totalViewTime");
 
   info("Switch back to first tab");
-  Interactions._lastUpdateTime = Cu.now() - 20000;
+  Interactions._pageViewStartTime = Cu.now() - 20000;
   gBrowser.selectedTab = tab1;
 
   // The interaction of the second tab should now be recorded.
-  await assertDatabaseValues(Interactions._updateDatabase.args, [
+  await assertDatabaseValues([
     {
       url: TEST_URL,
       exactTotalViewTime: tab1ViewTime,
@@ -167,19 +149,247 @@ add_task(async function test_interactions_switch_tabs() {
   ]);
 
   info("Switch to second tab again");
-  // We reset the stub here to make the database change clearer.
-  sinon.reset();
-  Interactions._lastUpdateTime = Cu.now() - 30000;
+  Interactions._pageViewStartTime = Cu.now() - 30000;
   gBrowser.selectedTab = tab2;
 
   // The interaction of the second tab should now be recorded.
-  await assertDatabaseValues(Interactions._updateDatabase.args, [
+  await assertDatabaseValues([
     {
       url: TEST_URL,
       totalViewTime: tab1ViewTime + 30000,
+    },
+    {
+      url: TEST_URL2,
+      totalViewTime: 20000,
     },
   ]);
 
   BrowserTestUtils.removeTab(tab1);
   BrowserTestUtils.removeTab(tab2);
+});
+
+add_task(async function test_interactions_switch_windows() {
+  await Interactions.reset();
+
+  // Open a tab in the first window.
+  let tabInOriginalWindow = await BrowserTestUtils.openNewForegroundTab({
+    gBrowser,
+    url: TEST_URL,
+  });
+
+  // and then load the second window.
+  Interactions._pageViewStartTime = Cu.now() - 10000;
+
+  let otherWin = await BrowserTestUtils.openNewBrowserWindow();
+
+  BrowserTestUtils.loadURI(otherWin.gBrowser.selectedBrowser, TEST_URL2);
+  await BrowserTestUtils.browserLoaded(
+    otherWin.gBrowser.selectedBrowser,
+    false,
+    TEST_URL2
+  );
+  await SimpleTest.promiseFocus(otherWin);
+  await assertDatabaseValues([
+    {
+      url: TEST_URL,
+      totalViewTime: 10000,
+    },
+  ]);
+  let originalWindowViewTime = await getDatabaseValue(
+    TEST_URL,
+    "totalViewTime"
+  );
+
+  info("Switch back to original window");
+  Interactions._pageViewStartTime = Cu.now() - 20000;
+  await SimpleTest.promiseFocus(window);
+  await assertDatabaseValues([
+    {
+      url: TEST_URL,
+      exactTotalViewTime: originalWindowViewTime,
+    },
+    {
+      url: TEST_URL2,
+      totalViewTime: 20000,
+    },
+  ]);
+  let newWindowViewTime = await getDatabaseValue(TEST_URL2, "totalViewTime");
+
+  info("Switch back to new window");
+  Interactions._pageViewStartTime = Cu.now() - 30000;
+  await SimpleTest.promiseFocus(otherWin);
+  await assertDatabaseValues([
+    {
+      url: TEST_URL,
+      totalViewTime: originalWindowViewTime + 30000,
+    },
+    {
+      url: TEST_URL2,
+      exactTotalViewTime: newWindowViewTime,
+    },
+  ]);
+
+  BrowserTestUtils.removeTab(tabInOriginalWindow);
+  await BrowserTestUtils.closeWindow(otherWin);
+});
+
+add_task(async function test_interactions_loading_in_unfocused_windows() {
+  await Interactions.reset();
+
+  let otherWin = await BrowserTestUtils.openNewBrowserWindow();
+
+  BrowserTestUtils.loadURI(otherWin.gBrowser.selectedBrowser, TEST_URL);
+  await BrowserTestUtils.browserLoaded(
+    otherWin.gBrowser.selectedBrowser,
+    false,
+    TEST_URL
+  );
+
+  Interactions._pageViewStartTime = Cu.now() - 10000;
+
+  BrowserTestUtils.loadURI(otherWin.gBrowser.selectedBrowser, TEST_URL2);
+  await BrowserTestUtils.browserLoaded(
+    otherWin.gBrowser.selectedBrowser,
+    false,
+    TEST_URL2
+  );
+
+  // Only the interaction of the first tab should be recorded so far.
+  await assertDatabaseValues([
+    {
+      url: TEST_URL,
+      totalViewTime: 10000,
+    },
+  ]);
+  let newWindowViewTime = await getDatabaseValue(TEST_URL, "totalViewTime");
+
+  // Open a tab in the background window, and then navigate somewhere else,
+  // this should not record an intereaction.
+  let tabInOriginalWindow = await BrowserTestUtils.openNewForegroundTab({
+    gBrowser,
+    url: TEST_URL3,
+  });
+
+  Interactions._pageViewStartTime = Cu.now() - 20000;
+
+  BrowserTestUtils.loadURI(tabInOriginalWindow.linkedBrowser, TEST_URL4);
+  await BrowserTestUtils.browserLoaded(
+    tabInOriginalWindow.linkedBrowser,
+    false,
+    TEST_URL4
+  );
+
+  // Only the interaction of the first tab should be recorded so far.
+  await assertDatabaseValues([
+    {
+      url: TEST_URL,
+      exactTotalViewTime: newWindowViewTime,
+    },
+  ]);
+
+  BrowserTestUtils.removeTab(tabInOriginalWindow);
+  await BrowserTestUtils.closeWindow(otherWin);
+});
+
+add_task(async function test_interactions_private_browsing() {
+  await Interactions.reset();
+
+  // Open a tab in the first window.
+  let tabInOriginalWindow = await BrowserTestUtils.openNewForegroundTab({
+    gBrowser,
+    url: TEST_URL,
+  });
+
+  // and then load the second window.
+  Interactions._pageViewStartTime = Cu.now() - 10000;
+
+  let privateWin = await BrowserTestUtils.openNewBrowserWindow({
+    private: true,
+  });
+
+  BrowserTestUtils.loadURI(privateWin.gBrowser.selectedBrowser, TEST_URL2);
+  await BrowserTestUtils.browserLoaded(
+    privateWin.gBrowser.selectedBrowser,
+    false,
+    TEST_URL2
+  );
+  await SimpleTest.promiseFocus(privateWin);
+  await assertDatabaseValues([
+    {
+      url: TEST_URL,
+      totalViewTime: 10000,
+    },
+  ]);
+  let originalWindowViewTime = await getDatabaseValue(
+    TEST_URL,
+    "totalViewTime"
+  );
+
+  info("Switch back to original window");
+  Interactions._pageViewStartTime = Cu.now() - 20000;
+  // As we're checking for a non-action, wait for the focus to have definitely
+  // completed, and then let the event queues clear.
+  await SimpleTest.promiseFocus(window);
+  await TestUtils.waitForTick();
+
+  // The private window site should not be recorded.
+  await assertDatabaseValues([
+    {
+      url: TEST_URL,
+      exactTotalViewTime: originalWindowViewTime,
+    },
+  ]);
+
+  info("Switch back to new window");
+  Interactions._pageViewStartTime = Cu.now() - 30000;
+  await SimpleTest.promiseFocus(privateWin);
+  await assertDatabaseValues([
+    {
+      url: TEST_URL,
+      totalViewTime: originalWindowViewTime + 30000,
+    },
+  ]);
+
+  BrowserTestUtils.removeTab(tabInOriginalWindow);
+  await BrowserTestUtils.closeWindow(privateWin);
+});
+
+add_task(async function test_interactions_idle() {
+  await Interactions.reset();
+  let lastViewTime;
+
+  await BrowserTestUtils.withNewTab(TEST_URL, async browser => {
+    Interactions._pageViewStartTime = Cu.now() - 10000;
+
+    Interactions.observe(null, "idle", "");
+
+    await assertDatabaseValues([
+      {
+        url: TEST_URL,
+        totalViewTime: 10000,
+      },
+    ]);
+    lastViewTime = await getDatabaseValue(TEST_URL, "totalViewTime");
+
+    Interactions._pageViewStartTime = Cu.now() - 20000;
+
+    Interactions.observe(null, "active", "");
+
+    await assertDatabaseValues([
+      {
+        url: TEST_URL,
+        exactTotalViewTime: lastViewTime,
+      },
+    ]);
+
+    Interactions._pageViewStartTime = Cu.now() - 30000;
+  });
+
+  await assertDatabaseValues([
+    {
+      url: TEST_URL,
+      totalViewTime: lastViewTime + 30000,
+      maxViewTime: lastViewTime + 30000 + 10000,
+    },
+  ]);
 });

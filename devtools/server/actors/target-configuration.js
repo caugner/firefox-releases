@@ -4,6 +4,7 @@
 
 "use strict";
 
+const { Ci } = require("chrome");
 const { ActorClassWithSpec, Actor } = require("devtools/shared/protocol");
 const {
   targetConfigurationSpec,
@@ -36,6 +37,8 @@ const SUPPORTED_OPTIONS = {
   rdmPaneMaxTouchPoints: true,
   // Page orientation (used in RDM and doesn't apply if RDM isn't enabled)
   rdmPaneOrientation: true,
+  // Reload the page when the touch simulation state changes (only works alongside touchEventsOverride)
+  reloadOnTouchSimulationToggle: true,
   // Restore focus in the page after closing DevTools.
   restoreFocus: true,
   // Enable service worker testing over HTTP (instead of HTTPS only).
@@ -183,6 +186,7 @@ const TargetConfigurationActor = ActorClassWithSpec(targetConfigurationSpec, {
       return;
     }
 
+    let shouldReload = false;
     for (const [key, value] of Object.entries(configuration)) {
       switch (key) {
         case "colorSchemeSimulation":
@@ -190,6 +194,16 @@ const TargetConfigurationActor = ActorClassWithSpec(targetConfigurationSpec, {
           break;
         case "customUserAgent":
           this._setCustomUserAgent(value);
+          break;
+        case "javascriptEnabled":
+          if (value !== undefined) {
+            // This flag requires a reload in order to take full effect,
+            // so reload if it has changed.
+            if (value != this.isJavascriptEnabled()) {
+              shouldReload = true;
+            }
+            this._setJavascriptEnabled(value);
+          }
           break;
         case "overrideDPPX":
           this._setDPPXOverride(value);
@@ -209,7 +223,14 @@ const TargetConfigurationActor = ActorClassWithSpec(targetConfigurationSpec, {
         case "touchEventsOverride":
           this._setTouchEventsOverride(value);
           break;
+        case "cacheDisabled":
+          this._setCacheDisabled(value);
+          break;
       }
+    }
+
+    if (shouldReload) {
+      this._browsingContext.reload(Ci.nsIWebNavigation.LOAD_FLAGS_NONE);
     }
   },
 
@@ -220,6 +241,7 @@ const TargetConfigurationActor = ActorClassWithSpec(targetConfigurationSpec, {
 
     this._setServiceWorkersTestingEnabled(false);
     this._setPrintSimulationEnabled(false);
+    this._setCacheDisabled(false);
 
     // Restore the color scheme simulation only if it was explicitly updated
     // by this actor. This will avoid side effects caused when destroying additional
@@ -239,6 +261,10 @@ const TargetConfigurationActor = ActorClassWithSpec(targetConfigurationSpec, {
     // specific actor.
     if (this._initialDPPXOverride !== undefined) {
       this._setDPPXOverride(this._initialDPPXOverride);
+    }
+
+    if (this._initialJavascriptEnabled !== undefined) {
+      this._setJavascriptEnabled(this._initialJavascriptEnabled);
     }
 
     if (this._initialTouchEventsOverride !== undefined) {
@@ -293,6 +319,19 @@ const TargetConfigurationActor = ActorClassWithSpec(targetConfigurationSpec, {
     }
 
     this._browsingContext.customUserAgent = userAgent;
+  },
+
+  isJavascriptEnabled() {
+    return this._browsingContext.allowJavascript;
+  },
+
+  _setJavascriptEnabled(allow) {
+    if (this._initialJavascriptEnabled === undefined) {
+      this._initialJavascriptEnabled = this._browsingContext.allowJavascript;
+    }
+    if (allow !== undefined) {
+      this._browsingContext.allowJavascript = allow;
+    }
   },
 
   /* DPPX override */
@@ -357,6 +396,20 @@ const TargetConfigurationActor = ActorClassWithSpec(targetConfigurationSpec, {
    */
   _setRDMPaneOrientation({ type, angle }) {
     this._browsingContext.setRDMPaneOrientation(type, angle);
+  },
+
+  /**
+   * Disable or enable the cache via the browsing context.
+   *
+   * @param {Boolean} disabled: The state the cache should be changed to
+   */
+  _setCacheDisabled(disabled) {
+    const value = disabled
+      ? Ci.nsIRequest.LOAD_BYPASS_CACHE
+      : Ci.nsIRequest.LOAD_NORMAL;
+    if (this._browsingContext.defaultLoadFlags != value) {
+      this._browsingContext.defaultLoadFlags = value;
+    }
   },
 
   destroy() {

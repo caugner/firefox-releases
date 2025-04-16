@@ -107,7 +107,7 @@
         <html:link rel="stylesheet" href="chrome://global/skin/global.css"/>
         <html:style>${this.styles}</html:style>
         <arrowscrollbox class="menupopup-arrowscrollbox"
-                        part="arrowscrollbox"
+                        part="arrowscrollbox content"
                         exportparts="scrollbox: arrowscrollbox-scrollbox"
                         flex="1"
                         orient="vertical"
@@ -118,7 +118,7 @@
     }
 
     get styles() {
-      let s = `
+      return `
         :host(.in-menulist) arrowscrollbox::part(scrollbutton-up),
         :host(.in-menulist) arrowscrollbox::part(scrollbutton-down) {
           display: none;
@@ -131,21 +131,6 @@
           overflow: visible;
         }
       `;
-
-      switch (AppConstants.platform) {
-        case "macosx":
-          s += `
-            :host(.in-menulist) arrowscrollbox {
-              padding: 0;
-            }
-          `;
-          break;
-
-        default:
-          break;
-      }
-
-      return s;
     }
 
     get scrollBox() {

@@ -49,11 +49,11 @@ include DOMTypes;
 include WindowGlobalTypes;
 include IPCBlob;
 include IPCStream;
+include PPrintingTypes;
 include PTabContext;
 include ProtocolTypes;
 include PBackgroundSharedTypes;
 include PContentPermission;
-include ServiceWorkerConfiguration;
 include GraphicsMessages;
 include MemoryReportTypes;
 include ClientIPCTypes;
@@ -67,7 +67,6 @@ include LookAndFeelTypes;
 include protocol PSandboxTesting;
 #endif
 
-include "ipc/DataStorageIPCUtils.h";
 include "ipc/MediaControlIPC.h";
 include "mozilla/AntiTrackingIPCUtils.h";
 include "mozilla/GfxMessageUtils.h";
@@ -340,7 +339,6 @@ struct XPCOMInitData
     GfxVarUpdate[] gfxNonDefaultVarUpdates;
     ContentDeviceData contentDeviceData;
     GfxInfoFeatureStatus[] gfxFeatureStatus;
-    DataStorageEntry[] dataStorage;
     nsCString[] appLocales;
     nsCString[] requestedLocales;
     DynamicScalarDefinition[] dynamicScalarDefs;
@@ -483,7 +481,11 @@ parent:
     // Guess we'll see how we end up triggering the actual print, for preview
     // this should be enough...
     async CloneDocumentTreeInto(MaybeDiscardedBrowsingContext aSourceBc,
-                                MaybeDiscardedBrowsingContext aTargetBc);
+                                MaybeDiscardedBrowsingContext aTargetBc,
+                                PrintData aPrintData);
+
+    async UpdateRemotePrintSettings(MaybeDiscardedBrowsingContext aBc,
+                                    PrintData aPrintData);
 
     async PExtensions();
 
@@ -611,10 +613,6 @@ child:
     async UpdatePerfStatsCollectionMask(uint64_t aMask);
     async CollectPerfStatsJSON() returns (nsCString aStats);
 
-    async DataStoragePut(nsString aFilename, DataStorageItem aItem);
-    async DataStorageRemove(nsString aFilename, nsCString aKey, DataStorageType aType);
-    async DataStorageClear(nsString aFilename);
-
     async NotifyAlertsObserver(nsCString topic, nsString data);
 
     async GeolocationUpdate(nsIDOMGeoPosition aPosition);
@@ -692,11 +690,6 @@ child:
      * Send the remote type associated with the content process.
      */
     async RemoteType(nsCString aRemoteType);
-
-    /**
-     * Send ServiceWorkerRegistrationData to child process.
-     */
-    async InitServiceWorkers(ServiceWorkerConfiguration aConfig);
 
     /**
      * Send BlobURLRegistrationData to child process.
@@ -971,6 +964,11 @@ child:
   // Send the list of the supported mimetypes in the given process. GeckoView-specific
   async DecoderSupportedMimeTypes(nsCString[] supportedTypes);
 
+  // Used to initialize the global variable in content processes with the
+  // latched value in the parent process. See dom/LocalStorageCommon.h for more
+  // details.
+  async InitNextGenLocalStorageEnabled(bool enabled);
+
 parent:
 
     async SynchronizeLayoutHistoryState(MaybeDiscardedBrowsingContext aContext,
@@ -1006,7 +1004,7 @@ parent:
 
     async InitCrashReporter(NativeThreadId tid);
 
-    sync IsSecureURI(uint32_t aType, nsIURI aURI, uint32_t aFlags,
+    sync IsSecureURI(nsIURI aURI, uint32_t aFlags,
                      OriginAttributes aOriginAttributes)
         returns (bool isSecureURI);
 
@@ -1160,9 +1158,6 @@ parent:
 
     sync GetIconForExtension(nsCString aFileExt, uint32_t aIconSize)
         returns (uint8_t[] bits);
-
-    // Notify the parent of the presence or absence of private docshells
-    async PrivateDocShellsExist(bool aExist);
 
     // Tell the parent that the child has gone idle for the first time.
     async FirstIdle();
@@ -1549,7 +1544,7 @@ parent:
      * Adds a certificate exception for the given hostname and port.
      */
     async AddCertException(nsCString aSerializedCert, uint32_t aFlags,
-                           nsCString aHostName, int32_t aPort,
+                           nsCString aHostName, int32_t aPort, OriginAttributes aOriginAttributes,
                            bool aIsTemporary)
           returns (nsresult success);
 
@@ -1837,6 +1832,11 @@ child:
 parent:
     async SetContainerFeaturePolicy(MaybeDiscardedBrowsingContext aContainerContext,
                                     FeaturePolicy aContainerFeaturePolicy);
+
+    // Obtain an icon from the system widget toolkit, in nsIconDecoder
+    // format.  Not supported (or needed) on all platforms; see the
+    // implementation in ContentParent::RecvGetSystemIcon for details.
+    async GetSystemIcon(nsIURI aURI) returns (nsresult aResult, ByteBuf? aData);
 };
 
 }

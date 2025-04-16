@@ -28,9 +28,15 @@ const CONFIRM_FAILED = 3;
 const CONFIRM_TRYING_FAILED = 4;
 const CONFIRM_DISABLED = 5;
 
-trr_test_setup();
+function setup() {
+  trr_test_setup();
+  Services.prefs.setBoolPref("network.trr.skip-check-for-blocked-host", true);
+}
+
+setup();
 registerCleanupFunction(async () => {
   trr_clear_prefs();
+  Services.prefs.clearUserPref("network.trr.skip-check-for-blocked-host");
 });
 
 let trrServer = null;
@@ -70,7 +76,9 @@ function trigger15Failures() {
   dns.clearCache(true);
 
   let dnsRequests = [];
-  for (let i = 0; i < 15; i++) {
+  // There are actually two TRR requests sent for A and AAAA records, so doing
+  // DNS query 10 times should be enough to trigger confirmation process.
+  for (let i = 0; i < 10; i++) {
     dnsRequests.push(
       new TRRDNSListener(`failing-domain${i}.faily.com`, {
         expectedAnswer: "127.0.0.1",
@@ -363,9 +371,11 @@ add_task(async function test_uri_pref_change() {
 
 add_task(async function test_autodetected_uri() {
   const defaultPrefBranch = Services.prefs.getDefaultBranch("");
-  let defaultURI = defaultPrefBranch.getCharPref("network.trr.uri");
+  let defaultURI = defaultPrefBranch.getCharPref(
+    "network.trr.default_provider_uri"
+  );
   defaultPrefBranch.setCharPref(
-    "network.trr.uri",
+    "network.trr.default_provider_uri",
     `https://foo.example.com:${trrServer.port}/dns-query?changed`
   );
   // For setDetectedTrrURI to work we must pretend we are using the default.
@@ -386,5 +396,5 @@ add_task(async function test_autodetected_uri() {
   );
 
   // reset the default URI
-  defaultPrefBranch.setCharPref("network.trr.uri", defaultURI);
+  defaultPrefBranch.setCharPref("network.trr.default_provider_uri", defaultURI);
 });

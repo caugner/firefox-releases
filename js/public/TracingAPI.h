@@ -21,10 +21,10 @@ template <typename T>
 class TenuredHeap;
 
 /** Returns a static string equivalent of |kind|. */
-JS_FRIEND_API const char* GCTraceKindToAscii(JS::TraceKind kind);
+JS_PUBLIC_API const char* GCTraceKindToAscii(JS::TraceKind kind);
 
 /** Returns the base size in bytes of the GC thing of kind |kind|. */
-JS_FRIEND_API size_t GCTraceKindSize(JS::TraceKind kind);
+JS_PUBLIC_API size_t GCTraceKindSize(JS::TraceKind kind);
 
 // Kinds of JSTracer.
 enum class TracerKind {
@@ -251,6 +251,7 @@ class GenericTracer : public JSTracer {
   virtual js::Shape* onShapeEdge(js::Shape* shape) = 0;
   virtual js::RegExpShared* onRegExpSharedEdge(js::RegExpShared* shared) = 0;
   virtual js::GetterSetter* onGetterSetterEdge(js::GetterSetter* gs) = 0;
+  virtual js::PropMap* onPropMapEdge(js::PropMap* map) = 0;
   virtual js::BaseShape* onBaseShapeEdge(js::BaseShape* base) = 0;
   virtual js::jit::JitCode* onJitCodeEdge(js::jit::JitCode* code) = 0;
   virtual js::Scope* onScopeEdge(js::Scope* scope) = 0;
@@ -307,6 +308,10 @@ class JS_PUBLIC_API CallbackTracer : public js::GenericTracer {
   virtual js::GetterSetter* onGetterSetterEdge(js::GetterSetter* gs) {
     onChild(JS::GCCellPtr(gs, JS::TraceKind::GetterSetter));
     return gs;
+  }
+  virtual js::PropMap* onPropMapEdge(js::PropMap* map) {
+    onChild(JS::GCCellPtr(map, JS::TraceKind::PropMap));
+    return map;
   }
   virtual js::jit::JitCode* onJitCodeEdge(js::jit::JitCode* code) {
     onChild(JS::GCCellPtr(code, JS::TraceKind::JitCode));
@@ -527,7 +532,7 @@ bool IsAboutToBeFinalizedUnbarriered(T* thingp);
  * Return whether the runtime is currently being destroyed, for use in
  * assertions.
  */
-extern JS_FRIEND_API bool RuntimeIsBeingDestroyed();
+extern JS_PUBLIC_API bool RuntimeIsBeingDestroyed();
 #endif
 
 }  // namespace js

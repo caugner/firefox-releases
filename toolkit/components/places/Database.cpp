@@ -1179,6 +1179,23 @@ nsresult Database::InitSchema(bool* aDatabaseMigrated) {
 
       // Firefox 81 uses schema version 54
 
+      if (currentSchemaVersion < 55) {
+        rv = MigrateV55Up();
+        NS_ENSURE_SUCCESS(rv, rv);
+      }
+
+      if (currentSchemaVersion < 56) {
+        rv = MigrateV56Up();
+        NS_ENSURE_SUCCESS(rv, rv);
+      }
+
+      if (currentSchemaVersion < 57) {
+        rv = MigrateV57Up();
+        NS_ENSURE_SUCCESS(rv, rv);
+      }
+
+      // Firefox 91 uses schema version 57
+
       // Schema Upgrades must add migration code here.
       // >>> IMPORTANT! <<<
       // NEVER MIX UP SYNC AND ASYNC EXECUTION IN MIGRATORS, YOU MAY LOCK THE
@@ -1266,6 +1283,17 @@ nsresult Database::InitSchema(bool* aDatabaseMigrated) {
 
     // moz_meta.
     rv = mMainConn->ExecuteSimpleSQL(CREATE_MOZ_META);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // moz_places_metadata
+    rv = mMainConn->ExecuteSimpleSQL(CREATE_MOZ_PLACES_METADATA);
+    NS_ENSURE_SUCCESS(rv, rv);
+    rv = mMainConn->ExecuteSimpleSQL(
+        CREATE_IDX_MOZ_PLACES_METADATA_PLACECREATED);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    // moz_places_metadata_search_queries
+    rv = mMainConn->ExecuteSimpleSQL(CREATE_MOZ_PLACES_METADATA_SEARCH_QUERIES);
     NS_ENSURE_SUCCESS(rv, rv);
 
     // The bookmarks roots get initialized in CheckRoots().
@@ -1570,6 +1598,10 @@ nsresult Database::InitTempEntities() {
   NS_ENSURE_SUCCESS(rv, rv);
   rv =
       mMainConn->ExecuteSimpleSQL(CREATE_BOOKMARKS_DELETED_AFTERDELETE_TRIGGER);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  rv = mMainConn->ExecuteSimpleSQL(
+      CREATE_PLACES_METADATA_DELETED_AFTERDELETE_TRIGGER);
   NS_ENSURE_SUCCESS(rv, rv);
 
   return NS_OK;
@@ -2151,6 +2183,54 @@ nsresult Database::MigrateV54Up() {
       "WHERE expire_ms = 0 "_ns);
   NS_ENSURE_SUCCESS(rv, rv);
 
+  return NS_OK;
+}
+
+nsresult Database::MigrateV55Up() {
+  // Add places metadata tables.
+  nsCOMPtr<mozIStorageStatement> stmt;
+  nsresult rv = mMainConn->CreateStatement(
+      "SELECT id FROM moz_places_metadata"_ns, getter_AddRefs(stmt));
+  if (NS_FAILED(rv)) {
+    // Create the tables.
+    rv = mMainConn->ExecuteSimpleSQL(CREATE_MOZ_PLACES_METADATA);
+    NS_ENSURE_SUCCESS(rv, rv);
+    // moz_places_metadata_search_queries.
+    rv = mMainConn->ExecuteSimpleSQL(CREATE_MOZ_PLACES_METADATA_SEARCH_QUERIES);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  return NS_OK;
+}
+
+nsresult Database::MigrateV56Up() {
+  // Add places metadata (place_id, created_at) index.
+  return mMainConn->ExecuteSimpleSQL(
+      CREATE_IDX_MOZ_PLACES_METADATA_PLACECREATED);
+}
+
+nsresult Database::MigrateV57Up() {
+  // Add the scrolling columns to the metadata.
+  nsCOMPtr<mozIStorageStatement> stmt;
+  nsresult rv = mMainConn->CreateStatement(
+      "SELECT scrolling_time FROM moz_places_metadata"_ns,
+      getter_AddRefs(stmt));
+  if (NS_FAILED(rv)) {
+    rv = mMainConn->ExecuteSimpleSQL(
+        "ALTER TABLE moz_places_metadata "
+        "ADD COLUMN scrolling_time INTEGER NOT NULL DEFAULT 0 "_ns);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
+
+  rv = mMainConn->CreateStatement(
+      "SELECT scrolling_distance FROM moz_places_metadata"_ns,
+      getter_AddRefs(stmt));
+  if (NS_FAILED(rv)) {
+    rv = mMainConn->ExecuteSimpleSQL(
+        "ALTER TABLE moz_places_metadata "
+        "ADD COLUMN scrolling_distance INTEGER NOT NULL DEFAULT 0 "_ns);
+    NS_ENSURE_SUCCESS(rv, rv);
+  }
   return NS_OK;
 }
 

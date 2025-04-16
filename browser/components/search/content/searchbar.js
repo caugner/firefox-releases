@@ -738,18 +738,16 @@
           // clear any previous selection, see bugs 400671 and 488357
           popup.selectedIndex = -1;
 
-          document.popupNode = null;
-
           // Ensure the panel has a meaningful initial size and doesn't grow
           // unconditionally.
           requestAnimationFrame(() => {
             let { width } = window.windowUtils.getBoundsWithoutFlushing(this);
             if (popup.oneOffButtons) {
               // We have a min-width rule on search-panel-one-offs to show at
-              // least 3 buttons, so take that into account here.
-              width = Math.max(width, popup.oneOffButtons.buttonWidth * 3);
+              // least 4 buttons, so take that into account here.
+              width = Math.max(width, popup.oneOffButtons.buttonWidth * 4);
             }
-            popup.style.width = width + "px";
+            popup.style.setProperty("--panel-width", width + "px");
           });
 
           popup._invalidate();

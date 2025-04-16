@@ -13,8 +13,11 @@
 #include "js/RootingAPI.h"
 #include "vm/NativeObject.h"
 
-using UDateFormat = void*;
 struct UDateIntervalFormat;
+
+namespace mozilla::intl {
+class DateTimeFormat;
+}
 
 namespace js {
 
@@ -38,15 +41,15 @@ class DateTimeFormatObject : public NativeObject {
   // Estimated memory use for UDateIntervalFormat (see IcuMemoryUsage).
   static constexpr size_t UDateIntervalFormatEstimatedMemoryUse = 119856;
 
-  UDateFormat* getDateFormat() const {
+  mozilla::intl::DateTimeFormat* getDateFormat() const {
     const auto& slot = getFixedSlot(UDATE_FORMAT_SLOT);
     if (slot.isUndefined()) {
       return nullptr;
     }
-    return static_cast<UDateFormat*>(slot.toPrivate());
+    return static_cast<mozilla::intl::DateTimeFormat*>(slot.toPrivate());
   }
 
-  void setDateFormat(UDateFormat* dateFormat) {
+  void setDateFormat(mozilla::intl::DateTimeFormat* dateFormat) {
     setFixedSlot(UDATE_FORMAT_SLOT, PrivateValue(dateFormat));
   }
 

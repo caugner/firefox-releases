@@ -50,13 +50,13 @@ var _primitives = __w_pdfjs_require__(5);
 
 var _pdf_manager = __w_pdfjs_require__(7);
 
-var _writer = __w_pdfjs_require__(64);
+var _writer = __w_pdfjs_require__(71);
 
 var _is_node = __w_pdfjs_require__(4);
 
-var _message_handler = __w_pdfjs_require__(88);
+var _message_handler = __w_pdfjs_require__(99);
 
-var _worker_stream = __w_pdfjs_require__(89);
+var _worker_stream = __w_pdfjs_require__(100);
 
 var _core_utils = __w_pdfjs_require__(9);
 
@@ -125,7 +125,7 @@ class WorkerMessageHandler {
     const WorkerTasks = [];
     const verbosity = (0, _util.getVerbosityLevel)();
     const apiVersion = docParams.apiVersion;
-    const workerVersion = '2.9.273';
+    const workerVersion = '2.11.22';
 
     if (apiVersion !== workerVersion) {
       throw new Error(`The API version "${apiVersion}" does not match ` + `the Worker version "${workerVersion}".`);
@@ -162,18 +162,20 @@ class WorkerMessageHandler {
         await pdfManager.ensureDoc("checkFirstPage");
       }
 
-      const [numPages, fingerprint, isPureXfa] = await Promise.all([pdfManager.ensureDoc("numPages"), pdfManager.ensureDoc("fingerprint"), pdfManager.ensureDoc("isPureXfa")]);
+      const isPureXfa = await pdfManager.ensureDoc("isPureXfa");
 
       if (isPureXfa) {
         const task = new WorkerTask("loadXfaFonts");
         startWorkerTask(task);
-        await pdfManager.loadXfaFonts(handler, task).catch(reason => {}).then(() => finishWorkerTask(task));
+        await Promise.all([pdfManager.loadXfaFonts(handler, task).catch(reason => {}).then(() => finishWorkerTask(task)), pdfManager.loadXfaImages()]);
       }
 
+      const [numPages, fingerprints] = await Promise.all([pdfManager.ensureDoc("numPages"), pdfManager.ensureDoc("fingerprints")]);
+      const htmlForXfa = isPureXfa ? await pdfManager.ensureDoc("htmlForXfa") : null;
       return {
         numPages,
-        fingerprint,
-        isPureXfa
+        fingerprints,
+        htmlForXfa
       };
     }
 
@@ -355,7 +357,10 @@ class WorkerMessageHandler {
         disableFontFace: data.disableFontFace,
         ignoreErrors: data.ignoreErrors,
         isEvalSupported: data.isEvalSupported,
-        fontExtraProperties: data.fontExtraProperties
+        fontExtraProperties: data.fontExtraProperties,
+        useSystemFonts: data.useSystemFonts,
+        cMapUrl: data.cMapUrl,
+        standardFontDataUrl: data.standardFontDataUrl
       };
       getPdfManager(data, evaluatorOptions, data.enableXfa).then(function (newPdfManager) {
         if (terminated) {
@@ -428,13 +433,6 @@ class WorkerMessageHandler {
         return pdfManager.ensure(page, "jsActions");
       });
     });
-    handler.on("GetPageXfa", function wphSetupGetXfa({
-      pageIndex
-    }) {
-      return pdfManager.getPage(pageIndex).then(function (page) {
-        return pdfManager.ensure(page, "xfaData");
-      });
-    });
     handler.on("GetOutline", function wphSetupGetOutline(data) {
       return pdfManager.ensureCatalog("documentOutline");
     });
@@ -477,6 +475,7 @@ class WorkerMessageHandler {
       return pdfManager.ensureDoc("calculationOrderIds");
     });
     handler.on("SaveDocument", function ({
+      isPureXfa,
       numPages,
       annotationStorage,
       filename
@@ -484,25 +483,37 @@ class WorkerMessageHandler {
       pdfManager.requestLoadedStream();
       const promises = [pdfManager.onLoadedStream(), pdfManager.ensureCatalog("acroForm"), pdfManager.ensureDoc("xref"), pdfManager.ensureDoc("startXRef")];
 
-      for (let pageIndex = 0; pageIndex < numPages; pageIndex++) {
-        promises.push(pdfManager.getPage(pageIndex).then(function (page) {
-          const task = new WorkerTask(`Save: page ${pageIndex}`);
-          startWorkerTask(task);
-          return page.save(handler, task, annotationStorage).finally(function () {
-            finishWorkerTask(task);
-          });
-        }));
+      if (isPureXfa) {
+        promises.push(pdfManager.serializeXfaData(annotationStorage));
+      } else {
+        for (let pageIndex = 0; pageIndex < numPages; pageIndex++) {
+          promises.push(pdfManager.getPage(pageIndex).then(function (page) {
+            const task = new WorkerTask(`Save: page ${pageIndex}`);
+            return page.save(handler, task, annotationStorage).finally(function () {
+              finishWorkerTask(task);
+            });
+          }));
+        }
       }
 
       return Promise.all(promises).then(function ([stream, acroForm, xref, startXRef, ...refs]) {
         let newRefs = [];
+        let xfaData = null;
 
-        for (const ref of refs) {
-          newRefs = ref.filter(x => x !== null).reduce((a, b) => a.concat(b), newRefs);
-        }
+        if (isPureXfa) {
+          xfaData = refs[0];
 
-        if (newRefs.length === 0) {
-          return stream.bytes;
+          if (!xfaData) {
+            return stream.bytes;
+          }
+        } else {
+          for (const ref of refs) {
+            newRefs = ref.filter(x => x !== null).reduce((a, b) => a.concat(b), newRefs);
+          }
+
+          if (newRefs.length === 0) {
+            return stream.bytes;
+          }
         }
 
         const xfa = acroForm instanceof _primitives.Dict && acroForm.get("XFA") || [];
@@ -550,7 +561,8 @@ class WorkerMessageHandler {
           xrefInfo: newXrefInfo,
           newRefs,
           xref,
-          datasetsRef: xfaDatasets
+          datasetsRef: xfaDatasets,
+          xfaData
         });
       });
     });
@@ -908,6 +920,7 @@ exports.StreamType = StreamType;
 const FontType = {
   UNKNOWN: "UNKNOWN",
   TYPE1: "TYPE1",
+  TYPE1STANDARD: "TYPE1STANDARD",
   TYPE1C: "TYPE1C",
   CIDFONTTYPE0: "CIDFONTTYPE0",
   CIDFONTTYPE0C: "CIDFONTTYPE0C",
@@ -1044,8 +1057,10 @@ const UNSUPPORTED_FEATURES = {
   errorOperatorList: "errorOperatorList",
   errorFontToUnicode: "errorFontToUnicode",
   errorFontLoadNative: "errorFontLoadNative",
+  errorFontBuildPath: "errorFontBuildPath",
   errorFontGetPath: "errorFontGetPath",
-  errorMarkedContent: "errorMarkedContent"
+  errorMarkedContent: "errorMarkedContent",
+  errorContentSubStream: "errorContentSubStream"
 };
 exports.UNSUPPORTED_FEATURES = UNSUPPORTED_FEATURES;
 const PasswordResponses = {
@@ -1447,7 +1462,7 @@ class Util {
 }
 
 exports.Util = Util;
-const PDFStringTranslateTable = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x2D8, 0x2C7, 0x2C6, 0x2D9, 0x2DD, 0x2DB, 0x2DA, 0x2DC, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x2022, 0x2020, 0x2021, 0x2026, 0x2014, 0x2013, 0x192, 0x2044, 0x2039, 0x203A, 0x2212, 0x2030, 0x201E, 0x201C, 0x201D, 0x2018, 0x2019, 0x201A, 0x2122, 0xFB01, 0xFB02, 0x141, 0x152, 0x160, 0x178, 0x17D, 0x131, 0x142, 0x153, 0x161, 0x17E, 0, 0x20AC];
+const PDFStringTranslateTable = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x2d8, 0x2c7, 0x2c6, 0x2d9, 0x2dd, 0x2db, 0x2da, 0x2dc, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x2022, 0x2020, 0x2021, 0x2026, 0x2014, 0x2013, 0x192, 0x2044, 0x2039, 0x203a, 0x2212, 0x2030, 0x201e, 0x201c, 0x201d, 0x2018, 0x2019, 0x201a, 0x2122, 0xfb01, 0xfb02, 0x141, 0x152, 0x160, 0x178, 0x17d, 0x131, 0x142, 0x153, 0x161, 0x17e, 0, 0x20ac];
 
 function stringToPDFString(str) {
   const length = str.length,
@@ -1492,8 +1507,7 @@ function stringToUTF16BEString(str) {
 
   for (let i = 0, ii = str.length; i < ii; i++) {
     const char = str.charCodeAt(i);
-    buf.push(String.fromCharCode(char >> 8 & 0xff));
-    buf.push(String.fromCharCode(char & 0xff));
+    buf.push(String.fromCharCode(char >> 8 & 0xff), String.fromCharCode(char & 0xff));
   }
 
   return buf.join("");
@@ -1744,20 +1758,28 @@ class Dict {
   }
 
   getArray(key1, key2, key3) {
-    let value = this.get(key1, key2, key3);
+    let value = this._map[key1];
 
-    if (!Array.isArray(value) || !this.xref) {
-      return value;
+    if (value === undefined && key2 !== undefined) {
+      value = this._map[key2];
+
+      if (value === undefined && key3 !== undefined) {
+        value = this._map[key3];
+      }
     }
 
-    value = value.slice();
+    if (value instanceof Ref && this.xref) {
+      value = this.xref.fetch(value, this.suppressEncryption);
+    }
 
-    for (let i = 0, ii = value.length; i < ii; i++) {
-      if (!(value[i] instanceof Ref)) {
-        continue;
+    if (Array.isArray(value)) {
+      value = value.slice();
+
+      for (let i = 0, ii = value.length; i < ii; i++) {
+        if (value[i] instanceof Ref && this.xref) {
+          value[i] = this.xref.fetch(value[i], this.suppressEncryption);
+        }
       }
-
-      value[i] = this.xref.fetch(value[i], this.suppressEncryption);
     }
 
     return value;
@@ -1804,25 +1826,8 @@ class Dict {
     dictArray,
     mergeSubDicts = false
   }) {
-    const mergedDict = new Dict(xref);
-
-    if (!mergeSubDicts) {
-      for (const dict of dictArray) {
-        if (!(dict instanceof Dict)) {
-          continue;
-        }
-
-        for (const [key, value] of Object.entries(dict._map)) {
-          if (mergedDict._map[key] === undefined) {
-            mergedDict._map[key] = value;
-          }
-        }
-      }
-
-      return mergedDict.size > 0 ? mergedDict : Dict.empty;
-    }
-
-    const properties = new Map();
+    const mergedDict = new Dict(xref),
+          properties = new Map();
 
     for (const dict of dictArray) {
       if (!(dict instanceof Dict)) {
@@ -1835,6 +1840,8 @@ class Dict {
         if (property === undefined) {
           property = [];
           properties.set(key, property);
+        } else if (!mergeSubDicts) {
+          continue;
         }
 
         property.push(value);
@@ -2201,6 +2208,14 @@ class BasePdfManager {
 
   loadXfaFonts(handler, task) {
     return this.pdfDocument.loadXfaFonts(handler, task);
+  }
+
+  loadXfaImages() {
+    return this.pdfDocument.loadXfaImages();
+  }
+
+  serializeXfaData(annotationStorage) {
+    return this.pdfDocument.serializeXfaData(annotationStorage);
   }
 
   cleanup(manuallyTriggered = false) {
@@ -2927,7 +2942,7 @@ exports.readUint16 = readUint16;
 exports.readUint32 = readUint32;
 exports.toRomanNumerals = toRomanNumerals;
 exports.validateCSSFont = validateCSSFont;
-exports.XRefParseException = exports.XRefEntryException = exports.MissingDataException = void 0;
+exports.XRefParseException = exports.XRefEntryException = exports.ParserEOFException = exports.MissingDataException = void 0;
 
 var _util = __w_pdfjs_require__(2);
 
@@ -2975,6 +2990,10 @@ class MissingDataException extends _util.BaseException {
 }
 
 exports.MissingDataException = MissingDataException;
+
+class ParserEOFException extends _util.BaseException {}
+
+exports.ParserEOFException = ParserEOFException;
 
 class XRefEntryException extends _util.BaseException {}
 
@@ -3423,36 +3442,36 @@ var _primitives = __w_pdfjs_require__(5);
 
 var _core_utils = __w_pdfjs_require__(9);
 
+var _xfa_fonts = __w_pdfjs_require__(12);
+
 var _stream = __w_pdfjs_require__(10);
 
-var _annotation = __w_pdfjs_require__(12);
+var _annotation = __w_pdfjs_require__(22);
 
-var _crypto = __w_pdfjs_require__(65);
+var _base_stream = __w_pdfjs_require__(6);
 
-var _catalog = __w_pdfjs_require__(57);
+var _crypto = __w_pdfjs_require__(72);
 
-var _parser = __w_pdfjs_require__(17);
+var _catalog = __w_pdfjs_require__(64);
 
-var _object_loader = __w_pdfjs_require__(63);
+var _parser = __w_pdfjs_require__(27);
 
-var _operator_list = __w_pdfjs_require__(55);
+var _object_loader = __w_pdfjs_require__(70);
 
-var _evaluator = __w_pdfjs_require__(15);
+var _operator_list = __w_pdfjs_require__(62);
 
-var _decode_stream = __w_pdfjs_require__(19);
+var _evaluator = __w_pdfjs_require__(25);
 
-var _struct_tree = __w_pdfjs_require__(62);
+var _decode_stream = __w_pdfjs_require__(29);
 
-var _factory = __w_pdfjs_require__(67);
+var _struct_tree = __w_pdfjs_require__(69);
 
-var _xref = __w_pdfjs_require__(87);
+var _factory = __w_pdfjs_require__(74);
+
+var _xref = __w_pdfjs_require__(98);
 
 const DEFAULT_USER_UNIT = 1.0;
 const LETTER_SIZE_MEDIABOX = [0, 0, 612, 792];
-
-function isAnnotationRenderable(annotation, intent) {
-  return intent === "display" && annotation.viewable || intent === "print" && annotation.printable;
-}
 
 class Page {
   constructor({
@@ -3464,6 +3483,7 @@ class Page {
     globalIdFactory,
     fontCache,
     builtInCMapCache,
+    standardFontDataCache,
     globalImageCache,
     nonBlendModesSet,
     xfaFactory
@@ -3475,6 +3495,7 @@ class Page {
     this.ref = ref;
     this.fontCache = fontCache;
     this.builtInCMapCache = builtInCMapCache;
+    this.standardFontDataCache = standardFontDataCache;
     this.globalImageCache = globalImageCache;
     this.nonBlendModesSet = nonBlendModesSet;
     this.evaluatorOptions = pdfManager.evaluatorOptions;
@@ -3518,7 +3539,7 @@ class Page {
   }
 
   get content() {
-    return this.pageDict.get("Contents");
+    return this.pageDict.getArray("Contents");
   }
 
   get resources() {
@@ -3527,11 +3548,7 @@ class Page {
 
   _getBoundingBox(name) {
     if (this.xfaData) {
-      const {
-        width,
-        height
-      } = this.xfaData.attributes.style;
-      return [0, 0, parseInt(width), parseInt(height)];
+      return this.xfaData.bbox;
     }
 
     const box = this._getInheritableProperty(name, true);
@@ -3593,7 +3610,7 @@ class Page {
     if (rotate % 90 !== 0) {
       rotate = 0;
     } else if (rotate >= 360) {
-      rotate = rotate % 360;
+      rotate %= 360;
     } else if (rotate < 0) {
       rotate = (rotate % 360 + 360) % 360;
     }
@@ -3601,31 +3618,37 @@ class Page {
     return (0, _util.shadow)(this, "rotate", rotate);
   }
 
-  getContentStream() {
-    const content = this.content;
-    let stream;
-
-    if (Array.isArray(content)) {
-      const xref = this.xref;
-      const streams = [];
-
-      for (const subStream of content) {
-        streams.push(xref.fetchIfRef(subStream));
-      }
-
-      stream = new _decode_stream.StreamsSequenceStream(streams);
-    } else if ((0, _primitives.isStream)(content)) {
-      stream = content;
-    } else {
-      stream = new _stream.NullStream();
+  _onSubStreamError(handler, reason, objId) {
+    if (this.evaluatorOptions.ignoreErrors) {
+      handler.send("UnsupportedFeature", {
+        featureId: _util.UNSUPPORTED_FEATURES.errorContentSubStream
+      });
+      (0, _util.warn)(`getContentStream - ignoring sub-stream (${objId}): "${reason}".`);
+      return;
     }
 
-    return stream;
+    throw reason;
+  }
+
+  getContentStream(handler) {
+    return this.pdfManager.ensure(this, "content").then(content => {
+      if (content instanceof _base_stream.BaseStream) {
+        return content;
+      }
+
+      if (Array.isArray(content)) {
+        return new _decode_stream.StreamsSequenceStream(content, this._onSubStreamError.bind(this, handler));
+      }
+
+      return new _stream.NullStream();
+    });
   }
 
   get xfaData() {
     if (this.xfaFactory) {
-      return (0, _util.shadow)(this, "xfaData", this.xfaFactory.getPage(this.pageIndex));
+      return (0, _util.shadow)(this, "xfaData", {
+        bbox: this.xfaFactory.getBoundingBox(this.pageIndex)
+      });
     }
 
     return (0, _util.shadow)(this, "xfaData", null);
@@ -3639,6 +3662,7 @@ class Page {
       idFactory: this._localIdFactory,
       fontCache: this.fontCache,
       builtInCMapCache: this.builtInCMapCache,
+      standardFontDataCache: this.standardFontDataCache,
       globalImageCache: this.globalImageCache,
       options: this.evaluatorOptions
     });
@@ -3646,7 +3670,7 @@ class Page {
       const newRefsPromises = [];
 
       for (const annotation of annotations) {
-        if (!isAnnotationRenderable(annotation, "print")) {
+        if (!annotation.mustBePrinted(annotationStorage)) {
           continue;
         }
 
@@ -3679,7 +3703,7 @@ class Page {
     renderInteractiveForms,
     annotationStorage
   }) {
-    const contentStreamPromise = this.pdfManager.ensure(this, "getContentStream");
+    const contentStreamPromise = this.getContentStream(handler);
     const resourcesPromise = this.loadResources(["ColorSpace", "ExtGState", "Font", "Pattern", "Properties", "Shading", "XObject"]);
     const partialEvaluator = new _evaluator.PartialEvaluator({
       xref: this.xref,
@@ -3688,6 +3712,7 @@ class Page {
       idFactory: this._localIdFactory,
       fontCache: this.fontCache,
       builtInCMapCache: this.builtInCMapCache,
+      standardFontDataCache: this.standardFontDataCache,
       globalImageCache: this.globalImageCache,
       options: this.evaluatorOptions
     });
@@ -3716,10 +3741,11 @@ class Page {
         };
       }
 
+      const annotationIntent = intent.startsWith("oplist-") ? intent.split("-")[1] : intent;
       const opListPromises = [];
 
       for (const annotation of annotations) {
-        if (isAnnotationRenderable(annotation, intent) && !annotation.isHidden(annotationStorage)) {
+        if (annotationIntent === "display" && annotation.mustBeViewed(annotationStorage) || annotationIntent === "print" && annotation.mustBePrinted(annotationStorage)) {
           opListPromises.push(annotation.getOperatorList(partialEvaluator, task, renderInteractiveForms, annotationStorage).catch(function (reason) {
             (0, _util.warn)("getOperatorList - ignoring annotation data during " + `"${task.name}" task: "${reason}".`);
             return null;
@@ -3751,7 +3777,7 @@ class Page {
     sink,
     combineTextItems
   }) {
-    const contentStreamPromise = this.pdfManager.ensure(this, "getContentStream");
+    const contentStreamPromise = this.getContentStream(handler);
     const resourcesPromise = this.loadResources(["ExtGState", "Font", "Properties", "XObject"]);
     const dataPromises = Promise.all([contentStreamPromise, resourcesPromise]);
     return dataPromises.then(([contentStream]) => {
@@ -3762,6 +3788,7 @@ class Page {
         idFactory: this._localIdFactory,
         fontCache: this.fontCache,
         builtInCMapCache: this.builtInCMapCache,
+        standardFontDataCache: this.standardFontDataCache,
         globalImageCache: this.globalImageCache,
         options: this.evaluatorOptions
       });
@@ -3799,7 +3826,7 @@ class Page {
       const annotationsData = [];
 
       for (let i = 0, ii = annotations.length; i < ii; i++) {
-        if (!intent || isAnnotationRenderable(annotations[i], intent)) {
+        if (!intent || intent === "display" && annotations[i].viewable || intent === "print" && annotations[i].printable) {
           annotationsData.push(annotations[i].data);
         }
       }
@@ -4163,7 +4190,40 @@ class PDFDocument {
   }
 
   get isPureXfa() {
-    return this.xfaFactory !== null;
+    return this.xfaFactory && this.xfaFactory.isValid();
+  }
+
+  get htmlForXfa() {
+    if (this.xfaFactory) {
+      return this.xfaFactory.getPages();
+    }
+
+    return null;
+  }
+
+  async loadXfaImages() {
+    const xfaImagesDict = await this.pdfManager.ensureCatalog("xfaImages");
+
+    if (!xfaImagesDict) {
+      return;
+    }
+
+    const keys = xfaImagesDict.getKeys();
+    const objectLoader = new _object_loader.ObjectLoader(xfaImagesDict, keys, this.xref);
+    await objectLoader.load();
+    const xfaImages = new Map();
+
+    for (const key of keys) {
+      const stream = xfaImagesDict.get(key);
+
+      if (!(0, _primitives.isStream)(stream)) {
+        continue;
+      }
+
+      xfaImages.set(key, stream.getBytes());
+    }
+
+    this.xfaFactory.setImages(xfaImages);
   }
 
   async loadXfaFonts(handler, task) {
@@ -4187,17 +4247,28 @@ class PDFDocument {
       return;
     }
 
+    const options = Object.assign(Object.create(null), this.pdfManager.evaluatorOptions);
+    options.useSystemFonts = false;
     const partialEvaluator = new _evaluator.PartialEvaluator({
       xref: this.xref,
       handler,
       pageIndex: -1,
       idFactory: this._globalIdFactory,
       fontCache: this.catalog.fontCache,
-      builtInCMapCache: this.catalog.builtInCMapCache
+      builtInCMapCache: this.catalog.builtInCMapCache,
+      standardFontDataCache: this.catalog.standardFontDataCache,
+      options
     });
     const operatorList = new _operator_list.OperatorList();
+    const pdfFonts = [];
     const initialState = {
-      font: null,
+      get font() {
+        return pdfFonts[pdfFonts.length - 1];
+      },
+
+      set font(font) {
+        pdfFonts.push(font);
+      },
 
       clone() {
         return this;
@@ -4217,9 +4288,10 @@ class PDFDocument {
         continue;
       }
 
-      const fontFamily = descriptor.get("FontFamily");
+      let fontFamily = descriptor.get("FontFamily");
+      fontFamily = fontFamily.replace(/[ ]+([0-9])/g, "$1");
       const fontWeight = descriptor.get("FontWeight");
-      const italicAngle = descriptor.get("ItalicAngle");
+      const italicAngle = -descriptor.get("ItalicAngle");
       const cssFontInfo = {
         fontFamily,
         fontWeight,
@@ -4237,6 +4309,72 @@ class PDFDocument {
     }
 
     await Promise.all(promises);
+    const missingFonts = this.xfaFactory.setFonts(pdfFonts);
+
+    if (!missingFonts) {
+      return;
+    }
+
+    options.ignoreErrors = true;
+    promises.length = 0;
+    pdfFonts.length = 0;
+    const reallyMissingFonts = new Set();
+
+    for (const missing of missingFonts) {
+      if (!(0, _xfa_fonts.getXfaFontName)(`${missing}-Regular`)) {
+        reallyMissingFonts.add(missing);
+      }
+    }
+
+    if (reallyMissingFonts.size) {
+      missingFonts.push("PdfJS-Fallback");
+    }
+
+    for (const missing of missingFonts) {
+      if (reallyMissingFonts.has(missing)) {
+        continue;
+      }
+
+      for (const fontInfo of [{
+        name: "Regular",
+        fontWeight: 400,
+        italicAngle: 0
+      }, {
+        name: "Bold",
+        fontWeight: 700,
+        italicAngle: 0
+      }, {
+        name: "Italic",
+        fontWeight: 400,
+        italicAngle: 12
+      }, {
+        name: "BoldItalic",
+        fontWeight: 700,
+        italicAngle: 12
+      }]) {
+        const name = `${missing}-${fontInfo.name}`;
+        const dict = (0, _xfa_fonts.getXfaFontDict)(name);
+        promises.push(partialEvaluator.handleSetFont(resources, [_primitives.Name.get(name), 1], null, operatorList, task, initialState, dict, {
+          fontFamily: missing,
+          fontWeight: fontInfo.fontWeight,
+          italicAngle: fontInfo.italicAngle
+        }).catch(function (reason) {
+          (0, _util.warn)(`loadXfaFonts: "${reason}".`);
+          return null;
+        }));
+      }
+    }
+
+    await Promise.all(promises);
+    this.xfaFactory.appendFonts(pdfFonts, reallyMissingFonts);
+  }
+
+  async serializeXfaData(annotationStorage) {
+    if (this.xfaFactory) {
+      return this.xfaFactory.serializeData(annotationStorage);
+    }
+
+    return null;
   }
 
   get formInfo() {
@@ -4349,24 +4487,36 @@ class PDFDocument {
     return (0, _util.shadow)(this, "documentInfo", docInfo);
   }
 
-  get fingerprint() {
-    let hash;
+  get fingerprints() {
+    function validate(data) {
+      return typeof data === "string" && data.length > 0 && data !== EMPTY_FINGERPRINT;
+    }
+
+    function hexString(hash) {
+      const buf = [];
+
+      for (let i = 0, ii = hash.length; i < ii; i++) {
+        const hex = hash[i].toString(16);
+        buf.push(hex.padStart(2, "0"));
+      }
+
+      return buf.join("");
+    }
+
     const idArray = this.xref.trailer.get("ID");
+    let hashOriginal, hashModified;
 
-    if (Array.isArray(idArray) && idArray[0] && (0, _util.isString)(idArray[0]) && idArray[0] !== EMPTY_FINGERPRINT) {
-      hash = (0, _util.stringToBytes)(idArray[0]);
+    if (Array.isArray(idArray) && validate(idArray[0])) {
+      hashOriginal = (0, _util.stringToBytes)(idArray[0]);
+
+      if (idArray[1] !== idArray[0] && validate(idArray[1])) {
+        hashModified = (0, _util.stringToBytes)(idArray[1]);
+      }
     } else {
-      hash = (0, _crypto.calculateMD5)(this.stream.getByteRange(0, FINGERPRINT_FIRST_BYTES), 0, FINGERPRINT_FIRST_BYTES);
+      hashOriginal = (0, _crypto.calculateMD5)(this.stream.getByteRange(0, FINGERPRINT_FIRST_BYTES), 0, FINGERPRINT_FIRST_BYTES);
     }
 
-    const fingerprintBuf = [];
-
-    for (let i = 0, ii = hash.length; i < ii; i++) {
-      const hex = hash[i].toString(16);
-      fingerprintBuf.push(hex.padStart(2, "0"));
-    }
-
-    return (0, _util.shadow)(this, "fingerprint", fingerprintBuf.join(""));
+    return (0, _util.shadow)(this, "fingerprints", [hexString(hashOriginal), hashModified ? hexString(hashModified) : null]);
   }
 
   _getLinearizationPage(pageIndex) {
@@ -4413,6 +4563,7 @@ class PDFDocument {
         globalIdFactory: this._globalIdFactory,
         fontCache: catalog.fontCache,
         builtInCMapCache: catalog.builtInCMapCache,
+        standardFontDataCache: catalog.standardFontDataCache,
         globalImageCache: catalog.globalImageCache,
         nonBlendModesSet: catalog.nonBlendModesSet,
         xfaFactory: this.xfaFactory
@@ -4430,6 +4581,7 @@ class PDFDocument {
         globalIdFactory: this._globalIdFactory,
         fontCache: catalog.fontCache,
         builtInCMapCache: catalog.builtInCMapCache,
+        standardFontDataCache: catalog.standardFontDataCache,
         globalImageCache: catalog.globalImageCache,
         nonBlendModesSet: catalog.nonBlendModesSet,
         xfaFactory: null
@@ -4567,6 +4719,1180 @@ exports.PDFDocument = PDFDocument;
 Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
+exports.getXfaFontDict = getXfaFontDict;
+exports.getXfaFontName = getXfaFontName;
+
+var _calibri_factors = __w_pdfjs_require__(13);
+
+var _primitives = __w_pdfjs_require__(5);
+
+var _helvetica_factors = __w_pdfjs_require__(14);
+
+var _liberationsans_widths = __w_pdfjs_require__(15);
+
+var _myriadpro_factors = __w_pdfjs_require__(16);
+
+var _segoeui_factors = __w_pdfjs_require__(17);
+
+var _core_utils = __w_pdfjs_require__(9);
+
+var _fonts_utils = __w_pdfjs_require__(18);
+
+const getXFAFontMap = (0, _core_utils.getLookupTableFactory)(function (t) {
+  t["MyriadPro-Regular"] = t["PdfJS-Fallback-Regular"] = {
+    name: "LiberationSans-Regular",
+    factors: _myriadpro_factors.MyriadProRegularFactors,
+    baseWidths: _liberationsans_widths.LiberationSansRegularWidths,
+    baseMapping: _liberationsans_widths.LiberationSansRegularMapping,
+    metrics: _myriadpro_factors.MyriadProRegularMetrics
+  };
+  t["MyriadPro-Bold"] = t["PdfJS-Fallback-Bold"] = {
+    name: "LiberationSans-Bold",
+    factors: _myriadpro_factors.MyriadProBoldFactors,
+    baseWidths: _liberationsans_widths.LiberationSansBoldWidths,
+    baseMapping: _liberationsans_widths.LiberationSansBoldMapping,
+    metrics: _myriadpro_factors.MyriadProBoldMetrics
+  };
+  t["MyriadPro-It"] = t["MyriadPro-Italic"] = t["PdfJS-Fallback-Italic"] = {
+    name: "LiberationSans-Italic",
+    factors: _myriadpro_factors.MyriadProItalicFactors,
+    baseWidths: _liberationsans_widths.LiberationSansItalicWidths,
+    baseMapping: _liberationsans_widths.LiberationSansItalicMapping,
+    metrics: _myriadpro_factors.MyriadProItalicMetrics
+  };
+  t["MyriadPro-BoldIt"] = t["MyriadPro-BoldItalic"] = t["PdfJS-Fallback-BoldItalic"] = {
+    name: "LiberationSans-BoldItalic",
+    factors: _myriadpro_factors.MyriadProBoldItalicFactors,
+    baseWidths: _liberationsans_widths.LiberationSansBoldItalicWidths,
+    baseMapping: _liberationsans_widths.LiberationSansBoldItalicMapping,
+    metrics: _myriadpro_factors.MyriadProBoldItalicMetrics
+  };
+  t.ArialMT = t.Arial = t["Arial-Regular"] = {
+    name: "LiberationSans-Regular",
+    baseWidths: _liberationsans_widths.LiberationSansRegularWidths,
+    baseMapping: _liberationsans_widths.LiberationSansRegularMapping
+  };
+  t["Arial-BoldMT"] = t["Arial-Bold"] = {
+    name: "LiberationSans-Bold",
+    baseWidths: _liberationsans_widths.LiberationSansBoldWidths,
+    baseMapping: _liberationsans_widths.LiberationSansBoldMapping
+  };
+  t["Arial-ItalicMT"] = t["Arial-Italic"] = {
+    name: "LiberationSans-Italic",
+    baseWidths: _liberationsans_widths.LiberationSansItalicWidths,
+    baseMapping: _liberationsans_widths.LiberationSansItalicMapping
+  };
+  t["Arial-BoldItalicMT"] = t["Arial-BoldItalic"] = {
+    name: "LiberationSans-BoldItalic",
+    baseWidths: _liberationsans_widths.LiberationSansBoldItalicWidths,
+    baseMapping: _liberationsans_widths.LiberationSansBoldItalicMapping
+  };
+  t["Calibri-Regular"] = {
+    name: "LiberationSans-Regular",
+    factors: _calibri_factors.CalibriRegularFactors,
+    baseWidths: _liberationsans_widths.LiberationSansRegularWidths,
+    baseMapping: _liberationsans_widths.LiberationSansRegularMapping,
+    metrics: _calibri_factors.CalibriRegularMetrics
+  };
+  t["Calibri-Bold"] = {
+    name: "LiberationSans-Bold",
+    factors: _calibri_factors.CalibriBoldFactors,
+    baseWidths: _liberationsans_widths.LiberationSansBoldWidths,
+    baseMapping: _liberationsans_widths.LiberationSansBoldMapping,
+    metrics: _calibri_factors.CalibriBoldMetrics
+  };
+  t["Calibri-Italic"] = {
+    name: "LiberationSans-Italic",
+    factors: _calibri_factors.CalibriItalicFactors,
+    baseWidths: _liberationsans_widths.LiberationSansItalicWidths,
+    baseMapping: _liberationsans_widths.LiberationSansItalicMapping,
+    metrics: _calibri_factors.CalibriItalicMetrics
+  };
+  t["Calibri-BoldItalic"] = {
+    name: "LiberationSans-BoldItalic",
+    factors: _calibri_factors.CalibriBoldItalicFactors,
+    baseWidths: _liberationsans_widths.LiberationSansBoldItalicWidths,
+    baseMapping: _liberationsans_widths.LiberationSansBoldItalicMapping,
+    metrics: _calibri_factors.CalibriBoldItalicMetrics
+  };
+  t["Segoeui-Regular"] = {
+    name: "LiberationSans-Regular",
+    factors: _segoeui_factors.SegoeuiRegularFactors,
+    baseWidths: _liberationsans_widths.LiberationSansRegularWidths,
+    baseMapping: _liberationsans_widths.LiberationSansRegularMapping,
+    metrics: _segoeui_factors.SegoeuiRegularMetrics
+  };
+  t["Segoeui-Bold"] = {
+    name: "LiberationSans-Bold",
+    factors: _segoeui_factors.SegoeuiBoldFactors,
+    baseWidths: _liberationsans_widths.LiberationSansBoldWidths,
+    baseMapping: _liberationsans_widths.LiberationSansBoldMapping,
+    metrics: _segoeui_factors.SegoeuiBoldMetrics
+  };
+  t["Segoeui-Italic"] = {
+    name: "LiberationSans-Italic",
+    factors: _segoeui_factors.SegoeuiItalicFactors,
+    baseWidths: _liberationsans_widths.LiberationSansItalicWidths,
+    baseMapping: _liberationsans_widths.LiberationSansItalicMapping,
+    metrics: _segoeui_factors.SegoeuiItalicMetrics
+  };
+  t["Segoeui-BoldItalic"] = {
+    name: "LiberationSans-BoldItalic",
+    factors: _segoeui_factors.SegoeuiBoldItalicFactors,
+    baseWidths: _liberationsans_widths.LiberationSansBoldItalicWidths,
+    baseMapping: _liberationsans_widths.LiberationSansBoldItalicMapping,
+    metrics: _segoeui_factors.SegoeuiBoldItalicMetrics
+  };
+  t["Helvetica-Regular"] = t.Helvetica = {
+    name: "LiberationSans-Regular",
+    factors: _helvetica_factors.HelveticaRegularFactors,
+    baseWidths: _liberationsans_widths.LiberationSansRegularWidths,
+    baseMapping: _liberationsans_widths.LiberationSansRegularMapping,
+    metrics: _helvetica_factors.HelveticaRegularMetrics
+  };
+  t["Helvetica-Bold"] = {
+    name: "LiberationSans-Bold",
+    factors: _helvetica_factors.HelveticaBoldFactors,
+    baseWidths: _liberationsans_widths.LiberationSansBoldWidths,
+    baseMapping: _liberationsans_widths.LiberationSansBoldMapping,
+    metrics: _helvetica_factors.HelveticaBoldMetrics
+  };
+  t["Helvetica-Italic"] = {
+    name: "LiberationSans-Italic",
+    factors: _helvetica_factors.HelveticaItalicFactors,
+    baseWidths: _liberationsans_widths.LiberationSansItalicWidths,
+    baseMapping: _liberationsans_widths.LiberationSansItalicMapping,
+    metrics: _helvetica_factors.HelveticaItalicMetrics
+  };
+  t["Helvetica-BoldItalic"] = {
+    name: "LiberationSans-BoldItalic",
+    factors: _helvetica_factors.HelveticaBoldItalicFactors,
+    baseWidths: _liberationsans_widths.LiberationSansBoldItalicWidths,
+    baseMapping: _liberationsans_widths.LiberationSansBoldItalicMapping,
+    metrics: _helvetica_factors.HelveticaBoldItalicMetrics
+  };
+});
+
+function getXfaFontName(name) {
+  const fontName = (0, _fonts_utils.normalizeFontName)(name);
+  const fontMap = getXFAFontMap();
+  return fontMap[fontName];
+}
+
+function getXfaFontWidths(name) {
+  const info = getXfaFontName(name);
+
+  if (!info) {
+    return null;
+  }
+
+  const {
+    baseWidths,
+    baseMapping,
+    factors
+  } = info;
+  let rescaledBaseWidths;
+
+  if (!factors) {
+    rescaledBaseWidths = baseWidths;
+  } else {
+    rescaledBaseWidths = baseWidths.map((w, i) => w * factors[i]);
+  }
+
+  let currentCode = -2;
+  let currentArray;
+  const newWidths = [];
+
+  for (const [unicode, glyphIndex] of baseMapping.map((charUnicode, index) => [charUnicode, index]).sort(([unicode1], [unicode2]) => unicode1 - unicode2)) {
+    if (unicode === -1) {
+      continue;
+    }
+
+    if (unicode === currentCode + 1) {
+      currentArray.push(rescaledBaseWidths[glyphIndex]);
+      currentCode += 1;
+    } else {
+      currentCode = unicode;
+      currentArray = [rescaledBaseWidths[glyphIndex]];
+      newWidths.push(unicode, currentArray);
+    }
+  }
+
+  return newWidths;
+}
+
+function getXfaFontDict(name) {
+  const widths = getXfaFontWidths(name);
+  const dict = new _primitives.Dict(null);
+  dict.set("BaseFont", _primitives.Name.get(name));
+  dict.set("Type", _primitives.Name.get("Font"));
+  dict.set("Subtype", _primitives.Name.get("CIDFontType2"));
+  dict.set("Encoding", _primitives.Name.get("Identity-H"));
+  dict.set("CIDToGIDMap", _primitives.Name.get("Identity"));
+  dict.set("W", widths);
+  dict.set("FirstChar", widths[0]);
+  dict.set("LastChar", widths[widths.length - 2] + widths[widths.length - 1].length - 1);
+  const descriptor = new _primitives.Dict(null);
+  dict.set("FontDescriptor", descriptor);
+  const systemInfo = new _primitives.Dict(null);
+  systemInfo.set("Ordering", "Identity");
+  systemInfo.set("Registry", "Adobe");
+  systemInfo.set("Supplement", 0);
+  dict.set("CIDSystemInfo", systemInfo);
+  return dict;
+}
+
+/***/ }),
+/* 13 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports.CalibriRegularMetrics = exports.CalibriRegularFactors = exports.CalibriItalicMetrics = exports.CalibriItalicFactors = exports.CalibriBoldMetrics = exports.CalibriBoldItalicMetrics = exports.CalibriBoldItalicFactors = exports.CalibriBoldFactors = void 0;
+const CalibriBoldFactors = [1.3877, 1, 1, 1, 0.97801, 0.92482, 0.89552, 0.91133, 0.81988, 0.97566, 0.98152, 0.93548, 0.93548, 1.2798, 0.85284, 0.92794, 1, 0.96134, 1.54657, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.82845, 0.82845, 0.85284, 0.85284, 0.85284, 0.75859, 0.92138, 0.83908, 0.7762, 0.73293, 0.87289, 0.73133, 0.7514, 0.81921, 0.87356, 0.95958, 0.59526, 0.75727, 0.69225, 1.04924, 0.9121, 0.86943, 0.79795, 0.88198, 0.77958, 0.70864, 0.81055, 0.90399, 0.88653, 0.96017, 0.82577, 0.77892, 0.78257, 0.97507, 1.54657, 0.97507, 0.85284, 0.89552, 0.90176, 0.88762, 0.8785, 0.75241, 0.8785, 0.90518, 0.95015, 0.77618, 0.8785, 0.88401, 0.91916, 0.86304, 0.88401, 0.91488, 0.8785, 0.8801, 0.8785, 0.8785, 0.91343, 0.7173, 1.04106, 0.8785, 0.85075, 0.95794, 0.82616, 0.85162, 0.79492, 0.88331, 1.69808, 0.88331, 0.85284, 0.97801, 0.89552, 0.91133, 0.89552, 0.91133, 1.7801, 0.89552, 1.24487, 1.13254, 1.12401, 0.96839, 0.85284, 0.68787, 0.70645, 0.85592, 0.90747, 1.01466, 1.0088, 0.90323, 1, 1.07463, 1, 0.91056, 0.75806, 1.19118, 0.96839, 0.78864, 0.82845, 0.84133, 0.75859, 0.83908, 0.83908, 0.83908, 0.83908, 0.83908, 0.83908, 0.77539, 0.73293, 0.73133, 0.73133, 0.73133, 0.73133, 0.95958, 0.95958, 0.95958, 0.95958, 0.88506, 0.9121, 0.86943, 0.86943, 0.86943, 0.86943, 0.86943, 0.85284, 0.87508, 0.90399, 0.90399, 0.90399, 0.90399, 0.77892, 0.79795, 0.90807, 0.88762, 0.88762, 0.88762, 0.88762, 0.88762, 0.88762, 0.8715, 0.75241, 0.90518, 0.90518, 0.90518, 0.90518, 0.88401, 0.88401, 0.88401, 0.88401, 0.8785, 0.8785, 0.8801, 0.8801, 0.8801, 0.8801, 0.8801, 0.90747, 0.89049, 0.8785, 0.8785, 0.8785, 0.8785, 0.85162, 0.8785, 0.85162, 0.83908, 0.88762, 0.83908, 0.88762, 0.83908, 0.88762, 0.73293, 0.75241, 0.73293, 0.75241, 0.73293, 0.75241, 0.73293, 0.75241, 0.87289, 0.83016, 0.88506, 0.93125, 0.73133, 0.90518, 0.73133, 0.90518, 0.73133, 0.90518, 0.73133, 0.90518, 0.73133, 0.90518, 0.81921, 0.77618, 0.81921, 0.77618, 0.81921, 0.77618, 1, 1, 0.87356, 0.8785, 0.91075, 0.89608, 0.95958, 0.88401, 0.95958, 0.88401, 0.95958, 0.88401, 0.95958, 0.88401, 0.95958, 0.88401, 0.76229, 0.90167, 0.59526, 0.91916, 1, 1, 0.86304, 0.69225, 0.88401, 1, 1, 0.70424, 0.79468, 0.91926, 0.88175, 0.70823, 0.94903, 0.9121, 0.8785, 1, 1, 0.9121, 0.8785, 0.87802, 0.88656, 0.8785, 0.86943, 0.8801, 0.86943, 0.8801, 0.86943, 0.8801, 0.87402, 0.89291, 0.77958, 0.91343, 1, 1, 0.77958, 0.91343, 0.70864, 0.7173, 0.70864, 0.7173, 0.70864, 0.7173, 0.70864, 0.7173, 1, 1, 0.81055, 0.75841, 0.81055, 1.06452, 0.90399, 0.8785, 0.90399, 0.8785, 0.90399, 0.8785, 0.90399, 0.8785, 0.90399, 0.8785, 0.90399, 0.8785, 0.96017, 0.95794, 0.77892, 0.85162, 0.77892, 0.78257, 0.79492, 0.78257, 0.79492, 0.78257, 0.79492, 0.9297, 0.56892, 0.83908, 0.88762, 0.77539, 0.8715, 0.87508, 0.89049, 1, 1, 0.81055, 1.04106, 1.20528, 1.20528, 1, 1.15543, 0.70674, 0.98387, 0.94721, 1.33431, 1.45894, 0.95161, 1.06303, 0.83908, 0.80352, 0.57184, 0.6965, 0.56289, 0.82001, 0.56029, 0.81235, 1.02988, 0.83908, 0.7762, 0.68156, 0.80367, 0.73133, 0.78257, 0.87356, 0.86943, 0.95958, 0.75727, 0.89019, 1.04924, 0.9121, 0.7648, 0.86943, 0.87356, 0.79795, 0.78275, 0.81055, 0.77892, 0.9762, 0.82577, 0.99819, 0.84896, 0.95958, 0.77892, 0.96108, 1.01407, 0.89049, 1.02988, 0.94211, 0.96108, 0.8936, 0.84021, 0.87842, 0.96399, 0.79109, 0.89049, 1.00813, 1.02988, 0.86077, 0.87445, 0.92099, 0.84723, 0.86513, 0.8801, 0.75638, 0.85714, 0.78216, 0.79586, 0.87965, 0.94211, 0.97747, 0.78287, 0.97926, 0.84971, 1.02988, 0.94211, 0.8801, 0.94211, 0.84971, 0.73133, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.90264, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.90518, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.90548, 1, 1, 1, 1, 1, 1, 0.96017, 0.95794, 0.96017, 0.95794, 0.96017, 0.95794, 0.77892, 0.85162, 1, 1, 0.89552, 0.90527, 1, 0.90363, 0.92794, 0.92794, 0.92794, 0.92794, 0.87012, 0.87012, 0.87012, 0.89552, 0.89552, 1.42259, 0.71143, 1.06152, 1, 1, 1.03372, 1.03372, 0.97171, 1.4956, 2.2807, 0.93835, 0.83406, 0.91133, 0.84107, 0.91133, 1, 1, 1, 0.72021, 1, 1.23108, 0.83489, 0.88525, 0.88525, 0.81499, 0.90527, 1.81055, 0.90527, 1.81055, 1.31006, 1.53711, 0.94434, 1.08696, 1, 0.95018, 0.77192, 0.85284, 0.90747, 1.17534, 0.69825, 0.9716, 1.37077, 0.90747, 0.90747, 0.85356, 0.90747, 0.90747, 1.44947, 0.85284, 0.8941, 0.8941, 0.70572, 0.8, 0.70572, 0.70572, 0.70572, 0.70572, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.99862, 0.99862, 1, 1, 1, 1, 1, 1.08004, 0.91027, 1, 1, 1, 0.99862, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.90727, 0.90727, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+exports.CalibriBoldFactors = CalibriBoldFactors;
+const CalibriBoldMetrics = {
+  lineHeight: 1.2207,
+  lineGap: 0.2207
+};
+exports.CalibriBoldMetrics = CalibriBoldMetrics;
+const CalibriBoldItalicFactors = [1.3877, 1, 1, 1, 0.97801, 0.92482, 0.89552, 0.91133, 0.81988, 0.97566, 0.98152, 0.93548, 0.93548, 1.2798, 0.85284, 0.92794, 1, 0.96134, 1.56239, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.82845, 0.82845, 0.85284, 0.85284, 0.85284, 0.75859, 0.92138, 0.83908, 0.7762, 0.71805, 0.87289, 0.73133, 0.7514, 0.81921, 0.87356, 0.95958, 0.59526, 0.75727, 0.69225, 1.04924, 0.90872, 0.85938, 0.79795, 0.87068, 0.77958, 0.69766, 0.81055, 0.90399, 0.88653, 0.96068, 0.82577, 0.77892, 0.78257, 0.97507, 1.529, 0.97507, 0.85284, 0.89552, 0.90176, 0.94908, 0.86411, 0.74012, 0.86411, 0.88323, 0.95015, 0.86411, 0.86331, 0.88401, 0.91916, 0.86304, 0.88401, 0.9039, 0.86331, 0.86331, 0.86411, 0.86411, 0.90464, 0.70852, 1.04106, 0.86331, 0.84372, 0.95794, 0.82616, 0.84548, 0.79492, 0.88331, 1.69808, 0.88331, 0.85284, 0.97801, 0.89552, 0.91133, 0.89552, 0.91133, 1.7801, 0.89552, 1.24487, 1.13254, 1.19129, 0.96839, 0.85284, 0.68787, 0.70645, 0.85592, 0.90747, 1.01466, 1.0088, 0.90323, 1, 1.07463, 1, 0.91056, 0.75806, 1.19118, 0.96839, 0.78864, 0.82845, 0.84133, 0.75859, 0.83908, 0.83908, 0.83908, 0.83908, 0.83908, 0.83908, 0.77539, 0.71805, 0.73133, 0.73133, 0.73133, 0.73133, 0.95958, 0.95958, 0.95958, 0.95958, 0.88506, 0.90872, 0.85938, 0.85938, 0.85938, 0.85938, 0.85938, 0.85284, 0.87068, 0.90399, 0.90399, 0.90399, 0.90399, 0.77892, 0.79795, 0.90807, 0.94908, 0.94908, 0.94908, 0.94908, 0.94908, 0.94908, 0.85887, 0.74012, 0.88323, 0.88323, 0.88323, 0.88323, 0.88401, 0.88401, 0.88401, 0.88401, 0.8785, 0.86331, 0.86331, 0.86331, 0.86331, 0.86331, 0.86331, 0.90747, 0.89049, 0.86331, 0.86331, 0.86331, 0.86331, 0.84548, 0.86411, 0.84548, 0.83908, 0.94908, 0.83908, 0.94908, 0.83908, 0.94908, 0.71805, 0.74012, 0.71805, 0.74012, 0.71805, 0.74012, 0.71805, 0.74012, 0.87289, 0.79538, 0.88506, 0.92726, 0.73133, 0.88323, 0.73133, 0.88323, 0.73133, 0.88323, 0.73133, 0.88323, 0.73133, 0.88323, 0.81921, 0.86411, 0.81921, 0.86411, 0.81921, 0.86411, 1, 1, 0.87356, 0.86331, 0.91075, 0.8777, 0.95958, 0.88401, 0.95958, 0.88401, 0.95958, 0.88401, 0.95958, 0.88401, 0.95958, 0.88401, 0.76467, 0.90167, 0.59526, 0.91916, 1, 1, 0.86304, 0.69225, 0.88401, 1, 1, 0.70424, 0.77312, 0.91926, 0.88175, 0.70823, 0.94903, 0.90872, 0.86331, 1, 1, 0.90872, 0.86331, 0.86906, 0.88116, 0.86331, 0.85938, 0.86331, 0.85938, 0.86331, 0.85938, 0.86331, 0.87402, 0.86549, 0.77958, 0.90464, 1, 1, 0.77958, 0.90464, 0.69766, 0.70852, 0.69766, 0.70852, 0.69766, 0.70852, 0.69766, 0.70852, 1, 1, 0.81055, 0.75841, 0.81055, 1.06452, 0.90399, 0.86331, 0.90399, 0.86331, 0.90399, 0.86331, 0.90399, 0.86331, 0.90399, 0.86331, 0.90399, 0.86331, 0.96068, 0.95794, 0.77892, 0.84548, 0.77892, 0.78257, 0.79492, 0.78257, 0.79492, 0.78257, 0.79492, 0.9297, 0.56892, 0.83908, 0.94908, 0.77539, 0.85887, 0.87068, 0.89049, 1, 1, 0.81055, 1.04106, 1.20528, 1.20528, 1, 1.15543, 0.70088, 0.98387, 0.94721, 1.33431, 1.45894, 0.95161, 1.48387, 0.83908, 0.80352, 0.57118, 0.6965, 0.56347, 0.79179, 0.55853, 0.80346, 1.02988, 0.83908, 0.7762, 0.67174, 0.86036, 0.73133, 0.78257, 0.87356, 0.86441, 0.95958, 0.75727, 0.89019, 1.04924, 0.90872, 0.74889, 0.85938, 0.87891, 0.79795, 0.7957, 0.81055, 0.77892, 0.97447, 0.82577, 0.97466, 0.87179, 0.95958, 0.77892, 0.94252, 0.95612, 0.8753, 1.02988, 0.92733, 0.94252, 0.87411, 0.84021, 0.8728, 0.95612, 0.74081, 0.8753, 1.02189, 1.02988, 0.84814, 0.87445, 0.91822, 0.84723, 0.85668, 0.86331, 0.81344, 0.87581, 0.76422, 0.82046, 0.96057, 0.92733, 0.99375, 0.78022, 0.95452, 0.86015, 1.02988, 0.92733, 0.86331, 0.92733, 0.86015, 0.73133, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.90631, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.88323, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.85174, 1, 1, 1, 1, 1, 1, 0.96068, 0.95794, 0.96068, 0.95794, 0.96068, 0.95794, 0.77892, 0.84548, 1, 1, 0.89552, 0.90527, 1, 0.90363, 0.92794, 0.92794, 0.92794, 0.89807, 0.87012, 0.87012, 0.87012, 0.89552, 0.89552, 1.42259, 0.71094, 1.06152, 1, 1, 1.03372, 1.03372, 0.97171, 1.4956, 2.2807, 0.92972, 0.83406, 0.91133, 0.83326, 0.91133, 1, 1, 1, 0.72021, 1, 1.23108, 0.83489, 0.88525, 0.88525, 0.81499, 0.90616, 1.81055, 0.90527, 1.81055, 1.3107, 1.53711, 0.94434, 1.08696, 1, 0.95018, 0.77192, 0.85284, 0.90747, 1.17534, 0.69825, 0.9716, 1.37077, 0.90747, 0.90747, 0.85356, 0.90747, 0.90747, 1.44947, 0.85284, 0.8941, 0.8941, 0.70572, 0.8, 0.70572, 0.70572, 0.70572, 0.70572, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.99862, 0.99862, 1, 1, 1, 1, 1, 1.08004, 0.91027, 1, 1, 1, 0.99862, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.90727, 0.90727, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+exports.CalibriBoldItalicFactors = CalibriBoldItalicFactors;
+const CalibriBoldItalicMetrics = {
+  lineHeight: 1.2207,
+  lineGap: 0.2207
+};
+exports.CalibriBoldItalicMetrics = CalibriBoldItalicMetrics;
+const CalibriItalicFactors = [1.3877, 1, 1, 1, 1.17223, 1.1293, 0.89552, 0.91133, 0.80395, 1.02269, 1.15601, 0.91056, 0.91056, 1.2798, 0.85284, 0.89807, 1, 0.90861, 1.39543, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.96309, 0.96309, 0.85284, 0.85284, 0.85284, 0.83319, 0.88071, 0.8675, 0.81552, 0.72346, 0.85193, 0.73206, 0.7522, 0.81105, 0.86275, 0.90685, 0.6377, 0.77892, 0.75593, 1.02638, 0.89249, 0.84118, 0.77452, 0.85374, 0.75186, 0.67789, 0.79776, 0.88844, 0.85066, 0.94309, 0.77818, 0.7306, 0.76659, 1.10369, 1.38313, 1.10369, 1.06139, 0.89552, 0.8739, 0.9245, 0.9245, 0.83203, 0.9245, 0.85865, 1.09842, 0.9245, 0.9245, 1.03297, 1.07692, 0.90918, 1.03297, 0.94959, 0.9245, 0.92274, 0.9245, 0.9245, 1.02933, 0.77832, 1.20562, 0.9245, 0.8916, 0.98986, 0.86621, 0.89453, 0.79004, 0.94152, 1.77256, 0.94152, 0.85284, 0.97801, 0.89552, 0.91133, 0.89552, 0.91133, 1.91729, 0.89552, 1.17889, 1.13254, 1.16359, 0.92098, 0.85284, 0.68787, 0.71353, 0.84737, 0.90747, 1.0088, 1.0044, 0.87683, 1, 1.09091, 1, 0.92229, 0.739, 1.15642, 0.92098, 0.76288, 0.80504, 0.80972, 0.75859, 0.8675, 0.8675, 0.8675, 0.8675, 0.8675, 0.8675, 0.76318, 0.72346, 0.73206, 0.73206, 0.73206, 0.73206, 0.90685, 0.90685, 0.90685, 0.90685, 0.86477, 0.89249, 0.84118, 0.84118, 0.84118, 0.84118, 0.84118, 0.85284, 0.84557, 0.88844, 0.88844, 0.88844, 0.88844, 0.7306, 0.77452, 0.86331, 0.9245, 0.9245, 0.9245, 0.9245, 0.9245, 0.9245, 0.84843, 0.83203, 0.85865, 0.85865, 0.85865, 0.85865, 0.82601, 0.82601, 0.82601, 0.82601, 0.94469, 0.9245, 0.92274, 0.92274, 0.92274, 0.92274, 0.92274, 0.90747, 0.86651, 0.9245, 0.9245, 0.9245, 0.9245, 0.89453, 0.9245, 0.89453, 0.8675, 0.9245, 0.8675, 0.9245, 0.8675, 0.9245, 0.72346, 0.83203, 0.72346, 0.83203, 0.72346, 0.83203, 0.72346, 0.83203, 0.85193, 0.8875, 0.86477, 0.99034, 0.73206, 0.85865, 0.73206, 0.85865, 0.73206, 0.85865, 0.73206, 0.85865, 0.73206, 0.85865, 0.81105, 0.9245, 0.81105, 0.9245, 0.81105, 0.9245, 1, 1, 0.86275, 0.9245, 0.90872, 0.93591, 0.90685, 0.82601, 0.90685, 0.82601, 0.90685, 0.82601, 0.90685, 1.03297, 0.90685, 0.82601, 0.77896, 1.05611, 0.6377, 1.07692, 1, 1, 0.90918, 0.75593, 1.03297, 1, 1, 0.76032, 0.9375, 0.98156, 0.93407, 0.77261, 1.11429, 0.89249, 0.9245, 1, 1, 0.89249, 0.9245, 0.92534, 0.86698, 0.9245, 0.84118, 0.92274, 0.84118, 0.92274, 0.84118, 0.92274, 0.8667, 0.86291, 0.75186, 1.02933, 1, 1, 0.75186, 1.02933, 0.67789, 0.77832, 0.67789, 0.77832, 0.67789, 0.77832, 0.67789, 0.77832, 1, 1, 0.79776, 0.97655, 0.79776, 1.23023, 0.88844, 0.9245, 0.88844, 0.9245, 0.88844, 0.9245, 0.88844, 0.9245, 0.88844, 0.9245, 0.88844, 0.9245, 0.94309, 0.98986, 0.7306, 0.89453, 0.7306, 0.76659, 0.79004, 0.76659, 0.79004, 0.76659, 0.79004, 1.09231, 0.54873, 0.8675, 0.9245, 0.76318, 0.84843, 0.84557, 0.86651, 1, 1, 0.79776, 1.20562, 1.18622, 1.18622, 1, 1.1437, 0.67009, 0.96334, 0.93695, 1.35191, 1.40909, 0.95161, 1.48387, 0.8675, 0.90861, 0.6192, 0.7363, 0.64824, 0.82411, 0.56321, 0.85696, 1.23516, 0.8675, 0.81552, 0.7286, 0.84134, 0.73206, 0.76659, 0.86275, 0.84369, 0.90685, 0.77892, 0.85871, 1.02638, 0.89249, 0.75828, 0.84118, 0.85984, 0.77452, 0.76466, 0.79776, 0.7306, 0.90782, 0.77818, 0.903, 0.87291, 0.90685, 0.7306, 0.99058, 1.03667, 0.94635, 1.23516, 0.9849, 0.99058, 0.92393, 0.8916, 0.942, 1.03667, 0.75026, 0.94635, 1.0297, 1.23516, 0.90918, 0.94048, 0.98217, 0.89746, 0.84153, 0.92274, 0.82507, 0.88832, 0.84438, 0.88178, 1.03525, 0.9849, 1.00225, 0.78086, 0.97248, 0.89404, 1.23516, 0.9849, 0.92274, 0.9849, 0.89404, 0.73206, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.89693, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.85865, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.90933, 1, 1, 1, 1, 1, 1, 0.94309, 0.98986, 0.94309, 0.98986, 0.94309, 0.98986, 0.7306, 0.89453, 1, 1, 0.89552, 0.90527, 1, 0.90186, 1.12308, 1.12308, 1.12308, 1.12308, 1.2566, 1.2566, 1.2566, 0.89552, 0.89552, 1.42259, 0.68994, 1.03809, 1, 1, 1.0176, 1.0176, 1.11523, 1.4956, 2.01462, 0.97858, 0.82616, 0.91133, 0.83437, 0.91133, 1, 1, 1, 0.70508, 1, 1.23108, 0.79801, 0.84426, 0.84426, 0.774, 0.90572, 1.81055, 0.90749, 1.81055, 1.28809, 1.55469, 0.94434, 1.07806, 1, 0.97094, 0.7589, 0.85284, 0.90747, 1.19658, 0.69825, 0.97622, 1.33512, 0.90747, 0.90747, 0.85284, 0.90747, 0.90747, 1.44947, 0.85284, 0.8941, 0.8941, 0.70572, 0.8, 0.70572, 0.70572, 0.70572, 0.70572, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.99862, 0.99862, 1, 1, 1, 1, 1, 1.0336, 0.91027, 1, 1, 1, 0.99862, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.05859, 1.05859, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+exports.CalibriItalicFactors = CalibriItalicFactors;
+const CalibriItalicMetrics = {
+  lineHeight: 1.2207,
+  lineGap: 0.2207
+};
+exports.CalibriItalicMetrics = CalibriItalicMetrics;
+const CalibriRegularFactors = [1.3877, 1, 1, 1, 1.17223, 1.1293, 0.89552, 0.91133, 0.80395, 1.02269, 1.15601, 0.91056, 0.91056, 1.2798, 0.85284, 0.89807, 1, 0.90861, 1.39016, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.91133, 0.96309, 0.96309, 0.85284, 0.85284, 0.85284, 0.83319, 0.88071, 0.8675, 0.81552, 0.73834, 0.85193, 0.73206, 0.7522, 0.81105, 0.86275, 0.90685, 0.6377, 0.77892, 0.75593, 1.02638, 0.89385, 0.85122, 0.77452, 0.86503, 0.75186, 0.68887, 0.79776, 0.88844, 0.85066, 0.94258, 0.77818, 0.7306, 0.76659, 1.10369, 1.39016, 1.10369, 1.06139, 0.89552, 0.8739, 0.86128, 0.94469, 0.8457, 0.94469, 0.89464, 1.09842, 0.84636, 0.94469, 1.03297, 1.07692, 0.90918, 1.03297, 0.95897, 0.94469, 0.9482, 0.94469, 0.94469, 1.04692, 0.78223, 1.20562, 0.94469, 0.90332, 0.98986, 0.86621, 0.90527, 0.79004, 0.94152, 1.77256, 0.94152, 0.85284, 0.97801, 0.89552, 0.91133, 0.89552, 0.91133, 1.91729, 0.89552, 1.17889, 1.13254, 1.08707, 0.92098, 0.85284, 0.68787, 0.71353, 0.84737, 0.90747, 1.0088, 1.0044, 0.87683, 1, 1.09091, 1, 0.92229, 0.739, 1.15642, 0.92098, 0.76288, 0.80504, 0.80972, 0.75859, 0.8675, 0.8675, 0.8675, 0.8675, 0.8675, 0.8675, 0.76318, 0.73834, 0.73206, 0.73206, 0.73206, 0.73206, 0.90685, 0.90685, 0.90685, 0.90685, 0.86477, 0.89385, 0.85122, 0.85122, 0.85122, 0.85122, 0.85122, 0.85284, 0.85311, 0.88844, 0.88844, 0.88844, 0.88844, 0.7306, 0.77452, 0.86331, 0.86128, 0.86128, 0.86128, 0.86128, 0.86128, 0.86128, 0.8693, 0.8457, 0.89464, 0.89464, 0.89464, 0.89464, 0.82601, 0.82601, 0.82601, 0.82601, 0.94469, 0.94469, 0.9482, 0.9482, 0.9482, 0.9482, 0.9482, 0.90747, 0.86651, 0.94469, 0.94469, 0.94469, 0.94469, 0.90527, 0.94469, 0.90527, 0.8675, 0.86128, 0.8675, 0.86128, 0.8675, 0.86128, 0.73834, 0.8457, 0.73834, 0.8457, 0.73834, 0.8457, 0.73834, 0.8457, 0.85193, 0.92454, 0.86477, 0.9921, 0.73206, 0.89464, 0.73206, 0.89464, 0.73206, 0.89464, 0.73206, 0.89464, 0.73206, 0.89464, 0.81105, 0.84636, 0.81105, 0.84636, 0.81105, 0.84636, 1, 1, 0.86275, 0.94469, 0.90872, 0.95786, 0.90685, 0.82601, 0.90685, 0.82601, 0.90685, 0.82601, 0.90685, 1.03297, 0.90685, 0.82601, 0.77741, 1.05611, 0.6377, 1.07692, 1, 1, 0.90918, 0.75593, 1.03297, 1, 1, 0.76032, 0.90452, 0.98156, 1.11842, 0.77261, 1.11429, 0.89385, 0.94469, 1, 1, 0.89385, 0.94469, 0.95877, 0.86901, 0.94469, 0.85122, 0.9482, 0.85122, 0.9482, 0.85122, 0.9482, 0.8667, 0.90016, 0.75186, 1.04692, 1, 1, 0.75186, 1.04692, 0.68887, 0.78223, 0.68887, 0.78223, 0.68887, 0.78223, 0.68887, 0.78223, 1, 1, 0.79776, 0.92188, 0.79776, 1.23023, 0.88844, 0.94469, 0.88844, 0.94469, 0.88844, 0.94469, 0.88844, 0.94469, 0.88844, 0.94469, 0.88844, 0.94469, 0.94258, 0.98986, 0.7306, 0.90527, 0.7306, 0.76659, 0.79004, 0.76659, 0.79004, 0.76659, 0.79004, 1.09231, 0.54873, 0.8675, 0.86128, 0.76318, 0.8693, 0.85311, 0.86651, 1, 1, 0.79776, 1.20562, 1.18622, 1.18622, 1, 1.1437, 0.67742, 0.96334, 0.93695, 1.35191, 1.40909, 0.95161, 1.48387, 0.86686, 0.90861, 0.62267, 0.74359, 0.65649, 0.85498, 0.56963, 0.88254, 1.23516, 0.8675, 0.81552, 0.75443, 0.84503, 0.73206, 0.76659, 0.86275, 0.85122, 0.90685, 0.77892, 0.85746, 1.02638, 0.89385, 0.75657, 0.85122, 0.86275, 0.77452, 0.74171, 0.79776, 0.7306, 0.95165, 0.77818, 0.89772, 0.88831, 0.90685, 0.7306, 0.98142, 1.02191, 0.96576, 1.23516, 0.99018, 0.98142, 0.9236, 0.89258, 0.94035, 1.02191, 0.78848, 0.96576, 0.9561, 1.23516, 0.90918, 0.92578, 0.95424, 0.89746, 0.83969, 0.9482, 0.80113, 0.89442, 0.85208, 0.86155, 0.98022, 0.99018, 1.00452, 0.81209, 0.99247, 0.89181, 1.23516, 0.99018, 0.9482, 0.99018, 0.89181, 0.73206, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.88844, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.89464, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.96766, 1, 1, 1, 1, 1, 1, 0.94258, 0.98986, 0.94258, 0.98986, 0.94258, 0.98986, 0.7306, 0.90527, 1, 1, 0.89552, 0.90527, 1, 0.90186, 1.12308, 1.12308, 1.12308, 1.12308, 1.2566, 1.2566, 1.2566, 0.89552, 0.89552, 1.42259, 0.69043, 1.03809, 1, 1, 1.0176, 1.0176, 1.11523, 1.4956, 2.01462, 0.99331, 0.82616, 0.91133, 0.84286, 0.91133, 1, 1, 1, 0.70508, 1, 1.23108, 0.79801, 0.84426, 0.84426, 0.774, 0.90527, 1.81055, 0.90527, 1.81055, 1.28809, 1.55469, 0.94434, 1.07806, 1, 0.97094, 0.7589, 0.85284, 0.90747, 1.19658, 0.69825, 0.97622, 1.33512, 0.90747, 0.90747, 0.85356, 0.90747, 0.90747, 1.44947, 0.85284, 0.8941, 0.8941, 0.70572, 0.8, 0.70572, 0.70572, 0.70572, 0.70572, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.99862, 0.99862, 1, 1, 1, 1, 1, 1.0336, 0.91027, 1, 1, 1, 0.99862, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.05859, 1.05859, 1, 1, 1, 1.07185, 0.99413, 0.96334, 1.08065, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+exports.CalibriRegularFactors = CalibriRegularFactors;
+const CalibriRegularMetrics = {
+  lineHeight: 1.2207,
+  lineGap: 0.2207
+};
+exports.CalibriRegularMetrics = CalibriRegularMetrics;
+
+/***/ }),
+/* 14 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports.HelveticaRegularMetrics = exports.HelveticaRegularFactors = exports.HelveticaItalicMetrics = exports.HelveticaItalicFactors = exports.HelveticaBoldMetrics = exports.HelveticaBoldItalicMetrics = exports.HelveticaBoldItalicFactors = exports.HelveticaBoldFactors = void 0;
+const HelveticaBoldFactors = [0.76116, 1, 1, 1.0006, 0.99998, 0.99974, 0.99973, 0.99973, 0.99982, 0.99977, 1.00087, 0.99998, 0.99998, 0.99959, 1.00003, 1.0006, 0.99998, 1.0006, 1.0006, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99998, 1, 1.00003, 1.00003, 1.00003, 1.00026, 0.9999, 0.99977, 0.99977, 0.99977, 0.99977, 1.00001, 1.00026, 1.00022, 0.99977, 1.0006, 0.99973, 0.99977, 1.00026, 0.99999, 0.99977, 1.00022, 1.00001, 1.00022, 0.99977, 1.00001, 1.00026, 0.99977, 1.00001, 1.00016, 1.00001, 1.00001, 1.00026, 0.99998, 1.0006, 0.99998, 1.00003, 0.99973, 0.99998, 0.99973, 1.00026, 0.99973, 1.00026, 0.99973, 0.99998, 1.00026, 1.00026, 1.0006, 1.0006, 0.99973, 1.0006, 0.99982, 1.00026, 1.00026, 1.00026, 1.00026, 0.99959, 0.99973, 0.99998, 1.00026, 0.99973, 1.00022, 0.99973, 0.99973, 1, 0.99959, 1.00077, 0.99959, 1.00003, 0.99998, 0.99973, 0.99973, 0.99973, 0.99973, 1.00077, 0.99973, 0.99998, 1.00025, 0.99968, 0.99973, 1.00003, 1.00025, 0.60299, 1.00024, 1.06409, 1, 1, 0.99998, 1, 0.99973, 1.0006, 0.99998, 1, 0.99936, 0.99973, 1.00002, 1.00002, 1.00002, 1.00026, 0.99977, 0.99977, 0.99977, 0.99977, 0.99977, 0.99977, 1, 0.99977, 1.00001, 1.00001, 1.00001, 1.00001, 1.0006, 1.0006, 1.0006, 1.0006, 0.99977, 0.99977, 1.00022, 1.00022, 1.00022, 1.00022, 1.00022, 1.00003, 1.00022, 0.99977, 0.99977, 0.99977, 0.99977, 1.00001, 1.00001, 1.00026, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99982, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 1.0006, 1.0006, 1.0006, 1.0006, 1.00026, 1.00026, 1.00026, 1.00026, 1.00026, 1.00026, 1.00026, 1.06409, 1.00026, 1.00026, 1.00026, 1.00026, 1.00026, 0.99973, 1.00026, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 1.03374, 0.99977, 1.00026, 1.00001, 0.99973, 1.00001, 0.99973, 1.00001, 0.99973, 1.00001, 0.99973, 1.00001, 0.99973, 1.00022, 1.00026, 1.00022, 1.00026, 1.00022, 1.00026, 1.00022, 1.00026, 0.99977, 1.00026, 0.99977, 1.00026, 1.0006, 1.0006, 1.0006, 1.0006, 1.0006, 1.0006, 1.0006, 1.0006, 1.0006, 1.0006, 1.00042, 0.99973, 0.99973, 1.0006, 0.99977, 0.99973, 0.99973, 1.00026, 1.0006, 1.00026, 1.0006, 1.00026, 1.03828, 1.00026, 0.99999, 1.00026, 1.0006, 0.99977, 1.00026, 0.99977, 1.00026, 0.99977, 1.00026, 0.9993, 0.9998, 1.00026, 1.00022, 1.00026, 1.00022, 1.00026, 1.00022, 1.00026, 1, 1.00016, 0.99977, 0.99959, 0.99977, 0.99959, 0.99977, 0.99959, 1.00001, 0.99973, 1.00001, 0.99973, 1.00001, 0.99973, 1.00001, 0.99973, 1.00026, 0.99998, 1.00026, 0.8121, 1.00026, 0.99998, 0.99977, 1.00026, 0.99977, 1.00026, 0.99977, 1.00026, 0.99977, 1.00026, 0.99977, 1.00026, 0.99977, 1.00026, 1.00016, 1.00022, 1.00001, 0.99973, 1.00001, 1.00026, 1, 1.00026, 1, 1.00026, 1, 1.0006, 0.99973, 0.99977, 0.99973, 1, 0.99982, 1.00022, 1.00026, 1.00001, 0.99973, 1.00026, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 1.00034, 0.99977, 1, 0.99997, 1.00026, 1.00078, 1.00036, 0.99973, 1.00013, 1.0006, 0.99977, 0.99977, 0.99988, 0.85148, 1.00001, 1.00026, 0.99977, 1.00022, 1.0006, 0.99977, 1.00001, 0.99999, 0.99977, 1.00069, 1.00022, 0.99977, 1.00001, 0.99984, 1.00026, 1.00001, 1.00024, 1.00001, 0.9999, 1, 1.0006, 1.00001, 1.00041, 0.99962, 1.00026, 1.0006, 0.99995, 1.00041, 0.99942, 0.99973, 0.99927, 1.00082, 0.99902, 1.00026, 1.00087, 1.0006, 1.00069, 0.99973, 0.99867, 0.99973, 0.9993, 1.00026, 1.00049, 1.00056, 1, 0.99988, 0.99935, 0.99995, 0.99954, 1.00055, 0.99945, 1.00032, 1.0006, 0.99995, 1.00026, 0.99995, 1.00032, 1.00001, 1.00008, 0.99971, 1.00019, 0.9994, 1.00001, 1.0006, 1.00044, 0.99973, 1.00023, 1.00047, 1, 0.99942, 0.99561, 0.99989, 1.00035, 0.99977, 1.00035, 0.99977, 1.00019, 0.99944, 1.00001, 1.00021, 0.99926, 1.00035, 1.00035, 0.99942, 1.00048, 0.99999, 0.99977, 1.00022, 1.00035, 1.00001, 0.99977, 1.00026, 0.99989, 1.00057, 1.00001, 0.99936, 1.00052, 1.00012, 0.99996, 1.00043, 1, 1.00035, 0.9994, 0.99976, 1.00035, 0.99973, 1.00052, 1.00041, 1.00119, 1.00037, 0.99973, 1.00002, 0.99986, 1.00041, 1.00041, 0.99902, 0.9996, 1.00034, 0.99999, 1.00026, 0.99999, 1.00026, 0.99973, 1.00052, 0.99973, 1, 0.99973, 1.00041, 1.00075, 0.9994, 1.0003, 0.99999, 1, 1.00041, 0.99955, 1, 0.99915, 0.99973, 0.99973, 1.00026, 1.00119, 0.99955, 0.99973, 1.0006, 0.99911, 1.0006, 1.00026, 0.99972, 1.00026, 0.99902, 1.00041, 0.99973, 0.99999, 1, 1, 1.00038, 1.0005, 1.00016, 1.00022, 1.00016, 1.00022, 1.00016, 1.00022, 1.00001, 0.99973, 1, 1, 0.99973, 1, 1, 0.99955, 1.0006, 1.0006, 1.0006, 1.0006, 1, 1, 1, 0.99973, 0.99973, 0.99972, 1, 1, 1.00106, 0.99999, 0.99998, 0.99998, 0.99999, 0.99998, 1.66475, 1, 0.99973, 0.99973, 1.00023, 0.99973, 0.99971, 1.00047, 1.00023, 1, 0.99991, 0.99984, 1.00002, 1.00002, 1.00002, 1.00002, 1, 1, 1, 1, 1, 1, 1, 0.99972, 1, 1.20985, 1.39713, 1.00003, 1.00031, 1.00015, 1, 0.99561, 1.00027, 1.00031, 1.00031, 0.99915, 1.00031, 1.00031, 0.99999, 1.00003, 0.99999, 0.99999, 1.41144, 1.6, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.40579, 1.40579, 1.36625, 0.99999, 1, 0.99861, 0.99861, 1, 1.00026, 1.00026, 1.00026, 1.00026, 0.99972, 0.99999, 0.99999, 0.99999, 0.99999, 1.40483, 1, 0.99977, 1.00054, 1, 1, 0.99953, 0.99962, 1.00042, 0.9995, 1, 1, 1, 1, 1, 1, 1, 1, 0.99998, 0.99998, 0.99998, 0.99998, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+exports.HelveticaBoldFactors = HelveticaBoldFactors;
+const HelveticaBoldMetrics = {
+  lineHeight: 1.2,
+  lineGap: 0.2
+};
+exports.HelveticaBoldMetrics = HelveticaBoldMetrics;
+const HelveticaBoldItalicFactors = [0.76116, 1, 1, 1.0006, 0.99998, 0.99974, 0.99973, 0.99973, 0.99982, 0.99977, 1.00087, 0.99998, 0.99998, 0.99959, 1.00003, 1.0006, 0.99998, 1.0006, 1.0006, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99998, 1, 1.00003, 1.00003, 1.00003, 1.00026, 0.9999, 0.99977, 0.99977, 0.99977, 0.99977, 1.00001, 1.00026, 1.00022, 0.99977, 1.0006, 0.99973, 0.99977, 1.00026, 0.99999, 0.99977, 1.00022, 1.00001, 1.00022, 0.99977, 1.00001, 1.00026, 0.99977, 1.00001, 1.00016, 1.00001, 1.00001, 1.00026, 0.99998, 1.0006, 0.99998, 1.00003, 0.99973, 0.99998, 0.99973, 1.00026, 0.99973, 1.00026, 0.99973, 0.99998, 1.00026, 1.00026, 1.0006, 1.0006, 0.99973, 1.0006, 0.99982, 1.00026, 1.00026, 1.00026, 1.00026, 0.99959, 0.99973, 0.99998, 1.00026, 0.99973, 1.00022, 0.99973, 0.99973, 1, 0.99959, 1.00077, 0.99959, 1.00003, 0.99998, 0.99973, 0.99973, 0.99973, 0.99973, 1.00077, 0.99973, 0.99998, 1.00025, 0.99968, 0.99973, 1.00003, 1.00025, 0.60299, 1.00024, 1.06409, 1, 1, 0.99998, 1, 0.99973, 1.0006, 0.99998, 1, 0.99936, 0.99973, 1.00002, 1.00002, 1.00002, 1.00026, 0.99977, 0.99977, 0.99977, 0.99977, 0.99977, 0.99977, 1, 0.99977, 1.00001, 1.00001, 1.00001, 1.00001, 1.0006, 1.0006, 1.0006, 1.0006, 0.99977, 0.99977, 1.00022, 1.00022, 1.00022, 1.00022, 1.00022, 1.00003, 1.00022, 0.99977, 0.99977, 0.99977, 0.99977, 1.00001, 1.00001, 1.00026, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99982, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 1.0006, 1.0006, 1.0006, 1.0006, 1.00026, 1.00026, 1.00026, 1.00026, 1.00026, 1.00026, 1.00026, 1.06409, 1.00026, 1.00026, 1.00026, 1.00026, 1.00026, 0.99973, 1.00026, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 1.0044, 0.99977, 1.00026, 1.00001, 0.99973, 1.00001, 0.99973, 1.00001, 0.99973, 1.00001, 0.99973, 1.00001, 0.99973, 1.00022, 1.00026, 1.00022, 1.00026, 1.00022, 1.00026, 1.00022, 1.00026, 0.99977, 1.00026, 0.99977, 1.00026, 1.0006, 1.0006, 1.0006, 1.0006, 1.0006, 1.0006, 1.0006, 1.0006, 1.0006, 1.0006, 0.99971, 0.99973, 0.99973, 1.0006, 0.99977, 0.99973, 0.99973, 1.00026, 1.0006, 1.00026, 1.0006, 1.00026, 1.01011, 1.00026, 0.99999, 1.00026, 1.0006, 0.99977, 1.00026, 0.99977, 1.00026, 0.99977, 1.00026, 0.9993, 0.9998, 1.00026, 1.00022, 1.00026, 1.00022, 1.00026, 1.00022, 1.00026, 1, 1.00016, 0.99977, 0.99959, 0.99977, 0.99959, 0.99977, 0.99959, 1.00001, 0.99973, 1.00001, 0.99973, 1.00001, 0.99973, 1.00001, 0.99973, 1.00026, 0.99998, 1.00026, 0.8121, 1.00026, 0.99998, 0.99977, 1.00026, 0.99977, 1.00026, 0.99977, 1.00026, 0.99977, 1.00026, 0.99977, 1.00026, 0.99977, 1.00026, 1.00016, 1.00022, 1.00001, 0.99973, 1.00001, 1.00026, 1, 1.00026, 1, 1.00026, 1, 1.0006, 0.99973, 0.99977, 0.99973, 1, 0.99982, 1.00022, 1.00026, 1.00001, 0.99973, 1.00026, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99977, 1, 1, 1.00026, 0.99969, 0.99972, 0.99981, 0.9998, 1.0006, 0.99977, 0.99977, 1.00022, 0.91155, 1.00001, 1.00026, 0.99977, 1.00022, 1.0006, 0.99977, 1.00001, 0.99999, 0.99977, 0.99966, 1.00022, 1.00032, 1.00001, 0.99944, 1.00026, 1.00001, 0.99968, 1.00001, 1.00047, 1, 1.0006, 1.00001, 0.99981, 1.00101, 1.00026, 1.0006, 0.99948, 0.99981, 1.00064, 0.99973, 0.99942, 1.00101, 1.00061, 1.00026, 1.00069, 1.0006, 1.00014, 0.99973, 1.01322, 0.99973, 1.00065, 1.00026, 1.00012, 0.99923, 1, 1.00064, 1.00076, 0.99948, 1.00055, 1.00063, 1.00007, 0.99943, 1.0006, 0.99948, 1.00026, 0.99948, 0.99943, 1.00001, 1.00001, 1.00029, 1.00038, 1.00035, 1.00001, 1.0006, 1.0006, 0.99973, 0.99978, 1.00001, 1.00057, 0.99989, 0.99967, 0.99964, 0.99967, 0.99977, 0.99999, 0.99977, 1.00038, 0.99977, 1.00001, 0.99973, 1.00066, 0.99967, 0.99967, 1.00041, 0.99998, 0.99999, 0.99977, 1.00022, 0.99967, 1.00001, 0.99977, 1.00026, 0.99964, 1.00031, 1.00001, 0.99999, 0.99999, 1, 1.00023, 1, 1, 0.99999, 1.00035, 1.00001, 0.99999, 0.99973, 0.99977, 0.99999, 1.00058, 0.99973, 0.99973, 0.99955, 0.9995, 1.00026, 1.00026, 1.00032, 0.99989, 1.00034, 0.99999, 1.00026, 1.00026, 1.00026, 0.99973, 0.45998, 0.99973, 1.00026, 0.99973, 1.00001, 0.99999, 0.99982, 0.99994, 0.99996, 1, 1.00042, 1.00044, 1.00029, 1.00023, 0.99973, 0.99973, 1.00026, 0.99949, 1.00002, 0.99973, 1.0006, 1.0006, 1.0006, 0.99975, 1.00026, 1.00026, 1.00032, 0.98685, 0.99973, 1.00026, 1, 1, 0.99966, 1.00044, 1.00016, 1.00022, 1.00016, 1.00022, 1.00016, 1.00022, 1.00001, 0.99973, 1, 1, 0.99973, 1, 1, 0.99955, 1.0006, 1.0006, 1.0006, 1.0006, 1, 1, 1, 0.99973, 0.99973, 0.99972, 1, 1, 1.00106, 0.99999, 0.99998, 0.99998, 0.99999, 0.99998, 1.66475, 1, 0.99973, 0.99973, 1, 0.99973, 0.99971, 0.99978, 1, 1, 0.99991, 0.99984, 1.00002, 1.00002, 1.00002, 1.00002, 1.00098, 1, 1, 1, 1.00049, 1, 1, 0.99972, 1, 1.20985, 1.39713, 1.00003, 1.00031, 1.00015, 1, 0.99561, 1.00027, 1.00031, 1.00031, 0.99915, 1.00031, 1.00031, 0.99999, 1.00003, 0.99999, 0.99999, 1.41144, 1.6, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.40579, 1.40579, 1.36625, 0.99999, 1, 0.99861, 0.99861, 1, 1.00026, 1.00026, 1.00026, 1.00026, 0.99972, 0.99999, 0.99999, 0.99999, 0.99999, 1.40483, 1, 0.99977, 1.00054, 1, 1, 0.99953, 0.99962, 1.00042, 0.9995, 1, 1, 1, 1, 1, 1, 1, 1, 0.99998, 0.99998, 0.99998, 0.99998, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+exports.HelveticaBoldItalicFactors = HelveticaBoldItalicFactors;
+const HelveticaBoldItalicMetrics = {
+  lineHeight: 1.35,
+  lineGap: 0.2
+};
+exports.HelveticaBoldItalicMetrics = HelveticaBoldItalicMetrics;
+const HelveticaItalicFactors = [0.76116, 1, 1, 1.0006, 1.0006, 1.00006, 0.99973, 0.99973, 0.99982, 1.00001, 1.00043, 0.99998, 0.99998, 0.99959, 1.00003, 1.0006, 0.99998, 1.0006, 1.0006, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 1.0006, 1, 1.00003, 1.00003, 1.00003, 0.99973, 0.99987, 1.00001, 1.00001, 0.99977, 0.99977, 1.00001, 1.00026, 1.00022, 0.99977, 1.0006, 1, 1.00001, 0.99973, 0.99999, 0.99977, 1.00022, 1.00001, 1.00022, 0.99977, 1.00001, 1.00026, 0.99977, 1.00001, 1.00016, 1.00001, 1.00001, 1.00026, 1.0006, 1.0006, 1.0006, 0.99949, 0.99973, 0.99998, 0.99973, 0.99973, 1, 0.99973, 0.99973, 1.0006, 0.99973, 0.99973, 0.99924, 0.99924, 1, 0.99924, 0.99999, 0.99973, 0.99973, 0.99973, 0.99973, 0.99998, 1, 1.0006, 0.99973, 1, 0.99977, 1, 1, 1, 1.00005, 1.0009, 1.00005, 1.00003, 0.99998, 0.99973, 0.99973, 0.99973, 0.99973, 1.0009, 0.99973, 0.99998, 1.00025, 0.99968, 0.99973, 1.00003, 1.00025, 0.60299, 1.00024, 1.06409, 1, 1, 0.99998, 1, 0.9998, 1.0006, 0.99998, 1, 0.99936, 0.99973, 1.00002, 1.00002, 1.00002, 1.00026, 1.00001, 1.00001, 1.00001, 1.00001, 1.00001, 1.00001, 1, 0.99977, 1.00001, 1.00001, 1.00001, 1.00001, 1.0006, 1.0006, 1.0006, 1.0006, 0.99977, 0.99977, 1.00022, 1.00022, 1.00022, 1.00022, 1.00022, 1.00003, 1.00022, 0.99977, 0.99977, 0.99977, 0.99977, 1.00001, 1.00001, 1.00026, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99982, 1, 0.99973, 0.99973, 0.99973, 0.99973, 1.0006, 1.0006, 1.0006, 1.0006, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 1.06409, 1.00026, 0.99973, 0.99973, 0.99973, 0.99973, 1, 0.99973, 1, 1.00001, 0.99973, 1.00001, 0.99973, 1.00001, 0.99973, 0.99977, 1, 0.99977, 1, 0.99977, 1, 0.99977, 1, 0.99977, 1.0288, 0.99977, 0.99973, 1.00001, 0.99973, 1.00001, 0.99973, 1.00001, 0.99973, 1.00001, 0.99973, 1.00001, 0.99973, 1.00022, 0.99973, 1.00022, 0.99973, 1.00022, 0.99973, 1.00022, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 1.0006, 1.0006, 1.0006, 1.0006, 1.0006, 1.0006, 1.0006, 0.99924, 1.0006, 1.0006, 0.99946, 1.00034, 1, 0.99924, 1.00001, 1, 1, 0.99973, 0.99924, 0.99973, 0.99924, 0.99973, 1.06311, 0.99973, 1.00024, 0.99973, 0.99924, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 1.00041, 0.9998, 0.99973, 1.00022, 0.99973, 1.00022, 0.99973, 1.00022, 0.99973, 1, 1.00016, 0.99977, 0.99998, 0.99977, 0.99998, 0.99977, 0.99998, 1.00001, 1, 1.00001, 1, 1.00001, 1, 1.00001, 1, 1.00026, 1.0006, 1.00026, 0.89547, 1.00026, 1.0006, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 1.00016, 0.99977, 1.00001, 1, 1.00001, 1.00026, 1, 1.00026, 1, 1.00026, 1, 0.99924, 0.99973, 1.00001, 0.99973, 1, 0.99982, 1.00022, 1.00026, 1.00001, 1, 1.00026, 1.0006, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 1.00001, 1, 1.00054, 0.99977, 1.00084, 1.00007, 0.99973, 1.00013, 0.99924, 1.00001, 1.00001, 0.99945, 0.91221, 1.00001, 1.00026, 0.99977, 1.00022, 1.0006, 1.00001, 1.00001, 0.99999, 0.99977, 0.99933, 1.00022, 1.00054, 1.00001, 1.00065, 1.00026, 1.00001, 1.0001, 1.00001, 1.00052, 1, 1.0006, 1.00001, 0.99945, 0.99897, 0.99968, 0.99924, 1.00036, 0.99945, 0.99949, 1, 1.0006, 0.99897, 0.99918, 0.99968, 0.99911, 0.99924, 1, 0.99962, 1.01487, 1, 1.0005, 0.99973, 1.00012, 1.00043, 1, 0.99995, 0.99994, 1.00036, 0.99947, 1.00019, 1.00063, 1.00025, 0.99924, 1.00036, 0.99973, 1.00036, 1.00025, 1.00001, 1.00001, 1.00027, 1.0001, 1.00068, 1.00001, 1.0006, 1.0006, 1, 1.00008, 0.99957, 0.99972, 0.9994, 0.99954, 0.99975, 1.00051, 1.00001, 1.00019, 1.00001, 1.0001, 0.99986, 1.00001, 1.00001, 1.00038, 0.99954, 0.99954, 0.9994, 1.00066, 0.99999, 0.99977, 1.00022, 1.00054, 1.00001, 0.99977, 1.00026, 0.99975, 1.0001, 1.00001, 0.99993, 0.9995, 0.99955, 1.00016, 0.99978, 0.99974, 1.00019, 1.00022, 0.99955, 1.00053, 0.99973, 1.00089, 1.00005, 0.99967, 1.00048, 0.99973, 1.00002, 1.00034, 0.99973, 0.99973, 0.99964, 1.00006, 1.00066, 0.99947, 0.99973, 0.98894, 0.99973, 1, 0.44898, 1, 0.99946, 1, 1.00039, 1.00082, 0.99991, 0.99991, 0.99985, 1.00022, 1.00023, 1.00061, 1.00006, 0.99966, 0.99973, 0.99973, 0.99973, 1.00019, 1.0008, 1, 0.99924, 0.99924, 0.99924, 0.99983, 1.00044, 0.99973, 0.99964, 0.98332, 1, 0.99973, 1, 1, 0.99962, 0.99895, 1.00016, 0.99977, 1.00016, 0.99977, 1.00016, 0.99977, 1.00001, 1, 1, 1, 0.99973, 1, 1, 0.99955, 0.99924, 0.99924, 0.99924, 0.99924, 0.99998, 0.99998, 0.99998, 0.99973, 0.99973, 0.99972, 1, 1, 1.00267, 0.99999, 0.99998, 0.99998, 1, 0.99998, 1.66475, 1, 0.99973, 0.99973, 1.00023, 0.99973, 1.00423, 0.99925, 0.99999, 1, 0.99991, 0.99984, 1.00002, 1.00002, 1.00002, 1.00002, 1.00049, 1, 1.00245, 1, 1, 1, 1, 0.96329, 1, 1.20985, 1.39713, 1.00003, 0.8254, 1.00015, 1, 1.00035, 1.00027, 1.00031, 1.00031, 1.00003, 1.00031, 1.00031, 0.99999, 1.00003, 0.99999, 0.99999, 1.41144, 1.6, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.40579, 1.40579, 1.36625, 0.99999, 1, 0.99861, 0.99861, 1, 1.00026, 1.00026, 1.00026, 1.00026, 0.95317, 0.99999, 0.99999, 0.99999, 0.99999, 1.40483, 1, 0.99977, 1.00054, 1, 1, 0.99953, 0.99962, 1.00042, 0.9995, 1, 1, 1, 1, 1, 1, 1, 1, 0.99998, 0.99998, 0.99998, 0.99998, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+exports.HelveticaItalicFactors = HelveticaItalicFactors;
+const HelveticaItalicMetrics = {
+  lineHeight: 1.35,
+  lineGap: 0.2
+};
+exports.HelveticaItalicMetrics = HelveticaItalicMetrics;
+const HelveticaRegularFactors = [0.76116, 1, 1, 1.0006, 1.0006, 1.00006, 0.99973, 0.99973, 0.99982, 1.00001, 1.00043, 0.99998, 0.99998, 0.99959, 1.00003, 1.0006, 0.99998, 1.0006, 1.0006, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 1.0006, 1, 1.00003, 1.00003, 1.00003, 0.99973, 0.99987, 1.00001, 1.00001, 0.99977, 0.99977, 1.00001, 1.00026, 1.00022, 0.99977, 1.0006, 1, 1.00001, 0.99973, 0.99999, 0.99977, 1.00022, 1.00001, 1.00022, 0.99977, 1.00001, 1.00026, 0.99977, 1.00001, 1.00016, 1.00001, 1.00001, 1.00026, 1.0006, 1.0006, 1.0006, 0.99949, 0.99973, 0.99998, 0.99973, 0.99973, 1, 0.99973, 0.99973, 1.0006, 0.99973, 0.99973, 0.99924, 0.99924, 1, 0.99924, 0.99999, 0.99973, 0.99973, 0.99973, 0.99973, 0.99998, 1, 1.0006, 0.99973, 1, 0.99977, 1, 1, 1, 1.00005, 1.0009, 1.00005, 1.00003, 0.99998, 0.99973, 0.99973, 0.99973, 0.99973, 1.0009, 0.99973, 0.99998, 1.00025, 0.99968, 0.99973, 1.00003, 1.00025, 0.60299, 1.00024, 1.06409, 1, 1, 0.99998, 1, 0.9998, 1.0006, 0.99998, 1, 0.99936, 0.99973, 1.00002, 1.00002, 1.00002, 1.00026, 1.00001, 1.00001, 1.00001, 1.00001, 1.00001, 1.00001, 1, 0.99977, 1.00001, 1.00001, 1.00001, 1.00001, 1.0006, 1.0006, 1.0006, 1.0006, 0.99977, 0.99977, 1.00022, 1.00022, 1.00022, 1.00022, 1.00022, 1.00003, 1.00022, 0.99977, 0.99977, 0.99977, 0.99977, 1.00001, 1.00001, 1.00026, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99982, 1, 0.99973, 0.99973, 0.99973, 0.99973, 1.0006, 1.0006, 1.0006, 1.0006, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 0.99973, 1.06409, 1.00026, 0.99973, 0.99973, 0.99973, 0.99973, 1, 0.99973, 1, 1.00001, 0.99973, 1.00001, 0.99973, 1.00001, 0.99973, 0.99977, 1, 0.99977, 1, 0.99977, 1, 0.99977, 1, 0.99977, 1.04596, 0.99977, 0.99973, 1.00001, 0.99973, 1.00001, 0.99973, 1.00001, 0.99973, 1.00001, 0.99973, 1.00001, 0.99973, 1.00022, 0.99973, 1.00022, 0.99973, 1.00022, 0.99973, 1.00022, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 1.0006, 1.0006, 1.0006, 1.0006, 1.0006, 1.0006, 1.0006, 0.99924, 1.0006, 1.0006, 1.00019, 1.00034, 1, 0.99924, 1.00001, 1, 1, 0.99973, 0.99924, 0.99973, 0.99924, 0.99973, 1.02572, 0.99973, 1.00005, 0.99973, 0.99924, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 0.99999, 0.9998, 0.99973, 1.00022, 0.99973, 1.00022, 0.99973, 1.00022, 0.99973, 1, 1.00016, 0.99977, 0.99998, 0.99977, 0.99998, 0.99977, 0.99998, 1.00001, 1, 1.00001, 1, 1.00001, 1, 1.00001, 1, 1.00026, 1.0006, 1.00026, 0.84533, 1.00026, 1.0006, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 0.99977, 0.99973, 1.00016, 0.99977, 1.00001, 1, 1.00001, 1.00026, 1, 1.00026, 1, 1.00026, 1, 0.99924, 0.99973, 1.00001, 0.99973, 1, 0.99982, 1.00022, 1.00026, 1.00001, 1, 1.00026, 1.0006, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99998, 0.99928, 1, 0.99977, 1.00013, 1.00055, 0.99947, 0.99945, 0.99941, 0.99924, 1.00001, 1.00001, 1.0004, 0.91621, 1.00001, 1.00026, 0.99977, 1.00022, 1.0006, 1.00001, 1.00005, 0.99999, 0.99977, 1.00015, 1.00022, 0.99977, 1.00001, 0.99973, 1.00026, 1.00001, 1.00019, 1.00001, 0.99946, 1, 1.0006, 1.00001, 0.99978, 1.00045, 0.99973, 0.99924, 1.00023, 0.99978, 0.99966, 1, 1.00065, 1.00045, 1.00019, 0.99973, 0.99973, 0.99924, 1, 1, 0.96499, 1, 1.00055, 0.99973, 1.00008, 1.00027, 1, 0.9997, 0.99995, 1.00023, 0.99933, 1.00019, 1.00015, 1.00031, 0.99924, 1.00023, 0.99973, 1.00023, 1.00031, 1.00001, 0.99928, 1.00029, 1.00092, 1.00035, 1.00001, 1.0006, 1.0006, 1, 0.99988, 0.99975, 1, 1.00082, 0.99561, 0.9996, 1.00035, 1.00001, 0.99962, 1.00001, 1.00092, 0.99964, 1.00001, 0.99963, 0.99999, 1.00035, 1.00035, 1.00082, 0.99962, 0.99999, 0.99977, 1.00022, 1.00035, 1.00001, 0.99977, 1.00026, 0.9996, 0.99967, 1.00001, 1.00034, 1.00074, 1.00054, 1.00053, 1.00063, 0.99971, 0.99962, 1.00035, 0.99975, 0.99977, 0.99973, 1.00043, 0.99953, 1.0007, 0.99915, 0.99973, 1.00008, 0.99892, 1.00073, 1.00073, 1.00114, 0.99915, 1.00073, 0.99955, 0.99973, 1.00092, 0.99973, 1, 0.99998, 1, 1.0003, 1, 1.00043, 1.00001, 0.99969, 1.0003, 1, 1.00035, 1.00001, 0.9995, 1, 1.00092, 0.99973, 0.99973, 0.99973, 1.0007, 0.9995, 1, 0.99924, 1.0006, 0.99924, 0.99972, 1.00062, 0.99973, 1.00114, 1.00073, 1, 0.99955, 1, 1, 1.00047, 0.99968, 1.00016, 0.99977, 1.00016, 0.99977, 1.00016, 0.99977, 1.00001, 1, 1, 1, 0.99973, 1, 1, 0.99955, 0.99924, 0.99924, 0.99924, 0.99924, 0.99998, 0.99998, 0.99998, 0.99973, 0.99973, 0.99972, 1, 1, 1.00267, 0.99999, 0.99998, 0.99998, 1, 0.99998, 1.66475, 1, 0.99973, 0.99973, 1.00023, 0.99973, 0.99971, 0.99925, 1.00023, 1, 0.99991, 0.99984, 1.00002, 1.00002, 1.00002, 1.00002, 1, 1, 1, 1, 1, 1, 1, 0.96329, 1, 1.20985, 1.39713, 1.00003, 0.8254, 1.00015, 1, 1.00035, 1.00027, 1.00031, 1.00031, 0.99915, 1.00031, 1.00031, 0.99999, 1.00003, 0.99999, 0.99999, 1.41144, 1.6, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.41144, 1.40579, 1.40579, 1.36625, 0.99999, 1, 0.99861, 0.99861, 1, 1.00026, 1.00026, 1.00026, 1.00026, 0.95317, 0.99999, 0.99999, 0.99999, 0.99999, 1.40483, 1, 0.99977, 1.00054, 1, 1, 0.99953, 0.99962, 1.00042, 0.9995, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+exports.HelveticaRegularFactors = HelveticaRegularFactors;
+const HelveticaRegularMetrics = {
+  lineHeight: 1.2,
+  lineGap: 0.2
+};
+exports.HelveticaRegularMetrics = HelveticaRegularMetrics;
+
+/***/ }),
+/* 15 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports.LiberationSansRegularWidths = exports.LiberationSansRegularMapping = exports.LiberationSansItalicWidths = exports.LiberationSansItalicMapping = exports.LiberationSansBoldWidths = exports.LiberationSansBoldMapping = exports.LiberationSansBoldItalicWidths = exports.LiberationSansBoldItalicMapping = void 0;
+const LiberationSansBoldWidths = [365, 0, 333, 278, 333, 474, 556, 556, 889, 722, 238, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 333, 333, 584, 584, 584, 611, 975, 722, 722, 722, 722, 667, 611, 778, 722, 278, 556, 722, 611, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 333, 278, 333, 584, 556, 333, 556, 611, 556, 611, 556, 333, 611, 611, 278, 278, 556, 278, 889, 611, 611, 611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500, 389, 280, 389, 584, 333, 556, 556, 556, 556, 280, 556, 333, 737, 370, 556, 584, 737, 552, 400, 549, 333, 333, 333, 576, 556, 278, 333, 333, 365, 556, 834, 834, 834, 611, 722, 722, 722, 722, 722, 722, 1000, 722, 667, 667, 667, 667, 278, 278, 278, 278, 722, 722, 778, 778, 778, 778, 778, 584, 778, 722, 722, 722, 722, 667, 667, 611, 556, 556, 556, 556, 556, 556, 889, 556, 556, 556, 556, 556, 278, 278, 278, 278, 611, 611, 611, 611, 611, 611, 611, 549, 611, 611, 611, 611, 611, 556, 611, 556, 722, 556, 722, 556, 722, 556, 722, 556, 722, 556, 722, 556, 722, 556, 722, 719, 722, 611, 667, 556, 667, 556, 667, 556, 667, 556, 667, 556, 778, 611, 778, 611, 778, 611, 778, 611, 722, 611, 722, 611, 278, 278, 278, 278, 278, 278, 278, 278, 278, 278, 785, 556, 556, 278, 722, 556, 556, 611, 278, 611, 278, 611, 385, 611, 479, 611, 278, 722, 611, 722, 611, 722, 611, 708, 723, 611, 778, 611, 778, 611, 778, 611, 1000, 944, 722, 389, 722, 389, 722, 389, 667, 556, 667, 556, 667, 556, 667, 556, 611, 333, 611, 479, 611, 333, 722, 611, 722, 611, 722, 611, 722, 611, 722, 611, 722, 611, 944, 778, 667, 556, 667, 611, 500, 611, 500, 611, 500, 278, 556, 722, 556, 1000, 889, 778, 611, 667, 556, 611, 333, 333, 333, 333, 333, 333, 333, 333, 333, 333, 333, 465, 722, 333, 853, 906, 474, 825, 927, 838, 278, 722, 722, 601, 719, 667, 611, 722, 778, 278, 722, 667, 833, 722, 644, 778, 722, 667, 600, 611, 667, 821, 667, 809, 802, 278, 667, 615, 451, 611, 278, 582, 615, 610, 556, 606, 475, 460, 611, 541, 278, 558, 556, 612, 556, 445, 611, 766, 619, 520, 684, 446, 582, 715, 576, 753, 845, 278, 582, 611, 582, 845, 667, 669, 885, 567, 711, 667, 278, 276, 556, 1094, 1062, 875, 610, 722, 622, 719, 722, 719, 722, 567, 712, 667, 904, 626, 719, 719, 610, 702, 833, 722, 778, 719, 667, 722, 611, 622, 854, 667, 730, 703, 1005, 1019, 870, 979, 719, 711, 1031, 719, 556, 618, 615, 417, 635, 556, 709, 497, 615, 615, 500, 635, 740, 604, 611, 604, 611, 556, 490, 556, 875, 556, 615, 581, 833, 844, 729, 854, 615, 552, 854, 583, 556, 556, 611, 417, 552, 556, 278, 281, 278, 969, 906, 611, 500, 615, 556, 604, 778, 611, 487, 447, 944, 778, 944, 778, 944, 778, 667, 556, 333, 333, 556, 1000, 1000, 552, 278, 278, 278, 278, 500, 500, 500, 556, 556, 350, 1000, 1000, 240, 479, 333, 333, 604, 333, 167, 396, 556, 556, 1094, 556, 885, 489, 1115, 1000, 768, 600, 834, 834, 834, 834, 1000, 500, 1000, 500, 1000, 500, 500, 494, 612, 823, 713, 584, 549, 713, 979, 722, 274, 549, 549, 583, 549, 549, 604, 584, 604, 604, 708, 625, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 729, 604, 604, 354, 354, 1000, 990, 990, 990, 990, 494, 604, 604, 604, 604, 354, 1021, 1052, 917, 750, 750, 531, 656, 594, 510, 500, 750, 750, 611, 611, 333, 333, 333, 333, 333, 333, 333, 333, 222, 222, 333, 333, 333, 333, 333, 333, 333, 333];
+exports.LiberationSansBoldWidths = LiberationSansBoldWidths;
+const LiberationSansBoldMapping = [-1, -1, -1, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330, 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343, 344, 345, 346, 347, 348, 349, 350, 351, 352, 353, 354, 355, 356, 357, 358, 359, 360, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 373, 374, 375, 376, 377, 378, 379, 380, 381, 382, 383, 402, 506, 507, 508, 509, 510, 511, 536, 537, 538, 539, 710, 711, 713, 728, 729, 730, 731, 732, 733, 900, 901, 902, 903, 904, 905, 906, 908, 910, 911, 912, 913, 914, 915, 916, 917, 918, 919, 920, 921, 922, 923, 924, 925, 926, 927, 928, 929, 931, 932, 933, 934, 935, 936, 937, 938, 939, 940, 941, 942, 943, 944, 945, 946, 947, 948, 949, 950, 951, 952, 953, 954, 955, 956, 957, 958, 959, 960, 961, 962, 963, 964, 965, 966, 967, 968, 969, 970, 971, 972, 973, 974, 1024, 1025, 1026, 1027, 1028, 1029, 1030, 1031, 1032, 1033, 1034, 1035, 1036, 1037, 1038, 1039, 1040, 1041, 1042, 1043, 1044, 1045, 1046, 1047, 1048, 1049, 1050, 1051, 1052, 1053, 1054, 1055, 1056, 1057, 1058, 1059, 1060, 1061, 1062, 1063, 1064, 1065, 1066, 1067, 1068, 1069, 1070, 1071, 1072, 1073, 1074, 1075, 1076, 1077, 1078, 1079, 1080, 1081, 1082, 1083, 1084, 1085, 1086, 1087, 1088, 1089, 1090, 1091, 1092, 1093, 1094, 1095, 1096, 1097, 1098, 1099, 1100, 1101, 1102, 1103, 1104, 1105, 1106, 1107, 1108, 1109, 1110, 1111, 1112, 1113, 1114, 1115, 1116, 1117, 1118, 1119, 1138, 1139, 1168, 1169, 7808, 7809, 7810, 7811, 7812, 7813, 7922, 7923, 8208, 8209, 8211, 8212, 8213, 8215, 8216, 8217, 8218, 8219, 8220, 8221, 8222, 8224, 8225, 8226, 8230, 8240, 8242, 8243, 8249, 8250, 8252, 8254, 8260, 8319, 8355, 8356, 8359, 8364, 8453, 8467, 8470, 8482, 8486, 8494, 8539, 8540, 8541, 8542, 8592, 8593, 8594, 8595, 8596, 8597, 8616, 8706, 8710, 8719, 8721, 8722, 8730, 8734, 8735, 8745, 8747, 8776, 8800, 8801, 8804, 8805, 8962, 8976, 8992, 8993, 9472, 9474, 9484, 9488, 9492, 9496, 9500, 9508, 9516, 9524, 9532, 9552, 9553, 9554, 9555, 9556, 9557, 9558, 9559, 9560, 9561, 9562, 9563, 9564, 9565, 9566, 9567, 9568, 9569, 9570, 9571, 9572, 9573, 9574, 9575, 9576, 9577, 9578, 9579, 9580, 9600, 9604, 9608, 9612, 9616, 9617, 9618, 9619, 9632, 9633, 9642, 9643, 9644, 9650, 9658, 9660, 9668, 9674, 9675, 9679, 9688, 9689, 9702, 9786, 9787, 9788, 9792, 9794, 9824, 9827, 9829, 9830, 9834, 9835, 9836, 61441, 61442, 61445, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1];
+exports.LiberationSansBoldMapping = LiberationSansBoldMapping;
+const LiberationSansBoldItalicWidths = [365, 0, 333, 278, 333, 474, 556, 556, 889, 722, 238, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 333, 333, 584, 584, 584, 611, 975, 722, 722, 722, 722, 667, 611, 778, 722, 278, 556, 722, 611, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 333, 278, 333, 584, 556, 333, 556, 611, 556, 611, 556, 333, 611, 611, 278, 278, 556, 278, 889, 611, 611, 611, 611, 389, 556, 333, 611, 556, 778, 556, 556, 500, 389, 280, 389, 584, 333, 556, 556, 556, 556, 280, 556, 333, 737, 370, 556, 584, 737, 552, 400, 549, 333, 333, 333, 576, 556, 278, 333, 333, 365, 556, 834, 834, 834, 611, 722, 722, 722, 722, 722, 722, 1000, 722, 667, 667, 667, 667, 278, 278, 278, 278, 722, 722, 778, 778, 778, 778, 778, 584, 778, 722, 722, 722, 722, 667, 667, 611, 556, 556, 556, 556, 556, 556, 889, 556, 556, 556, 556, 556, 278, 278, 278, 278, 611, 611, 611, 611, 611, 611, 611, 549, 611, 611, 611, 611, 611, 556, 611, 556, 722, 556, 722, 556, 722, 556, 722, 556, 722, 556, 722, 556, 722, 556, 722, 740, 722, 611, 667, 556, 667, 556, 667, 556, 667, 556, 667, 556, 778, 611, 778, 611, 778, 611, 778, 611, 722, 611, 722, 611, 278, 278, 278, 278, 278, 278, 278, 278, 278, 278, 782, 556, 556, 278, 722, 556, 556, 611, 278, 611, 278, 611, 396, 611, 479, 611, 278, 722, 611, 722, 611, 722, 611, 708, 723, 611, 778, 611, 778, 611, 778, 611, 1000, 944, 722, 389, 722, 389, 722, 389, 667, 556, 667, 556, 667, 556, 667, 556, 611, 333, 611, 479, 611, 333, 722, 611, 722, 611, 722, 611, 722, 611, 722, 611, 722, 611, 944, 778, 667, 556, 667, 611, 500, 611, 500, 611, 500, 278, 556, 722, 556, 1000, 889, 778, 611, 667, 556, 611, 333, 333, 333, 333, 333, 333, 333, 333, 333, 333, 333, 333, 722, 333, 854, 906, 473, 844, 930, 847, 278, 722, 722, 610, 671, 667, 611, 722, 778, 278, 722, 667, 833, 722, 657, 778, 718, 667, 590, 611, 667, 822, 667, 829, 781, 278, 667, 620, 479, 611, 278, 591, 620, 621, 556, 610, 479, 492, 611, 558, 278, 566, 556, 603, 556, 450, 611, 712, 605, 532, 664, 409, 591, 704, 578, 773, 834, 278, 591, 611, 591, 834, 667, 667, 886, 614, 719, 667, 278, 278, 556, 1094, 1042, 854, 622, 719, 677, 719, 722, 708, 722, 614, 722, 667, 927, 643, 719, 719, 615, 687, 833, 722, 778, 719, 667, 722, 611, 677, 781, 667, 729, 708, 979, 989, 854, 1000, 708, 719, 1042, 729, 556, 619, 604, 534, 618, 556, 736, 510, 611, 611, 507, 622, 740, 604, 611, 611, 611, 556, 889, 556, 885, 556, 646, 583, 889, 935, 707, 854, 594, 552, 865, 589, 556, 556, 611, 469, 563, 556, 278, 278, 278, 969, 906, 611, 507, 619, 556, 611, 778, 611, 575, 467, 944, 778, 944, 778, 944, 778, 667, 556, 333, 333, 556, 1000, 1000, 552, 278, 278, 278, 278, 500, 500, 500, 556, 556, 350, 1000, 1000, 240, 479, 333, 333, 604, 333, 167, 396, 556, 556, 1104, 556, 885, 516, 1146, 1000, 768, 600, 834, 834, 834, 834, 999, 500, 1000, 500, 1000, 500, 500, 494, 612, 823, 713, 584, 549, 713, 979, 722, 274, 549, 549, 583, 549, 549, 604, 584, 604, 604, 708, 625, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 729, 604, 604, 354, 354, 1000, 990, 990, 990, 990, 494, 604, 604, 604, 604, 354, 1021, 1052, 917, 750, 750, 531, 656, 594, 510, 500, 750, 750, 611, 611, 333, 333, 333, 333, 333, 333, 333, 333, 222, 222, 333, 333, 333, 333, 333, 333, 333, 333];
+exports.LiberationSansBoldItalicWidths = LiberationSansBoldItalicWidths;
+const LiberationSansBoldItalicMapping = [-1, -1, -1, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330, 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343, 344, 345, 346, 347, 348, 349, 350, 351, 352, 353, 354, 355, 356, 357, 358, 359, 360, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 373, 374, 375, 376, 377, 378, 379, 380, 381, 382, 383, 402, 506, 507, 508, 509, 510, 511, 536, 537, 538, 539, 710, 711, 713, 728, 729, 730, 731, 732, 733, 900, 901, 902, 903, 904, 905, 906, 908, 910, 911, 912, 913, 914, 915, 916, 917, 918, 919, 920, 921, 922, 923, 924, 925, 926, 927, 928, 929, 931, 932, 933, 934, 935, 936, 937, 938, 939, 940, 941, 942, 943, 944, 945, 946, 947, 948, 949, 950, 951, 952, 953, 954, 955, 956, 957, 958, 959, 960, 961, 962, 963, 964, 965, 966, 967, 968, 969, 970, 971, 972, 973, 974, 1024, 1025, 1026, 1027, 1028, 1029, 1030, 1031, 1032, 1033, 1034, 1035, 1036, 1037, 1038, 1039, 1040, 1041, 1042, 1043, 1044, 1045, 1046, 1047, 1048, 1049, 1050, 1051, 1052, 1053, 1054, 1055, 1056, 1057, 1058, 1059, 1060, 1061, 1062, 1063, 1064, 1065, 1066, 1067, 1068, 1069, 1070, 1071, 1072, 1073, 1074, 1075, 1076, 1077, 1078, 1079, 1080, 1081, 1082, 1083, 1084, 1085, 1086, 1087, 1088, 1089, 1090, 1091, 1092, 1093, 1094, 1095, 1096, 1097, 1098, 1099, 1100, 1101, 1102, 1103, 1104, 1105, 1106, 1107, 1108, 1109, 1110, 1111, 1112, 1113, 1114, 1115, 1116, 1117, 1118, 1119, 1138, 1139, 1168, 1169, 7808, 7809, 7810, 7811, 7812, 7813, 7922, 7923, 8208, 8209, 8211, 8212, 8213, 8215, 8216, 8217, 8218, 8219, 8220, 8221, 8222, 8224, 8225, 8226, 8230, 8240, 8242, 8243, 8249, 8250, 8252, 8254, 8260, 8319, 8355, 8356, 8359, 8364, 8453, 8467, 8470, 8482, 8486, 8494, 8539, 8540, 8541, 8542, 8592, 8593, 8594, 8595, 8596, 8597, 8616, 8706, 8710, 8719, 8721, 8722, 8730, 8734, 8735, 8745, 8747, 8776, 8800, 8801, 8804, 8805, 8962, 8976, 8992, 8993, 9472, 9474, 9484, 9488, 9492, 9496, 9500, 9508, 9516, 9524, 9532, 9552, 9553, 9554, 9555, 9556, 9557, 9558, 9559, 9560, 9561, 9562, 9563, 9564, 9565, 9566, 9567, 9568, 9569, 9570, 9571, 9572, 9573, 9574, 9575, 9576, 9577, 9578, 9579, 9580, 9600, 9604, 9608, 9612, 9616, 9617, 9618, 9619, 9632, 9633, 9642, 9643, 9644, 9650, 9658, 9660, 9668, 9674, 9675, 9679, 9688, 9689, 9702, 9786, 9787, 9788, 9792, 9794, 9824, 9827, 9829, 9830, 9834, 9835, 9836, 61441, 61442, 61445, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1];
+exports.LiberationSansBoldItalicMapping = LiberationSansBoldItalicMapping;
+const LiberationSansItalicWidths = [365, 0, 333, 278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556, 1015, 667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278, 469, 556, 333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584, 333, 556, 556, 556, 556, 260, 556, 333, 737, 370, 556, 584, 737, 552, 400, 549, 333, 333, 333, 576, 537, 278, 333, 333, 365, 556, 834, 834, 834, 611, 667, 667, 667, 667, 667, 667, 1000, 722, 667, 667, 667, 667, 278, 278, 278, 278, 722, 722, 778, 778, 778, 778, 778, 584, 778, 722, 722, 722, 722, 667, 667, 611, 556, 556, 556, 556, 556, 556, 889, 500, 556, 556, 556, 556, 278, 278, 278, 278, 556, 556, 556, 556, 556, 556, 556, 549, 611, 556, 556, 556, 556, 500, 556, 500, 667, 556, 667, 556, 667, 556, 722, 500, 722, 500, 722, 500, 722, 500, 722, 625, 722, 556, 667, 556, 667, 556, 667, 556, 667, 556, 667, 556, 778, 556, 778, 556, 778, 556, 778, 556, 722, 556, 722, 556, 278, 278, 278, 278, 278, 278, 278, 222, 278, 278, 733, 444, 500, 222, 667, 500, 500, 556, 222, 556, 222, 556, 281, 556, 400, 556, 222, 722, 556, 722, 556, 722, 556, 615, 723, 556, 778, 556, 778, 556, 778, 556, 1000, 944, 722, 333, 722, 333, 722, 333, 667, 500, 667, 500, 667, 500, 667, 500, 611, 278, 611, 354, 611, 278, 722, 556, 722, 556, 722, 556, 722, 556, 722, 556, 722, 556, 944, 722, 667, 500, 667, 611, 500, 611, 500, 611, 500, 222, 556, 667, 556, 1000, 889, 778, 611, 667, 500, 611, 278, 333, 333, 333, 333, 333, 333, 333, 333, 333, 333, 333, 667, 278, 789, 846, 389, 794, 865, 775, 222, 667, 667, 570, 671, 667, 611, 722, 778, 278, 667, 667, 833, 722, 648, 778, 725, 667, 600, 611, 667, 837, 667, 831, 761, 278, 667, 570, 439, 555, 222, 550, 570, 571, 500, 556, 439, 463, 555, 542, 222, 500, 492, 548, 500, 447, 556, 670, 573, 486, 603, 374, 550, 652, 546, 728, 779, 222, 550, 556, 550, 779, 667, 667, 843, 544, 708, 667, 278, 278, 500, 1066, 982, 844, 589, 715, 639, 724, 667, 651, 667, 544, 704, 667, 917, 614, 715, 715, 589, 686, 833, 722, 778, 725, 667, 722, 611, 639, 795, 667, 727, 673, 920, 923, 805, 886, 651, 694, 1022, 682, 556, 562, 522, 493, 553, 556, 688, 465, 556, 556, 472, 564, 686, 550, 556, 556, 556, 500, 833, 500, 835, 500, 572, 518, 830, 851, 621, 736, 526, 492, 752, 534, 556, 556, 556, 378, 496, 500, 222, 222, 222, 910, 828, 556, 472, 565, 500, 556, 778, 556, 492, 339, 944, 722, 944, 722, 944, 722, 667, 500, 333, 333, 556, 1000, 1000, 552, 222, 222, 222, 222, 333, 333, 333, 556, 556, 350, 1000, 1000, 188, 354, 333, 333, 500, 333, 167, 365, 556, 556, 1094, 556, 885, 323, 1083, 1000, 768, 600, 834, 834, 834, 834, 1000, 500, 998, 500, 1000, 500, 500, 494, 612, 823, 713, 584, 549, 713, 979, 719, 274, 549, 549, 584, 549, 549, 604, 584, 604, 604, 708, 625, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 729, 604, 604, 354, 354, 1000, 990, 990, 990, 990, 494, 604, 604, 604, 604, 354, 1021, 1052, 917, 750, 750, 531, 656, 594, 510, 500, 750, 750, 500, 500, 333, 333, 333, 333, 333, 333, 333, 333, 222, 222, 294, 294, 324, 324, 316, 328, 398, 285];
+exports.LiberationSansItalicWidths = LiberationSansItalicWidths;
+const LiberationSansItalicMapping = [-1, -1, -1, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330, 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343, 344, 345, 346, 347, 348, 349, 350, 351, 352, 353, 354, 355, 356, 357, 358, 359, 360, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 373, 374, 375, 376, 377, 378, 379, 380, 381, 382, 383, 402, 506, 507, 508, 509, 510, 511, 536, 537, 538, 539, 710, 711, 713, 728, 729, 730, 731, 732, 733, 900, 901, 902, 903, 904, 905, 906, 908, 910, 911, 912, 913, 914, 915, 916, 917, 918, 919, 920, 921, 922, 923, 924, 925, 926, 927, 928, 929, 931, 932, 933, 934, 935, 936, 937, 938, 939, 940, 941, 942, 943, 944, 945, 946, 947, 948, 949, 950, 951, 952, 953, 954, 955, 956, 957, 958, 959, 960, 961, 962, 963, 964, 965, 966, 967, 968, 969, 970, 971, 972, 973, 974, 1024, 1025, 1026, 1027, 1028, 1029, 1030, 1031, 1032, 1033, 1034, 1035, 1036, 1037, 1038, 1039, 1040, 1041, 1042, 1043, 1044, 1045, 1046, 1047, 1048, 1049, 1050, 1051, 1052, 1053, 1054, 1055, 1056, 1057, 1058, 1059, 1060, 1061, 1062, 1063, 1064, 1065, 1066, 1067, 1068, 1069, 1070, 1071, 1072, 1073, 1074, 1075, 1076, 1077, 1078, 1079, 1080, 1081, 1082, 1083, 1084, 1085, 1086, 1087, 1088, 1089, 1090, 1091, 1092, 1093, 1094, 1095, 1096, 1097, 1098, 1099, 1100, 1101, 1102, 1103, 1104, 1105, 1106, 1107, 1108, 1109, 1110, 1111, 1112, 1113, 1114, 1115, 1116, 1117, 1118, 1119, 1138, 1139, 1168, 1169, 7808, 7809, 7810, 7811, 7812, 7813, 7922, 7923, 8208, 8209, 8211, 8212, 8213, 8215, 8216, 8217, 8218, 8219, 8220, 8221, 8222, 8224, 8225, 8226, 8230, 8240, 8242, 8243, 8249, 8250, 8252, 8254, 8260, 8319, 8355, 8356, 8359, 8364, 8453, 8467, 8470, 8482, 8486, 8494, 8539, 8540, 8541, 8542, 8592, 8593, 8594, 8595, 8596, 8597, 8616, 8706, 8710, 8719, 8721, 8722, 8730, 8734, 8735, 8745, 8747, 8776, 8800, 8801, 8804, 8805, 8962, 8976, 8992, 8993, 9472, 9474, 9484, 9488, 9492, 9496, 9500, 9508, 9516, 9524, 9532, 9552, 9553, 9554, 9555, 9556, 9557, 9558, 9559, 9560, 9561, 9562, 9563, 9564, 9565, 9566, 9567, 9568, 9569, 9570, 9571, 9572, 9573, 9574, 9575, 9576, 9577, 9578, 9579, 9580, 9600, 9604, 9608, 9612, 9616, 9617, 9618, 9619, 9632, 9633, 9642, 9643, 9644, 9650, 9658, 9660, 9668, 9674, 9675, 9679, 9688, 9689, 9702, 9786, 9787, 9788, 9792, 9794, 9824, 9827, 9829, 9830, 9834, 9835, 9836, 61441, 61442, 61445, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1];
+exports.LiberationSansItalicMapping = LiberationSansItalicMapping;
+const LiberationSansRegularWidths = [365, 0, 333, 278, 278, 355, 556, 556, 889, 667, 191, 333, 333, 389, 584, 278, 333, 278, 278, 556, 556, 556, 556, 556, 556, 556, 556, 556, 556, 278, 278, 584, 584, 584, 556, 1015, 667, 667, 722, 722, 667, 611, 778, 722, 278, 500, 667, 556, 833, 722, 778, 667, 778, 722, 667, 611, 722, 667, 944, 667, 667, 611, 278, 278, 278, 469, 556, 333, 556, 556, 500, 556, 556, 278, 556, 556, 222, 222, 500, 222, 833, 556, 556, 556, 556, 333, 500, 278, 556, 500, 722, 500, 500, 500, 334, 260, 334, 584, 333, 556, 556, 556, 556, 260, 556, 333, 737, 370, 556, 584, 737, 552, 400, 549, 333, 333, 333, 576, 537, 278, 333, 333, 365, 556, 834, 834, 834, 611, 667, 667, 667, 667, 667, 667, 1000, 722, 667, 667, 667, 667, 278, 278, 278, 278, 722, 722, 778, 778, 778, 778, 778, 584, 778, 722, 722, 722, 722, 667, 667, 611, 556, 556, 556, 556, 556, 556, 889, 500, 556, 556, 556, 556, 278, 278, 278, 278, 556, 556, 556, 556, 556, 556, 556, 549, 611, 556, 556, 556, 556, 500, 556, 500, 667, 556, 667, 556, 667, 556, 722, 500, 722, 500, 722, 500, 722, 500, 722, 615, 722, 556, 667, 556, 667, 556, 667, 556, 667, 556, 667, 556, 778, 556, 778, 556, 778, 556, 778, 556, 722, 556, 722, 556, 278, 278, 278, 278, 278, 278, 278, 222, 278, 278, 735, 444, 500, 222, 667, 500, 500, 556, 222, 556, 222, 556, 292, 556, 334, 556, 222, 722, 556, 722, 556, 722, 556, 604, 723, 556, 778, 556, 778, 556, 778, 556, 1000, 944, 722, 333, 722, 333, 722, 333, 667, 500, 667, 500, 667, 500, 667, 500, 611, 278, 611, 375, 611, 278, 722, 556, 722, 556, 722, 556, 722, 556, 722, 556, 722, 556, 944, 722, 667, 500, 667, 611, 500, 611, 500, 611, 500, 222, 556, 667, 556, 1000, 889, 778, 611, 667, 500, 611, 278, 333, 333, 333, 333, 333, 333, 333, 333, 333, 333, 333, 667, 278, 784, 838, 384, 774, 855, 752, 222, 667, 667, 551, 668, 667, 611, 722, 778, 278, 667, 668, 833, 722, 650, 778, 722, 667, 618, 611, 667, 798, 667, 835, 748, 278, 667, 578, 446, 556, 222, 547, 578, 575, 500, 557, 446, 441, 556, 556, 222, 500, 500, 576, 500, 448, 556, 690, 569, 482, 617, 395, 547, 648, 525, 713, 781, 222, 547, 556, 547, 781, 667, 667, 865, 542, 719, 667, 278, 278, 500, 1057, 1010, 854, 583, 722, 635, 719, 667, 656, 667, 542, 677, 667, 923, 604, 719, 719, 583, 656, 833, 722, 778, 719, 667, 722, 611, 635, 760, 667, 740, 667, 917, 938, 792, 885, 656, 719, 1010, 722, 556, 573, 531, 365, 583, 556, 669, 458, 559, 559, 438, 583, 688, 552, 556, 542, 556, 500, 458, 500, 823, 500, 573, 521, 802, 823, 625, 719, 521, 510, 750, 542, 556, 556, 556, 365, 510, 500, 222, 278, 222, 906, 812, 556, 438, 559, 500, 552, 778, 556, 489, 411, 944, 722, 944, 722, 944, 722, 667, 500, 333, 333, 556, 1000, 1000, 552, 222, 222, 222, 222, 333, 333, 333, 556, 556, 350, 1000, 1000, 188, 354, 333, 333, 500, 333, 167, 365, 556, 556, 1094, 556, 885, 323, 1073, 1000, 768, 600, 834, 834, 834, 834, 1000, 500, 1000, 500, 1000, 500, 500, 494, 612, 823, 713, 584, 549, 713, 979, 719, 274, 549, 549, 583, 549, 549, 604, 584, 604, 604, 708, 625, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 708, 729, 604, 604, 354, 354, 1000, 990, 990, 990, 990, 494, 604, 604, 604, 604, 354, 1021, 1052, 917, 750, 750, 531, 656, 594, 510, 500, 750, 750, 500, 500, 333, 333, 333, 333, 333, 333, 333, 333, 222, 222, 294, 294, 324, 324, 316, 328, 398, 285];
+exports.LiberationSansRegularWidths = LiberationSansRegularWidths;
+const LiberationSansRegularMapping = [-1, -1, -1, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121, 122, 123, 124, 125, 126, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189, 190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206, 207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255, 256, 257, 258, 259, 260, 261, 262, 263, 264, 265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278, 279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290, 291, 292, 293, 294, 295, 296, 297, 298, 299, 300, 301, 302, 303, 304, 305, 306, 307, 308, 309, 310, 311, 312, 313, 314, 315, 316, 317, 318, 319, 320, 321, 322, 323, 324, 325, 326, 327, 328, 329, 330, 331, 332, 333, 334, 335, 336, 337, 338, 339, 340, 341, 342, 343, 344, 345, 346, 347, 348, 349, 350, 351, 352, 353, 354, 355, 356, 357, 358, 359, 360, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 373, 374, 375, 376, 377, 378, 379, 380, 381, 382, 383, 402, 506, 507, 508, 509, 510, 511, 536, 537, 538, 539, 710, 711, 713, 728, 729, 730, 731, 732, 733, 900, 901, 902, 903, 904, 905, 906, 908, 910, 911, 912, 913, 914, 915, 916, 917, 918, 919, 920, 921, 922, 923, 924, 925, 926, 927, 928, 929, 931, 932, 933, 934, 935, 936, 937, 938, 939, 940, 941, 942, 943, 944, 945, 946, 947, 948, 949, 950, 951, 952, 953, 954, 955, 956, 957, 958, 959, 960, 961, 962, 963, 964, 965, 966, 967, 968, 969, 970, 971, 972, 973, 974, 1024, 1025, 1026, 1027, 1028, 1029, 1030, 1031, 1032, 1033, 1034, 1035, 1036, 1037, 1038, 1039, 1040, 1041, 1042, 1043, 1044, 1045, 1046, 1047, 1048, 1049, 1050, 1051, 1052, 1053, 1054, 1055, 1056, 1057, 1058, 1059, 1060, 1061, 1062, 1063, 1064, 1065, 1066, 1067, 1068, 1069, 1070, 1071, 1072, 1073, 1074, 1075, 1076, 1077, 1078, 1079, 1080, 1081, 1082, 1083, 1084, 1085, 1086, 1087, 1088, 1089, 1090, 1091, 1092, 1093, 1094, 1095, 1096, 1097, 1098, 1099, 1100, 1101, 1102, 1103, 1104, 1105, 1106, 1107, 1108, 1109, 1110, 1111, 1112, 1113, 1114, 1115, 1116, 1117, 1118, 1119, 1138, 1139, 1168, 1169, 7808, 7809, 7810, 7811, 7812, 7813, 7922, 7923, 8208, 8209, 8211, 8212, 8213, 8215, 8216, 8217, 8218, 8219, 8220, 8221, 8222, 8224, 8225, 8226, 8230, 8240, 8242, 8243, 8249, 8250, 8252, 8254, 8260, 8319, 8355, 8356, 8359, 8364, 8453, 8467, 8470, 8482, 8486, 8494, 8539, 8540, 8541, 8542, 8592, 8593, 8594, 8595, 8596, 8597, 8616, 8706, 8710, 8719, 8721, 8722, 8730, 8734, 8735, 8745, 8747, 8776, 8800, 8801, 8804, 8805, 8962, 8976, 8992, 8993, 9472, 9474, 9484, 9488, 9492, 9496, 9500, 9508, 9516, 9524, 9532, 9552, 9553, 9554, 9555, 9556, 9557, 9558, 9559, 9560, 9561, 9562, 9563, 9564, 9565, 9566, 9567, 9568, 9569, 9570, 9571, 9572, 9573, 9574, 9575, 9576, 9577, 9578, 9579, 9580, 9600, 9604, 9608, 9612, 9616, 9617, 9618, 9619, 9632, 9633, 9642, 9643, 9644, 9650, 9658, 9660, 9668, 9674, 9675, 9679, 9688, 9689, 9702, 9786, 9787, 9788, 9792, 9794, 9824, 9827, 9829, 9830, 9834, 9835, 9836, 61441, 61442, 61445, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1];
+exports.LiberationSansRegularMapping = LiberationSansRegularMapping;
+
+/***/ }),
+/* 16 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports.MyriadProRegularMetrics = exports.MyriadProRegularFactors = exports.MyriadProItalicMetrics = exports.MyriadProItalicFactors = exports.MyriadProBoldMetrics = exports.MyriadProBoldItalicMetrics = exports.MyriadProBoldItalicFactors = exports.MyriadProBoldFactors = void 0;
+const MyriadProBoldFactors = [1.36898, 1, 1, 0.72706, 0.80479, 0.83734, 0.98894, 0.99793, 0.9897, 0.93884, 0.86209, 0.94292, 0.94292, 1.16661, 1.02058, 0.93582, 0.96694, 0.93582, 1.19137, 0.99793, 0.99793, 0.99793, 0.99793, 0.99793, 0.99793, 0.99793, 0.99793, 0.99793, 0.99793, 0.78076, 0.78076, 1.02058, 1.02058, 1.02058, 0.72851, 0.78966, 0.90838, 0.83637, 0.82391, 0.96376, 0.80061, 0.86275, 0.8768, 0.95407, 1.0258, 0.73901, 0.85022, 0.83655, 1.0156, 0.95546, 0.92179, 0.87107, 0.92179, 0.82114, 0.8096, 0.89713, 0.94438, 0.95353, 0.94083, 0.91905, 0.90406, 0.9446, 0.94292, 1.18777, 0.94292, 1.02058, 0.89903, 0.90088, 0.94938, 0.97898, 0.81093, 0.97571, 0.94938, 1.024, 0.9577, 0.95933, 0.98621, 1.0474, 0.97455, 0.98981, 0.9672, 0.95933, 0.9446, 0.97898, 0.97407, 0.97646, 0.78036, 1.10208, 0.95442, 0.95298, 0.97579, 0.9332, 0.94039, 0.938, 0.80687, 1.01149, 0.80687, 1.02058, 0.80479, 0.99793, 0.99793, 0.99793, 0.99793, 1.01149, 1.00872, 0.90088, 0.91882, 1.0213, 0.8361, 1.02058, 0.62295, 0.54324, 0.89022, 1.08595, 1, 1, 0.90088, 1, 0.97455, 0.93582, 0.90088, 1, 1.05686, 0.8361, 0.99642, 0.99642, 0.99642, 0.72851, 0.90838, 0.90838, 0.90838, 0.90838, 0.90838, 0.90838, 0.868, 0.82391, 0.80061, 0.80061, 0.80061, 0.80061, 1.0258, 1.0258, 1.0258, 1.0258, 0.97484, 0.95546, 0.92179, 0.92179, 0.92179, 0.92179, 0.92179, 1.02058, 0.92179, 0.94438, 0.94438, 0.94438, 0.94438, 0.90406, 0.86958, 0.98225, 0.94938, 0.94938, 0.94938, 0.94938, 0.94938, 0.94938, 0.9031, 0.81093, 0.94938, 0.94938, 0.94938, 0.94938, 0.98621, 0.98621, 0.98621, 0.98621, 0.93969, 0.95933, 0.9446, 0.9446, 0.9446, 0.9446, 0.9446, 1.08595, 0.9446, 0.95442, 0.95442, 0.95442, 0.95442, 0.94039, 0.97898, 0.94039, 0.90838, 0.94938, 0.90838, 0.94938, 0.90838, 0.94938, 0.82391, 0.81093, 0.82391, 0.81093, 0.82391, 0.81093, 0.82391, 0.81093, 0.96376, 0.84313, 0.97484, 0.97571, 0.80061, 0.94938, 0.80061, 0.94938, 0.80061, 0.94938, 0.80061, 0.94938, 0.80061, 0.94938, 0.8768, 0.9577, 0.8768, 0.9577, 0.8768, 0.9577, 1, 1, 0.95407, 0.95933, 0.97069, 0.95933, 1.0258, 0.98621, 1.0258, 0.98621, 1.0258, 0.98621, 1.0258, 0.98621, 1.0258, 0.98621, 0.887, 1.01591, 0.73901, 1.0474, 1, 1, 0.97455, 0.83655, 0.98981, 1, 1, 0.83655, 0.73977, 0.83655, 0.73903, 0.84638, 1.033, 0.95546, 0.95933, 1, 1, 0.95546, 0.95933, 0.8271, 0.95417, 0.95933, 0.92179, 0.9446, 0.92179, 0.9446, 0.92179, 0.9446, 0.936, 0.91964, 0.82114, 0.97646, 1, 1, 0.82114, 0.97646, 0.8096, 0.78036, 0.8096, 0.78036, 1, 1, 0.8096, 0.78036, 1, 1, 0.89713, 0.77452, 0.89713, 1.10208, 0.94438, 0.95442, 0.94438, 0.95442, 0.94438, 0.95442, 0.94438, 0.95442, 0.94438, 0.95442, 0.94438, 0.95442, 0.94083, 0.97579, 0.90406, 0.94039, 0.90406, 0.9446, 0.938, 0.9446, 0.938, 0.9446, 0.938, 1, 0.99793, 0.90838, 0.94938, 0.868, 0.9031, 0.92179, 0.9446, 1, 1, 0.89713, 1.10208, 0.90088, 0.90088, 0.90088, 0.90088, 0.90088, 0.90088, 0.90088, 0.90088, 0.90088, 0.90989, 0.9358, 0.91945, 0.83181, 0.75261, 0.87992, 0.82976, 0.96034, 0.83689, 0.97268, 1.0078, 0.90838, 0.83637, 0.8019, 0.90157, 0.80061, 0.9446, 0.95407, 0.92436, 1.0258, 0.85022, 0.97153, 1.0156, 0.95546, 0.89192, 0.92179, 0.92361, 0.87107, 0.96318, 0.89713, 0.93704, 0.95638, 0.91905, 0.91709, 0.92796, 1.0258, 0.93704, 0.94836, 1.0373, 0.95933, 1.0078, 0.95871, 0.94836, 0.96174, 0.92601, 0.9498, 0.98607, 0.95776, 0.95933, 1.05453, 1.0078, 0.98275, 0.9314, 0.95617, 0.91701, 1.05993, 0.9446, 0.78367, 0.9553, 1, 0.86832, 1.0128, 0.95871, 0.99394, 0.87548, 0.96361, 0.86774, 1.0078, 0.95871, 0.9446, 0.95871, 0.86774, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.94083, 0.97579, 0.94083, 0.97579, 0.94083, 0.97579, 0.90406, 0.94039, 0.96694, 1, 0.89903, 1, 1, 1, 0.93582, 0.93582, 0.93582, 1, 0.908, 0.908, 0.918, 0.94219, 0.94219, 0.96544, 1, 1.285, 1, 1, 0.81079, 0.81079, 1, 1, 0.74854, 1, 1, 1, 1, 0.99793, 1, 1, 1, 0.65, 1, 1.36145, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.17173, 1, 0.80535, 0.76169, 1.02058, 1.0732, 1.05486, 1, 1, 1.30692, 1.08595, 1.08595, 1, 1.08595, 1.08595, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.16161, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+exports.MyriadProBoldFactors = MyriadProBoldFactors;
+const MyriadProBoldMetrics = {
+  lineHeight: 1.2,
+  lineGap: 0.2
+};
+exports.MyriadProBoldMetrics = MyriadProBoldMetrics;
+const MyriadProBoldItalicFactors = [1.36898, 1, 1, 0.66227, 0.80779, 0.81625, 0.97276, 0.97276, 0.97733, 0.92222, 0.83266, 0.94292, 0.94292, 1.16148, 1.02058, 0.93582, 0.96694, 0.93582, 1.17337, 0.97276, 0.97276, 0.97276, 0.97276, 0.97276, 0.97276, 0.97276, 0.97276, 0.97276, 0.97276, 0.78076, 0.78076, 1.02058, 1.02058, 1.02058, 0.71541, 0.76813, 0.85576, 0.80591, 0.80729, 0.94299, 0.77512, 0.83655, 0.86523, 0.92222, 0.98621, 0.71743, 0.81698, 0.79726, 0.98558, 0.92222, 0.90637, 0.83809, 0.90637, 0.80729, 0.76463, 0.86275, 0.90699, 0.91605, 0.9154, 0.85308, 0.85458, 0.90531, 0.94292, 1.21296, 0.94292, 1.02058, 0.89903, 1.18616, 0.99613, 0.91677, 0.78216, 0.91677, 0.90083, 0.98796, 0.9135, 0.92168, 0.95381, 0.98981, 0.95298, 0.95381, 0.93459, 0.92168, 0.91513, 0.92004, 0.91677, 0.95077, 0.748, 1.04502, 0.91677, 0.92061, 0.94236, 0.89544, 0.89364, 0.9, 0.80687, 0.8578, 0.80687, 1.02058, 0.80779, 0.97276, 0.97276, 0.97276, 0.97276, 0.8578, 0.99973, 1.18616, 0.91339, 1.08074, 0.82891, 1.02058, 0.55509, 0.71526, 0.89022, 1.08595, 1, 1, 1.18616, 1, 0.96736, 0.93582, 1.18616, 1, 1.04864, 0.82711, 0.99043, 0.99043, 0.99043, 0.71541, 0.85576, 0.85576, 0.85576, 0.85576, 0.85576, 0.85576, 0.845, 0.80729, 0.77512, 0.77512, 0.77512, 0.77512, 0.98621, 0.98621, 0.98621, 0.98621, 0.95961, 0.92222, 0.90637, 0.90637, 0.90637, 0.90637, 0.90637, 1.02058, 0.90251, 0.90699, 0.90699, 0.90699, 0.90699, 0.85458, 0.83659, 0.94951, 0.99613, 0.99613, 0.99613, 0.99613, 0.99613, 0.99613, 0.85811, 0.78216, 0.90083, 0.90083, 0.90083, 0.90083, 0.95381, 0.95381, 0.95381, 0.95381, 0.9135, 0.92168, 0.91513, 0.91513, 0.91513, 0.91513, 0.91513, 1.08595, 0.91677, 0.91677, 0.91677, 0.91677, 0.91677, 0.89364, 0.92332, 0.89364, 0.85576, 0.99613, 0.85576, 0.99613, 0.85576, 0.99613, 0.80729, 0.78216, 0.80729, 0.78216, 0.80729, 0.78216, 0.80729, 0.78216, 0.94299, 0.76783, 0.95961, 0.91677, 0.77512, 0.90083, 0.77512, 0.90083, 0.77512, 0.90083, 0.77512, 0.90083, 0.77512, 0.90083, 0.86523, 0.9135, 0.86523, 0.9135, 0.86523, 0.9135, 1, 1, 0.92222, 0.92168, 0.92222, 0.92168, 0.98621, 0.95381, 0.98621, 0.95381, 0.98621, 0.95381, 0.98621, 0.95381, 0.98621, 0.95381, 0.86036, 0.97096, 0.71743, 0.98981, 1, 1, 0.95298, 0.79726, 0.95381, 1, 1, 0.79726, 0.6894, 0.79726, 0.74321, 0.81691, 1.0006, 0.92222, 0.92168, 1, 1, 0.92222, 0.92168, 0.79464, 0.92098, 0.92168, 0.90637, 0.91513, 0.90637, 0.91513, 0.90637, 0.91513, 0.909, 0.87514, 0.80729, 0.95077, 1, 1, 0.80729, 0.95077, 0.76463, 0.748, 0.76463, 0.748, 1, 1, 0.76463, 0.748, 1, 1, 0.86275, 0.72651, 0.86275, 1.04502, 0.90699, 0.91677, 0.90699, 0.91677, 0.90699, 0.91677, 0.90699, 0.91677, 0.90699, 0.91677, 0.90699, 0.91677, 0.9154, 0.94236, 0.85458, 0.89364, 0.85458, 0.90531, 0.9, 0.90531, 0.9, 0.90531, 0.9, 1, 0.97276, 0.85576, 0.99613, 0.845, 0.85811, 0.90251, 0.91677, 1, 1, 0.86275, 1.04502, 1.18616, 1.18616, 1.18616, 1.18616, 1.18616, 1.18616, 1.18616, 1.18616, 1.18616, 1.00899, 1.30628, 0.85576, 0.80178, 0.66862, 0.7927, 0.69323, 0.88127, 0.72459, 0.89711, 0.95381, 0.85576, 0.80591, 0.7805, 0.94729, 0.77512, 0.90531, 0.92222, 0.90637, 0.98621, 0.81698, 0.92655, 0.98558, 0.92222, 0.85359, 0.90637, 0.90976, 0.83809, 0.94523, 0.86275, 0.83509, 0.93157, 0.85308, 0.83392, 0.92346, 0.98621, 0.83509, 0.92886, 0.91324, 0.92168, 0.95381, 0.90646, 0.92886, 0.90557, 0.86847, 0.90276, 0.91324, 0.86842, 0.92168, 0.99531, 0.95381, 0.9224, 0.85408, 0.92699, 0.86847, 1.0051, 0.91513, 0.80487, 0.93481, 1, 0.88159, 1.05214, 0.90646, 0.97355, 0.81539, 0.89398, 0.85923, 0.95381, 0.90646, 0.91513, 0.90646, 0.85923, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.9154, 0.94236, 0.9154, 0.94236, 0.9154, 0.94236, 0.85458, 0.89364, 0.96694, 1, 0.89903, 1, 1, 1, 0.91782, 0.91782, 0.91782, 1, 0.896, 0.896, 0.896, 0.9332, 0.9332, 0.95973, 1, 1.26, 1, 1, 0.80479, 0.80178, 1, 1, 0.85633, 1, 1, 1, 1, 0.97276, 1, 1, 1, 0.698, 1, 1.36145, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.14542, 1, 0.79199, 0.78694, 1.02058, 1.03493, 1.05486, 1, 1, 1.23026, 1.08595, 1.08595, 1, 1.08595, 1.08595, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.20006, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+exports.MyriadProBoldItalicFactors = MyriadProBoldItalicFactors;
+const MyriadProBoldItalicMetrics = {
+  lineHeight: 1.2,
+  lineGap: 0.2
+};
+exports.MyriadProBoldItalicMetrics = MyriadProBoldItalicMetrics;
+const MyriadProItalicFactors = [1.36898, 1, 1, 0.65507, 0.84943, 0.85639, 0.88465, 0.88465, 0.86936, 0.88307, 0.86948, 0.85283, 0.85283, 1.06383, 1.02058, 0.75945, 0.9219, 0.75945, 1.17337, 0.88465, 0.88465, 0.88465, 0.88465, 0.88465, 0.88465, 0.88465, 0.88465, 0.88465, 0.88465, 0.75945, 0.75945, 1.02058, 1.02058, 1.02058, 0.69046, 0.70926, 0.85158, 0.77812, 0.76852, 0.89591, 0.70466, 0.76125, 0.80094, 0.86822, 0.83864, 0.728, 0.77212, 0.79475, 0.93637, 0.87514, 0.8588, 0.76013, 0.8588, 0.72421, 0.69866, 0.77598, 0.85991, 0.80811, 0.87832, 0.78112, 0.77512, 0.8562, 1.0222, 1.18417, 1.0222, 1.27014, 0.89903, 1.15012, 0.93859, 0.94399, 0.846, 0.94399, 0.81453, 1.0186, 0.94219, 0.96017, 1.03075, 1.02175, 0.912, 1.03075, 0.96998, 0.96017, 0.93859, 0.94399, 0.94399, 0.95493, 0.746, 1.12658, 0.94578, 0.91, 0.979, 0.882, 0.882, 0.83, 0.85034, 0.83537, 0.85034, 1.02058, 0.70869, 0.88465, 0.88465, 0.88465, 0.88465, 0.83537, 0.90083, 1.15012, 0.9161, 0.94565, 0.73541, 1.02058, 0.53609, 0.69353, 0.79519, 1.08595, 1, 1, 1.15012, 1, 0.91974, 0.75945, 1.15012, 1, 0.9446, 0.73361, 0.9005, 0.9005, 0.9005, 0.62864, 0.85158, 0.85158, 0.85158, 0.85158, 0.85158, 0.85158, 0.773, 0.76852, 0.70466, 0.70466, 0.70466, 0.70466, 0.83864, 0.83864, 0.83864, 0.83864, 0.90561, 0.87514, 0.8588, 0.8588, 0.8588, 0.8588, 0.8588, 1.02058, 0.85751, 0.85991, 0.85991, 0.85991, 0.85991, 0.77512, 0.76013, 0.88075, 0.93859, 0.93859, 0.93859, 0.93859, 0.93859, 0.93859, 0.8075, 0.846, 0.81453, 0.81453, 0.81453, 0.81453, 0.82424, 0.82424, 0.82424, 0.82424, 0.9278, 0.96017, 0.93859, 0.93859, 0.93859, 0.93859, 0.93859, 1.08595, 0.8562, 0.94578, 0.94578, 0.94578, 0.94578, 0.882, 0.94578, 0.882, 0.85158, 0.93859, 0.85158, 0.93859, 0.85158, 0.93859, 0.76852, 0.846, 0.76852, 0.846, 0.76852, 0.846, 0.76852, 0.846, 0.89591, 0.8544, 0.90561, 0.94399, 0.70466, 0.81453, 0.70466, 0.81453, 0.70466, 0.81453, 0.70466, 0.81453, 0.70466, 0.81453, 0.80094, 0.94219, 0.80094, 0.94219, 0.80094, 0.94219, 1, 1, 0.86822, 0.96017, 0.86822, 0.96017, 0.83864, 0.82424, 0.83864, 0.82424, 0.83864, 0.82424, 0.83864, 1.03075, 0.83864, 0.82424, 0.81402, 1.02738, 0.728, 1.02175, 1, 1, 0.912, 0.79475, 1.03075, 1, 1, 0.79475, 0.83911, 0.79475, 0.66266, 0.80553, 1.06676, 0.87514, 0.96017, 1, 1, 0.87514, 0.96017, 0.86865, 0.87396, 0.96017, 0.8588, 0.93859, 0.8588, 0.93859, 0.8588, 0.93859, 0.867, 0.84759, 0.72421, 0.95493, 1, 1, 0.72421, 0.95493, 0.69866, 0.746, 0.69866, 0.746, 1, 1, 0.69866, 0.746, 1, 1, 0.77598, 0.88417, 0.77598, 1.12658, 0.85991, 0.94578, 0.85991, 0.94578, 0.85991, 0.94578, 0.85991, 0.94578, 0.85991, 0.94578, 0.85991, 0.94578, 0.87832, 0.979, 0.77512, 0.882, 0.77512, 0.8562, 0.83, 0.8562, 0.83, 0.8562, 0.83, 1, 0.88465, 0.85158, 0.93859, 0.773, 0.8075, 0.85751, 0.8562, 1, 1, 0.77598, 1.12658, 1.15012, 1.15012, 1.15012, 1.15012, 1.15012, 1.15313, 1.15012, 1.15012, 1.15012, 1.08106, 1.03901, 0.85158, 0.77025, 0.62264, 0.7646, 0.65351, 0.86026, 0.69461, 0.89947, 1.03075, 0.85158, 0.77812, 0.76449, 0.88836, 0.70466, 0.8562, 0.86822, 0.8588, 0.83864, 0.77212, 0.85308, 0.93637, 0.87514, 0.82352, 0.8588, 0.85701, 0.76013, 0.89058, 0.77598, 0.8156, 0.82565, 0.78112, 0.77899, 0.89386, 0.83864, 0.8156, 0.9486, 0.92388, 0.96186, 1.03075, 0.91123, 0.9486, 0.93298, 0.878, 0.93942, 0.92388, 0.84596, 0.96186, 0.95119, 1.03075, 0.922, 0.88787, 0.95829, 0.88, 0.93559, 0.93859, 0.78815, 0.93758, 1, 0.89217, 1.03737, 0.91123, 0.93969, 0.77487, 0.85769, 0.86799, 1.03075, 0.91123, 0.93859, 0.91123, 0.86799, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.87832, 0.979, 0.87832, 0.979, 0.87832, 0.979, 0.77512, 0.882, 0.9219, 1, 0.89903, 1, 1, 1, 0.87321, 0.87321, 0.87321, 1, 1.027, 1.027, 1.027, 0.86847, 0.86847, 0.79121, 1, 1.124, 1, 1, 0.73572, 0.73572, 1, 1, 0.85034, 1, 1, 1, 1, 0.88465, 1, 1, 1, 0.669, 1, 1.36145, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.04828, 1, 0.74948, 0.75187, 1.02058, 0.98391, 1.02119, 1, 1, 1.06233, 1.08595, 1.08595, 1, 1.08595, 1.08595, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.05233, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+exports.MyriadProItalicFactors = MyriadProItalicFactors;
+const MyriadProItalicMetrics = {
+  lineHeight: 1.2,
+  lineGap: 0.2
+};
+exports.MyriadProItalicMetrics = MyriadProItalicMetrics;
+const MyriadProRegularFactors = [1.36898, 1, 1, 0.76305, 0.82784, 0.94935, 0.89364, 0.92241, 0.89073, 0.90706, 0.98472, 0.85283, 0.85283, 1.0664, 1.02058, 0.74505, 0.9219, 0.74505, 1.23456, 0.92241, 0.92241, 0.92241, 0.92241, 0.92241, 0.92241, 0.92241, 0.92241, 0.92241, 0.92241, 0.74505, 0.74505, 1.02058, 1.02058, 1.02058, 0.73002, 0.72601, 0.91755, 0.8126, 0.80314, 0.92222, 0.73764, 0.79726, 0.83051, 0.90284, 0.86023, 0.74, 0.8126, 0.84869, 0.96518, 0.91115, 0.8858, 0.79761, 0.8858, 0.74498, 0.73914, 0.81363, 0.89591, 0.83659, 0.89633, 0.85608, 0.8111, 0.90531, 1.0222, 1.22736, 1.0222, 1.27014, 0.89903, 0.90088, 0.86667, 1.0231, 0.896, 1.01411, 0.90083, 1.05099, 1.00512, 0.99793, 1.05326, 1.09377, 0.938, 1.06226, 1.00119, 0.99793, 0.98714, 1.0231, 1.01231, 0.98196, 0.792, 1.19137, 0.99074, 0.962, 1.01915, 0.926, 0.942, 0.856, 0.85034, 0.92006, 0.85034, 1.02058, 0.69067, 0.92241, 0.92241, 0.92241, 0.92241, 0.92006, 0.9332, 0.90088, 0.91882, 0.93484, 0.75339, 1.02058, 0.56866, 0.54324, 0.79519, 1.08595, 1, 1, 0.90088, 1, 0.95325, 0.74505, 0.90088, 1, 0.97198, 0.75339, 0.91009, 0.91009, 0.91009, 0.66466, 0.91755, 0.91755, 0.91755, 0.91755, 0.91755, 0.91755, 0.788, 0.80314, 0.73764, 0.73764, 0.73764, 0.73764, 0.86023, 0.86023, 0.86023, 0.86023, 0.92915, 0.91115, 0.8858, 0.8858, 0.8858, 0.8858, 0.8858, 1.02058, 0.8858, 0.89591, 0.89591, 0.89591, 0.89591, 0.8111, 0.79611, 0.89713, 0.86667, 0.86667, 0.86667, 0.86667, 0.86667, 0.86667, 0.86936, 0.896, 0.90083, 0.90083, 0.90083, 0.90083, 0.84224, 0.84224, 0.84224, 0.84224, 0.97276, 0.99793, 0.98714, 0.98714, 0.98714, 0.98714, 0.98714, 1.08595, 0.89876, 0.99074, 0.99074, 0.99074, 0.99074, 0.942, 1.0231, 0.942, 0.91755, 0.86667, 0.91755, 0.86667, 0.91755, 0.86667, 0.80314, 0.896, 0.80314, 0.896, 0.80314, 0.896, 0.80314, 0.896, 0.92222, 0.93372, 0.92915, 1.01411, 0.73764, 0.90083, 0.73764, 0.90083, 0.73764, 0.90083, 0.73764, 0.90083, 0.73764, 0.90083, 0.83051, 1.00512, 0.83051, 1.00512, 0.83051, 1.00512, 1, 1, 0.90284, 0.99793, 0.90976, 0.99793, 0.86023, 0.84224, 0.86023, 0.84224, 0.86023, 0.84224, 0.86023, 1.05326, 0.86023, 0.84224, 0.82873, 1.07469, 0.74, 1.09377, 1, 1, 0.938, 0.84869, 1.06226, 1, 1, 0.84869, 0.83704, 0.84869, 0.81441, 0.85588, 1.08927, 0.91115, 0.99793, 1, 1, 0.91115, 0.99793, 0.91887, 0.90991, 0.99793, 0.8858, 0.98714, 0.8858, 0.98714, 0.8858, 0.98714, 0.894, 0.91434, 0.74498, 0.98196, 1, 1, 0.74498, 0.98196, 0.73914, 0.792, 0.73914, 0.792, 1, 1, 0.73914, 0.792, 1, 1, 0.81363, 0.904, 0.81363, 1.19137, 0.89591, 0.99074, 0.89591, 0.99074, 0.89591, 0.99074, 0.89591, 0.99074, 0.89591, 0.99074, 0.89591, 0.99074, 0.89633, 1.01915, 0.8111, 0.942, 0.8111, 0.90531, 0.856, 0.90531, 0.856, 0.90531, 0.856, 1, 0.92241, 0.91755, 0.86667, 0.788, 0.86936, 0.8858, 0.89876, 1, 1, 0.81363, 1.19137, 0.90088, 0.90088, 0.90088, 0.90088, 0.90088, 0.90088, 0.90088, 0.90088, 0.90088, 0.90388, 1.03901, 0.92138, 0.78105, 0.7154, 0.86169, 0.80513, 0.94007, 0.82528, 0.98612, 1.06226, 0.91755, 0.8126, 0.81884, 0.92819, 0.73764, 0.90531, 0.90284, 0.8858, 0.86023, 0.8126, 0.91172, 0.96518, 0.91115, 0.83089, 0.8858, 0.87791, 0.79761, 0.89297, 0.81363, 0.88157, 0.89992, 0.85608, 0.81992, 0.94307, 0.86023, 0.88157, 0.95308, 0.98699, 0.99793, 1.06226, 0.95817, 0.95308, 0.97358, 0.928, 0.98088, 0.98699, 0.92761, 0.99793, 0.96017, 1.06226, 0.986, 0.944, 0.95978, 0.938, 0.96705, 0.98714, 0.80442, 0.98972, 1, 0.89762, 1.04552, 0.95817, 0.99007, 0.87064, 0.91879, 0.88888, 1.06226, 0.95817, 0.98714, 0.95817, 0.88888, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.89633, 1.01915, 0.89633, 1.01915, 0.89633, 1.01915, 0.8111, 0.942, 0.9219, 1, 0.89903, 1, 1, 1, 0.93173, 0.93173, 0.93173, 1, 1.06304, 1.06304, 1.06904, 0.89903, 0.89903, 0.80549, 1, 1.156, 1, 1, 0.76575, 0.76575, 1, 1, 0.72458, 1, 1, 1, 1, 0.92241, 1, 1, 1, 0.619, 1, 1.36145, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.07257, 1, 0.74705, 0.71119, 1.02058, 1.024, 1.02119, 1, 1, 1.1536, 1.08595, 1.08595, 1, 1.08595, 1.08595, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.05638, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+exports.MyriadProRegularFactors = MyriadProRegularFactors;
+const MyriadProRegularMetrics = {
+  lineHeight: 1.2,
+  lineGap: 0.2
+};
+exports.MyriadProRegularMetrics = MyriadProRegularMetrics;
+
+/***/ }),
+/* 17 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports.SegoeuiRegularMetrics = exports.SegoeuiRegularFactors = exports.SegoeuiItalicMetrics = exports.SegoeuiItalicFactors = exports.SegoeuiBoldMetrics = exports.SegoeuiBoldItalicMetrics = exports.SegoeuiBoldItalicFactors = exports.SegoeuiBoldFactors = void 0;
+const SegoeuiBoldFactors = [1.76738, 1, 1, 0.99297, 0.9824, 1.04016, 1.06497, 1.03424, 0.97529, 1.17647, 1.23203, 1.1085, 1.1085, 1.16939, 1.2107, 0.9754, 1.21408, 0.9754, 1.59578, 1.03424, 1.03424, 1.03424, 1.03424, 1.03424, 1.03424, 1.03424, 1.03424, 1.03424, 1.03424, 0.81378, 0.81378, 1.2107, 1.2107, 1.2107, 0.71703, 0.97847, 0.97363, 0.88776, 0.8641, 1.02096, 0.79795, 0.85132, 0.914, 1.06085, 1.1406, 0.8007, 0.89858, 0.83693, 1.14889, 1.09398, 0.97489, 0.92094, 0.97489, 0.90399, 0.84041, 0.95923, 1.00135, 1, 1.06467, 0.98243, 0.90996, 0.99361, 1.1085, 1.56942, 1.1085, 1.2107, 0.74627, 0.94282, 0.96752, 1.01519, 0.86304, 1.01359, 0.97278, 1.15103, 1.01359, 0.98561, 1.02285, 1.02285, 1.00527, 1.02285, 1.0302, 0.99041, 1.0008, 1.01519, 1.01359, 1.02258, 0.79104, 1.16862, 0.99041, 0.97454, 1.02511, 0.99298, 0.96752, 0.95801, 0.94856, 1.16579, 0.94856, 1.2107, 0.9824, 1.03424, 1.03424, 1, 1.03424, 1.16579, 0.8727, 1.3871, 1.18622, 1.10818, 1.04478, 1.2107, 1.18622, 0.75155, 0.94994, 1.28826, 1.21408, 1.21408, 0.91056, 1, 0.91572, 0.9754, 0.64663, 1.18328, 1.24866, 1.04478, 1.14169, 1.15749, 1.17389, 0.71703, 0.97363, 0.97363, 0.97363, 0.97363, 0.97363, 0.97363, 0.93506, 0.8641, 0.79795, 0.79795, 0.79795, 0.79795, 1.1406, 1.1406, 1.1406, 1.1406, 1.02096, 1.09398, 0.97426, 0.97426, 0.97426, 0.97426, 0.97426, 1.2107, 0.97489, 1.00135, 1.00135, 1.00135, 1.00135, 0.90996, 0.92094, 1.02798, 0.96752, 0.96752, 0.96752, 0.96752, 0.96752, 0.96752, 0.93136, 0.86304, 0.97278, 0.97278, 0.97278, 0.97278, 1.02285, 1.02285, 1.02285, 1.02285, 0.97122, 0.99041, 1, 1, 1, 1, 1, 1.28826, 1.0008, 0.99041, 0.99041, 0.99041, 0.99041, 0.96752, 1.01519, 0.96752, 0.97363, 0.96752, 0.97363, 0.96752, 0.97363, 0.96752, 0.8641, 0.86304, 0.8641, 0.86304, 0.8641, 0.86304, 0.8641, 0.86304, 1.02096, 1.03057, 1.02096, 1.03517, 0.79795, 0.97278, 0.79795, 0.97278, 0.79795, 0.97278, 0.79795, 0.97278, 0.79795, 0.97278, 0.914, 1.01359, 0.914, 1.01359, 0.914, 1.01359, 1, 1, 1.06085, 0.98561, 1.06085, 1.00879, 1.1406, 1.02285, 1.1406, 1.02285, 1.1406, 1.02285, 1.1406, 1.02285, 1.1406, 1.02285, 0.97138, 1.08692, 0.8007, 1.02285, 1, 1, 1.00527, 0.83693, 1.02285, 1, 1, 0.83693, 0.9455, 0.83693, 0.90418, 0.83693, 1.13005, 1.09398, 0.99041, 1, 1, 1.09398, 0.99041, 0.96692, 1.09251, 0.99041, 0.97489, 1.0008, 0.97489, 1.0008, 0.97489, 1.0008, 0.93994, 0.97931, 0.90399, 1.02258, 1, 1, 0.90399, 1.02258, 0.84041, 0.79104, 0.84041, 0.79104, 0.84041, 0.79104, 0.84041, 0.79104, 1, 1, 0.95923, 1.07034, 0.95923, 1.16862, 1.00135, 0.99041, 1.00135, 0.99041, 1.00135, 0.99041, 1.00135, 0.99041, 1.00135, 0.99041, 1.00135, 0.99041, 1.06467, 1.02511, 0.90996, 0.96752, 0.90996, 0.99361, 0.95801, 0.99361, 0.95801, 0.99361, 0.95801, 1.07733, 1.03424, 0.97363, 0.96752, 0.93506, 0.93136, 0.97489, 1.0008, 1, 1, 0.95923, 1.16862, 1.15103, 1.15103, 1.01173, 1.03959, 0.75953, 0.81378, 0.79912, 1.15103, 1.21994, 0.95161, 0.87815, 1.01149, 0.81525, 0.7676, 0.98167, 1.01134, 1.02546, 0.84097, 1.03089, 1.18102, 0.97363, 0.88776, 0.85134, 0.97826, 0.79795, 0.99361, 1.06085, 0.97489, 1.1406, 0.89858, 1.0388, 1.14889, 1.09398, 0.86039, 0.97489, 1.0595, 0.92094, 0.94793, 0.95923, 0.90996, 0.99346, 0.98243, 1.02112, 0.95493, 1.1406, 0.90996, 1.03574, 1.02597, 1.0008, 1.18102, 1.06628, 1.03574, 1.0192, 1.01932, 1.00886, 0.97531, 1.0106, 1.0008, 1.13189, 1.18102, 1.02277, 0.98683, 1.0016, 0.99561, 1.07237, 1.0008, 0.90434, 0.99921, 0.93803, 0.8965, 1.23085, 1.06628, 1.04983, 0.96268, 1.0499, 0.98439, 1.18102, 1.06628, 1.0008, 1.06628, 0.98439, 0.79795, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.09466, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.97278, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.02065, 1, 1, 1, 1, 1, 1, 1.06467, 1.02511, 1.06467, 1.02511, 1.06467, 1.02511, 0.90996, 0.96752, 1, 1.21408, 0.89903, 1, 1, 0.75155, 1.04394, 1.04394, 1.04394, 1.04394, 0.98633, 0.98633, 0.98633, 0.73047, 0.73047, 1.20642, 0.91211, 1.25635, 1.222, 1.02956, 1.03372, 1.03372, 0.96039, 1.24633, 1, 1.12454, 0.93503, 1.03424, 1.19687, 1.03424, 1, 1, 1, 0.771, 1, 1, 1.15749, 1.15749, 1.15749, 1.10948, 0.86279, 0.94434, 0.86279, 0.94434, 0.86182, 1, 1, 1.16897, 1, 0.96085, 0.90137, 1.2107, 1.18416, 1.13973, 0.69825, 0.9716, 2.10339, 1.29004, 1.29004, 1.21172, 1.29004, 1.29004, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.42603, 1, 0.99862, 0.99862, 1, 0.87025, 0.87025, 0.87025, 0.87025, 1.18874, 1.42603, 1, 1.42603, 1.42603, 0.99862, 1, 1, 1, 1, 1, 1.2886, 1.04315, 1.15296, 1.34163, 1, 1, 1, 1.09193, 1.09193, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+exports.SegoeuiBoldFactors = SegoeuiBoldFactors;
+const SegoeuiBoldMetrics = {
+  lineHeight: 1.33008,
+  lineGap: 0
+};
+exports.SegoeuiBoldMetrics = SegoeuiBoldMetrics;
+const SegoeuiBoldItalicFactors = [1.76738, 1, 1, 0.98946, 1.03959, 1.04016, 1.02809, 1.036, 0.97639, 1.10953, 1.23203, 1.11144, 1.11144, 1.16939, 1.21237, 0.9754, 1.21261, 0.9754, 1.59754, 1.036, 1.036, 1.036, 1.036, 1.036, 1.036, 1.036, 1.036, 1.036, 1.036, 0.81378, 0.81378, 1.21237, 1.21237, 1.21237, 0.73541, 0.97847, 0.97363, 0.89723, 0.87897, 1.0426, 0.79429, 0.85292, 0.91149, 1.05815, 1.1406, 0.79631, 0.90128, 0.83853, 1.04396, 1.10615, 0.97552, 0.94436, 0.97552, 0.88641, 0.80527, 0.96083, 1.00135, 1, 1.06777, 0.9817, 0.91142, 0.99361, 1.11144, 1.57293, 1.11144, 1.21237, 0.74627, 1.31818, 1.06585, 0.97042, 0.83055, 0.97042, 0.93503, 1.1261, 0.97042, 0.97922, 1.14236, 0.94552, 1.01054, 1.14236, 1.02471, 0.97922, 0.94165, 0.97042, 0.97042, 1.0276, 0.78929, 1.1261, 0.97922, 0.95874, 1.02197, 0.98507, 0.96752, 0.97168, 0.95107, 1.16579, 0.95107, 1.21237, 1.03959, 1.036, 1.036, 1, 1.036, 1.16579, 0.87357, 1.31818, 1.18754, 1.26781, 1.05356, 1.21237, 1.18622, 0.79487, 0.94994, 1.29004, 1.24047, 1.24047, 1.31818, 1, 0.91484, 0.9754, 1.31818, 1.1349, 1.24866, 1.05356, 1.13934, 1.15574, 1.17389, 0.73541, 0.97363, 0.97363, 0.97363, 0.97363, 0.97363, 0.97363, 0.94385, 0.87897, 0.79429, 0.79429, 0.79429, 0.79429, 1.1406, 1.1406, 1.1406, 1.1406, 1.0426, 1.10615, 0.97552, 0.97552, 0.97552, 0.97552, 0.97552, 1.21237, 0.97552, 1.00135, 1.00135, 1.00135, 1.00135, 0.91142, 0.94436, 0.98721, 1.06585, 1.06585, 1.06585, 1.06585, 1.06585, 1.06585, 0.96705, 0.83055, 0.93503, 0.93503, 0.93503, 0.93503, 1.14236, 1.14236, 1.14236, 1.14236, 0.93125, 0.97922, 0.94165, 0.94165, 0.94165, 0.94165, 0.94165, 1.29004, 0.94165, 0.97922, 0.97922, 0.97922, 0.97922, 0.96752, 0.97042, 0.96752, 0.97363, 1.06585, 0.97363, 1.06585, 0.97363, 1.06585, 0.87897, 0.83055, 0.87897, 0.83055, 0.87897, 0.83055, 0.87897, 0.83055, 1.0426, 1.0033, 1.0426, 0.97042, 0.79429, 0.93503, 0.79429, 0.93503, 0.79429, 0.93503, 0.79429, 0.93503, 0.79429, 0.93503, 0.91149, 0.97042, 0.91149, 0.97042, 0.91149, 0.97042, 1, 1, 1.05815, 0.97922, 1.05815, 0.97922, 1.1406, 1.14236, 1.1406, 1.14236, 1.1406, 1.14236, 1.1406, 1.14236, 1.1406, 1.14236, 0.97441, 1.04302, 0.79631, 1.01582, 1, 1, 1.01054, 0.83853, 1.14236, 1, 1, 0.83853, 1.09125, 0.83853, 0.90418, 0.83853, 1.19508, 1.10615, 0.97922, 1, 1, 1.10615, 0.97922, 1.01034, 1.10466, 0.97922, 0.97552, 0.94165, 0.97552, 0.94165, 0.97552, 0.94165, 0.91602, 0.91981, 0.88641, 1.0276, 1, 1, 0.88641, 1.0276, 0.80527, 0.78929, 0.80527, 0.78929, 0.80527, 0.78929, 0.80527, 0.78929, 1, 1, 0.96083, 1.05403, 0.95923, 1.16862, 1.00135, 0.97922, 1.00135, 0.97922, 1.00135, 0.97922, 1.00135, 0.97922, 1.00135, 0.97922, 1.00135, 0.97922, 1.06777, 1.02197, 0.91142, 0.96752, 0.91142, 0.99361, 0.97168, 0.99361, 0.97168, 0.99361, 0.97168, 1.23199, 1.036, 0.97363, 1.06585, 0.94385, 0.96705, 0.97552, 0.94165, 1, 1, 0.96083, 1.1261, 1.31818, 1.31818, 1.31818, 1.31818, 1.31818, 1.31818, 1.31818, 1.31818, 1.31818, 0.95161, 1.27126, 1.00811, 0.83284, 0.77702, 0.99137, 0.95253, 1.0347, 0.86142, 1.07205, 1.14236, 0.97363, 0.89723, 0.86869, 1.09818, 0.79429, 0.99361, 1.05815, 0.97552, 1.1406, 0.90128, 1.06662, 1.04396, 1.10615, 0.84918, 0.97552, 1.04694, 0.94436, 0.98015, 0.96083, 0.91142, 1.00356, 0.9817, 1.01945, 0.98999, 1.1406, 0.91142, 1.04961, 0.9898, 1.00639, 1.14236, 1.07514, 1.04961, 0.99607, 1.02897, 1.008, 0.9898, 0.95134, 1.00639, 1.11121, 1.14236, 1.00518, 0.97981, 1.02186, 1, 1.08578, 0.94165, 0.99314, 0.98387, 0.93028, 0.93377, 1.35125, 1.07514, 1.10687, 0.93491, 1.04232, 1.00351, 1.14236, 1.07514, 0.94165, 1.07514, 1.00351, 0.79429, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.09097, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.93503, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.96609, 1, 1, 1, 1, 1, 1, 1.06777, 1.02197, 1.06777, 1.02197, 1.06777, 1.02197, 0.91142, 0.96752, 1, 1.21261, 0.89903, 1, 1, 0.75155, 1.04745, 1.04745, 1.04745, 1.04394, 0.98633, 0.98633, 0.98633, 0.72959, 0.72959, 1.20502, 0.91406, 1.26514, 1.222, 1.02956, 1.03372, 1.03372, 0.96039, 1.24633, 1, 1.09125, 0.93327, 1.03336, 1.16541, 1.036, 1, 1, 1, 0.771, 1, 1, 1.15574, 1.15574, 1.15574, 1.15574, 0.86364, 0.94434, 0.86279, 0.94434, 0.86224, 1, 1, 1.16798, 1, 0.96085, 0.90068, 1.21237, 1.18416, 1.13904, 0.69825, 0.9716, 2.10339, 1.29004, 1.29004, 1.21339, 1.29004, 1.29004, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.42603, 1, 0.99862, 0.99862, 1, 0.87025, 0.87025, 0.87025, 0.87025, 1.18775, 1.42603, 1, 1.42603, 1.42603, 0.99862, 1, 1, 1, 1, 1, 1.2886, 1.04315, 1.15296, 1.34163, 1, 1, 1, 1.13269, 1.13269, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+exports.SegoeuiBoldItalicFactors = SegoeuiBoldItalicFactors;
+const SegoeuiBoldItalicMetrics = {
+  lineHeight: 1.33008,
+  lineGap: 0
+};
+exports.SegoeuiBoldItalicMetrics = SegoeuiBoldItalicMetrics;
+const SegoeuiItalicFactors = [1.76738, 1, 1, 0.98946, 1.14763, 1.05365, 1.06234, 0.96927, 0.92586, 1.15373, 1.18414, 0.91349, 0.91349, 1.07403, 1.17308, 0.78383, 1.20088, 0.78383, 1.42531, 0.96927, 0.96927, 0.96927, 0.96927, 0.96927, 0.96927, 0.96927, 0.96927, 0.96927, 0.96927, 0.78383, 0.78383, 1.17308, 1.17308, 1.17308, 0.77349, 0.94565, 0.94729, 0.85944, 0.88506, 0.9858, 0.74817, 0.80016, 0.88449, 0.98039, 0.95782, 0.69238, 0.89898, 0.83231, 0.98183, 1.03989, 0.96924, 0.86237, 0.96924, 0.80595, 0.74524, 0.86091, 0.95402, 0.94143, 0.98448, 0.8858, 0.83089, 0.93285, 1.0949, 1.39016, 1.0949, 1.45994, 0.74627, 1.04839, 0.97454, 0.97454, 0.87207, 0.97454, 0.87533, 1.06151, 0.97454, 1.00176, 1.16484, 1.08132, 0.98047, 1.16484, 1.02989, 1.01054, 0.96225, 0.97454, 0.97454, 1.06598, 0.79004, 1.16344, 1.00351, 0.94629, 0.9973, 0.91016, 0.96777, 0.9043, 0.91082, 0.92481, 0.91082, 1.17308, 0.95748, 0.96927, 0.96927, 1, 0.96927, 0.92481, 0.80597, 1.04839, 1.23393, 1.1781, 0.9245, 1.17308, 1.20808, 0.63218, 0.94261, 1.24822, 1.09971, 1.09971, 1.04839, 1, 0.85273, 0.78032, 1.04839, 1.09971, 1.22326, 0.9245, 1.09836, 1.13525, 1.15222, 0.70424, 0.94729, 0.94729, 0.94729, 0.94729, 0.94729, 0.94729, 0.85498, 0.88506, 0.74817, 0.74817, 0.74817, 0.74817, 0.95782, 0.95782, 0.95782, 0.95782, 0.9858, 1.03989, 0.96924, 0.96924, 0.96924, 0.96924, 0.96924, 1.17308, 0.96924, 0.95402, 0.95402, 0.95402, 0.95402, 0.83089, 0.86237, 0.88409, 0.97454, 0.97454, 0.97454, 0.97454, 0.97454, 0.97454, 0.92916, 0.87207, 0.87533, 0.87533, 0.87533, 0.87533, 0.93146, 0.93146, 0.93146, 0.93146, 0.93854, 1.01054, 0.96225, 0.96225, 0.96225, 0.96225, 0.96225, 1.24822, 0.8761, 1.00351, 1.00351, 1.00351, 1.00351, 0.96777, 0.97454, 0.96777, 0.94729, 0.97454, 0.94729, 0.97454, 0.94729, 0.97454, 0.88506, 0.87207, 0.88506, 0.87207, 0.88506, 0.87207, 0.88506, 0.87207, 0.9858, 0.95391, 0.9858, 0.97454, 0.74817, 0.87533, 0.74817, 0.87533, 0.74817, 0.87533, 0.74817, 0.87533, 0.74817, 0.87533, 0.88449, 0.97454, 0.88449, 0.97454, 0.88449, 0.97454, 1, 1, 0.98039, 1.00176, 0.98039, 1.00176, 0.95782, 0.93146, 0.95782, 0.93146, 0.95782, 0.93146, 0.95782, 1.16484, 0.95782, 0.93146, 0.84421, 1.12761, 0.69238, 1.08132, 1, 1, 0.98047, 0.83231, 1.16484, 1, 1, 0.84723, 1.04861, 0.84723, 0.78755, 0.83231, 1.23736, 1.03989, 1.01054, 1, 1, 1.03989, 1.01054, 0.9857, 1.03849, 1.01054, 0.96924, 0.96225, 0.96924, 0.96225, 0.96924, 0.96225, 0.92383, 0.90171, 0.80595, 1.06598, 1, 1, 0.80595, 1.06598, 0.74524, 0.79004, 0.74524, 0.79004, 0.74524, 0.79004, 0.74524, 0.79004, 1, 1, 0.86091, 1.02759, 0.85771, 1.16344, 0.95402, 1.00351, 0.95402, 1.00351, 0.95402, 1.00351, 0.95402, 1.00351, 0.95402, 1.00351, 0.95402, 1.00351, 0.98448, 0.9973, 0.83089, 0.96777, 0.83089, 0.93285, 0.9043, 0.93285, 0.9043, 0.93285, 0.9043, 1.31868, 0.96927, 0.94729, 0.97454, 0.85498, 0.92916, 0.96924, 0.8761, 1, 1, 0.86091, 1.16344, 1.04839, 1.04839, 1.04839, 1.04839, 1.04839, 1.04839, 1.04839, 1.04839, 1.04839, 0.81965, 0.81965, 0.94729, 0.78032, 0.71022, 0.90883, 0.84171, 0.99877, 0.77596, 1.05734, 1.2, 0.94729, 0.85944, 0.82791, 0.9607, 0.74817, 0.93285, 0.98039, 0.96924, 0.95782, 0.89898, 0.98316, 0.98183, 1.03989, 0.78614, 0.96924, 0.97642, 0.86237, 0.86075, 0.86091, 0.83089, 0.90082, 0.8858, 0.97296, 1.01284, 0.95782, 0.83089, 1.0976, 1.04, 1.03342, 1.2, 1.0675, 1.0976, 0.98205, 1.03809, 1.05097, 1.04, 0.95364, 1.03342, 1.05401, 1.2, 1.02148, 1.0119, 1.04724, 1.0127, 1.02732, 0.96225, 0.8965, 0.97783, 0.93574, 0.94818, 1.30679, 1.0675, 1.11826, 0.99821, 1.0557, 1.0326, 1.2, 1.0675, 0.96225, 1.0675, 1.0326, 0.74817, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.03754, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.87533, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.98705, 1, 1, 1, 1, 1, 1, 0.98448, 0.9973, 0.98448, 0.9973, 0.98448, 0.9973, 0.83089, 0.96777, 1, 1.20088, 0.89903, 1, 1, 0.75155, 0.94945, 0.94945, 0.94945, 0.94945, 1.12317, 1.12317, 1.12317, 0.67603, 0.67603, 1.15621, 0.73584, 1.21191, 1.22135, 1.06483, 0.94868, 0.94868, 0.95996, 1.24633, 1, 1.07497, 0.87709, 0.96927, 1.01473, 0.96927, 1, 1, 1, 0.77295, 1, 1, 1.09836, 1.09836, 1.09836, 1.01522, 0.86321, 0.94434, 0.8649, 0.94434, 0.86182, 1, 1, 1.083, 1, 0.91578, 0.86438, 1.17308, 1.18416, 1.14589, 0.69825, 0.97622, 1.96791, 1.24822, 1.24822, 1.17308, 1.24822, 1.24822, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.42603, 1, 0.99862, 0.99862, 1, 0.87025, 0.87025, 0.87025, 0.87025, 1.17984, 1.42603, 1, 1.42603, 1.42603, 0.99862, 1, 1, 1, 1, 1, 1.2886, 1.04315, 1.15296, 1.34163, 1, 1, 1, 1.10742, 1.10742, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+exports.SegoeuiItalicFactors = SegoeuiItalicFactors;
+const SegoeuiItalicMetrics = {
+  lineHeight: 1.33008,
+  lineGap: 0
+};
+exports.SegoeuiItalicMetrics = SegoeuiItalicMetrics;
+const SegoeuiRegularFactors = [1.76738, 1, 1, 0.98594, 1.02285, 1.10454, 1.06234, 0.96927, 0.92037, 1.19985, 1.2046, 0.90616, 0.90616, 1.07152, 1.1714, 0.78032, 1.20088, 0.78032, 1.40246, 0.96927, 0.96927, 0.96927, 0.96927, 0.96927, 0.96927, 0.96927, 0.96927, 0.96927, 0.96927, 0.78032, 0.78032, 1.1714, 1.1714, 1.1714, 0.80597, 0.94084, 0.96706, 0.85944, 0.85734, 0.97093, 0.75842, 0.79936, 0.88198, 0.9831, 0.95782, 0.71387, 0.86969, 0.84636, 1.07796, 1.03584, 0.96924, 0.83968, 0.96924, 0.82826, 0.79649, 0.85771, 0.95132, 0.93119, 0.98965, 0.88433, 0.8287, 0.93365, 1.08612, 1.3638, 1.08612, 1.45786, 0.74627, 0.80499, 0.91484, 1.05707, 0.92383, 1.05882, 0.9403, 1.12654, 1.05882, 1.01756, 1.09011, 1.09011, 0.99414, 1.09011, 1.034, 1.01756, 1.05356, 1.05707, 1.05882, 1.04399, 0.84863, 1.21968, 1.01756, 0.95801, 1.00068, 0.91797, 0.96777, 0.9043, 0.90351, 0.92105, 0.90351, 1.1714, 0.85337, 0.96927, 0.96927, 0.99912, 0.96927, 0.92105, 0.80597, 1.2434, 1.20808, 1.05937, 0.90957, 1.1714, 1.20808, 0.75155, 0.94261, 1.24644, 1.09971, 1.09971, 0.84751, 1, 0.85273, 0.78032, 0.61584, 1.05425, 1.17914, 0.90957, 1.08665, 1.11593, 1.14169, 0.73381, 0.96706, 0.96706, 0.96706, 0.96706, 0.96706, 0.96706, 0.86035, 0.85734, 0.75842, 0.75842, 0.75842, 0.75842, 0.95782, 0.95782, 0.95782, 0.95782, 0.97093, 1.03584, 0.96924, 0.96924, 0.96924, 0.96924, 0.96924, 1.1714, 0.96924, 0.95132, 0.95132, 0.95132, 0.95132, 0.8287, 0.83968, 0.89049, 0.91484, 0.91484, 0.91484, 0.91484, 0.91484, 0.91484, 0.93575, 0.92383, 0.9403, 0.9403, 0.9403, 0.9403, 0.8717, 0.8717, 0.8717, 0.8717, 1.00527, 1.01756, 1.05356, 1.05356, 1.05356, 1.05356, 1.05356, 1.24644, 0.95923, 1.01756, 1.01756, 1.01756, 1.01756, 0.96777, 1.05707, 0.96777, 0.96706, 0.91484, 0.96706, 0.91484, 0.96706, 0.91484, 0.85734, 0.92383, 0.85734, 0.92383, 0.85734, 0.92383, 0.85734, 0.92383, 0.97093, 1.0969, 0.97093, 1.05882, 0.75842, 0.9403, 0.75842, 0.9403, 0.75842, 0.9403, 0.75842, 0.9403, 0.75842, 0.9403, 0.88198, 1.05882, 0.88198, 1.05882, 0.88198, 1.05882, 1, 1, 0.9831, 1.01756, 0.9831, 1.01756, 0.95782, 0.8717, 0.95782, 0.8717, 0.95782, 0.8717, 0.95782, 1.09011, 0.95782, 0.8717, 0.84784, 1.11551, 0.71387, 1.09011, 1, 1, 0.99414, 0.84636, 1.09011, 1, 1, 0.84636, 1.0536, 0.84636, 0.94298, 0.84636, 1.23297, 1.03584, 1.01756, 1, 1, 1.03584, 1.01756, 1.00323, 1.03444, 1.01756, 0.96924, 1.05356, 0.96924, 1.05356, 0.96924, 1.05356, 0.93066, 0.98293, 0.82826, 1.04399, 1, 1, 0.82826, 1.04399, 0.79649, 0.84863, 0.79649, 0.84863, 0.79649, 0.84863, 0.79649, 0.84863, 1, 1, 0.85771, 1.17318, 0.85771, 1.21968, 0.95132, 1.01756, 0.95132, 1.01756, 0.95132, 1.01756, 0.95132, 1.01756, 0.95132, 1.01756, 0.95132, 1.01756, 0.98965, 1.00068, 0.8287, 0.96777, 0.8287, 0.93365, 0.9043, 0.93365, 0.9043, 0.93365, 0.9043, 1.08571, 0.96927, 0.96706, 0.91484, 0.86035, 0.93575, 0.96924, 0.95923, 1, 1, 0.85771, 1.21968, 1.11437, 1.11437, 0.93109, 0.91202, 0.60411, 0.84164, 0.55572, 1.01173, 0.97361, 0.81818, 0.81818, 0.96635, 0.78032, 0.72727, 0.92366, 0.98601, 1.03405, 0.77968, 1.09799, 1.2, 0.96706, 0.85944, 0.85638, 0.96491, 0.75842, 0.93365, 0.9831, 0.96924, 0.95782, 0.86969, 0.94152, 1.07796, 1.03584, 0.78437, 0.96924, 0.98715, 0.83968, 0.83491, 0.85771, 0.8287, 0.94492, 0.88433, 0.9287, 1.0098, 0.95782, 0.8287, 1.0625, 0.98248, 1.03424, 1.2, 1.01071, 1.0625, 0.95246, 1.03809, 1.04912, 0.98248, 1.00221, 1.03424, 1.05443, 1.2, 1.04785, 0.99609, 1.00169, 1.05176, 0.99346, 1.05356, 0.9087, 1.03004, 0.95542, 0.93117, 1.23362, 1.01071, 1.07831, 1.02512, 1.05205, 1.03502, 1.2, 1.01071, 1.05356, 1.01071, 1.03502, 0.75842, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.03719, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0.9403, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.04021, 1, 1, 1, 1, 1, 1, 0.98965, 1.00068, 0.98965, 1.00068, 0.98965, 1.00068, 0.8287, 0.96777, 1, 1.20088, 0.89903, 1, 1, 0.75155, 1.03077, 1.03077, 1.03077, 1.03077, 1.13196, 1.13196, 1.13196, 0.67428, 0.67428, 1.16039, 0.73291, 1.20996, 1.22135, 1.06483, 0.94868, 0.94868, 0.95996, 1.24633, 1, 1.07497, 0.87796, 0.96927, 1.01518, 0.96927, 1, 1, 1, 0.77295, 1, 1, 1.10539, 1.10539, 1.11358, 1.06967, 0.86279, 0.94434, 0.86279, 0.94434, 0.86182, 1, 1, 1.083, 1, 0.91578, 0.86507, 1.1714, 1.18416, 1.14589, 0.69825, 0.97622, 1.9697, 1.24822, 1.24822, 1.17238, 1.24822, 1.24822, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1.42603, 1, 0.99862, 0.99862, 1, 0.87025, 0.87025, 0.87025, 0.87025, 1.18083, 1.42603, 1, 1.42603, 1.42603, 0.99862, 1, 1, 1, 1, 1, 1.2886, 1.04315, 1.15296, 1.34163, 1, 1, 1, 1.10938, 1.10938, 1, 1, 1, 1.05425, 1.09971, 1.09971, 1.09971, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1];
+exports.SegoeuiRegularFactors = SegoeuiRegularFactors;
+const SegoeuiRegularMetrics = {
+  lineHeight: 1.33008,
+  lineGap: 0
+};
+exports.SegoeuiRegularMetrics = SegoeuiRegularMetrics;
+
+/***/ }),
+/* 18 */
+/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
+
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports.getFontType = getFontType;
+exports.normalizeFontName = normalizeFontName;
+exports.recoverGlyphName = recoverGlyphName;
+exports.type1FontGlyphMapping = type1FontGlyphMapping;
+exports.SEAC_ANALYSIS_ENABLED = exports.MacStandardGlyphOrdering = exports.FontFlags = void 0;
+
+var _util = __w_pdfjs_require__(2);
+
+var _encodings = __w_pdfjs_require__(19);
+
+var _glyphlist = __w_pdfjs_require__(20);
+
+var _unicode = __w_pdfjs_require__(21);
+
+const SEAC_ANALYSIS_ENABLED = true;
+exports.SEAC_ANALYSIS_ENABLED = SEAC_ANALYSIS_ENABLED;
+const FontFlags = {
+  FixedPitch: 1,
+  Serif: 2,
+  Symbolic: 4,
+  Script: 8,
+  Nonsymbolic: 32,
+  Italic: 64,
+  AllCap: 65536,
+  SmallCap: 131072,
+  ForceBold: 262144
+};
+exports.FontFlags = FontFlags;
+const MacStandardGlyphOrdering = [".notdef", ".null", "nonmarkingreturn", "space", "exclam", "quotedbl", "numbersign", "dollar", "percent", "ampersand", "quotesingle", "parenleft", "parenright", "asterisk", "plus", "comma", "hyphen", "period", "slash", "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "colon", "semicolon", "less", "equal", "greater", "question", "at", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "bracketleft", "backslash", "bracketright", "asciicircum", "underscore", "grave", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "braceleft", "bar", "braceright", "asciitilde", "Adieresis", "Aring", "Ccedilla", "Eacute", "Ntilde", "Odieresis", "Udieresis", "aacute", "agrave", "acircumflex", "adieresis", "atilde", "aring", "ccedilla", "eacute", "egrave", "ecircumflex", "edieresis", "iacute", "igrave", "icircumflex", "idieresis", "ntilde", "oacute", "ograve", "ocircumflex", "odieresis", "otilde", "uacute", "ugrave", "ucircumflex", "udieresis", "dagger", "degree", "cent", "sterling", "section", "bullet", "paragraph", "germandbls", "registered", "copyright", "trademark", "acute", "dieresis", "notequal", "AE", "Oslash", "infinity", "plusminus", "lessequal", "greaterequal", "yen", "mu", "partialdiff", "summation", "product", "pi", "integral", "ordfeminine", "ordmasculine", "Omega", "ae", "oslash", "questiondown", "exclamdown", "logicalnot", "radical", "florin", "approxequal", "Delta", "guillemotleft", "guillemotright", "ellipsis", "nonbreakingspace", "Agrave", "Atilde", "Otilde", "OE", "oe", "endash", "emdash", "quotedblleft", "quotedblright", "quoteleft", "quoteright", "divide", "lozenge", "ydieresis", "Ydieresis", "fraction", "currency", "guilsinglleft", "guilsinglright", "fi", "fl", "daggerdbl", "periodcentered", "quotesinglbase", "quotedblbase", "perthousand", "Acircumflex", "Ecircumflex", "Aacute", "Edieresis", "Egrave", "Iacute", "Icircumflex", "Idieresis", "Igrave", "Oacute", "Ocircumflex", "apple", "Ograve", "Uacute", "Ucircumflex", "Ugrave", "dotlessi", "circumflex", "tilde", "macron", "breve", "dotaccent", "ring", "cedilla", "hungarumlaut", "ogonek", "caron", "Lslash", "lslash", "Scaron", "scaron", "Zcaron", "zcaron", "brokenbar", "Eth", "eth", "Yacute", "yacute", "Thorn", "thorn", "minus", "multiply", "onesuperior", "twosuperior", "threesuperior", "onehalf", "onequarter", "threequarters", "franc", "Gbreve", "gbreve", "Idotaccent", "Scedilla", "scedilla", "Cacute", "cacute", "Ccaron", "ccaron", "dcroat"];
+exports.MacStandardGlyphOrdering = MacStandardGlyphOrdering;
+
+function getFontType(type, subtype, isStandardFont = false) {
+  switch (type) {
+    case "Type1":
+      if (isStandardFont) {
+        return _util.FontType.TYPE1STANDARD;
+      }
+
+      return subtype === "Type1C" ? _util.FontType.TYPE1C : _util.FontType.TYPE1;
+
+    case "CIDFontType0":
+      return subtype === "CIDFontType0C" ? _util.FontType.CIDFONTTYPE0C : _util.FontType.CIDFONTTYPE0;
+
+    case "OpenType":
+      return _util.FontType.OPENTYPE;
+
+    case "TrueType":
+      return _util.FontType.TRUETYPE;
+
+    case "CIDFontType2":
+      return _util.FontType.CIDFONTTYPE2;
+
+    case "MMType1":
+      return _util.FontType.MMTYPE1;
+
+    case "Type0":
+      return _util.FontType.TYPE0;
+
+    default:
+      return _util.FontType.UNKNOWN;
+  }
+}
+
+function recoverGlyphName(name, glyphsUnicodeMap) {
+  if (glyphsUnicodeMap[name] !== undefined) {
+    return name;
+  }
+
+  const unicode = (0, _unicode.getUnicodeForGlyph)(name, glyphsUnicodeMap);
+
+  if (unicode !== -1) {
+    for (const key in glyphsUnicodeMap) {
+      if (glyphsUnicodeMap[key] === unicode) {
+        return key;
+      }
+    }
+  }
+
+  (0, _util.info)("Unable to recover a standard glyph name for: " + name);
+  return name;
+}
+
+function type1FontGlyphMapping(properties, builtInEncoding, glyphNames) {
+  const charCodeToGlyphId = Object.create(null);
+  let glyphId, charCode, baseEncoding;
+  const isSymbolicFont = !!(properties.flags & FontFlags.Symbolic);
+
+  if (properties.isInternalFont) {
+    baseEncoding = builtInEncoding;
+
+    for (charCode = 0; charCode < baseEncoding.length; charCode++) {
+      glyphId = glyphNames.indexOf(baseEncoding[charCode]);
+
+      if (glyphId >= 0) {
+        charCodeToGlyphId[charCode] = glyphId;
+      } else {
+        charCodeToGlyphId[charCode] = 0;
+      }
+    }
+  } else if (properties.baseEncodingName) {
+    baseEncoding = (0, _encodings.getEncoding)(properties.baseEncodingName);
+
+    for (charCode = 0; charCode < baseEncoding.length; charCode++) {
+      glyphId = glyphNames.indexOf(baseEncoding[charCode]);
+
+      if (glyphId >= 0) {
+        charCodeToGlyphId[charCode] = glyphId;
+      } else {
+        charCodeToGlyphId[charCode] = 0;
+      }
+    }
+  } else if (isSymbolicFont) {
+    for (charCode in builtInEncoding) {
+      charCodeToGlyphId[charCode] = builtInEncoding[charCode];
+    }
+  } else {
+    baseEncoding = _encodings.StandardEncoding;
+
+    for (charCode = 0; charCode < baseEncoding.length; charCode++) {
+      glyphId = glyphNames.indexOf(baseEncoding[charCode]);
+
+      if (glyphId >= 0) {
+        charCodeToGlyphId[charCode] = glyphId;
+      } else {
+        charCodeToGlyphId[charCode] = 0;
+      }
+    }
+  }
+
+  const differences = properties.differences;
+  let glyphsUnicodeMap;
+
+  if (differences) {
+    for (charCode in differences) {
+      const glyphName = differences[charCode];
+      glyphId = glyphNames.indexOf(glyphName);
+
+      if (glyphId === -1) {
+        if (!glyphsUnicodeMap) {
+          glyphsUnicodeMap = (0, _glyphlist.getGlyphsUnicode)();
+        }
+
+        const standardGlyphName = recoverGlyphName(glyphName, glyphsUnicodeMap);
+
+        if (standardGlyphName !== glyphName) {
+          glyphId = glyphNames.indexOf(standardGlyphName);
+        }
+      }
+
+      if (glyphId >= 0) {
+        charCodeToGlyphId[charCode] = glyphId;
+      } else {
+        charCodeToGlyphId[charCode] = 0;
+      }
+    }
+  }
+
+  return charCodeToGlyphId;
+}
+
+function normalizeFontName(name) {
+  return name.replace(/[,_]/g, "-").replace(/\s/g, "");
+}
+
+/***/ }),
+/* 19 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports.getEncoding = getEncoding;
+exports.ZapfDingbatsEncoding = exports.WinAnsiEncoding = exports.SymbolSetEncoding = exports.StandardEncoding = exports.MacRomanEncoding = exports.ExpertEncoding = void 0;
+const ExpertEncoding = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "space", "exclamsmall", "Hungarumlautsmall", "", "dollaroldstyle", "dollarsuperior", "ampersandsmall", "Acutesmall", "parenleftsuperior", "parenrightsuperior", "twodotenleader", "onedotenleader", "comma", "hyphen", "period", "fraction", "zerooldstyle", "oneoldstyle", "twooldstyle", "threeoldstyle", "fouroldstyle", "fiveoldstyle", "sixoldstyle", "sevenoldstyle", "eightoldstyle", "nineoldstyle", "colon", "semicolon", "commasuperior", "threequartersemdash", "periodsuperior", "questionsmall", "", "asuperior", "bsuperior", "centsuperior", "dsuperior", "esuperior", "", "", "", "isuperior", "", "", "lsuperior", "msuperior", "nsuperior", "osuperior", "", "", "rsuperior", "ssuperior", "tsuperior", "", "ff", "fi", "fl", "ffi", "ffl", "parenleftinferior", "", "parenrightinferior", "Circumflexsmall", "hyphensuperior", "Gravesmall", "Asmall", "Bsmall", "Csmall", "Dsmall", "Esmall", "Fsmall", "Gsmall", "Hsmall", "Ismall", "Jsmall", "Ksmall", "Lsmall", "Msmall", "Nsmall", "Osmall", "Psmall", "Qsmall", "Rsmall", "Ssmall", "Tsmall", "Usmall", "Vsmall", "Wsmall", "Xsmall", "Ysmall", "Zsmall", "colonmonetary", "onefitted", "rupiah", "Tildesmall", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "exclamdownsmall", "centoldstyle", "Lslashsmall", "", "", "Scaronsmall", "Zcaronsmall", "Dieresissmall", "Brevesmall", "Caronsmall", "", "Dotaccentsmall", "", "", "Macronsmall", "", "", "figuredash", "hypheninferior", "", "", "Ogoneksmall", "Ringsmall", "Cedillasmall", "", "", "", "onequarter", "onehalf", "threequarters", "questiondownsmall", "oneeighth", "threeeighths", "fiveeighths", "seveneighths", "onethird", "twothirds", "", "", "zerosuperior", "onesuperior", "twosuperior", "threesuperior", "foursuperior", "fivesuperior", "sixsuperior", "sevensuperior", "eightsuperior", "ninesuperior", "zeroinferior", "oneinferior", "twoinferior", "threeinferior", "fourinferior", "fiveinferior", "sixinferior", "seveninferior", "eightinferior", "nineinferior", "centinferior", "dollarinferior", "periodinferior", "commainferior", "Agravesmall", "Aacutesmall", "Acircumflexsmall", "Atildesmall", "Adieresissmall", "Aringsmall", "AEsmall", "Ccedillasmall", "Egravesmall", "Eacutesmall", "Ecircumflexsmall", "Edieresissmall", "Igravesmall", "Iacutesmall", "Icircumflexsmall", "Idieresissmall", "Ethsmall", "Ntildesmall", "Ogravesmall", "Oacutesmall", "Ocircumflexsmall", "Otildesmall", "Odieresissmall", "OEsmall", "Oslashsmall", "Ugravesmall", "Uacutesmall", "Ucircumflexsmall", "Udieresissmall", "Yacutesmall", "Thornsmall", "Ydieresissmall"];
+exports.ExpertEncoding = ExpertEncoding;
+const MacExpertEncoding = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "space", "exclamsmall", "Hungarumlautsmall", "centoldstyle", "dollaroldstyle", "dollarsuperior", "ampersandsmall", "Acutesmall", "parenleftsuperior", "parenrightsuperior", "twodotenleader", "onedotenleader", "comma", "hyphen", "period", "fraction", "zerooldstyle", "oneoldstyle", "twooldstyle", "threeoldstyle", "fouroldstyle", "fiveoldstyle", "sixoldstyle", "sevenoldstyle", "eightoldstyle", "nineoldstyle", "colon", "semicolon", "", "threequartersemdash", "", "questionsmall", "", "", "", "", "Ethsmall", "", "", "onequarter", "onehalf", "threequarters", "oneeighth", "threeeighths", "fiveeighths", "seveneighths", "onethird", "twothirds", "", "", "", "", "", "", "ff", "fi", "fl", "ffi", "ffl", "parenleftinferior", "", "parenrightinferior", "Circumflexsmall", "hypheninferior", "Gravesmall", "Asmall", "Bsmall", "Csmall", "Dsmall", "Esmall", "Fsmall", "Gsmall", "Hsmall", "Ismall", "Jsmall", "Ksmall", "Lsmall", "Msmall", "Nsmall", "Osmall", "Psmall", "Qsmall", "Rsmall", "Ssmall", "Tsmall", "Usmall", "Vsmall", "Wsmall", "Xsmall", "Ysmall", "Zsmall", "colonmonetary", "onefitted", "rupiah", "Tildesmall", "", "", "asuperior", "centsuperior", "", "", "", "", "Aacutesmall", "Agravesmall", "Acircumflexsmall", "Adieresissmall", "Atildesmall", "Aringsmall", "Ccedillasmall", "Eacutesmall", "Egravesmall", "Ecircumflexsmall", "Edieresissmall", "Iacutesmall", "Igravesmall", "Icircumflexsmall", "Idieresissmall", "Ntildesmall", "Oacutesmall", "Ogravesmall", "Ocircumflexsmall", "Odieresissmall", "Otildesmall", "Uacutesmall", "Ugravesmall", "Ucircumflexsmall", "Udieresissmall", "", "eightsuperior", "fourinferior", "threeinferior", "sixinferior", "eightinferior", "seveninferior", "Scaronsmall", "", "centinferior", "twoinferior", "", "Dieresissmall", "", "Caronsmall", "osuperior", "fiveinferior", "", "commainferior", "periodinferior", "Yacutesmall", "", "dollarinferior", "", "", "Thornsmall", "", "nineinferior", "zeroinferior", "Zcaronsmall", "AEsmall", "Oslashsmall", "questiondownsmall", "oneinferior", "Lslashsmall", "", "", "", "", "", "", "Cedillasmall", "", "", "", "", "", "OEsmall", "figuredash", "hyphensuperior", "", "", "", "", "exclamdownsmall", "", "Ydieresissmall", "", "onesuperior", "twosuperior", "threesuperior", "foursuperior", "fivesuperior", "sixsuperior", "sevensuperior", "ninesuperior", "zerosuperior", "", "esuperior", "rsuperior", "tsuperior", "", "", "isuperior", "ssuperior", "dsuperior", "", "", "", "", "", "lsuperior", "Ogoneksmall", "Brevesmall", "Macronsmall", "bsuperior", "nsuperior", "msuperior", "commasuperior", "periodsuperior", "Dotaccentsmall", "Ringsmall", "", "", "", ""];
+const MacRomanEncoding = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "space", "exclam", "quotedbl", "numbersign", "dollar", "percent", "ampersand", "quotesingle", "parenleft", "parenright", "asterisk", "plus", "comma", "hyphen", "period", "slash", "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "colon", "semicolon", "less", "equal", "greater", "question", "at", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "bracketleft", "backslash", "bracketright", "asciicircum", "underscore", "grave", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "braceleft", "bar", "braceright", "asciitilde", "", "Adieresis", "Aring", "Ccedilla", "Eacute", "Ntilde", "Odieresis", "Udieresis", "aacute", "agrave", "acircumflex", "adieresis", "atilde", "aring", "ccedilla", "eacute", "egrave", "ecircumflex", "edieresis", "iacute", "igrave", "icircumflex", "idieresis", "ntilde", "oacute", "ograve", "ocircumflex", "odieresis", "otilde", "uacute", "ugrave", "ucircumflex", "udieresis", "dagger", "degree", "cent", "sterling", "section", "bullet", "paragraph", "germandbls", "registered", "copyright", "trademark", "acute", "dieresis", "notequal", "AE", "Oslash", "infinity", "plusminus", "lessequal", "greaterequal", "yen", "mu", "partialdiff", "summation", "product", "pi", "integral", "ordfeminine", "ordmasculine", "Omega", "ae", "oslash", "questiondown", "exclamdown", "logicalnot", "radical", "florin", "approxequal", "Delta", "guillemotleft", "guillemotright", "ellipsis", "space", "Agrave", "Atilde", "Otilde", "OE", "oe", "endash", "emdash", "quotedblleft", "quotedblright", "quoteleft", "quoteright", "divide", "lozenge", "ydieresis", "Ydieresis", "fraction", "currency", "guilsinglleft", "guilsinglright", "fi", "fl", "daggerdbl", "periodcentered", "quotesinglbase", "quotedblbase", "perthousand", "Acircumflex", "Ecircumflex", "Aacute", "Edieresis", "Egrave", "Iacute", "Icircumflex", "Idieresis", "Igrave", "Oacute", "Ocircumflex", "apple", "Ograve", "Uacute", "Ucircumflex", "Ugrave", "dotlessi", "circumflex", "tilde", "macron", "breve", "dotaccent", "ring", "cedilla", "hungarumlaut", "ogonek", "caron"];
+exports.MacRomanEncoding = MacRomanEncoding;
+const StandardEncoding = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "space", "exclam", "quotedbl", "numbersign", "dollar", "percent", "ampersand", "quoteright", "parenleft", "parenright", "asterisk", "plus", "comma", "hyphen", "period", "slash", "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "colon", "semicolon", "less", "equal", "greater", "question", "at", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "bracketleft", "backslash", "bracketright", "asciicircum", "underscore", "quoteleft", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "braceleft", "bar", "braceright", "asciitilde", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "exclamdown", "cent", "sterling", "fraction", "yen", "florin", "section", "currency", "quotesingle", "quotedblleft", "guillemotleft", "guilsinglleft", "guilsinglright", "fi", "fl", "", "endash", "dagger", "daggerdbl", "periodcentered", "", "paragraph", "bullet", "quotesinglbase", "quotedblbase", "quotedblright", "guillemotright", "ellipsis", "perthousand", "", "questiondown", "", "grave", "acute", "circumflex", "tilde", "macron", "breve", "dotaccent", "dieresis", "", "ring", "cedilla", "", "hungarumlaut", "ogonek", "caron", "emdash", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "AE", "", "ordfeminine", "", "", "", "", "Lslash", "Oslash", "OE", "ordmasculine", "", "", "", "", "", "ae", "", "", "", "dotlessi", "", "", "lslash", "oslash", "oe", "germandbls", "", "", "", ""];
+exports.StandardEncoding = StandardEncoding;
+const WinAnsiEncoding = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "space", "exclam", "quotedbl", "numbersign", "dollar", "percent", "ampersand", "quotesingle", "parenleft", "parenright", "asterisk", "plus", "comma", "hyphen", "period", "slash", "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "colon", "semicolon", "less", "equal", "greater", "question", "at", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "bracketleft", "backslash", "bracketright", "asciicircum", "underscore", "grave", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "braceleft", "bar", "braceright", "asciitilde", "bullet", "Euro", "bullet", "quotesinglbase", "florin", "quotedblbase", "ellipsis", "dagger", "daggerdbl", "circumflex", "perthousand", "Scaron", "guilsinglleft", "OE", "bullet", "Zcaron", "bullet", "bullet", "quoteleft", "quoteright", "quotedblleft", "quotedblright", "bullet", "endash", "emdash", "tilde", "trademark", "scaron", "guilsinglright", "oe", "bullet", "zcaron", "Ydieresis", "space", "exclamdown", "cent", "sterling", "currency", "yen", "brokenbar", "section", "dieresis", "copyright", "ordfeminine", "guillemotleft", "logicalnot", "hyphen", "registered", "macron", "degree", "plusminus", "twosuperior", "threesuperior", "acute", "mu", "paragraph", "periodcentered", "cedilla", "onesuperior", "ordmasculine", "guillemotright", "onequarter", "onehalf", "threequarters", "questiondown", "Agrave", "Aacute", "Acircumflex", "Atilde", "Adieresis", "Aring", "AE", "Ccedilla", "Egrave", "Eacute", "Ecircumflex", "Edieresis", "Igrave", "Iacute", "Icircumflex", "Idieresis", "Eth", "Ntilde", "Ograve", "Oacute", "Ocircumflex", "Otilde", "Odieresis", "multiply", "Oslash", "Ugrave", "Uacute", "Ucircumflex", "Udieresis", "Yacute", "Thorn", "germandbls", "agrave", "aacute", "acircumflex", "atilde", "adieresis", "aring", "ae", "ccedilla", "egrave", "eacute", "ecircumflex", "edieresis", "igrave", "iacute", "icircumflex", "idieresis", "eth", "ntilde", "ograve", "oacute", "ocircumflex", "otilde", "odieresis", "divide", "oslash", "ugrave", "uacute", "ucircumflex", "udieresis", "yacute", "thorn", "ydieresis"];
+exports.WinAnsiEncoding = WinAnsiEncoding;
+const SymbolSetEncoding = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "space", "exclam", "universal", "numbersign", "existential", "percent", "ampersand", "suchthat", "parenleft", "parenright", "asteriskmath", "plus", "comma", "minus", "period", "slash", "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "colon", "semicolon", "less", "equal", "greater", "question", "congruent", "Alpha", "Beta", "Chi", "Delta", "Epsilon", "Phi", "Gamma", "Eta", "Iota", "theta1", "Kappa", "Lambda", "Mu", "Nu", "Omicron", "Pi", "Theta", "Rho", "Sigma", "Tau", "Upsilon", "sigma1", "Omega", "Xi", "Psi", "Zeta", "bracketleft", "therefore", "bracketright", "perpendicular", "underscore", "radicalex", "alpha", "beta", "chi", "delta", "epsilon", "phi", "gamma", "eta", "iota", "phi1", "kappa", "lambda", "mu", "nu", "omicron", "pi", "theta", "rho", "sigma", "tau", "upsilon", "omega1", "omega", "xi", "psi", "zeta", "braceleft", "bar", "braceright", "similar", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "Euro", "Upsilon1", "minute", "lessequal", "fraction", "infinity", "florin", "club", "diamond", "heart", "spade", "arrowboth", "arrowleft", "arrowup", "arrowright", "arrowdown", "degree", "plusminus", "second", "greaterequal", "multiply", "proportional", "partialdiff", "bullet", "divide", "notequal", "equivalence", "approxequal", "ellipsis", "arrowvertex", "arrowhorizex", "carriagereturn", "aleph", "Ifraktur", "Rfraktur", "weierstrass", "circlemultiply", "circleplus", "emptyset", "intersection", "union", "propersuperset", "reflexsuperset", "notsubset", "propersubset", "reflexsubset", "element", "notelement", "angle", "gradient", "registerserif", "copyrightserif", "trademarkserif", "product", "radical", "dotmath", "logicalnot", "logicaland", "logicalor", "arrowdblboth", "arrowdblleft", "arrowdblup", "arrowdblright", "arrowdbldown", "lozenge", "angleleft", "registersans", "copyrightsans", "trademarksans", "summation", "parenlefttp", "parenleftex", "parenleftbt", "bracketlefttp", "bracketleftex", "bracketleftbt", "bracelefttp", "braceleftmid", "braceleftbt", "braceex", "", "angleright", "integral", "integraltp", "integralex", "integralbt", "parenrighttp", "parenrightex", "parenrightbt", "bracketrighttp", "bracketrightex", "bracketrightbt", "bracerighttp", "bracerightmid", "bracerightbt", ""];
+exports.SymbolSetEncoding = SymbolSetEncoding;
+const ZapfDingbatsEncoding = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "space", "a1", "a2", "a202", "a3", "a4", "a5", "a119", "a118", "a117", "a11", "a12", "a13", "a14", "a15", "a16", "a105", "a17", "a18", "a19", "a20", "a21", "a22", "a23", "a24", "a25", "a26", "a27", "a28", "a6", "a7", "a8", "a9", "a10", "a29", "a30", "a31", "a32", "a33", "a34", "a35", "a36", "a37", "a38", "a39", "a40", "a41", "a42", "a43", "a44", "a45", "a46", "a47", "a48", "a49", "a50", "a51", "a52", "a53", "a54", "a55", "a56", "a57", "a58", "a59", "a60", "a61", "a62", "a63", "a64", "a65", "a66", "a67", "a68", "a69", "a70", "a71", "a72", "a73", "a74", "a203", "a75", "a204", "a76", "a77", "a78", "a79", "a81", "a82", "a83", "a84", "a97", "a98", "a99", "a100", "", "a89", "a90", "a93", "a94", "a91", "a92", "a205", "a85", "a206", "a86", "a87", "a88", "a95", "a96", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "a101", "a102", "a103", "a104", "a106", "a107", "a108", "a112", "a111", "a110", "a109", "a120", "a121", "a122", "a123", "a124", "a125", "a126", "a127", "a128", "a129", "a130", "a131", "a132", "a133", "a134", "a135", "a136", "a137", "a138", "a139", "a140", "a141", "a142", "a143", "a144", "a145", "a146", "a147", "a148", "a149", "a150", "a151", "a152", "a153", "a154", "a155", "a156", "a157", "a158", "a159", "a160", "a161", "a163", "a164", "a196", "a165", "a192", "a166", "a167", "a168", "a169", "a170", "a171", "a172", "a173", "a162", "a174", "a175", "a176", "a177", "a178", "a179", "a193", "a180", "a199", "a181", "a200", "a182", "", "a201", "a183", "a184", "a197", "a185", "a194", "a198", "a186", "a195", "a187", "a188", "a189", "a190", "a191", ""];
+exports.ZapfDingbatsEncoding = ZapfDingbatsEncoding;
+
+function getEncoding(encodingName) {
+  switch (encodingName) {
+    case "WinAnsiEncoding":
+      return WinAnsiEncoding;
+
+    case "StandardEncoding":
+      return StandardEncoding;
+
+    case "MacRomanEncoding":
+      return MacRomanEncoding;
+
+    case "SymbolSetEncoding":
+      return SymbolSetEncoding;
+
+    case "ZapfDingbatsEncoding":
+      return ZapfDingbatsEncoding;
+
+    case "ExpertEncoding":
+      return ExpertEncoding;
+
+    case "MacExpertEncoding":
+      return MacExpertEncoding;
+
+    default:
+      return null;
+  }
+}
+
+/***/ }),
+/* 20 */
+/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
+
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports.getGlyphsUnicode = exports.getDingbatsGlyphsUnicode = void 0;
+
+var _core_utils = __w_pdfjs_require__(9);
+
+const getGlyphsUnicode = (0, _core_utils.getArrayLookupTableFactory)(function () {
+  return ["A", 0x0041, "AE", 0x00c6, "AEacute", 0x01fc, "AEmacron", 0x01e2, "AEsmall", 0xf7e6, "Aacute", 0x00c1, "Aacutesmall", 0xf7e1, "Abreve", 0x0102, "Abreveacute", 0x1eae, "Abrevecyrillic", 0x04d0, "Abrevedotbelow", 0x1eb6, "Abrevegrave", 0x1eb0, "Abrevehookabove", 0x1eb2, "Abrevetilde", 0x1eb4, "Acaron", 0x01cd, "Acircle", 0x24b6, "Acircumflex", 0x00c2, "Acircumflexacute", 0x1ea4, "Acircumflexdotbelow", 0x1eac, "Acircumflexgrave", 0x1ea6, "Acircumflexhookabove", 0x1ea8, "Acircumflexsmall", 0xf7e2, "Acircumflextilde", 0x1eaa, "Acute", 0xf6c9, "Acutesmall", 0xf7b4, "Acyrillic", 0x0410, "Adblgrave", 0x0200, "Adieresis", 0x00c4, "Adieresiscyrillic", 0x04d2, "Adieresismacron", 0x01de, "Adieresissmall", 0xf7e4, "Adotbelow", 0x1ea0, "Adotmacron", 0x01e0, "Agrave", 0x00c0, "Agravesmall", 0xf7e0, "Ahookabove", 0x1ea2, "Aiecyrillic", 0x04d4, "Ainvertedbreve", 0x0202, "Alpha", 0x0391, "Alphatonos", 0x0386, "Amacron", 0x0100, "Amonospace", 0xff21, "Aogonek", 0x0104, "Aring", 0x00c5, "Aringacute", 0x01fa, "Aringbelow", 0x1e00, "Aringsmall", 0xf7e5, "Asmall", 0xf761, "Atilde", 0x00c3, "Atildesmall", 0xf7e3, "Aybarmenian", 0x0531, "B", 0x0042, "Bcircle", 0x24b7, "Bdotaccent", 0x1e02, "Bdotbelow", 0x1e04, "Becyrillic", 0x0411, "Benarmenian", 0x0532, "Beta", 0x0392, "Bhook", 0x0181, "Blinebelow", 0x1e06, "Bmonospace", 0xff22, "Brevesmall", 0xf6f4, "Bsmall", 0xf762, "Btopbar", 0x0182, "C", 0x0043, "Caarmenian", 0x053e, "Cacute", 0x0106, "Caron", 0xf6ca, "Caronsmall", 0xf6f5, "Ccaron", 0x010c, "Ccedilla", 0x00c7, "Ccedillaacute", 0x1e08, "Ccedillasmall", 0xf7e7, "Ccircle", 0x24b8, "Ccircumflex", 0x0108, "Cdot", 0x010a, "Cdotaccent", 0x010a, "Cedillasmall", 0xf7b8, "Chaarmenian", 0x0549, "Cheabkhasiancyrillic", 0x04bc, "Checyrillic", 0x0427, "Chedescenderabkhasiancyrillic", 0x04be, "Chedescendercyrillic", 0x04b6, "Chedieresiscyrillic", 0x04f4, "Cheharmenian", 0x0543, "Chekhakassiancyrillic", 0x04cb, "Cheverticalstrokecyrillic", 0x04b8, "Chi", 0x03a7, "Chook", 0x0187, "Circumflexsmall", 0xf6f6, "Cmonospace", 0xff23, "Coarmenian", 0x0551, "Csmall", 0xf763, "D", 0x0044, "DZ", 0x01f1, "DZcaron", 0x01c4, "Daarmenian", 0x0534, "Dafrican", 0x0189, "Dcaron", 0x010e, "Dcedilla", 0x1e10, "Dcircle", 0x24b9, "Dcircumflexbelow", 0x1e12, "Dcroat", 0x0110, "Ddotaccent", 0x1e0a, "Ddotbelow", 0x1e0c, "Decyrillic", 0x0414, "Deicoptic", 0x03ee, "Delta", 0x2206, "Deltagreek", 0x0394, "Dhook", 0x018a, "Dieresis", 0xf6cb, "DieresisAcute", 0xf6cc, "DieresisGrave", 0xf6cd, "Dieresissmall", 0xf7a8, "Digammagreek", 0x03dc, "Djecyrillic", 0x0402, "Dlinebelow", 0x1e0e, "Dmonospace", 0xff24, "Dotaccentsmall", 0xf6f7, "Dslash", 0x0110, "Dsmall", 0xf764, "Dtopbar", 0x018b, "Dz", 0x01f2, "Dzcaron", 0x01c5, "Dzeabkhasiancyrillic", 0x04e0, "Dzecyrillic", 0x0405, "Dzhecyrillic", 0x040f, "E", 0x0045, "Eacute", 0x00c9, "Eacutesmall", 0xf7e9, "Ebreve", 0x0114, "Ecaron", 0x011a, "Ecedillabreve", 0x1e1c, "Echarmenian", 0x0535, "Ecircle", 0x24ba, "Ecircumflex", 0x00ca, "Ecircumflexacute", 0x1ebe, "Ecircumflexbelow", 0x1e18, "Ecircumflexdotbelow", 0x1ec6, "Ecircumflexgrave", 0x1ec0, "Ecircumflexhookabove", 0x1ec2, "Ecircumflexsmall", 0xf7ea, "Ecircumflextilde", 0x1ec4, "Ecyrillic", 0x0404, "Edblgrave", 0x0204, "Edieresis", 0x00cb, "Edieresissmall", 0xf7eb, "Edot", 0x0116, "Edotaccent", 0x0116, "Edotbelow", 0x1eb8, "Efcyrillic", 0x0424, "Egrave", 0x00c8, "Egravesmall", 0xf7e8, "Eharmenian", 0x0537, "Ehookabove", 0x1eba, "Eightroman", 0x2167, "Einvertedbreve", 0x0206, "Eiotifiedcyrillic", 0x0464, "Elcyrillic", 0x041b, "Elevenroman", 0x216a, "Emacron", 0x0112, "Emacronacute", 0x1e16, "Emacrongrave", 0x1e14, "Emcyrillic", 0x041c, "Emonospace", 0xff25, "Encyrillic", 0x041d, "Endescendercyrillic", 0x04a2, "Eng", 0x014a, "Enghecyrillic", 0x04a4, "Enhookcyrillic", 0x04c7, "Eogonek", 0x0118, "Eopen", 0x0190, "Epsilon", 0x0395, "Epsilontonos", 0x0388, "Ercyrillic", 0x0420, "Ereversed", 0x018e, "Ereversedcyrillic", 0x042d, "Escyrillic", 0x0421, "Esdescendercyrillic", 0x04aa, "Esh", 0x01a9, "Esmall", 0xf765, "Eta", 0x0397, "Etarmenian", 0x0538, "Etatonos", 0x0389, "Eth", 0x00d0, "Ethsmall", 0xf7f0, "Etilde", 0x1ebc, "Etildebelow", 0x1e1a, "Euro", 0x20ac, "Ezh", 0x01b7, "Ezhcaron", 0x01ee, "Ezhreversed", 0x01b8, "F", 0x0046, "Fcircle", 0x24bb, "Fdotaccent", 0x1e1e, "Feharmenian", 0x0556, "Feicoptic", 0x03e4, "Fhook", 0x0191, "Fitacyrillic", 0x0472, "Fiveroman", 0x2164, "Fmonospace", 0xff26, "Fourroman", 0x2163, "Fsmall", 0xf766, "G", 0x0047, "GBsquare", 0x3387, "Gacute", 0x01f4, "Gamma", 0x0393, "Gammaafrican", 0x0194, "Gangiacoptic", 0x03ea, "Gbreve", 0x011e, "Gcaron", 0x01e6, "Gcedilla", 0x0122, "Gcircle", 0x24bc, "Gcircumflex", 0x011c, "Gcommaaccent", 0x0122, "Gdot", 0x0120, "Gdotaccent", 0x0120, "Gecyrillic", 0x0413, "Ghadarmenian", 0x0542, "Ghemiddlehookcyrillic", 0x0494, "Ghestrokecyrillic", 0x0492, "Gheupturncyrillic", 0x0490, "Ghook", 0x0193, "Gimarmenian", 0x0533, "Gjecyrillic", 0x0403, "Gmacron", 0x1e20, "Gmonospace", 0xff27, "Grave", 0xf6ce, "Gravesmall", 0xf760, "Gsmall", 0xf767, "Gsmallhook", 0x029b, "Gstroke", 0x01e4, "H", 0x0048, "H18533", 0x25cf, "H18543", 0x25aa, "H18551", 0x25ab, "H22073", 0x25a1, "HPsquare", 0x33cb, "Haabkhasiancyrillic", 0x04a8, "Hadescendercyrillic", 0x04b2, "Hardsigncyrillic", 0x042a, "Hbar", 0x0126, "Hbrevebelow", 0x1e2a, "Hcedilla", 0x1e28, "Hcircle", 0x24bd, "Hcircumflex", 0x0124, "Hdieresis", 0x1e26, "Hdotaccent", 0x1e22, "Hdotbelow", 0x1e24, "Hmonospace", 0xff28, "Hoarmenian", 0x0540, "Horicoptic", 0x03e8, "Hsmall", 0xf768, "Hungarumlaut", 0xf6cf, "Hungarumlautsmall", 0xf6f8, "Hzsquare", 0x3390, "I", 0x0049, "IAcyrillic", 0x042f, "IJ", 0x0132, "IUcyrillic", 0x042e, "Iacute", 0x00cd, "Iacutesmall", 0xf7ed, "Ibreve", 0x012c, "Icaron", 0x01cf, "Icircle", 0x24be, "Icircumflex", 0x00ce, "Icircumflexsmall", 0xf7ee, "Icyrillic", 0x0406, "Idblgrave", 0x0208, "Idieresis", 0x00cf, "Idieresisacute", 0x1e2e, "Idieresiscyrillic", 0x04e4, "Idieresissmall", 0xf7ef, "Idot", 0x0130, "Idotaccent", 0x0130, "Idotbelow", 0x1eca, "Iebrevecyrillic", 0x04d6, "Iecyrillic", 0x0415, "Ifraktur", 0x2111, "Igrave", 0x00cc, "Igravesmall", 0xf7ec, "Ihookabove", 0x1ec8, "Iicyrillic", 0x0418, "Iinvertedbreve", 0x020a, "Iishortcyrillic", 0x0419, "Imacron", 0x012a, "Imacroncyrillic", 0x04e2, "Imonospace", 0xff29, "Iniarmenian", 0x053b, "Iocyrillic", 0x0401, "Iogonek", 0x012e, "Iota", 0x0399, "Iotaafrican", 0x0196, "Iotadieresis", 0x03aa, "Iotatonos", 0x038a, "Ismall", 0xf769, "Istroke", 0x0197, "Itilde", 0x0128, "Itildebelow", 0x1e2c, "Izhitsacyrillic", 0x0474, "Izhitsadblgravecyrillic", 0x0476, "J", 0x004a, "Jaarmenian", 0x0541, "Jcircle", 0x24bf, "Jcircumflex", 0x0134, "Jecyrillic", 0x0408, "Jheharmenian", 0x054b, "Jmonospace", 0xff2a, "Jsmall", 0xf76a, "K", 0x004b, "KBsquare", 0x3385, "KKsquare", 0x33cd, "Kabashkircyrillic", 0x04a0, "Kacute", 0x1e30, "Kacyrillic", 0x041a, "Kadescendercyrillic", 0x049a, "Kahookcyrillic", 0x04c3, "Kappa", 0x039a, "Kastrokecyrillic", 0x049e, "Kaverticalstrokecyrillic", 0x049c, "Kcaron", 0x01e8, "Kcedilla", 0x0136, "Kcircle", 0x24c0, "Kcommaaccent", 0x0136, "Kdotbelow", 0x1e32, "Keharmenian", 0x0554, "Kenarmenian", 0x053f, "Khacyrillic", 0x0425, "Kheicoptic", 0x03e6, "Khook", 0x0198, "Kjecyrillic", 0x040c, "Klinebelow", 0x1e34, "Kmonospace", 0xff2b, "Koppacyrillic", 0x0480, "Koppagreek", 0x03de, "Ksicyrillic", 0x046e, "Ksmall", 0xf76b, "L", 0x004c, "LJ", 0x01c7, "LL", 0xf6bf, "Lacute", 0x0139, "Lambda", 0x039b, "Lcaron", 0x013d, "Lcedilla", 0x013b, "Lcircle", 0x24c1, "Lcircumflexbelow", 0x1e3c, "Lcommaaccent", 0x013b, "Ldot", 0x013f, "Ldotaccent", 0x013f, "Ldotbelow", 0x1e36, "Ldotbelowmacron", 0x1e38, "Liwnarmenian", 0x053c, "Lj", 0x01c8, "Ljecyrillic", 0x0409, "Llinebelow", 0x1e3a, "Lmonospace", 0xff2c, "Lslash", 0x0141, "Lslashsmall", 0xf6f9, "Lsmall", 0xf76c, "M", 0x004d, "MBsquare", 0x3386, "Macron", 0xf6d0, "Macronsmall", 0xf7af, "Macute", 0x1e3e, "Mcircle", 0x24c2, "Mdotaccent", 0x1e40, "Mdotbelow", 0x1e42, "Menarmenian", 0x0544, "Mmonospace", 0xff2d, "Msmall", 0xf76d, "Mturned", 0x019c, "Mu", 0x039c, "N", 0x004e, "NJ", 0x01ca, "Nacute", 0x0143, "Ncaron", 0x0147, "Ncedilla", 0x0145, "Ncircle", 0x24c3, "Ncircumflexbelow", 0x1e4a, "Ncommaaccent", 0x0145, "Ndotaccent", 0x1e44, "Ndotbelow", 0x1e46, "Nhookleft", 0x019d, "Nineroman", 0x2168, "Nj", 0x01cb, "Njecyrillic", 0x040a, "Nlinebelow", 0x1e48, "Nmonospace", 0xff2e, "Nowarmenian", 0x0546, "Nsmall", 0xf76e, "Ntilde", 0x00d1, "Ntildesmall", 0xf7f1, "Nu", 0x039d, "O", 0x004f, "OE", 0x0152, "OEsmall", 0xf6fa, "Oacute", 0x00d3, "Oacutesmall", 0xf7f3, "Obarredcyrillic", 0x04e8, "Obarreddieresiscyrillic", 0x04ea, "Obreve", 0x014e, "Ocaron", 0x01d1, "Ocenteredtilde", 0x019f, "Ocircle", 0x24c4, "Ocircumflex", 0x00d4, "Ocircumflexacute", 0x1ed0, "Ocircumflexdotbelow", 0x1ed8, "Ocircumflexgrave", 0x1ed2, "Ocircumflexhookabove", 0x1ed4, "Ocircumflexsmall", 0xf7f4, "Ocircumflextilde", 0x1ed6, "Ocyrillic", 0x041e, "Odblacute", 0x0150, "Odblgrave", 0x020c, "Odieresis", 0x00d6, "Odieresiscyrillic", 0x04e6, "Odieresissmall", 0xf7f6, "Odotbelow", 0x1ecc, "Ogoneksmall", 0xf6fb, "Ograve", 0x00d2, "Ogravesmall", 0xf7f2, "Oharmenian", 0x0555, "Ohm", 0x2126, "Ohookabove", 0x1ece, "Ohorn", 0x01a0, "Ohornacute", 0x1eda, "Ohorndotbelow", 0x1ee2, "Ohorngrave", 0x1edc, "Ohornhookabove", 0x1ede, "Ohorntilde", 0x1ee0, "Ohungarumlaut", 0x0150, "Oi", 0x01a2, "Oinvertedbreve", 0x020e, "Omacron", 0x014c, "Omacronacute", 0x1e52, "Omacrongrave", 0x1e50, "Omega", 0x2126, "Omegacyrillic", 0x0460, "Omegagreek", 0x03a9, "Omegaroundcyrillic", 0x047a, "Omegatitlocyrillic", 0x047c, "Omegatonos", 0x038f, "Omicron", 0x039f, "Omicrontonos", 0x038c, "Omonospace", 0xff2f, "Oneroman", 0x2160, "Oogonek", 0x01ea, "Oogonekmacron", 0x01ec, "Oopen", 0x0186, "Oslash", 0x00d8, "Oslashacute", 0x01fe, "Oslashsmall", 0xf7f8, "Osmall", 0xf76f, "Ostrokeacute", 0x01fe, "Otcyrillic", 0x047e, "Otilde", 0x00d5, "Otildeacute", 0x1e4c, "Otildedieresis", 0x1e4e, "Otildesmall", 0xf7f5, "P", 0x0050, "Pacute", 0x1e54, "Pcircle", 0x24c5, "Pdotaccent", 0x1e56, "Pecyrillic", 0x041f, "Peharmenian", 0x054a, "Pemiddlehookcyrillic", 0x04a6, "Phi", 0x03a6, "Phook", 0x01a4, "Pi", 0x03a0, "Piwrarmenian", 0x0553, "Pmonospace", 0xff30, "Psi", 0x03a8, "Psicyrillic", 0x0470, "Psmall", 0xf770, "Q", 0x0051, "Qcircle", 0x24c6, "Qmonospace", 0xff31, "Qsmall", 0xf771, "R", 0x0052, "Raarmenian", 0x054c, "Racute", 0x0154, "Rcaron", 0x0158, "Rcedilla", 0x0156, "Rcircle", 0x24c7, "Rcommaaccent", 0x0156, "Rdblgrave", 0x0210, "Rdotaccent", 0x1e58, "Rdotbelow", 0x1e5a, "Rdotbelowmacron", 0x1e5c, "Reharmenian", 0x0550, "Rfraktur", 0x211c, "Rho", 0x03a1, "Ringsmall", 0xf6fc, "Rinvertedbreve", 0x0212, "Rlinebelow", 0x1e5e, "Rmonospace", 0xff32, "Rsmall", 0xf772, "Rsmallinverted", 0x0281, "Rsmallinvertedsuperior", 0x02b6, "S", 0x0053, "SF010000", 0x250c, "SF020000", 0x2514, "SF030000", 0x2510, "SF040000", 0x2518, "SF050000", 0x253c, "SF060000", 0x252c, "SF070000", 0x2534, "SF080000", 0x251c, "SF090000", 0x2524, "SF100000", 0x2500, "SF110000", 0x2502, "SF190000", 0x2561, "SF200000", 0x2562, "SF210000", 0x2556, "SF220000", 0x2555, "SF230000", 0x2563, "SF240000", 0x2551, "SF250000", 0x2557, "SF260000", 0x255d, "SF270000", 0x255c, "SF280000", 0x255b, "SF360000", 0x255e, "SF370000", 0x255f, "SF380000", 0x255a, "SF390000", 0x2554, "SF400000", 0x2569, "SF410000", 0x2566, "SF420000", 0x2560, "SF430000", 0x2550, "SF440000", 0x256c, "SF450000", 0x2567, "SF460000", 0x2568, "SF470000", 0x2564, "SF480000", 0x2565, "SF490000", 0x2559, "SF500000", 0x2558, "SF510000", 0x2552, "SF520000", 0x2553, "SF530000", 0x256b, "SF540000", 0x256a, "Sacute", 0x015a, "Sacutedotaccent", 0x1e64, "Sampigreek", 0x03e0, "Scaron", 0x0160, "Scarondotaccent", 0x1e66, "Scaronsmall", 0xf6fd, "Scedilla", 0x015e, "Schwa", 0x018f, "Schwacyrillic", 0x04d8, "Schwadieresiscyrillic", 0x04da, "Scircle", 0x24c8, "Scircumflex", 0x015c, "Scommaaccent", 0x0218, "Sdotaccent", 0x1e60, "Sdotbelow", 0x1e62, "Sdotbelowdotaccent", 0x1e68, "Seharmenian", 0x054d, "Sevenroman", 0x2166, "Shaarmenian", 0x0547, "Shacyrillic", 0x0428, "Shchacyrillic", 0x0429, "Sheicoptic", 0x03e2, "Shhacyrillic", 0x04ba, "Shimacoptic", 0x03ec, "Sigma", 0x03a3, "Sixroman", 0x2165, "Smonospace", 0xff33, "Softsigncyrillic", 0x042c, "Ssmall", 0xf773, "Stigmagreek", 0x03da, "T", 0x0054, "Tau", 0x03a4, "Tbar", 0x0166, "Tcaron", 0x0164, "Tcedilla", 0x0162, "Tcircle", 0x24c9, "Tcircumflexbelow", 0x1e70, "Tcommaaccent", 0x0162, "Tdotaccent", 0x1e6a, "Tdotbelow", 0x1e6c, "Tecyrillic", 0x0422, "Tedescendercyrillic", 0x04ac, "Tenroman", 0x2169, "Tetsecyrillic", 0x04b4, "Theta", 0x0398, "Thook", 0x01ac, "Thorn", 0x00de, "Thornsmall", 0xf7fe, "Threeroman", 0x2162, "Tildesmall", 0xf6fe, "Tiwnarmenian", 0x054f, "Tlinebelow", 0x1e6e, "Tmonospace", 0xff34, "Toarmenian", 0x0539, "Tonefive", 0x01bc, "Tonesix", 0x0184, "Tonetwo", 0x01a7, "Tretroflexhook", 0x01ae, "Tsecyrillic", 0x0426, "Tshecyrillic", 0x040b, "Tsmall", 0xf774, "Twelveroman", 0x216b, "Tworoman", 0x2161, "U", 0x0055, "Uacute", 0x00da, "Uacutesmall", 0xf7fa, "Ubreve", 0x016c, "Ucaron", 0x01d3, "Ucircle", 0x24ca, "Ucircumflex", 0x00db, "Ucircumflexbelow", 0x1e76, "Ucircumflexsmall", 0xf7fb, "Ucyrillic", 0x0423, "Udblacute", 0x0170, "Udblgrave", 0x0214, "Udieresis", 0x00dc, "Udieresisacute", 0x01d7, "Udieresisbelow", 0x1e72, "Udieresiscaron", 0x01d9, "Udieresiscyrillic", 0x04f0, "Udieresisgrave", 0x01db, "Udieresismacron", 0x01d5, "Udieresissmall", 0xf7fc, "Udotbelow", 0x1ee4, "Ugrave", 0x00d9, "Ugravesmall", 0xf7f9, "Uhookabove", 0x1ee6, "Uhorn", 0x01af, "Uhornacute", 0x1ee8, "Uhorndotbelow", 0x1ef0, "Uhorngrave", 0x1eea, "Uhornhookabove", 0x1eec, "Uhorntilde", 0x1eee, "Uhungarumlaut", 0x0170, "Uhungarumlautcyrillic", 0x04f2, "Uinvertedbreve", 0x0216, "Ukcyrillic", 0x0478, "Umacron", 0x016a, "Umacroncyrillic", 0x04ee, "Umacrondieresis", 0x1e7a, "Umonospace", 0xff35, "Uogonek", 0x0172, "Upsilon", 0x03a5, "Upsilon1", 0x03d2, "Upsilonacutehooksymbolgreek", 0x03d3, "Upsilonafrican", 0x01b1, "Upsilondieresis", 0x03ab, "Upsilondieresishooksymbolgreek", 0x03d4, "Upsilonhooksymbol", 0x03d2, "Upsilontonos", 0x038e, "Uring", 0x016e, "Ushortcyrillic", 0x040e, "Usmall", 0xf775, "Ustraightcyrillic", 0x04ae, "Ustraightstrokecyrillic", 0x04b0, "Utilde", 0x0168, "Utildeacute", 0x1e78, "Utildebelow", 0x1e74, "V", 0x0056, "Vcircle", 0x24cb, "Vdotbelow", 0x1e7e, "Vecyrillic", 0x0412, "Vewarmenian", 0x054e, "Vhook", 0x01b2, "Vmonospace", 0xff36, "Voarmenian", 0x0548, "Vsmall", 0xf776, "Vtilde", 0x1e7c, "W", 0x0057, "Wacute", 0x1e82, "Wcircle", 0x24cc, "Wcircumflex", 0x0174, "Wdieresis", 0x1e84, "Wdotaccent", 0x1e86, "Wdotbelow", 0x1e88, "Wgrave", 0x1e80, "Wmonospace", 0xff37, "Wsmall", 0xf777, "X", 0x0058, "Xcircle", 0x24cd, "Xdieresis", 0x1e8c, "Xdotaccent", 0x1e8a, "Xeharmenian", 0x053d, "Xi", 0x039e, "Xmonospace", 0xff38, "Xsmall", 0xf778, "Y", 0x0059, "Yacute", 0x00dd, "Yacutesmall", 0xf7fd, "Yatcyrillic", 0x0462, "Ycircle", 0x24ce, "Ycircumflex", 0x0176, "Ydieresis", 0x0178, "Ydieresissmall", 0xf7ff, "Ydotaccent", 0x1e8e, "Ydotbelow", 0x1ef4, "Yericyrillic", 0x042b, "Yerudieresiscyrillic", 0x04f8, "Ygrave", 0x1ef2, "Yhook", 0x01b3, "Yhookabove", 0x1ef6, "Yiarmenian", 0x0545, "Yicyrillic", 0x0407, "Yiwnarmenian", 0x0552, "Ymonospace", 0xff39, "Ysmall", 0xf779, "Ytilde", 0x1ef8, "Yusbigcyrillic", 0x046a, "Yusbigiotifiedcyrillic", 0x046c, "Yuslittlecyrillic", 0x0466, "Yuslittleiotifiedcyrillic", 0x0468, "Z", 0x005a, "Zaarmenian", 0x0536, "Zacute", 0x0179, "Zcaron", 0x017d, "Zcaronsmall", 0xf6ff, "Zcircle", 0x24cf, "Zcircumflex", 0x1e90, "Zdot", 0x017b, "Zdotaccent", 0x017b, "Zdotbelow", 0x1e92, "Zecyrillic", 0x0417, "Zedescendercyrillic", 0x0498, "Zedieresiscyrillic", 0x04de, "Zeta", 0x0396, "Zhearmenian", 0x053a, "Zhebrevecyrillic", 0x04c1, "Zhecyrillic", 0x0416, "Zhedescendercyrillic", 0x0496, "Zhedieresiscyrillic", 0x04dc, "Zlinebelow", 0x1e94, "Zmonospace", 0xff3a, "Zsmall", 0xf77a, "Zstroke", 0x01b5, "a", 0x0061, "aabengali", 0x0986, "aacute", 0x00e1, "aadeva", 0x0906, "aagujarati", 0x0a86, "aagurmukhi", 0x0a06, "aamatragurmukhi", 0x0a3e, "aarusquare", 0x3303, "aavowelsignbengali", 0x09be, "aavowelsigndeva", 0x093e, "aavowelsigngujarati", 0x0abe, "abbreviationmarkarmenian", 0x055f, "abbreviationsigndeva", 0x0970, "abengali", 0x0985, "abopomofo", 0x311a, "abreve", 0x0103, "abreveacute", 0x1eaf, "abrevecyrillic", 0x04d1, "abrevedotbelow", 0x1eb7, "abrevegrave", 0x1eb1, "abrevehookabove", 0x1eb3, "abrevetilde", 0x1eb5, "acaron", 0x01ce, "acircle", 0x24d0, "acircumflex", 0x00e2, "acircumflexacute", 0x1ea5, "acircumflexdotbelow", 0x1ead, "acircumflexgrave", 0x1ea7, "acircumflexhookabove", 0x1ea9, "acircumflextilde", 0x1eab, "acute", 0x00b4, "acutebelowcmb", 0x0317, "acutecmb", 0x0301, "acutecomb", 0x0301, "acutedeva", 0x0954, "acutelowmod", 0x02cf, "acutetonecmb", 0x0341, "acyrillic", 0x0430, "adblgrave", 0x0201, "addakgurmukhi", 0x0a71, "adeva", 0x0905, "adieresis", 0x00e4, "adieresiscyrillic", 0x04d3, "adieresismacron", 0x01df, "adotbelow", 0x1ea1, "adotmacron", 0x01e1, "ae", 0x00e6, "aeacute", 0x01fd, "aekorean", 0x3150, "aemacron", 0x01e3, "afii00208", 0x2015, "afii08941", 0x20a4, "afii10017", 0x0410, "afii10018", 0x0411, "afii10019", 0x0412, "afii10020", 0x0413, "afii10021", 0x0414, "afii10022", 0x0415, "afii10023", 0x0401, "afii10024", 0x0416, "afii10025", 0x0417, "afii10026", 0x0418, "afii10027", 0x0419, "afii10028", 0x041a, "afii10029", 0x041b, "afii10030", 0x041c, "afii10031", 0x041d, "afii10032", 0x041e, "afii10033", 0x041f, "afii10034", 0x0420, "afii10035", 0x0421, "afii10036", 0x0422, "afii10037", 0x0423, "afii10038", 0x0424, "afii10039", 0x0425, "afii10040", 0x0426, "afii10041", 0x0427, "afii10042", 0x0428, "afii10043", 0x0429, "afii10044", 0x042a, "afii10045", 0x042b, "afii10046", 0x042c, "afii10047", 0x042d, "afii10048", 0x042e, "afii10049", 0x042f, "afii10050", 0x0490, "afii10051", 0x0402, "afii10052", 0x0403, "afii10053", 0x0404, "afii10054", 0x0405, "afii10055", 0x0406, "afii10056", 0x0407, "afii10057", 0x0408, "afii10058", 0x0409, "afii10059", 0x040a, "afii10060", 0x040b, "afii10061", 0x040c, "afii10062", 0x040e, "afii10063", 0xf6c4, "afii10064", 0xf6c5, "afii10065", 0x0430, "afii10066", 0x0431, "afii10067", 0x0432, "afii10068", 0x0433, "afii10069", 0x0434, "afii10070", 0x0435, "afii10071", 0x0451, "afii10072", 0x0436, "afii10073", 0x0437, "afii10074", 0x0438, "afii10075", 0x0439, "afii10076", 0x043a, "afii10077", 0x043b, "afii10078", 0x043c, "afii10079", 0x043d, "afii10080", 0x043e, "afii10081", 0x043f, "afii10082", 0x0440, "afii10083", 0x0441, "afii10084", 0x0442, "afii10085", 0x0443, "afii10086", 0x0444, "afii10087", 0x0445, "afii10088", 0x0446, "afii10089", 0x0447, "afii10090", 0x0448, "afii10091", 0x0449, "afii10092", 0x044a, "afii10093", 0x044b, "afii10094", 0x044c, "afii10095", 0x044d, "afii10096", 0x044e, "afii10097", 0x044f, "afii10098", 0x0491, "afii10099", 0x0452, "afii10100", 0x0453, "afii10101", 0x0454, "afii10102", 0x0455, "afii10103", 0x0456, "afii10104", 0x0457, "afii10105", 0x0458, "afii10106", 0x0459, "afii10107", 0x045a, "afii10108", 0x045b, "afii10109", 0x045c, "afii10110", 0x045e, "afii10145", 0x040f, "afii10146", 0x0462, "afii10147", 0x0472, "afii10148", 0x0474, "afii10192", 0xf6c6, "afii10193", 0x045f, "afii10194", 0x0463, "afii10195", 0x0473, "afii10196", 0x0475, "afii10831", 0xf6c7, "afii10832", 0xf6c8, "afii10846", 0x04d9, "afii299", 0x200e, "afii300", 0x200f, "afii301", 0x200d, "afii57381", 0x066a, "afii57388", 0x060c, "afii57392", 0x0660, "afii57393", 0x0661, "afii57394", 0x0662, "afii57395", 0x0663, "afii57396", 0x0664, "afii57397", 0x0665, "afii57398", 0x0666, "afii57399", 0x0667, "afii57400", 0x0668, "afii57401", 0x0669, "afii57403", 0x061b, "afii57407", 0x061f, "afii57409", 0x0621, "afii57410", 0x0622, "afii57411", 0x0623, "afii57412", 0x0624, "afii57413", 0x0625, "afii57414", 0x0626, "afii57415", 0x0627, "afii57416", 0x0628, "afii57417", 0x0629, "afii57418", 0x062a, "afii57419", 0x062b, "afii57420", 0x062c, "afii57421", 0x062d, "afii57422", 0x062e, "afii57423", 0x062f, "afii57424", 0x0630, "afii57425", 0x0631, "afii57426", 0x0632, "afii57427", 0x0633, "afii57428", 0x0634, "afii57429", 0x0635, "afii57430", 0x0636, "afii57431", 0x0637, "afii57432", 0x0638, "afii57433", 0x0639, "afii57434", 0x063a, "afii57440", 0x0640, "afii57441", 0x0641, "afii57442", 0x0642, "afii57443", 0x0643, "afii57444", 0x0644, "afii57445", 0x0645, "afii57446", 0x0646, "afii57448", 0x0648, "afii57449", 0x0649, "afii57450", 0x064a, "afii57451", 0x064b, "afii57452", 0x064c, "afii57453", 0x064d, "afii57454", 0x064e, "afii57455", 0x064f, "afii57456", 0x0650, "afii57457", 0x0651, "afii57458", 0x0652, "afii57470", 0x0647, "afii57505", 0x06a4, "afii57506", 0x067e, "afii57507", 0x0686, "afii57508", 0x0698, "afii57509", 0x06af, "afii57511", 0x0679, "afii57512", 0x0688, "afii57513", 0x0691, "afii57514", 0x06ba, "afii57519", 0x06d2, "afii57534", 0x06d5, "afii57636", 0x20aa, "afii57645", 0x05be, "afii57658", 0x05c3, "afii57664", 0x05d0, "afii57665", 0x05d1, "afii57666", 0x05d2, "afii57667", 0x05d3, "afii57668", 0x05d4, "afii57669", 0x05d5, "afii57670", 0x05d6, "afii57671", 0x05d7, "afii57672", 0x05d8, "afii57673", 0x05d9, "afii57674", 0x05da, "afii57675", 0x05db, "afii57676", 0x05dc, "afii57677", 0x05dd, "afii57678", 0x05de, "afii57679", 0x05df, "afii57680", 0x05e0, "afii57681", 0x05e1, "afii57682", 0x05e2, "afii57683", 0x05e3, "afii57684", 0x05e4, "afii57685", 0x05e5, "afii57686", 0x05e6, "afii57687", 0x05e7, "afii57688", 0x05e8, "afii57689", 0x05e9, "afii57690", 0x05ea, "afii57694", 0xfb2a, "afii57695", 0xfb2b, "afii57700", 0xfb4b, "afii57705", 0xfb1f, "afii57716", 0x05f0, "afii57717", 0x05f1, "afii57718", 0x05f2, "afii57723", 0xfb35, "afii57793", 0x05b4, "afii57794", 0x05b5, "afii57795", 0x05b6, "afii57796", 0x05bb, "afii57797", 0x05b8, "afii57798", 0x05b7, "afii57799", 0x05b0, "afii57800", 0x05b2, "afii57801", 0x05b1, "afii57802", 0x05b3, "afii57803", 0x05c2, "afii57804", 0x05c1, "afii57806", 0x05b9, "afii57807", 0x05bc, "afii57839", 0x05bd, "afii57841", 0x05bf, "afii57842", 0x05c0, "afii57929", 0x02bc, "afii61248", 0x2105, "afii61289", 0x2113, "afii61352", 0x2116, "afii61573", 0x202c, "afii61574", 0x202d, "afii61575", 0x202e, "afii61664", 0x200c, "afii63167", 0x066d, "afii64937", 0x02bd, "agrave", 0x00e0, "agujarati", 0x0a85, "agurmukhi", 0x0a05, "ahiragana", 0x3042, "ahookabove", 0x1ea3, "aibengali", 0x0990, "aibopomofo", 0x311e, "aideva", 0x0910, "aiecyrillic", 0x04d5, "aigujarati", 0x0a90, "aigurmukhi", 0x0a10, "aimatragurmukhi", 0x0a48, "ainarabic", 0x0639, "ainfinalarabic", 0xfeca, "aininitialarabic", 0xfecb, "ainmedialarabic", 0xfecc, "ainvertedbreve", 0x0203, "aivowelsignbengali", 0x09c8, "aivowelsigndeva", 0x0948, "aivowelsigngujarati", 0x0ac8, "akatakana", 0x30a2, "akatakanahalfwidth", 0xff71, "akorean", 0x314f, "alef", 0x05d0, "alefarabic", 0x0627, "alefdageshhebrew", 0xfb30, "aleffinalarabic", 0xfe8e, "alefhamzaabovearabic", 0x0623, "alefhamzaabovefinalarabic", 0xfe84, "alefhamzabelowarabic", 0x0625, "alefhamzabelowfinalarabic", 0xfe88, "alefhebrew", 0x05d0, "aleflamedhebrew", 0xfb4f, "alefmaddaabovearabic", 0x0622, "alefmaddaabovefinalarabic", 0xfe82, "alefmaksuraarabic", 0x0649, "alefmaksurafinalarabic", 0xfef0, "alefmaksurainitialarabic", 0xfef3, "alefmaksuramedialarabic", 0xfef4, "alefpatahhebrew", 0xfb2e, "alefqamatshebrew", 0xfb2f, "aleph", 0x2135, "allequal", 0x224c, "alpha", 0x03b1, "alphatonos", 0x03ac, "amacron", 0x0101, "amonospace", 0xff41, "ampersand", 0x0026, "ampersandmonospace", 0xff06, "ampersandsmall", 0xf726, "amsquare", 0x33c2, "anbopomofo", 0x3122, "angbopomofo", 0x3124, "angbracketleft", 0x3008, "angbracketright", 0x3009, "angkhankhuthai", 0x0e5a, "angle", 0x2220, "anglebracketleft", 0x3008, "anglebracketleftvertical", 0xfe3f, "anglebracketright", 0x3009, "anglebracketrightvertical", 0xfe40, "angleleft", 0x2329, "angleright", 0x232a, "angstrom", 0x212b, "anoteleia", 0x0387, "anudattadeva", 0x0952, "anusvarabengali", 0x0982, "anusvaradeva", 0x0902, "anusvaragujarati", 0x0a82, "aogonek", 0x0105, "apaatosquare", 0x3300, "aparen", 0x249c, "apostrophearmenian", 0x055a, "apostrophemod", 0x02bc, "apple", 0xf8ff, "approaches", 0x2250, "approxequal", 0x2248, "approxequalorimage", 0x2252, "approximatelyequal", 0x2245, "araeaekorean", 0x318e, "araeakorean", 0x318d, "arc", 0x2312, "arighthalfring", 0x1e9a, "aring", 0x00e5, "aringacute", 0x01fb, "aringbelow", 0x1e01, "arrowboth", 0x2194, "arrowdashdown", 0x21e3, "arrowdashleft", 0x21e0, "arrowdashright", 0x21e2, "arrowdashup", 0x21e1, "arrowdblboth", 0x21d4, "arrowdbldown", 0x21d3, "arrowdblleft", 0x21d0, "arrowdblright", 0x21d2, "arrowdblup", 0x21d1, "arrowdown", 0x2193, "arrowdownleft", 0x2199, "arrowdownright", 0x2198, "arrowdownwhite", 0x21e9, "arrowheaddownmod", 0x02c5, "arrowheadleftmod", 0x02c2, "arrowheadrightmod", 0x02c3, "arrowheadupmod", 0x02c4, "arrowhorizex", 0xf8e7, "arrowleft", 0x2190, "arrowleftdbl", 0x21d0, "arrowleftdblstroke", 0x21cd, "arrowleftoverright", 0x21c6, "arrowleftwhite", 0x21e6, "arrowright", 0x2192, "arrowrightdblstroke", 0x21cf, "arrowrightheavy", 0x279e, "arrowrightoverleft", 0x21c4, "arrowrightwhite", 0x21e8, "arrowtableft", 0x21e4, "arrowtabright", 0x21e5, "arrowup", 0x2191, "arrowupdn", 0x2195, "arrowupdnbse", 0x21a8, "arrowupdownbase", 0x21a8, "arrowupleft", 0x2196, "arrowupleftofdown", 0x21c5, "arrowupright", 0x2197, "arrowupwhite", 0x21e7, "arrowvertex", 0xf8e6, "asciicircum", 0x005e, "asciicircummonospace", 0xff3e, "asciitilde", 0x007e, "asciitildemonospace", 0xff5e, "ascript", 0x0251, "ascriptturned", 0x0252, "asmallhiragana", 0x3041, "asmallkatakana", 0x30a1, "asmallkatakanahalfwidth", 0xff67, "asterisk", 0x002a, "asteriskaltonearabic", 0x066d, "asteriskarabic", 0x066d, "asteriskmath", 0x2217, "asteriskmonospace", 0xff0a, "asterisksmall", 0xfe61, "asterism", 0x2042, "asuperior", 0xf6e9, "asymptoticallyequal", 0x2243, "at", 0x0040, "atilde", 0x00e3, "atmonospace", 0xff20, "atsmall", 0xfe6b, "aturned", 0x0250, "aubengali", 0x0994, "aubopomofo", 0x3120, "audeva", 0x0914, "augujarati", 0x0a94, "augurmukhi", 0x0a14, "aulengthmarkbengali", 0x09d7, "aumatragurmukhi", 0x0a4c, "auvowelsignbengali", 0x09cc, "auvowelsigndeva", 0x094c, "auvowelsigngujarati", 0x0acc, "avagrahadeva", 0x093d, "aybarmenian", 0x0561, "ayin", 0x05e2, "ayinaltonehebrew", 0xfb20, "ayinhebrew", 0x05e2, "b", 0x0062, "babengali", 0x09ac, "backslash", 0x005c, "backslashmonospace", 0xff3c, "badeva", 0x092c, "bagujarati", 0x0aac, "bagurmukhi", 0x0a2c, "bahiragana", 0x3070, "bahtthai", 0x0e3f, "bakatakana", 0x30d0, "bar", 0x007c, "barmonospace", 0xff5c, "bbopomofo", 0x3105, "bcircle", 0x24d1, "bdotaccent", 0x1e03, "bdotbelow", 0x1e05, "beamedsixteenthnotes", 0x266c, "because", 0x2235, "becyrillic", 0x0431, "beharabic", 0x0628, "behfinalarabic", 0xfe90, "behinitialarabic", 0xfe91, "behiragana", 0x3079, "behmedialarabic", 0xfe92, "behmeeminitialarabic", 0xfc9f, "behmeemisolatedarabic", 0xfc08, "behnoonfinalarabic", 0xfc6d, "bekatakana", 0x30d9, "benarmenian", 0x0562, "bet", 0x05d1, "beta", 0x03b2, "betasymbolgreek", 0x03d0, "betdagesh", 0xfb31, "betdageshhebrew", 0xfb31, "bethebrew", 0x05d1, "betrafehebrew", 0xfb4c, "bhabengali", 0x09ad, "bhadeva", 0x092d, "bhagujarati", 0x0aad, "bhagurmukhi", 0x0a2d, "bhook", 0x0253, "bihiragana", 0x3073, "bikatakana", 0x30d3, "bilabialclick", 0x0298, "bindigurmukhi", 0x0a02, "birusquare", 0x3331, "blackcircle", 0x25cf, "blackdiamond", 0x25c6, "blackdownpointingtriangle", 0x25bc, "blackleftpointingpointer", 0x25c4, "blackleftpointingtriangle", 0x25c0, "blacklenticularbracketleft", 0x3010, "blacklenticularbracketleftvertical", 0xfe3b, "blacklenticularbracketright", 0x3011, "blacklenticularbracketrightvertical", 0xfe3c, "blacklowerlefttriangle", 0x25e3, "blacklowerrighttriangle", 0x25e2, "blackrectangle", 0x25ac, "blackrightpointingpointer", 0x25ba, "blackrightpointingtriangle", 0x25b6, "blacksmallsquare", 0x25aa, "blacksmilingface", 0x263b, "blacksquare", 0x25a0, "blackstar", 0x2605, "blackupperlefttriangle", 0x25e4, "blackupperrighttriangle", 0x25e5, "blackuppointingsmalltriangle", 0x25b4, "blackuppointingtriangle", 0x25b2, "blank", 0x2423, "blinebelow", 0x1e07, "block", 0x2588, "bmonospace", 0xff42, "bobaimaithai", 0x0e1a, "bohiragana", 0x307c, "bokatakana", 0x30dc, "bparen", 0x249d, "bqsquare", 0x33c3, "braceex", 0xf8f4, "braceleft", 0x007b, "braceleftbt", 0xf8f3, "braceleftmid", 0xf8f2, "braceleftmonospace", 0xff5b, "braceleftsmall", 0xfe5b, "bracelefttp", 0xf8f1, "braceleftvertical", 0xfe37, "braceright", 0x007d, "bracerightbt", 0xf8fe, "bracerightmid", 0xf8fd, "bracerightmonospace", 0xff5d, "bracerightsmall", 0xfe5c, "bracerighttp", 0xf8fc, "bracerightvertical", 0xfe38, "bracketleft", 0x005b, "bracketleftbt", 0xf8f0, "bracketleftex", 0xf8ef, "bracketleftmonospace", 0xff3b, "bracketlefttp", 0xf8ee, "bracketright", 0x005d, "bracketrightbt", 0xf8fb, "bracketrightex", 0xf8fa, "bracketrightmonospace", 0xff3d, "bracketrighttp", 0xf8f9, "breve", 0x02d8, "brevebelowcmb", 0x032e, "brevecmb", 0x0306, "breveinvertedbelowcmb", 0x032f, "breveinvertedcmb", 0x0311, "breveinverteddoublecmb", 0x0361, "bridgebelowcmb", 0x032a, "bridgeinvertedbelowcmb", 0x033a, "brokenbar", 0x00a6, "bstroke", 0x0180, "bsuperior", 0xf6ea, "btopbar", 0x0183, "buhiragana", 0x3076, "bukatakana", 0x30d6, "bullet", 0x2022, "bulletinverse", 0x25d8, "bulletoperator", 0x2219, "bullseye", 0x25ce, "c", 0x0063, "caarmenian", 0x056e, "cabengali", 0x099a, "cacute", 0x0107, "cadeva", 0x091a, "cagujarati", 0x0a9a, "cagurmukhi", 0x0a1a, "calsquare", 0x3388, "candrabindubengali", 0x0981, "candrabinducmb", 0x0310, "candrabindudeva", 0x0901, "candrabindugujarati", 0x0a81, "capslock", 0x21ea, "careof", 0x2105, "caron", 0x02c7, "caronbelowcmb", 0x032c, "caroncmb", 0x030c, "carriagereturn", 0x21b5, "cbopomofo", 0x3118, "ccaron", 0x010d, "ccedilla", 0x00e7, "ccedillaacute", 0x1e09, "ccircle", 0x24d2, "ccircumflex", 0x0109, "ccurl", 0x0255, "cdot", 0x010b, "cdotaccent", 0x010b, "cdsquare", 0x33c5, "cedilla", 0x00b8, "cedillacmb", 0x0327, "cent", 0x00a2, "centigrade", 0x2103, "centinferior", 0xf6df, "centmonospace", 0xffe0, "centoldstyle", 0xf7a2, "centsuperior", 0xf6e0, "chaarmenian", 0x0579, "chabengali", 0x099b, "chadeva", 0x091b, "chagujarati", 0x0a9b, "chagurmukhi", 0x0a1b, "chbopomofo", 0x3114, "cheabkhasiancyrillic", 0x04bd, "checkmark", 0x2713, "checyrillic", 0x0447, "chedescenderabkhasiancyrillic", 0x04bf, "chedescendercyrillic", 0x04b7, "chedieresiscyrillic", 0x04f5, "cheharmenian", 0x0573, "chekhakassiancyrillic", 0x04cc, "cheverticalstrokecyrillic", 0x04b9, "chi", 0x03c7, "chieuchacirclekorean", 0x3277, "chieuchaparenkorean", 0x3217, "chieuchcirclekorean", 0x3269, "chieuchkorean", 0x314a, "chieuchparenkorean", 0x3209, "chochangthai", 0x0e0a, "chochanthai", 0x0e08, "chochingthai", 0x0e09, "chochoethai", 0x0e0c, "chook", 0x0188, "cieucacirclekorean", 0x3276, "cieucaparenkorean", 0x3216, "cieuccirclekorean", 0x3268, "cieuckorean", 0x3148, "cieucparenkorean", 0x3208, "cieucuparenkorean", 0x321c, "circle", 0x25cb, "circlecopyrt", 0x00a9, "circlemultiply", 0x2297, "circleot", 0x2299, "circleplus", 0x2295, "circlepostalmark", 0x3036, "circlewithlefthalfblack", 0x25d0, "circlewithrighthalfblack", 0x25d1, "circumflex", 0x02c6, "circumflexbelowcmb", 0x032d, "circumflexcmb", 0x0302, "clear", 0x2327, "clickalveolar", 0x01c2, "clickdental", 0x01c0, "clicklateral", 0x01c1, "clickretroflex", 0x01c3, "club", 0x2663, "clubsuitblack", 0x2663, "clubsuitwhite", 0x2667, "cmcubedsquare", 0x33a4, "cmonospace", 0xff43, "cmsquaredsquare", 0x33a0, "coarmenian", 0x0581, "colon", 0x003a, "colonmonetary", 0x20a1, "colonmonospace", 0xff1a, "colonsign", 0x20a1, "colonsmall", 0xfe55, "colontriangularhalfmod", 0x02d1, "colontriangularmod", 0x02d0, "comma", 0x002c, "commaabovecmb", 0x0313, "commaaboverightcmb", 0x0315, "commaaccent", 0xf6c3, "commaarabic", 0x060c, "commaarmenian", 0x055d, "commainferior", 0xf6e1, "commamonospace", 0xff0c, "commareversedabovecmb", 0x0314, "commareversedmod", 0x02bd, "commasmall", 0xfe50, "commasuperior", 0xf6e2, "commaturnedabovecmb", 0x0312, "commaturnedmod", 0x02bb, "compass", 0x263c, "congruent", 0x2245, "contourintegral", 0x222e, "control", 0x2303, "controlACK", 0x0006, "controlBEL", 0x0007, "controlBS", 0x0008, "controlCAN", 0x0018, "controlCR", 0x000d, "controlDC1", 0x0011, "controlDC2", 0x0012, "controlDC3", 0x0013, "controlDC4", 0x0014, "controlDEL", 0x007f, "controlDLE", 0x0010, "controlEM", 0x0019, "controlENQ", 0x0005, "controlEOT", 0x0004, "controlESC", 0x001b, "controlETB", 0x0017, "controlETX", 0x0003, "controlFF", 0x000c, "controlFS", 0x001c, "controlGS", 0x001d, "controlHT", 0x0009, "controlLF", 0x000a, "controlNAK", 0x0015, "controlNULL", 0x0000, "controlRS", 0x001e, "controlSI", 0x000f, "controlSO", 0x000e, "controlSOT", 0x0002, "controlSTX", 0x0001, "controlSUB", 0x001a, "controlSYN", 0x0016, "controlUS", 0x001f, "controlVT", 0x000b, "copyright", 0x00a9, "copyrightsans", 0xf8e9, "copyrightserif", 0xf6d9, "cornerbracketleft", 0x300c, "cornerbracketlefthalfwidth", 0xff62, "cornerbracketleftvertical", 0xfe41, "cornerbracketright", 0x300d, "cornerbracketrighthalfwidth", 0xff63, "cornerbracketrightvertical", 0xfe42, "corporationsquare", 0x337f, "cosquare", 0x33c7, "coverkgsquare", 0x33c6, "cparen", 0x249e, "cruzeiro", 0x20a2, "cstretched", 0x0297, "curlyand", 0x22cf, "curlyor", 0x22ce, "currency", 0x00a4, "cyrBreve", 0xf6d1, "cyrFlex", 0xf6d2, "cyrbreve", 0xf6d4, "cyrflex", 0xf6d5, "d", 0x0064, "daarmenian", 0x0564, "dabengali", 0x09a6, "dadarabic", 0x0636, "dadeva", 0x0926, "dadfinalarabic", 0xfebe, "dadinitialarabic", 0xfebf, "dadmedialarabic", 0xfec0, "dagesh", 0x05bc, "dageshhebrew", 0x05bc, "dagger", 0x2020, "daggerdbl", 0x2021, "dagujarati", 0x0aa6, "dagurmukhi", 0x0a26, "dahiragana", 0x3060, "dakatakana", 0x30c0, "dalarabic", 0x062f, "dalet", 0x05d3, "daletdagesh", 0xfb33, "daletdageshhebrew", 0xfb33, "dalethebrew", 0x05d3, "dalfinalarabic", 0xfeaa, "dammaarabic", 0x064f, "dammalowarabic", 0x064f, "dammatanaltonearabic", 0x064c, "dammatanarabic", 0x064c, "danda", 0x0964, "dargahebrew", 0x05a7, "dargalefthebrew", 0x05a7, "dasiapneumatacyrilliccmb", 0x0485, "dblGrave", 0xf6d3, "dblanglebracketleft", 0x300a, "dblanglebracketleftvertical", 0xfe3d, "dblanglebracketright", 0x300b, "dblanglebracketrightvertical", 0xfe3e, "dblarchinvertedbelowcmb", 0x032b, "dblarrowleft", 0x21d4, "dblarrowright", 0x21d2, "dbldanda", 0x0965, "dblgrave", 0xf6d6, "dblgravecmb", 0x030f, "dblintegral", 0x222c, "dbllowline", 0x2017, "dbllowlinecmb", 0x0333, "dbloverlinecmb", 0x033f, "dblprimemod", 0x02ba, "dblverticalbar", 0x2016, "dblverticallineabovecmb", 0x030e, "dbopomofo", 0x3109, "dbsquare", 0x33c8, "dcaron", 0x010f, "dcedilla", 0x1e11, "dcircle", 0x24d3, "dcircumflexbelow", 0x1e13, "dcroat", 0x0111, "ddabengali", 0x09a1, "ddadeva", 0x0921, "ddagujarati", 0x0aa1, "ddagurmukhi", 0x0a21, "ddalarabic", 0x0688, "ddalfinalarabic", 0xfb89, "dddhadeva", 0x095c, "ddhabengali", 0x09a2, "ddhadeva", 0x0922, "ddhagujarati", 0x0aa2, "ddhagurmukhi", 0x0a22, "ddotaccent", 0x1e0b, "ddotbelow", 0x1e0d, "decimalseparatorarabic", 0x066b, "decimalseparatorpersian", 0x066b, "decyrillic", 0x0434, "degree", 0x00b0, "dehihebrew", 0x05ad, "dehiragana", 0x3067, "deicoptic", 0x03ef, "dekatakana", 0x30c7, "deleteleft", 0x232b, "deleteright", 0x2326, "delta", 0x03b4, "deltaturned", 0x018d, "denominatorminusonenumeratorbengali", 0x09f8, "dezh", 0x02a4, "dhabengali", 0x09a7, "dhadeva", 0x0927, "dhagujarati", 0x0aa7, "dhagurmukhi", 0x0a27, "dhook", 0x0257, "dialytikatonos", 0x0385, "dialytikatonoscmb", 0x0344, "diamond", 0x2666, "diamondsuitwhite", 0x2662, "dieresis", 0x00a8, "dieresisacute", 0xf6d7, "dieresisbelowcmb", 0x0324, "dieresiscmb", 0x0308, "dieresisgrave", 0xf6d8, "dieresistonos", 0x0385, "dihiragana", 0x3062, "dikatakana", 0x30c2, "dittomark", 0x3003, "divide", 0x00f7, "divides", 0x2223, "divisionslash", 0x2215, "djecyrillic", 0x0452, "dkshade", 0x2593, "dlinebelow", 0x1e0f, "dlsquare", 0x3397, "dmacron", 0x0111, "dmonospace", 0xff44, "dnblock", 0x2584, "dochadathai", 0x0e0e, "dodekthai", 0x0e14, "dohiragana", 0x3069, "dokatakana", 0x30c9, "dollar", 0x0024, "dollarinferior", 0xf6e3, "dollarmonospace", 0xff04, "dollaroldstyle", 0xf724, "dollarsmall", 0xfe69, "dollarsuperior", 0xf6e4, "dong", 0x20ab, "dorusquare", 0x3326, "dotaccent", 0x02d9, "dotaccentcmb", 0x0307, "dotbelowcmb", 0x0323, "dotbelowcomb", 0x0323, "dotkatakana", 0x30fb, "dotlessi", 0x0131, "dotlessj", 0xf6be, "dotlessjstrokehook", 0x0284, "dotmath", 0x22c5, "dottedcircle", 0x25cc, "doubleyodpatah", 0xfb1f, "doubleyodpatahhebrew", 0xfb1f, "downtackbelowcmb", 0x031e, "downtackmod", 0x02d5, "dparen", 0x249f, "dsuperior", 0xf6eb, "dtail", 0x0256, "dtopbar", 0x018c, "duhiragana", 0x3065, "dukatakana", 0x30c5, "dz", 0x01f3, "dzaltone", 0x02a3, "dzcaron", 0x01c6, "dzcurl", 0x02a5, "dzeabkhasiancyrillic", 0x04e1, "dzecyrillic", 0x0455, "dzhecyrillic", 0x045f, "e", 0x0065, "eacute", 0x00e9, "earth", 0x2641, "ebengali", 0x098f, "ebopomofo", 0x311c, "ebreve", 0x0115, "ecandradeva", 0x090d, "ecandragujarati", 0x0a8d, "ecandravowelsigndeva", 0x0945, "ecandravowelsigngujarati", 0x0ac5, "ecaron", 0x011b, "ecedillabreve", 0x1e1d, "echarmenian", 0x0565, "echyiwnarmenian", 0x0587, "ecircle", 0x24d4, "ecircumflex", 0x00ea, "ecircumflexacute", 0x1ebf, "ecircumflexbelow", 0x1e19, "ecircumflexdotbelow", 0x1ec7, "ecircumflexgrave", 0x1ec1, "ecircumflexhookabove", 0x1ec3, "ecircumflextilde", 0x1ec5, "ecyrillic", 0x0454, "edblgrave", 0x0205, "edeva", 0x090f, "edieresis", 0x00eb, "edot", 0x0117, "edotaccent", 0x0117, "edotbelow", 0x1eb9, "eegurmukhi", 0x0a0f, "eematragurmukhi", 0x0a47, "efcyrillic", 0x0444, "egrave", 0x00e8, "egujarati", 0x0a8f, "eharmenian", 0x0567, "ehbopomofo", 0x311d, "ehiragana", 0x3048, "ehookabove", 0x1ebb, "eibopomofo", 0x311f, "eight", 0x0038, "eightarabic", 0x0668, "eightbengali", 0x09ee, "eightcircle", 0x2467, "eightcircleinversesansserif", 0x2791, "eightdeva", 0x096e, "eighteencircle", 0x2471, "eighteenparen", 0x2485, "eighteenperiod", 0x2499, "eightgujarati", 0x0aee, "eightgurmukhi", 0x0a6e, "eighthackarabic", 0x0668, "eighthangzhou", 0x3028, "eighthnotebeamed", 0x266b, "eightideographicparen", 0x3227, "eightinferior", 0x2088, "eightmonospace", 0xff18, "eightoldstyle", 0xf738, "eightparen", 0x247b, "eightperiod", 0x248f, "eightpersian", 0x06f8, "eightroman", 0x2177, "eightsuperior", 0x2078, "eightthai", 0x0e58, "einvertedbreve", 0x0207, "eiotifiedcyrillic", 0x0465, "ekatakana", 0x30a8, "ekatakanahalfwidth", 0xff74, "ekonkargurmukhi", 0x0a74, "ekorean", 0x3154, "elcyrillic", 0x043b, "element", 0x2208, "elevencircle", 0x246a, "elevenparen", 0x247e, "elevenperiod", 0x2492, "elevenroman", 0x217a, "ellipsis", 0x2026, "ellipsisvertical", 0x22ee, "emacron", 0x0113, "emacronacute", 0x1e17, "emacrongrave", 0x1e15, "emcyrillic", 0x043c, "emdash", 0x2014, "emdashvertical", 0xfe31, "emonospace", 0xff45, "emphasismarkarmenian", 0x055b, "emptyset", 0x2205, "enbopomofo", 0x3123, "encyrillic", 0x043d, "endash", 0x2013, "endashvertical", 0xfe32, "endescendercyrillic", 0x04a3, "eng", 0x014b, "engbopomofo", 0x3125, "enghecyrillic", 0x04a5, "enhookcyrillic", 0x04c8, "enspace", 0x2002, "eogonek", 0x0119, "eokorean", 0x3153, "eopen", 0x025b, "eopenclosed", 0x029a, "eopenreversed", 0x025c, "eopenreversedclosed", 0x025e, "eopenreversedhook", 0x025d, "eparen", 0x24a0, "epsilon", 0x03b5, "epsilontonos", 0x03ad, "equal", 0x003d, "equalmonospace", 0xff1d, "equalsmall", 0xfe66, "equalsuperior", 0x207c, "equivalence", 0x2261, "erbopomofo", 0x3126, "ercyrillic", 0x0440, "ereversed", 0x0258, "ereversedcyrillic", 0x044d, "escyrillic", 0x0441, "esdescendercyrillic", 0x04ab, "esh", 0x0283, "eshcurl", 0x0286, "eshortdeva", 0x090e, "eshortvowelsigndeva", 0x0946, "eshreversedloop", 0x01aa, "eshsquatreversed", 0x0285, "esmallhiragana", 0x3047, "esmallkatakana", 0x30a7, "esmallkatakanahalfwidth", 0xff6a, "estimated", 0x212e, "esuperior", 0xf6ec, "eta", 0x03b7, "etarmenian", 0x0568, "etatonos", 0x03ae, "eth", 0x00f0, "etilde", 0x1ebd, "etildebelow", 0x1e1b, "etnahtafoukhhebrew", 0x0591, "etnahtafoukhlefthebrew", 0x0591, "etnahtahebrew", 0x0591, "etnahtalefthebrew", 0x0591, "eturned", 0x01dd, "eukorean", 0x3161, "euro", 0x20ac, "evowelsignbengali", 0x09c7, "evowelsigndeva", 0x0947, "evowelsigngujarati", 0x0ac7, "exclam", 0x0021, "exclamarmenian", 0x055c, "exclamdbl", 0x203c, "exclamdown", 0x00a1, "exclamdownsmall", 0xf7a1, "exclammonospace", 0xff01, "exclamsmall", 0xf721, "existential", 0x2203, "ezh", 0x0292, "ezhcaron", 0x01ef, "ezhcurl", 0x0293, "ezhreversed", 0x01b9, "ezhtail", 0x01ba, "f", 0x0066, "fadeva", 0x095e, "fagurmukhi", 0x0a5e, "fahrenheit", 0x2109, "fathaarabic", 0x064e, "fathalowarabic", 0x064e, "fathatanarabic", 0x064b, "fbopomofo", 0x3108, "fcircle", 0x24d5, "fdotaccent", 0x1e1f, "feharabic", 0x0641, "feharmenian", 0x0586, "fehfinalarabic", 0xfed2, "fehinitialarabic", 0xfed3, "fehmedialarabic", 0xfed4, "feicoptic", 0x03e5, "female", 0x2640, "ff", 0xfb00, "f_f", 0xfb00, "ffi", 0xfb03, "ffl", 0xfb04, "fi", 0xfb01, "fifteencircle", 0x246e, "fifteenparen", 0x2482, "fifteenperiod", 0x2496, "figuredash", 0x2012, "filledbox", 0x25a0, "filledrect", 0x25ac, "finalkaf", 0x05da, "finalkafdagesh", 0xfb3a, "finalkafdageshhebrew", 0xfb3a, "finalkafhebrew", 0x05da, "finalmem", 0x05dd, "finalmemhebrew", 0x05dd, "finalnun", 0x05df, "finalnunhebrew", 0x05df, "finalpe", 0x05e3, "finalpehebrew", 0x05e3, "finaltsadi", 0x05e5, "finaltsadihebrew", 0x05e5, "firsttonechinese", 0x02c9, "fisheye", 0x25c9, "fitacyrillic", 0x0473, "five", 0x0035, "fivearabic", 0x0665, "fivebengali", 0x09eb, "fivecircle", 0x2464, "fivecircleinversesansserif", 0x278e, "fivedeva", 0x096b, "fiveeighths", 0x215d, "fivegujarati", 0x0aeb, "fivegurmukhi", 0x0a6b, "fivehackarabic", 0x0665, "fivehangzhou", 0x3025, "fiveideographicparen", 0x3224, "fiveinferior", 0x2085, "fivemonospace", 0xff15, "fiveoldstyle", 0xf735, "fiveparen", 0x2478, "fiveperiod", 0x248c, "fivepersian", 0x06f5, "fiveroman", 0x2174, "fivesuperior", 0x2075, "fivethai", 0x0e55, "fl", 0xfb02, "florin", 0x0192, "fmonospace", 0xff46, "fmsquare", 0x3399, "fofanthai", 0x0e1f, "fofathai", 0x0e1d, "fongmanthai", 0x0e4f, "forall", 0x2200, "four", 0x0034, "fourarabic", 0x0664, "fourbengali", 0x09ea, "fourcircle", 0x2463, "fourcircleinversesansserif", 0x278d, "fourdeva", 0x096a, "fourgujarati", 0x0aea, "fourgurmukhi", 0x0a6a, "fourhackarabic", 0x0664, "fourhangzhou", 0x3024, "fourideographicparen", 0x3223, "fourinferior", 0x2084, "fourmonospace", 0xff14, "fournumeratorbengali", 0x09f7, "fouroldstyle", 0xf734, "fourparen", 0x2477, "fourperiod", 0x248b, "fourpersian", 0x06f4, "fourroman", 0x2173, "foursuperior", 0x2074, "fourteencircle", 0x246d, "fourteenparen", 0x2481, "fourteenperiod", 0x2495, "fourthai", 0x0e54, "fourthtonechinese", 0x02cb, "fparen", 0x24a1, "fraction", 0x2044, "franc", 0x20a3, "g", 0x0067, "gabengali", 0x0997, "gacute", 0x01f5, "gadeva", 0x0917, "gafarabic", 0x06af, "gaffinalarabic", 0xfb93, "gafinitialarabic", 0xfb94, "gafmedialarabic", 0xfb95, "gagujarati", 0x0a97, "gagurmukhi", 0x0a17, "gahiragana", 0x304c, "gakatakana", 0x30ac, "gamma", 0x03b3, "gammalatinsmall", 0x0263, "gammasuperior", 0x02e0, "gangiacoptic", 0x03eb, "gbopomofo", 0x310d, "gbreve", 0x011f, "gcaron", 0x01e7, "gcedilla", 0x0123, "gcircle", 0x24d6, "gcircumflex", 0x011d, "gcommaaccent", 0x0123, "gdot", 0x0121, "gdotaccent", 0x0121, "gecyrillic", 0x0433, "gehiragana", 0x3052, "gekatakana", 0x30b2, "geometricallyequal", 0x2251, "gereshaccenthebrew", 0x059c, "gereshhebrew", 0x05f3, "gereshmuqdamhebrew", 0x059d, "germandbls", 0x00df, "gershayimaccenthebrew", 0x059e, "gershayimhebrew", 0x05f4, "getamark", 0x3013, "ghabengali", 0x0998, "ghadarmenian", 0x0572, "ghadeva", 0x0918, "ghagujarati", 0x0a98, "ghagurmukhi", 0x0a18, "ghainarabic", 0x063a, "ghainfinalarabic", 0xfece, "ghaininitialarabic", 0xfecf, "ghainmedialarabic", 0xfed0, "ghemiddlehookcyrillic", 0x0495, "ghestrokecyrillic", 0x0493, "gheupturncyrillic", 0x0491, "ghhadeva", 0x095a, "ghhagurmukhi", 0x0a5a, "ghook", 0x0260, "ghzsquare", 0x3393, "gihiragana", 0x304e, "gikatakana", 0x30ae, "gimarmenian", 0x0563, "gimel", 0x05d2, "gimeldagesh", 0xfb32, "gimeldageshhebrew", 0xfb32, "gimelhebrew", 0x05d2, "gjecyrillic", 0x0453, "glottalinvertedstroke", 0x01be, "glottalstop", 0x0294, "glottalstopinverted", 0x0296, "glottalstopmod", 0x02c0, "glottalstopreversed", 0x0295, "glottalstopreversedmod", 0x02c1, "glottalstopreversedsuperior", 0x02e4, "glottalstopstroke", 0x02a1, "glottalstopstrokereversed", 0x02a2, "gmacron", 0x1e21, "gmonospace", 0xff47, "gohiragana", 0x3054, "gokatakana", 0x30b4, "gparen", 0x24a2, "gpasquare", 0x33ac, "gradient", 0x2207, "grave", 0x0060, "gravebelowcmb", 0x0316, "gravecmb", 0x0300, "gravecomb", 0x0300, "gravedeva", 0x0953, "gravelowmod", 0x02ce, "gravemonospace", 0xff40, "gravetonecmb", 0x0340, "greater", 0x003e, "greaterequal", 0x2265, "greaterequalorless", 0x22db, "greatermonospace", 0xff1e, "greaterorequivalent", 0x2273, "greaterorless", 0x2277, "greateroverequal", 0x2267, "greatersmall", 0xfe65, "gscript", 0x0261, "gstroke", 0x01e5, "guhiragana", 0x3050, "guillemotleft", 0x00ab, "guillemotright", 0x00bb, "guilsinglleft", 0x2039, "guilsinglright", 0x203a, "gukatakana", 0x30b0, "guramusquare", 0x3318, "gysquare", 0x33c9, "h", 0x0068, "haabkhasiancyrillic", 0x04a9, "haaltonearabic", 0x06c1, "habengali", 0x09b9, "hadescendercyrillic", 0x04b3, "hadeva", 0x0939, "hagujarati", 0x0ab9, "hagurmukhi", 0x0a39, "haharabic", 0x062d, "hahfinalarabic", 0xfea2, "hahinitialarabic", 0xfea3, "hahiragana", 0x306f, "hahmedialarabic", 0xfea4, "haitusquare", 0x332a, "hakatakana", 0x30cf, "hakatakanahalfwidth", 0xff8a, "halantgurmukhi", 0x0a4d, "hamzaarabic", 0x0621, "hamzalowarabic", 0x0621, "hangulfiller", 0x3164, "hardsigncyrillic", 0x044a, "harpoonleftbarbup", 0x21bc, "harpoonrightbarbup", 0x21c0, "hasquare", 0x33ca, "hatafpatah", 0x05b2, "hatafpatah16", 0x05b2, "hatafpatah23", 0x05b2, "hatafpatah2f", 0x05b2, "hatafpatahhebrew", 0x05b2, "hatafpatahnarrowhebrew", 0x05b2, "hatafpatahquarterhebrew", 0x05b2, "hatafpatahwidehebrew", 0x05b2, "hatafqamats", 0x05b3, "hatafqamats1b", 0x05b3, "hatafqamats28", 0x05b3, "hatafqamats34", 0x05b3, "hatafqamatshebrew", 0x05b3, "hatafqamatsnarrowhebrew", 0x05b3, "hatafqamatsquarterhebrew", 0x05b3, "hatafqamatswidehebrew", 0x05b3, "hatafsegol", 0x05b1, "hatafsegol17", 0x05b1, "hatafsegol24", 0x05b1, "hatafsegol30", 0x05b1, "hatafsegolhebrew", 0x05b1, "hatafsegolnarrowhebrew", 0x05b1, "hatafsegolquarterhebrew", 0x05b1, "hatafsegolwidehebrew", 0x05b1, "hbar", 0x0127, "hbopomofo", 0x310f, "hbrevebelow", 0x1e2b, "hcedilla", 0x1e29, "hcircle", 0x24d7, "hcircumflex", 0x0125, "hdieresis", 0x1e27, "hdotaccent", 0x1e23, "hdotbelow", 0x1e25, "he", 0x05d4, "heart", 0x2665, "heartsuitblack", 0x2665, "heartsuitwhite", 0x2661, "hedagesh", 0xfb34, "hedageshhebrew", 0xfb34, "hehaltonearabic", 0x06c1, "heharabic", 0x0647, "hehebrew", 0x05d4, "hehfinalaltonearabic", 0xfba7, "hehfinalalttwoarabic", 0xfeea, "hehfinalarabic", 0xfeea, "hehhamzaabovefinalarabic", 0xfba5, "hehhamzaaboveisolatedarabic", 0xfba4, "hehinitialaltonearabic", 0xfba8, "hehinitialarabic", 0xfeeb, "hehiragana", 0x3078, "hehmedialaltonearabic", 0xfba9, "hehmedialarabic", 0xfeec, "heiseierasquare", 0x337b, "hekatakana", 0x30d8, "hekatakanahalfwidth", 0xff8d, "hekutaarusquare", 0x3336, "henghook", 0x0267, "herutusquare", 0x3339, "het", 0x05d7, "hethebrew", 0x05d7, "hhook", 0x0266, "hhooksuperior", 0x02b1, "hieuhacirclekorean", 0x327b, "hieuhaparenkorean", 0x321b, "hieuhcirclekorean", 0x326d, "hieuhkorean", 0x314e, "hieuhparenkorean", 0x320d, "hihiragana", 0x3072, "hikatakana", 0x30d2, "hikatakanahalfwidth", 0xff8b, "hiriq", 0x05b4, "hiriq14", 0x05b4, "hiriq21", 0x05b4, "hiriq2d", 0x05b4, "hiriqhebrew", 0x05b4, "hiriqnarrowhebrew", 0x05b4, "hiriqquarterhebrew", 0x05b4, "hiriqwidehebrew", 0x05b4, "hlinebelow", 0x1e96, "hmonospace", 0xff48, "hoarmenian", 0x0570, "hohipthai", 0x0e2b, "hohiragana", 0x307b, "hokatakana", 0x30db, "hokatakanahalfwidth", 0xff8e, "holam", 0x05b9, "holam19", 0x05b9, "holam26", 0x05b9, "holam32", 0x05b9, "holamhebrew", 0x05b9, "holamnarrowhebrew", 0x05b9, "holamquarterhebrew", 0x05b9, "holamwidehebrew", 0x05b9, "honokhukthai", 0x0e2e, "hookabovecomb", 0x0309, "hookcmb", 0x0309, "hookpalatalizedbelowcmb", 0x0321, "hookretroflexbelowcmb", 0x0322, "hoonsquare", 0x3342, "horicoptic", 0x03e9, "horizontalbar", 0x2015, "horncmb", 0x031b, "hotsprings", 0x2668, "house", 0x2302, "hparen", 0x24a3, "hsuperior", 0x02b0, "hturned", 0x0265, "huhiragana", 0x3075, "huiitosquare", 0x3333, "hukatakana", 0x30d5, "hukatakanahalfwidth", 0xff8c, "hungarumlaut", 0x02dd, "hungarumlautcmb", 0x030b, "hv", 0x0195, "hyphen", 0x002d, "hypheninferior", 0xf6e5, "hyphenmonospace", 0xff0d, "hyphensmall", 0xfe63, "hyphensuperior", 0xf6e6, "hyphentwo", 0x2010, "i", 0x0069, "iacute", 0x00ed, "iacyrillic", 0x044f, "ibengali", 0x0987, "ibopomofo", 0x3127, "ibreve", 0x012d, "icaron", 0x01d0, "icircle", 0x24d8, "icircumflex", 0x00ee, "icyrillic", 0x0456, "idblgrave", 0x0209, "ideographearthcircle", 0x328f, "ideographfirecircle", 0x328b, "ideographicallianceparen", 0x323f, "ideographiccallparen", 0x323a, "ideographiccentrecircle", 0x32a5, "ideographicclose", 0x3006, "ideographiccomma", 0x3001, "ideographiccommaleft", 0xff64, "ideographiccongratulationparen", 0x3237, "ideographiccorrectcircle", 0x32a3, "ideographicearthparen", 0x322f, "ideographicenterpriseparen", 0x323d, "ideographicexcellentcircle", 0x329d, "ideographicfestivalparen", 0x3240, "ideographicfinancialcircle", 0x3296, "ideographicfinancialparen", 0x3236, "ideographicfireparen", 0x322b, "ideographichaveparen", 0x3232, "ideographichighcircle", 0x32a4, "ideographiciterationmark", 0x3005, "ideographiclaborcircle", 0x3298, "ideographiclaborparen", 0x3238, "ideographicleftcircle", 0x32a7, "ideographiclowcircle", 0x32a6, "ideographicmedicinecircle", 0x32a9, "ideographicmetalparen", 0x322e, "ideographicmoonparen", 0x322a, "ideographicnameparen", 0x3234, "ideographicperiod", 0x3002, "ideographicprintcircle", 0x329e, "ideographicreachparen", 0x3243, "ideographicrepresentparen", 0x3239, "ideographicresourceparen", 0x323e, "ideographicrightcircle", 0x32a8, "ideographicsecretcircle", 0x3299, "ideographicselfparen", 0x3242, "ideographicsocietyparen", 0x3233, "ideographicspace", 0x3000, "ideographicspecialparen", 0x3235, "ideographicstockparen", 0x3231, "ideographicstudyparen", 0x323b, "ideographicsunparen", 0x3230, "ideographicsuperviseparen", 0x323c, "ideographicwaterparen", 0x322c, "ideographicwoodparen", 0x322d, "ideographiczero", 0x3007, "ideographmetalcircle", 0x328e, "ideographmooncircle", 0x328a, "ideographnamecircle", 0x3294, "ideographsuncircle", 0x3290, "ideographwatercircle", 0x328c, "ideographwoodcircle", 0x328d, "ideva", 0x0907, "idieresis", 0x00ef, "idieresisacute", 0x1e2f, "idieresiscyrillic", 0x04e5, "idotbelow", 0x1ecb, "iebrevecyrillic", 0x04d7, "iecyrillic", 0x0435, "ieungacirclekorean", 0x3275, "ieungaparenkorean", 0x3215, "ieungcirclekorean", 0x3267, "ieungkorean", 0x3147, "ieungparenkorean", 0x3207, "igrave", 0x00ec, "igujarati", 0x0a87, "igurmukhi", 0x0a07, "ihiragana", 0x3044, "ihookabove", 0x1ec9, "iibengali", 0x0988, "iicyrillic", 0x0438, "iideva", 0x0908, "iigujarati", 0x0a88, "iigurmukhi", 0x0a08, "iimatragurmukhi", 0x0a40, "iinvertedbreve", 0x020b, "iishortcyrillic", 0x0439, "iivowelsignbengali", 0x09c0, "iivowelsigndeva", 0x0940, "iivowelsigngujarati", 0x0ac0, "ij", 0x0133, "ikatakana", 0x30a4, "ikatakanahalfwidth", 0xff72, "ikorean", 0x3163, "ilde", 0x02dc, "iluyhebrew", 0x05ac, "imacron", 0x012b, "imacroncyrillic", 0x04e3, "imageorapproximatelyequal", 0x2253, "imatragurmukhi", 0x0a3f, "imonospace", 0xff49, "increment", 0x2206, "infinity", 0x221e, "iniarmenian", 0x056b, "integral", 0x222b, "integralbottom", 0x2321, "integralbt", 0x2321, "integralex", 0xf8f5, "integraltop", 0x2320, "integraltp", 0x2320, "intersection", 0x2229, "intisquare", 0x3305, "invbullet", 0x25d8, "invcircle", 0x25d9, "invsmileface", 0x263b, "iocyrillic", 0x0451, "iogonek", 0x012f, "iota", 0x03b9, "iotadieresis", 0x03ca, "iotadieresistonos", 0x0390, "iotalatin", 0x0269, "iotatonos", 0x03af, "iparen", 0x24a4, "irigurmukhi", 0x0a72, "ismallhiragana", 0x3043, "ismallkatakana", 0x30a3, "ismallkatakanahalfwidth", 0xff68, "issharbengali", 0x09fa, "istroke", 0x0268, "isuperior", 0xf6ed, "iterationhiragana", 0x309d, "iterationkatakana", 0x30fd, "itilde", 0x0129, "itildebelow", 0x1e2d, "iubopomofo", 0x3129, "iucyrillic", 0x044e, "ivowelsignbengali", 0x09bf, "ivowelsigndeva", 0x093f, "ivowelsigngujarati", 0x0abf, "izhitsacyrillic", 0x0475, "izhitsadblgravecyrillic", 0x0477, "j", 0x006a, "jaarmenian", 0x0571, "jabengali", 0x099c, "jadeva", 0x091c, "jagujarati", 0x0a9c, "jagurmukhi", 0x0a1c, "jbopomofo", 0x3110, "jcaron", 0x01f0, "jcircle", 0x24d9, "jcircumflex", 0x0135, "jcrossedtail", 0x029d, "jdotlessstroke", 0x025f, "jecyrillic", 0x0458, "jeemarabic", 0x062c, "jeemfinalarabic", 0xfe9e, "jeeminitialarabic", 0xfe9f, "jeemmedialarabic", 0xfea0, "jeharabic", 0x0698, "jehfinalarabic", 0xfb8b, "jhabengali", 0x099d, "jhadeva", 0x091d, "jhagujarati", 0x0a9d, "jhagurmukhi", 0x0a1d, "jheharmenian", 0x057b, "jis", 0x3004, "jmonospace", 0xff4a, "jparen", 0x24a5, "jsuperior", 0x02b2, "k", 0x006b, "kabashkircyrillic", 0x04a1, "kabengali", 0x0995, "kacute", 0x1e31, "kacyrillic", 0x043a, "kadescendercyrillic", 0x049b, "kadeva", 0x0915, "kaf", 0x05db, "kafarabic", 0x0643, "kafdagesh", 0xfb3b, "kafdageshhebrew", 0xfb3b, "kaffinalarabic", 0xfeda, "kafhebrew", 0x05db, "kafinitialarabic", 0xfedb, "kafmedialarabic", 0xfedc, "kafrafehebrew", 0xfb4d, "kagujarati", 0x0a95, "kagurmukhi", 0x0a15, "kahiragana", 0x304b, "kahookcyrillic", 0x04c4, "kakatakana", 0x30ab, "kakatakanahalfwidth", 0xff76, "kappa", 0x03ba, "kappasymbolgreek", 0x03f0, "kapyeounmieumkorean", 0x3171, "kapyeounphieuphkorean", 0x3184, "kapyeounpieupkorean", 0x3178, "kapyeounssangpieupkorean", 0x3179, "karoriisquare", 0x330d, "kashidaautoarabic", 0x0640, "kashidaautonosidebearingarabic", 0x0640, "kasmallkatakana", 0x30f5, "kasquare", 0x3384, "kasraarabic", 0x0650, "kasratanarabic", 0x064d, "kastrokecyrillic", 0x049f, "katahiraprolongmarkhalfwidth", 0xff70, "kaverticalstrokecyrillic", 0x049d, "kbopomofo", 0x310e, "kcalsquare", 0x3389, "kcaron", 0x01e9, "kcedilla", 0x0137, "kcircle", 0x24da, "kcommaaccent", 0x0137, "kdotbelow", 0x1e33, "keharmenian", 0x0584, "kehiragana", 0x3051, "kekatakana", 0x30b1, "kekatakanahalfwidth", 0xff79, "kenarmenian", 0x056f, "kesmallkatakana", 0x30f6, "kgreenlandic", 0x0138, "khabengali", 0x0996, "khacyrillic", 0x0445, "khadeva", 0x0916, "khagujarati", 0x0a96, "khagurmukhi", 0x0a16, "khaharabic", 0x062e, "khahfinalarabic", 0xfea6, "khahinitialarabic", 0xfea7, "khahmedialarabic", 0xfea8, "kheicoptic", 0x03e7, "khhadeva", 0x0959, "khhagurmukhi", 0x0a59, "khieukhacirclekorean", 0x3278, "khieukhaparenkorean", 0x3218, "khieukhcirclekorean", 0x326a, "khieukhkorean", 0x314b, "khieukhparenkorean", 0x320a, "khokhaithai", 0x0e02, "khokhonthai", 0x0e05, "khokhuatthai", 0x0e03, "khokhwaithai", 0x0e04, "khomutthai", 0x0e5b, "khook", 0x0199, "khorakhangthai", 0x0e06, "khzsquare", 0x3391, "kihiragana", 0x304d, "kikatakana", 0x30ad, "kikatakanahalfwidth", 0xff77, "kiroguramusquare", 0x3315, "kiromeetorusquare", 0x3316, "kirosquare", 0x3314, "kiyeokacirclekorean", 0x326e, "kiyeokaparenkorean", 0x320e, "kiyeokcirclekorean", 0x3260, "kiyeokkorean", 0x3131, "kiyeokparenkorean", 0x3200, "kiyeoksioskorean", 0x3133, "kjecyrillic", 0x045c, "klinebelow", 0x1e35, "klsquare", 0x3398, "kmcubedsquare", 0x33a6, "kmonospace", 0xff4b, "kmsquaredsquare", 0x33a2, "kohiragana", 0x3053, "kohmsquare", 0x33c0, "kokaithai", 0x0e01, "kokatakana", 0x30b3, "kokatakanahalfwidth", 0xff7a, "kooposquare", 0x331e, "koppacyrillic", 0x0481, "koreanstandardsymbol", 0x327f, "koroniscmb", 0x0343, "kparen", 0x24a6, "kpasquare", 0x33aa, "ksicyrillic", 0x046f, "ktsquare", 0x33cf, "kturned", 0x029e, "kuhiragana", 0x304f, "kukatakana", 0x30af, "kukatakanahalfwidth", 0xff78, "kvsquare", 0x33b8, "kwsquare", 0x33be, "l", 0x006c, "labengali", 0x09b2, "lacute", 0x013a, "ladeva", 0x0932, "lagujarati", 0x0ab2, "lagurmukhi", 0x0a32, "lakkhangyaothai", 0x0e45, "lamaleffinalarabic", 0xfefc, "lamalefhamzaabovefinalarabic", 0xfef8, "lamalefhamzaaboveisolatedarabic", 0xfef7, "lamalefhamzabelowfinalarabic", 0xfefa, "lamalefhamzabelowisolatedarabic", 0xfef9, "lamalefisolatedarabic", 0xfefb, "lamalefmaddaabovefinalarabic", 0xfef6, "lamalefmaddaaboveisolatedarabic", 0xfef5, "lamarabic", 0x0644, "lambda", 0x03bb, "lambdastroke", 0x019b, "lamed", 0x05dc, "lameddagesh", 0xfb3c, "lameddageshhebrew", 0xfb3c, "lamedhebrew", 0x05dc, "lamfinalarabic", 0xfede, "lamhahinitialarabic", 0xfcca, "laminitialarabic", 0xfedf, "lamjeeminitialarabic", 0xfcc9, "lamkhahinitialarabic", 0xfccb, "lamlamhehisolatedarabic", 0xfdf2, "lammedialarabic", 0xfee0, "lammeemhahinitialarabic", 0xfd88, "lammeeminitialarabic", 0xfccc, "largecircle", 0x25ef, "lbar", 0x019a, "lbelt", 0x026c, "lbopomofo", 0x310c, "lcaron", 0x013e, "lcedilla", 0x013c, "lcircle", 0x24db, "lcircumflexbelow", 0x1e3d, "lcommaaccent", 0x013c, "ldot", 0x0140, "ldotaccent", 0x0140, "ldotbelow", 0x1e37, "ldotbelowmacron", 0x1e39, "leftangleabovecmb", 0x031a, "lefttackbelowcmb", 0x0318, "less", 0x003c, "lessequal", 0x2264, "lessequalorgreater", 0x22da, "lessmonospace", 0xff1c, "lessorequivalent", 0x2272, "lessorgreater", 0x2276, "lessoverequal", 0x2266, "lesssmall", 0xfe64, "lezh", 0x026e, "lfblock", 0x258c, "lhookretroflex", 0x026d, "lira", 0x20a4, "liwnarmenian", 0x056c, "lj", 0x01c9, "ljecyrillic", 0x0459, "ll", 0xf6c0, "lladeva", 0x0933, "llagujarati", 0x0ab3, "llinebelow", 0x1e3b, "llladeva", 0x0934, "llvocalicbengali", 0x09e1, "llvocalicdeva", 0x0961, "llvocalicvowelsignbengali", 0x09e3, "llvocalicvowelsigndeva", 0x0963, "lmiddletilde", 0x026b, "lmonospace", 0xff4c, "lmsquare", 0x33d0, "lochulathai", 0x0e2c, "logicaland", 0x2227, "logicalnot", 0x00ac, "logicalnotreversed", 0x2310, "logicalor", 0x2228, "lolingthai", 0x0e25, "longs", 0x017f, "lowlinecenterline", 0xfe4e, "lowlinecmb", 0x0332, "lowlinedashed", 0xfe4d, "lozenge", 0x25ca, "lparen", 0x24a7, "lslash", 0x0142, "lsquare", 0x2113, "lsuperior", 0xf6ee, "ltshade", 0x2591, "luthai", 0x0e26, "lvocalicbengali", 0x098c, "lvocalicdeva", 0x090c, "lvocalicvowelsignbengali", 0x09e2, "lvocalicvowelsigndeva", 0x0962, "lxsquare", 0x33d3, "m", 0x006d, "mabengali", 0x09ae, "macron", 0x00af, "macronbelowcmb", 0x0331, "macroncmb", 0x0304, "macronlowmod", 0x02cd, "macronmonospace", 0xffe3, "macute", 0x1e3f, "madeva", 0x092e, "magujarati", 0x0aae, "magurmukhi", 0x0a2e, "mahapakhhebrew", 0x05a4, "mahapakhlefthebrew", 0x05a4, "mahiragana", 0x307e, "maichattawalowleftthai", 0xf895, "maichattawalowrightthai", 0xf894, "maichattawathai", 0x0e4b, "maichattawaupperleftthai", 0xf893, "maieklowleftthai", 0xf88c, "maieklowrightthai", 0xf88b, "maiekthai", 0x0e48, "maiekupperleftthai", 0xf88a, "maihanakatleftthai", 0xf884, "maihanakatthai", 0x0e31, "maitaikhuleftthai", 0xf889, "maitaikhuthai", 0x0e47, "maitholowleftthai", 0xf88f, "maitholowrightthai", 0xf88e, "maithothai", 0x0e49, "maithoupperleftthai", 0xf88d, "maitrilowleftthai", 0xf892, "maitrilowrightthai", 0xf891, "maitrithai", 0x0e4a, "maitriupperleftthai", 0xf890, "maiyamokthai", 0x0e46, "makatakana", 0x30de, "makatakanahalfwidth", 0xff8f, "male", 0x2642, "mansyonsquare", 0x3347, "maqafhebrew", 0x05be, "mars", 0x2642, "masoracirclehebrew", 0x05af, "masquare", 0x3383, "mbopomofo", 0x3107, "mbsquare", 0x33d4, "mcircle", 0x24dc, "mcubedsquare", 0x33a5, "mdotaccent", 0x1e41, "mdotbelow", 0x1e43, "meemarabic", 0x0645, "meemfinalarabic", 0xfee2, "meeminitialarabic", 0xfee3, "meemmedialarabic", 0xfee4, "meemmeeminitialarabic", 0xfcd1, "meemmeemisolatedarabic", 0xfc48, "meetorusquare", 0x334d, "mehiragana", 0x3081, "meizierasquare", 0x337e, "mekatakana", 0x30e1, "mekatakanahalfwidth", 0xff92, "mem", 0x05de, "memdagesh", 0xfb3e, "memdageshhebrew", 0xfb3e, "memhebrew", 0x05de, "menarmenian", 0x0574, "merkhahebrew", 0x05a5, "merkhakefulahebrew", 0x05a6, "merkhakefulalefthebrew", 0x05a6, "merkhalefthebrew", 0x05a5, "mhook", 0x0271, "mhzsquare", 0x3392, "middledotkatakanahalfwidth", 0xff65, "middot", 0x00b7, "mieumacirclekorean", 0x3272, "mieumaparenkorean", 0x3212, "mieumcirclekorean", 0x3264, "mieumkorean", 0x3141, "mieumpansioskorean", 0x3170, "mieumparenkorean", 0x3204, "mieumpieupkorean", 0x316e, "mieumsioskorean", 0x316f, "mihiragana", 0x307f, "mikatakana", 0x30df, "mikatakanahalfwidth", 0xff90, "minus", 0x2212, "minusbelowcmb", 0x0320, "minuscircle", 0x2296, "minusmod", 0x02d7, "minusplus", 0x2213, "minute", 0x2032, "miribaarusquare", 0x334a, "mirisquare", 0x3349, "mlonglegturned", 0x0270, "mlsquare", 0x3396, "mmcubedsquare", 0x33a3, "mmonospace", 0xff4d, "mmsquaredsquare", 0x339f, "mohiragana", 0x3082, "mohmsquare", 0x33c1, "mokatakana", 0x30e2, "mokatakanahalfwidth", 0xff93, "molsquare", 0x33d6, "momathai", 0x0e21, "moverssquare", 0x33a7, "moverssquaredsquare", 0x33a8, "mparen", 0x24a8, "mpasquare", 0x33ab, "mssquare", 0x33b3, "msuperior", 0xf6ef, "mturned", 0x026f, "mu", 0x00b5, "mu1", 0x00b5, "muasquare", 0x3382, "muchgreater", 0x226b, "muchless", 0x226a, "mufsquare", 0x338c, "mugreek", 0x03bc, "mugsquare", 0x338d, "muhiragana", 0x3080, "mukatakana", 0x30e0, "mukatakanahalfwidth", 0xff91, "mulsquare", 0x3395, "multiply", 0x00d7, "mumsquare", 0x339b, "munahhebrew", 0x05a3, "munahlefthebrew", 0x05a3, "musicalnote", 0x266a, "musicalnotedbl", 0x266b, "musicflatsign", 0x266d, "musicsharpsign", 0x266f, "mussquare", 0x33b2, "muvsquare", 0x33b6, "muwsquare", 0x33bc, "mvmegasquare", 0x33b9, "mvsquare", 0x33b7, "mwmegasquare", 0x33bf, "mwsquare", 0x33bd, "n", 0x006e, "nabengali", 0x09a8, "nabla", 0x2207, "nacute", 0x0144, "nadeva", 0x0928, "nagujarati", 0x0aa8, "nagurmukhi", 0x0a28, "nahiragana", 0x306a, "nakatakana", 0x30ca, "nakatakanahalfwidth", 0xff85, "napostrophe", 0x0149, "nasquare", 0x3381, "nbopomofo", 0x310b, "nbspace", 0x00a0, "ncaron", 0x0148, "ncedilla", 0x0146, "ncircle", 0x24dd, "ncircumflexbelow", 0x1e4b, "ncommaaccent", 0x0146, "ndotaccent", 0x1e45, "ndotbelow", 0x1e47, "nehiragana", 0x306d, "nekatakana", 0x30cd, "nekatakanahalfwidth", 0xff88, "newsheqelsign", 0x20aa, "nfsquare", 0x338b, "ngabengali", 0x0999, "ngadeva", 0x0919, "ngagujarati", 0x0a99, "ngagurmukhi", 0x0a19, "ngonguthai", 0x0e07, "nhiragana", 0x3093, "nhookleft", 0x0272, "nhookretroflex", 0x0273, "nieunacirclekorean", 0x326f, "nieunaparenkorean", 0x320f, "nieuncieuckorean", 0x3135, "nieuncirclekorean", 0x3261, "nieunhieuhkorean", 0x3136, "nieunkorean", 0x3134, "nieunpansioskorean", 0x3168, "nieunparenkorean", 0x3201, "nieunsioskorean", 0x3167, "nieuntikeutkorean", 0x3166, "nihiragana", 0x306b, "nikatakana", 0x30cb, "nikatakanahalfwidth", 0xff86, "nikhahitleftthai", 0xf899, "nikhahitthai", 0x0e4d, "nine", 0x0039, "ninearabic", 0x0669, "ninebengali", 0x09ef, "ninecircle", 0x2468, "ninecircleinversesansserif", 0x2792, "ninedeva", 0x096f, "ninegujarati", 0x0aef, "ninegurmukhi", 0x0a6f, "ninehackarabic", 0x0669, "ninehangzhou", 0x3029, "nineideographicparen", 0x3228, "nineinferior", 0x2089, "ninemonospace", 0xff19, "nineoldstyle", 0xf739, "nineparen", 0x247c, "nineperiod", 0x2490, "ninepersian", 0x06f9, "nineroman", 0x2178, "ninesuperior", 0x2079, "nineteencircle", 0x2472, "nineteenparen", 0x2486, "nineteenperiod", 0x249a, "ninethai", 0x0e59, "nj", 0x01cc, "njecyrillic", 0x045a, "nkatakana", 0x30f3, "nkatakanahalfwidth", 0xff9d, "nlegrightlong", 0x019e, "nlinebelow", 0x1e49, "nmonospace", 0xff4e, "nmsquare", 0x339a, "nnabengali", 0x09a3, "nnadeva", 0x0923, "nnagujarati", 0x0aa3, "nnagurmukhi", 0x0a23, "nnnadeva", 0x0929, "nohiragana", 0x306e, "nokatakana", 0x30ce, "nokatakanahalfwidth", 0xff89, "nonbreakingspace", 0x00a0, "nonenthai", 0x0e13, "nonuthai", 0x0e19, "noonarabic", 0x0646, "noonfinalarabic", 0xfee6, "noonghunnaarabic", 0x06ba, "noonghunnafinalarabic", 0xfb9f, "nooninitialarabic", 0xfee7, "noonjeeminitialarabic", 0xfcd2, "noonjeemisolatedarabic", 0xfc4b, "noonmedialarabic", 0xfee8, "noonmeeminitialarabic", 0xfcd5, "noonmeemisolatedarabic", 0xfc4e, "noonnoonfinalarabic", 0xfc8d, "notcontains", 0x220c, "notelement", 0x2209, "notelementof", 0x2209, "notequal", 0x2260, "notgreater", 0x226f, "notgreaternorequal", 0x2271, "notgreaternorless", 0x2279, "notidentical", 0x2262, "notless", 0x226e, "notlessnorequal", 0x2270, "notparallel", 0x2226, "notprecedes", 0x2280, "notsubset", 0x2284, "notsucceeds", 0x2281, "notsuperset", 0x2285, "nowarmenian", 0x0576, "nparen", 0x24a9, "nssquare", 0x33b1, "nsuperior", 0x207f, "ntilde", 0x00f1, "nu", 0x03bd, "nuhiragana", 0x306c, "nukatakana", 0x30cc, "nukatakanahalfwidth", 0xff87, "nuktabengali", 0x09bc, "nuktadeva", 0x093c, "nuktagujarati", 0x0abc, "nuktagurmukhi", 0x0a3c, "numbersign", 0x0023, "numbersignmonospace", 0xff03, "numbersignsmall", 0xfe5f, "numeralsigngreek", 0x0374, "numeralsignlowergreek", 0x0375, "numero", 0x2116, "nun", 0x05e0, "nundagesh", 0xfb40, "nundageshhebrew", 0xfb40, "nunhebrew", 0x05e0, "nvsquare", 0x33b5, "nwsquare", 0x33bb, "nyabengali", 0x099e, "nyadeva", 0x091e, "nyagujarati", 0x0a9e, "nyagurmukhi", 0x0a1e, "o", 0x006f, "oacute", 0x00f3, "oangthai", 0x0e2d, "obarred", 0x0275, "obarredcyrillic", 0x04e9, "obarreddieresiscyrillic", 0x04eb, "obengali", 0x0993, "obopomofo", 0x311b, "obreve", 0x014f, "ocandradeva", 0x0911, "ocandragujarati", 0x0a91, "ocandravowelsigndeva", 0x0949, "ocandravowelsigngujarati", 0x0ac9, "ocaron", 0x01d2, "ocircle", 0x24de, "ocircumflex", 0x00f4, "ocircumflexacute", 0x1ed1, "ocircumflexdotbelow", 0x1ed9, "ocircumflexgrave", 0x1ed3, "ocircumflexhookabove", 0x1ed5, "ocircumflextilde", 0x1ed7, "ocyrillic", 0x043e, "odblacute", 0x0151, "odblgrave", 0x020d, "odeva", 0x0913, "odieresis", 0x00f6, "odieresiscyrillic", 0x04e7, "odotbelow", 0x1ecd, "oe", 0x0153, "oekorean", 0x315a, "ogonek", 0x02db, "ogonekcmb", 0x0328, "ograve", 0x00f2, "ogujarati", 0x0a93, "oharmenian", 0x0585, "ohiragana", 0x304a, "ohookabove", 0x1ecf, "ohorn", 0x01a1, "ohornacute", 0x1edb, "ohorndotbelow", 0x1ee3, "ohorngrave", 0x1edd, "ohornhookabove", 0x1edf, "ohorntilde", 0x1ee1, "ohungarumlaut", 0x0151, "oi", 0x01a3, "oinvertedbreve", 0x020f, "okatakana", 0x30aa, "okatakanahalfwidth", 0xff75, "okorean", 0x3157, "olehebrew", 0x05ab, "omacron", 0x014d, "omacronacute", 0x1e53, "omacrongrave", 0x1e51, "omdeva", 0x0950, "omega", 0x03c9, "omega1", 0x03d6, "omegacyrillic", 0x0461, "omegalatinclosed", 0x0277, "omegaroundcyrillic", 0x047b, "omegatitlocyrillic", 0x047d, "omegatonos", 0x03ce, "omgujarati", 0x0ad0, "omicron", 0x03bf, "omicrontonos", 0x03cc, "omonospace", 0xff4f, "one", 0x0031, "onearabic", 0x0661, "onebengali", 0x09e7, "onecircle", 0x2460, "onecircleinversesansserif", 0x278a, "onedeva", 0x0967, "onedotenleader", 0x2024, "oneeighth", 0x215b, "onefitted", 0xf6dc, "onegujarati", 0x0ae7, "onegurmukhi", 0x0a67, "onehackarabic", 0x0661, "onehalf", 0x00bd, "onehangzhou", 0x3021, "oneideographicparen", 0x3220, "oneinferior", 0x2081, "onemonospace", 0xff11, "onenumeratorbengali", 0x09f4, "oneoldstyle", 0xf731, "oneparen", 0x2474, "oneperiod", 0x2488, "onepersian", 0x06f1, "onequarter", 0x00bc, "oneroman", 0x2170, "onesuperior", 0x00b9, "onethai", 0x0e51, "onethird", 0x2153, "oogonek", 0x01eb, "oogonekmacron", 0x01ed, "oogurmukhi", 0x0a13, "oomatragurmukhi", 0x0a4b, "oopen", 0x0254, "oparen", 0x24aa, "openbullet", 0x25e6, "option", 0x2325, "ordfeminine", 0x00aa, "ordmasculine", 0x00ba, "orthogonal", 0x221f, "oshortdeva", 0x0912, "oshortvowelsigndeva", 0x094a, "oslash", 0x00f8, "oslashacute", 0x01ff, "osmallhiragana", 0x3049, "osmallkatakana", 0x30a9, "osmallkatakanahalfwidth", 0xff6b, "ostrokeacute", 0x01ff, "osuperior", 0xf6f0, "otcyrillic", 0x047f, "otilde", 0x00f5, "otildeacute", 0x1e4d, "otildedieresis", 0x1e4f, "oubopomofo", 0x3121, "overline", 0x203e, "overlinecenterline", 0xfe4a, "overlinecmb", 0x0305, "overlinedashed", 0xfe49, "overlinedblwavy", 0xfe4c, "overlinewavy", 0xfe4b, "overscore", 0x00af, "ovowelsignbengali", 0x09cb, "ovowelsigndeva", 0x094b, "ovowelsigngujarati", 0x0acb, "p", 0x0070, "paampssquare", 0x3380, "paasentosquare", 0x332b, "pabengali", 0x09aa, "pacute", 0x1e55, "padeva", 0x092a, "pagedown", 0x21df, "pageup", 0x21de, "pagujarati", 0x0aaa, "pagurmukhi", 0x0a2a, "pahiragana", 0x3071, "paiyannoithai", 0x0e2f, "pakatakana", 0x30d1, "palatalizationcyrilliccmb", 0x0484, "palochkacyrillic", 0x04c0, "pansioskorean", 0x317f, "paragraph", 0x00b6, "parallel", 0x2225, "parenleft", 0x0028, "parenleftaltonearabic", 0xfd3e, "parenleftbt", 0xf8ed, "parenleftex", 0xf8ec, "parenleftinferior", 0x208d, "parenleftmonospace", 0xff08, "parenleftsmall", 0xfe59, "parenleftsuperior", 0x207d, "parenlefttp", 0xf8eb, "parenleftvertical", 0xfe35, "parenright", 0x0029, "parenrightaltonearabic", 0xfd3f, "parenrightbt", 0xf8f8, "parenrightex", 0xf8f7, "parenrightinferior", 0x208e, "parenrightmonospace", 0xff09, "parenrightsmall", 0xfe5a, "parenrightsuperior", 0x207e, "parenrighttp", 0xf8f6, "parenrightvertical", 0xfe36, "partialdiff", 0x2202, "paseqhebrew", 0x05c0, "pashtahebrew", 0x0599, "pasquare", 0x33a9, "patah", 0x05b7, "patah11", 0x05b7, "patah1d", 0x05b7, "patah2a", 0x05b7, "patahhebrew", 0x05b7, "patahnarrowhebrew", 0x05b7, "patahquarterhebrew", 0x05b7, "patahwidehebrew", 0x05b7, "pazerhebrew", 0x05a1, "pbopomofo", 0x3106, "pcircle", 0x24df, "pdotaccent", 0x1e57, "pe", 0x05e4, "pecyrillic", 0x043f, "pedagesh", 0xfb44, "pedageshhebrew", 0xfb44, "peezisquare", 0x333b, "pefinaldageshhebrew", 0xfb43, "peharabic", 0x067e, "peharmenian", 0x057a, "pehebrew", 0x05e4, "pehfinalarabic", 0xfb57, "pehinitialarabic", 0xfb58, "pehiragana", 0x307a, "pehmedialarabic", 0xfb59, "pekatakana", 0x30da, "pemiddlehookcyrillic", 0x04a7, "perafehebrew", 0xfb4e, "percent", 0x0025, "percentarabic", 0x066a, "percentmonospace", 0xff05, "percentsmall", 0xfe6a, "period", 0x002e, "periodarmenian", 0x0589, "periodcentered", 0x00b7, "periodhalfwidth", 0xff61, "periodinferior", 0xf6e7, "periodmonospace", 0xff0e, "periodsmall", 0xfe52, "periodsuperior", 0xf6e8, "perispomenigreekcmb", 0x0342, "perpendicular", 0x22a5, "perthousand", 0x2030, "peseta", 0x20a7, "pfsquare", 0x338a, "phabengali", 0x09ab, "phadeva", 0x092b, "phagujarati", 0x0aab, "phagurmukhi", 0x0a2b, "phi", 0x03c6, "phi1", 0x03d5, "phieuphacirclekorean", 0x327a, "phieuphaparenkorean", 0x321a, "phieuphcirclekorean", 0x326c, "phieuphkorean", 0x314d, "phieuphparenkorean", 0x320c, "philatin", 0x0278, "phinthuthai", 0x0e3a, "phisymbolgreek", 0x03d5, "phook", 0x01a5, "phophanthai", 0x0e1e, "phophungthai", 0x0e1c, "phosamphaothai", 0x0e20, "pi", 0x03c0, "pieupacirclekorean", 0x3273, "pieupaparenkorean", 0x3213, "pieupcieuckorean", 0x3176, "pieupcirclekorean", 0x3265, "pieupkiyeokkorean", 0x3172, "pieupkorean", 0x3142, "pieupparenkorean", 0x3205, "pieupsioskiyeokkorean", 0x3174, "pieupsioskorean", 0x3144, "pieupsiostikeutkorean", 0x3175, "pieupthieuthkorean", 0x3177, "pieuptikeutkorean", 0x3173, "pihiragana", 0x3074, "pikatakana", 0x30d4, "pisymbolgreek", 0x03d6, "piwrarmenian", 0x0583, "plus", 0x002b, "plusbelowcmb", 0x031f, "pluscircle", 0x2295, "plusminus", 0x00b1, "plusmod", 0x02d6, "plusmonospace", 0xff0b, "plussmall", 0xfe62, "plussuperior", 0x207a, "pmonospace", 0xff50, "pmsquare", 0x33d8, "pohiragana", 0x307d, "pointingindexdownwhite", 0x261f, "pointingindexleftwhite", 0x261c, "pointingindexrightwhite", 0x261e, "pointingindexupwhite", 0x261d, "pokatakana", 0x30dd, "poplathai", 0x0e1b, "postalmark", 0x3012, "postalmarkface", 0x3020, "pparen", 0x24ab, "precedes", 0x227a, "prescription", 0x211e, "primemod", 0x02b9, "primereversed", 0x2035, "product", 0x220f, "projective", 0x2305, "prolongedkana", 0x30fc, "propellor", 0x2318, "propersubset", 0x2282, "propersuperset", 0x2283, "proportion", 0x2237, "proportional", 0x221d, "psi", 0x03c8, "psicyrillic", 0x0471, "psilipneumatacyrilliccmb", 0x0486, "pssquare", 0x33b0, "puhiragana", 0x3077, "pukatakana", 0x30d7, "pvsquare", 0x33b4, "pwsquare", 0x33ba, "q", 0x0071, "qadeva", 0x0958, "qadmahebrew", 0x05a8, "qafarabic", 0x0642, "qaffinalarabic", 0xfed6, "qafinitialarabic", 0xfed7, "qafmedialarabic", 0xfed8, "qamats", 0x05b8, "qamats10", 0x05b8, "qamats1a", 0x05b8, "qamats1c", 0x05b8, "qamats27", 0x05b8, "qamats29", 0x05b8, "qamats33", 0x05b8, "qamatsde", 0x05b8, "qamatshebrew", 0x05b8, "qamatsnarrowhebrew", 0x05b8, "qamatsqatanhebrew", 0x05b8, "qamatsqatannarrowhebrew", 0x05b8, "qamatsqatanquarterhebrew", 0x05b8, "qamatsqatanwidehebrew", 0x05b8, "qamatsquarterhebrew", 0x05b8, "qamatswidehebrew", 0x05b8, "qarneyparahebrew", 0x059f, "qbopomofo", 0x3111, "qcircle", 0x24e0, "qhook", 0x02a0, "qmonospace", 0xff51, "qof", 0x05e7, "qofdagesh", 0xfb47, "qofdageshhebrew", 0xfb47, "qofhebrew", 0x05e7, "qparen", 0x24ac, "quarternote", 0x2669, "qubuts", 0x05bb, "qubuts18", 0x05bb, "qubuts25", 0x05bb, "qubuts31", 0x05bb, "qubutshebrew", 0x05bb, "qubutsnarrowhebrew", 0x05bb, "qubutsquarterhebrew", 0x05bb, "qubutswidehebrew", 0x05bb, "question", 0x003f, "questionarabic", 0x061f, "questionarmenian", 0x055e, "questiondown", 0x00bf, "questiondownsmall", 0xf7bf, "questiongreek", 0x037e, "questionmonospace", 0xff1f, "questionsmall", 0xf73f, "quotedbl", 0x0022, "quotedblbase", 0x201e, "quotedblleft", 0x201c, "quotedblmonospace", 0xff02, "quotedblprime", 0x301e, "quotedblprimereversed", 0x301d, "quotedblright", 0x201d, "quoteleft", 0x2018, "quoteleftreversed", 0x201b, "quotereversed", 0x201b, "quoteright", 0x2019, "quoterightn", 0x0149, "quotesinglbase", 0x201a, "quotesingle", 0x0027, "quotesinglemonospace", 0xff07, "r", 0x0072, "raarmenian", 0x057c, "rabengali", 0x09b0, "racute", 0x0155, "radeva", 0x0930, "radical", 0x221a, "radicalex", 0xf8e5, "radoverssquare", 0x33ae, "radoverssquaredsquare", 0x33af, "radsquare", 0x33ad, "rafe", 0x05bf, "rafehebrew", 0x05bf, "ragujarati", 0x0ab0, "ragurmukhi", 0x0a30, "rahiragana", 0x3089, "rakatakana", 0x30e9, "rakatakanahalfwidth", 0xff97, "ralowerdiagonalbengali", 0x09f1, "ramiddlediagonalbengali", 0x09f0, "ramshorn", 0x0264, "ratio", 0x2236, "rbopomofo", 0x3116, "rcaron", 0x0159, "rcedilla", 0x0157, "rcircle", 0x24e1, "rcommaaccent", 0x0157, "rdblgrave", 0x0211, "rdotaccent", 0x1e59, "rdotbelow", 0x1e5b, "rdotbelowmacron", 0x1e5d, "referencemark", 0x203b, "reflexsubset", 0x2286, "reflexsuperset", 0x2287, "registered", 0x00ae, "registersans", 0xf8e8, "registerserif", 0xf6da, "reharabic", 0x0631, "reharmenian", 0x0580, "rehfinalarabic", 0xfeae, "rehiragana", 0x308c, "rekatakana", 0x30ec, "rekatakanahalfwidth", 0xff9a, "resh", 0x05e8, "reshdageshhebrew", 0xfb48, "reshhebrew", 0x05e8, "reversedtilde", 0x223d, "reviahebrew", 0x0597, "reviamugrashhebrew", 0x0597, "revlogicalnot", 0x2310, "rfishhook", 0x027e, "rfishhookreversed", 0x027f, "rhabengali", 0x09dd, "rhadeva", 0x095d, "rho", 0x03c1, "rhook", 0x027d, "rhookturned", 0x027b, "rhookturnedsuperior", 0x02b5, "rhosymbolgreek", 0x03f1, "rhotichookmod", 0x02de, "rieulacirclekorean", 0x3271, "rieulaparenkorean", 0x3211, "rieulcirclekorean", 0x3263, "rieulhieuhkorean", 0x3140, "rieulkiyeokkorean", 0x313a, "rieulkiyeoksioskorean", 0x3169, "rieulkorean", 0x3139, "rieulmieumkorean", 0x313b, "rieulpansioskorean", 0x316c, "rieulparenkorean", 0x3203, "rieulphieuphkorean", 0x313f, "rieulpieupkorean", 0x313c, "rieulpieupsioskorean", 0x316b, "rieulsioskorean", 0x313d, "rieulthieuthkorean", 0x313e, "rieultikeutkorean", 0x316a, "rieulyeorinhieuhkorean", 0x316d, "rightangle", 0x221f, "righttackbelowcmb", 0x0319, "righttriangle", 0x22bf, "rihiragana", 0x308a, "rikatakana", 0x30ea, "rikatakanahalfwidth", 0xff98, "ring", 0x02da, "ringbelowcmb", 0x0325, "ringcmb", 0x030a, "ringhalfleft", 0x02bf, "ringhalfleftarmenian", 0x0559, "ringhalfleftbelowcmb", 0x031c, "ringhalfleftcentered", 0x02d3, "ringhalfright", 0x02be, "ringhalfrightbelowcmb", 0x0339, "ringhalfrightcentered", 0x02d2, "rinvertedbreve", 0x0213, "rittorusquare", 0x3351, "rlinebelow", 0x1e5f, "rlongleg", 0x027c, "rlonglegturned", 0x027a, "rmonospace", 0xff52, "rohiragana", 0x308d, "rokatakana", 0x30ed, "rokatakanahalfwidth", 0xff9b, "roruathai", 0x0e23, "rparen", 0x24ad, "rrabengali", 0x09dc, "rradeva", 0x0931, "rragurmukhi", 0x0a5c, "rreharabic", 0x0691, "rrehfinalarabic", 0xfb8d, "rrvocalicbengali", 0x09e0, "rrvocalicdeva", 0x0960, "rrvocalicgujarati", 0x0ae0, "rrvocalicvowelsignbengali", 0x09c4, "rrvocalicvowelsigndeva", 0x0944, "rrvocalicvowelsigngujarati", 0x0ac4, "rsuperior", 0xf6f1, "rtblock", 0x2590, "rturned", 0x0279, "rturnedsuperior", 0x02b4, "ruhiragana", 0x308b, "rukatakana", 0x30eb, "rukatakanahalfwidth", 0xff99, "rupeemarkbengali", 0x09f2, "rupeesignbengali", 0x09f3, "rupiah", 0xf6dd, "ruthai", 0x0e24, "rvocalicbengali", 0x098b, "rvocalicdeva", 0x090b, "rvocalicgujarati", 0x0a8b, "rvocalicvowelsignbengali", 0x09c3, "rvocalicvowelsigndeva", 0x0943, "rvocalicvowelsigngujarati", 0x0ac3, "s", 0x0073, "sabengali", 0x09b8, "sacute", 0x015b, "sacutedotaccent", 0x1e65, "sadarabic", 0x0635, "sadeva", 0x0938, "sadfinalarabic", 0xfeba, "sadinitialarabic", 0xfebb, "sadmedialarabic", 0xfebc, "sagujarati", 0x0ab8, "sagurmukhi", 0x0a38, "sahiragana", 0x3055, "sakatakana", 0x30b5, "sakatakanahalfwidth", 0xff7b, "sallallahoualayhewasallamarabic", 0xfdfa, "samekh", 0x05e1, "samekhdagesh", 0xfb41, "samekhdageshhebrew", 0xfb41, "samekhhebrew", 0x05e1, "saraaathai", 0x0e32, "saraaethai", 0x0e41, "saraaimaimalaithai", 0x0e44, "saraaimaimuanthai", 0x0e43, "saraamthai", 0x0e33, "saraathai", 0x0e30, "saraethai", 0x0e40, "saraiileftthai", 0xf886, "saraiithai", 0x0e35, "saraileftthai", 0xf885, "saraithai", 0x0e34, "saraothai", 0x0e42, "saraueeleftthai", 0xf888, "saraueethai", 0x0e37, "saraueleftthai", 0xf887, "sarauethai", 0x0e36, "sarauthai", 0x0e38, "sarauuthai", 0x0e39, "sbopomofo", 0x3119, "scaron", 0x0161, "scarondotaccent", 0x1e67, "scedilla", 0x015f, "schwa", 0x0259, "schwacyrillic", 0x04d9, "schwadieresiscyrillic", 0x04db, "schwahook", 0x025a, "scircle", 0x24e2, "scircumflex", 0x015d, "scommaaccent", 0x0219, "sdotaccent", 0x1e61, "sdotbelow", 0x1e63, "sdotbelowdotaccent", 0x1e69, "seagullbelowcmb", 0x033c, "second", 0x2033, "secondtonechinese", 0x02ca, "section", 0x00a7, "seenarabic", 0x0633, "seenfinalarabic", 0xfeb2, "seeninitialarabic", 0xfeb3, "seenmedialarabic", 0xfeb4, "segol", 0x05b6, "segol13", 0x05b6, "segol1f", 0x05b6, "segol2c", 0x05b6, "segolhebrew", 0x05b6, "segolnarrowhebrew", 0x05b6, "segolquarterhebrew", 0x05b6, "segoltahebrew", 0x0592, "segolwidehebrew", 0x05b6, "seharmenian", 0x057d, "sehiragana", 0x305b, "sekatakana", 0x30bb, "sekatakanahalfwidth", 0xff7e, "semicolon", 0x003b, "semicolonarabic", 0x061b, "semicolonmonospace", 0xff1b, "semicolonsmall", 0xfe54, "semivoicedmarkkana", 0x309c, "semivoicedmarkkanahalfwidth", 0xff9f, "sentisquare", 0x3322, "sentosquare", 0x3323, "seven", 0x0037, "sevenarabic", 0x0667, "sevenbengali", 0x09ed, "sevencircle", 0x2466, "sevencircleinversesansserif", 0x2790, "sevendeva", 0x096d, "seveneighths", 0x215e, "sevengujarati", 0x0aed, "sevengurmukhi", 0x0a6d, "sevenhackarabic", 0x0667, "sevenhangzhou", 0x3027, "sevenideographicparen", 0x3226, "seveninferior", 0x2087, "sevenmonospace", 0xff17, "sevenoldstyle", 0xf737, "sevenparen", 0x247a, "sevenperiod", 0x248e, "sevenpersian", 0x06f7, "sevenroman", 0x2176, "sevensuperior", 0x2077, "seventeencircle", 0x2470, "seventeenparen", 0x2484, "seventeenperiod", 0x2498, "seventhai", 0x0e57, "sfthyphen", 0x00ad, "shaarmenian", 0x0577, "shabengali", 0x09b6, "shacyrillic", 0x0448, "shaddaarabic", 0x0651, "shaddadammaarabic", 0xfc61, "shaddadammatanarabic", 0xfc5e, "shaddafathaarabic", 0xfc60, "shaddakasraarabic", 0xfc62, "shaddakasratanarabic", 0xfc5f, "shade", 0x2592, "shadedark", 0x2593, "shadelight", 0x2591, "shademedium", 0x2592, "shadeva", 0x0936, "shagujarati", 0x0ab6, "shagurmukhi", 0x0a36, "shalshelethebrew", 0x0593, "shbopomofo", 0x3115, "shchacyrillic", 0x0449, "sheenarabic", 0x0634, "sheenfinalarabic", 0xfeb6, "sheeninitialarabic", 0xfeb7, "sheenmedialarabic", 0xfeb8, "sheicoptic", 0x03e3, "sheqel", 0x20aa, "sheqelhebrew", 0x20aa, "sheva", 0x05b0, "sheva115", 0x05b0, "sheva15", 0x05b0, "sheva22", 0x05b0, "sheva2e", 0x05b0, "shevahebrew", 0x05b0, "shevanarrowhebrew", 0x05b0, "shevaquarterhebrew", 0x05b0, "shevawidehebrew", 0x05b0, "shhacyrillic", 0x04bb, "shimacoptic", 0x03ed, "shin", 0x05e9, "shindagesh", 0xfb49, "shindageshhebrew", 0xfb49, "shindageshshindot", 0xfb2c, "shindageshshindothebrew", 0xfb2c, "shindageshsindot", 0xfb2d, "shindageshsindothebrew", 0xfb2d, "shindothebrew", 0x05c1, "shinhebrew", 0x05e9, "shinshindot", 0xfb2a, "shinshindothebrew", 0xfb2a, "shinsindot", 0xfb2b, "shinsindothebrew", 0xfb2b, "shook", 0x0282, "sigma", 0x03c3, "sigma1", 0x03c2, "sigmafinal", 0x03c2, "sigmalunatesymbolgreek", 0x03f2, "sihiragana", 0x3057, "sikatakana", 0x30b7, "sikatakanahalfwidth", 0xff7c, "siluqhebrew", 0x05bd, "siluqlefthebrew", 0x05bd, "similar", 0x223c, "sindothebrew", 0x05c2, "siosacirclekorean", 0x3274, "siosaparenkorean", 0x3214, "sioscieuckorean", 0x317e, "sioscirclekorean", 0x3266, "sioskiyeokkorean", 0x317a, "sioskorean", 0x3145, "siosnieunkorean", 0x317b, "siosparenkorean", 0x3206, "siospieupkorean", 0x317d, "siostikeutkorean", 0x317c, "six", 0x0036, "sixarabic", 0x0666, "sixbengali", 0x09ec, "sixcircle", 0x2465, "sixcircleinversesansserif", 0x278f, "sixdeva", 0x096c, "sixgujarati", 0x0aec, "sixgurmukhi", 0x0a6c, "sixhackarabic", 0x0666, "sixhangzhou", 0x3026, "sixideographicparen", 0x3225, "sixinferior", 0x2086, "sixmonospace", 0xff16, "sixoldstyle", 0xf736, "sixparen", 0x2479, "sixperiod", 0x248d, "sixpersian", 0x06f6, "sixroman", 0x2175, "sixsuperior", 0x2076, "sixteencircle", 0x246f, "sixteencurrencydenominatorbengali", 0x09f9, "sixteenparen", 0x2483, "sixteenperiod", 0x2497, "sixthai", 0x0e56, "slash", 0x002f, "slashmonospace", 0xff0f, "slong", 0x017f, "slongdotaccent", 0x1e9b, "smileface", 0x263a, "smonospace", 0xff53, "sofpasuqhebrew", 0x05c3, "softhyphen", 0x00ad, "softsigncyrillic", 0x044c, "sohiragana", 0x305d, "sokatakana", 0x30bd, "sokatakanahalfwidth", 0xff7f, "soliduslongoverlaycmb", 0x0338, "solidusshortoverlaycmb", 0x0337, "sorusithai", 0x0e29, "sosalathai", 0x0e28, "sosothai", 0x0e0b, "sosuathai", 0x0e2a, "space", 0x0020, "spacehackarabic", 0x0020, "spade", 0x2660, "spadesuitblack", 0x2660, "spadesuitwhite", 0x2664, "sparen", 0x24ae, "squarebelowcmb", 0x033b, "squarecc", 0x33c4, "squarecm", 0x339d, "squarediagonalcrosshatchfill", 0x25a9, "squarehorizontalfill", 0x25a4, "squarekg", 0x338f, "squarekm", 0x339e, "squarekmcapital", 0x33ce, "squareln", 0x33d1, "squarelog", 0x33d2, "squaremg", 0x338e, "squaremil", 0x33d5, "squaremm", 0x339c, "squaremsquared", 0x33a1, "squareorthogonalcrosshatchfill", 0x25a6, "squareupperlefttolowerrightfill", 0x25a7, "squareupperrighttolowerleftfill", 0x25a8, "squareverticalfill", 0x25a5, "squarewhitewithsmallblack", 0x25a3, "srsquare", 0x33db, "ssabengali", 0x09b7, "ssadeva", 0x0937, "ssagujarati", 0x0ab7, "ssangcieuckorean", 0x3149, "ssanghieuhkorean", 0x3185, "ssangieungkorean", 0x3180, "ssangkiyeokkorean", 0x3132, "ssangnieunkorean", 0x3165, "ssangpieupkorean", 0x3143, "ssangsioskorean", 0x3146, "ssangtikeutkorean", 0x3138, "ssuperior", 0xf6f2, "sterling", 0x00a3, "sterlingmonospace", 0xffe1, "strokelongoverlaycmb", 0x0336, "strokeshortoverlaycmb", 0x0335, "subset", 0x2282, "subsetnotequal", 0x228a, "subsetorequal", 0x2286, "succeeds", 0x227b, "suchthat", 0x220b, "suhiragana", 0x3059, "sukatakana", 0x30b9, "sukatakanahalfwidth", 0xff7d, "sukunarabic", 0x0652, "summation", 0x2211, "sun", 0x263c, "superset", 0x2283, "supersetnotequal", 0x228b, "supersetorequal", 0x2287, "svsquare", 0x33dc, "syouwaerasquare", 0x337c, "t", 0x0074, "tabengali", 0x09a4, "tackdown", 0x22a4, "tackleft", 0x22a3, "tadeva", 0x0924, "tagujarati", 0x0aa4, "tagurmukhi", 0x0a24, "taharabic", 0x0637, "tahfinalarabic", 0xfec2, "tahinitialarabic", 0xfec3, "tahiragana", 0x305f, "tahmedialarabic", 0xfec4, "taisyouerasquare", 0x337d, "takatakana", 0x30bf, "takatakanahalfwidth", 0xff80, "tatweelarabic", 0x0640, "tau", 0x03c4, "tav", 0x05ea, "tavdages", 0xfb4a, "tavdagesh", 0xfb4a, "tavdageshhebrew", 0xfb4a, "tavhebrew", 0x05ea, "tbar", 0x0167, "tbopomofo", 0x310a, "tcaron", 0x0165, "tccurl", 0x02a8, "tcedilla", 0x0163, "tcheharabic", 0x0686, "tchehfinalarabic", 0xfb7b, "tchehinitialarabic", 0xfb7c, "tchehmedialarabic", 0xfb7d, "tcircle", 0x24e3, "tcircumflexbelow", 0x1e71, "tcommaaccent", 0x0163, "tdieresis", 0x1e97, "tdotaccent", 0x1e6b, "tdotbelow", 0x1e6d, "tecyrillic", 0x0442, "tedescendercyrillic", 0x04ad, "teharabic", 0x062a, "tehfinalarabic", 0xfe96, "tehhahinitialarabic", 0xfca2, "tehhahisolatedarabic", 0xfc0c, "tehinitialarabic", 0xfe97, "tehiragana", 0x3066, "tehjeeminitialarabic", 0xfca1, "tehjeemisolatedarabic", 0xfc0b, "tehmarbutaarabic", 0x0629, "tehmarbutafinalarabic", 0xfe94, "tehmedialarabic", 0xfe98, "tehmeeminitialarabic", 0xfca4, "tehmeemisolatedarabic", 0xfc0e, "tehnoonfinalarabic", 0xfc73, "tekatakana", 0x30c6, "tekatakanahalfwidth", 0xff83, "telephone", 0x2121, "telephoneblack", 0x260e, "telishagedolahebrew", 0x05a0, "telishaqetanahebrew", 0x05a9, "tencircle", 0x2469, "tenideographicparen", 0x3229, "tenparen", 0x247d, "tenperiod", 0x2491, "tenroman", 0x2179, "tesh", 0x02a7, "tet", 0x05d8, "tetdagesh", 0xfb38, "tetdageshhebrew", 0xfb38, "tethebrew", 0x05d8, "tetsecyrillic", 0x04b5, "tevirhebrew", 0x059b, "tevirlefthebrew", 0x059b, "thabengali", 0x09a5, "thadeva", 0x0925, "thagujarati", 0x0aa5, "thagurmukhi", 0x0a25, "thalarabic", 0x0630, "thalfinalarabic", 0xfeac, "thanthakhatlowleftthai", 0xf898, "thanthakhatlowrightthai", 0xf897, "thanthakhatthai", 0x0e4c, "thanthakhatupperleftthai", 0xf896, "theharabic", 0x062b, "thehfinalarabic", 0xfe9a, "thehinitialarabic", 0xfe9b, "thehmedialarabic", 0xfe9c, "thereexists", 0x2203, "therefore", 0x2234, "theta", 0x03b8, "theta1", 0x03d1, "thetasymbolgreek", 0x03d1, "thieuthacirclekorean", 0x3279, "thieuthaparenkorean", 0x3219, "thieuthcirclekorean", 0x326b, "thieuthkorean", 0x314c, "thieuthparenkorean", 0x320b, "thirteencircle", 0x246c, "thirteenparen", 0x2480, "thirteenperiod", 0x2494, "thonangmonthothai", 0x0e11, "thook", 0x01ad, "thophuthaothai", 0x0e12, "thorn", 0x00fe, "thothahanthai", 0x0e17, "thothanthai", 0x0e10, "thothongthai", 0x0e18, "thothungthai", 0x0e16, "thousandcyrillic", 0x0482, "thousandsseparatorarabic", 0x066c, "thousandsseparatorpersian", 0x066c, "three", 0x0033, "threearabic", 0x0663, "threebengali", 0x09e9, "threecircle", 0x2462, "threecircleinversesansserif", 0x278c, "threedeva", 0x0969, "threeeighths", 0x215c, "threegujarati", 0x0ae9, "threegurmukhi", 0x0a69, "threehackarabic", 0x0663, "threehangzhou", 0x3023, "threeideographicparen", 0x3222, "threeinferior", 0x2083, "threemonospace", 0xff13, "threenumeratorbengali", 0x09f6, "threeoldstyle", 0xf733, "threeparen", 0x2476, "threeperiod", 0x248a, "threepersian", 0x06f3, "threequarters", 0x00be, "threequartersemdash", 0xf6de, "threeroman", 0x2172, "threesuperior", 0x00b3, "threethai", 0x0e53, "thzsquare", 0x3394, "tihiragana", 0x3061, "tikatakana", 0x30c1, "tikatakanahalfwidth", 0xff81, "tikeutacirclekorean", 0x3270, "tikeutaparenkorean", 0x3210, "tikeutcirclekorean", 0x3262, "tikeutkorean", 0x3137, "tikeutparenkorean", 0x3202, "tilde", 0x02dc, "tildebelowcmb", 0x0330, "tildecmb", 0x0303, "tildecomb", 0x0303, "tildedoublecmb", 0x0360, "tildeoperator", 0x223c, "tildeoverlaycmb", 0x0334, "tildeverticalcmb", 0x033e, "timescircle", 0x2297, "tipehahebrew", 0x0596, "tipehalefthebrew", 0x0596, "tippigurmukhi", 0x0a70, "titlocyrilliccmb", 0x0483, "tiwnarmenian", 0x057f, "tlinebelow", 0x1e6f, "tmonospace", 0xff54, "toarmenian", 0x0569, "tohiragana", 0x3068, "tokatakana", 0x30c8, "tokatakanahalfwidth", 0xff84, "tonebarextrahighmod", 0x02e5, "tonebarextralowmod", 0x02e9, "tonebarhighmod", 0x02e6, "tonebarlowmod", 0x02e8, "tonebarmidmod", 0x02e7, "tonefive", 0x01bd, "tonesix", 0x0185, "tonetwo", 0x01a8, "tonos", 0x0384, "tonsquare", 0x3327, "topatakthai", 0x0e0f, "tortoiseshellbracketleft", 0x3014, "tortoiseshellbracketleftsmall", 0xfe5d, "tortoiseshellbracketleftvertical", 0xfe39, "tortoiseshellbracketright", 0x3015, "tortoiseshellbracketrightsmall", 0xfe5e, "tortoiseshellbracketrightvertical", 0xfe3a, "totaothai", 0x0e15, "tpalatalhook", 0x01ab, "tparen", 0x24af, "trademark", 0x2122, "trademarksans", 0xf8ea, "trademarkserif", 0xf6db, "tretroflexhook", 0x0288, "triagdn", 0x25bc, "triaglf", 0x25c4, "triagrt", 0x25ba, "triagup", 0x25b2, "ts", 0x02a6, "tsadi", 0x05e6, "tsadidagesh", 0xfb46, "tsadidageshhebrew", 0xfb46, "tsadihebrew", 0x05e6, "tsecyrillic", 0x0446, "tsere", 0x05b5, "tsere12", 0x05b5, "tsere1e", 0x05b5, "tsere2b", 0x05b5, "tserehebrew", 0x05b5, "tserenarrowhebrew", 0x05b5, "tserequarterhebrew", 0x05b5, "tserewidehebrew", 0x05b5, "tshecyrillic", 0x045b, "tsuperior", 0xf6f3, "ttabengali", 0x099f, "ttadeva", 0x091f, "ttagujarati", 0x0a9f, "ttagurmukhi", 0x0a1f, "tteharabic", 0x0679, "ttehfinalarabic", 0xfb67, "ttehinitialarabic", 0xfb68, "ttehmedialarabic", 0xfb69, "tthabengali", 0x09a0, "tthadeva", 0x0920, "tthagujarati", 0x0aa0, "tthagurmukhi", 0x0a20, "tturned", 0x0287, "tuhiragana", 0x3064, "tukatakana", 0x30c4, "tukatakanahalfwidth", 0xff82, "tusmallhiragana", 0x3063, "tusmallkatakana", 0x30c3, "tusmallkatakanahalfwidth", 0xff6f, "twelvecircle", 0x246b, "twelveparen", 0x247f, "twelveperiod", 0x2493, "twelveroman", 0x217b, "twentycircle", 0x2473, "twentyhangzhou", 0x5344, "twentyparen", 0x2487, "twentyperiod", 0x249b, "two", 0x0032, "twoarabic", 0x0662, "twobengali", 0x09e8, "twocircle", 0x2461, "twocircleinversesansserif", 0x278b, "twodeva", 0x0968, "twodotenleader", 0x2025, "twodotleader", 0x2025, "twodotleadervertical", 0xfe30, "twogujarati", 0x0ae8, "twogurmukhi", 0x0a68, "twohackarabic", 0x0662, "twohangzhou", 0x3022, "twoideographicparen", 0x3221, "twoinferior", 0x2082, "twomonospace", 0xff12, "twonumeratorbengali", 0x09f5, "twooldstyle", 0xf732, "twoparen", 0x2475, "twoperiod", 0x2489, "twopersian", 0x06f2, "tworoman", 0x2171, "twostroke", 0x01bb, "twosuperior", 0x00b2, "twothai", 0x0e52, "twothirds", 0x2154, "u", 0x0075, "uacute", 0x00fa, "ubar", 0x0289, "ubengali", 0x0989, "ubopomofo", 0x3128, "ubreve", 0x016d, "ucaron", 0x01d4, "ucircle", 0x24e4, "ucircumflex", 0x00fb, "ucircumflexbelow", 0x1e77, "ucyrillic", 0x0443, "udattadeva", 0x0951, "udblacute", 0x0171, "udblgrave", 0x0215, "udeva", 0x0909, "udieresis", 0x00fc, "udieresisacute", 0x01d8, "udieresisbelow", 0x1e73, "udieresiscaron", 0x01da, "udieresiscyrillic", 0x04f1, "udieresisgrave", 0x01dc, "udieresismacron", 0x01d6, "udotbelow", 0x1ee5, "ugrave", 0x00f9, "ugujarati", 0x0a89, "ugurmukhi", 0x0a09, "uhiragana", 0x3046, "uhookabove", 0x1ee7, "uhorn", 0x01b0, "uhornacute", 0x1ee9, "uhorndotbelow", 0x1ef1, "uhorngrave", 0x1eeb, "uhornhookabove", 0x1eed, "uhorntilde", 0x1eef, "uhungarumlaut", 0x0171, "uhungarumlautcyrillic", 0x04f3, "uinvertedbreve", 0x0217, "ukatakana", 0x30a6, "ukatakanahalfwidth", 0xff73, "ukcyrillic", 0x0479, "ukorean", 0x315c, "umacron", 0x016b, "umacroncyrillic", 0x04ef, "umacrondieresis", 0x1e7b, "umatragurmukhi", 0x0a41, "umonospace", 0xff55, "underscore", 0x005f, "underscoredbl", 0x2017, "underscoremonospace", 0xff3f, "underscorevertical", 0xfe33, "underscorewavy", 0xfe4f, "union", 0x222a, "universal", 0x2200, "uogonek", 0x0173, "uparen", 0x24b0, "upblock", 0x2580, "upperdothebrew", 0x05c4, "upsilon", 0x03c5, "upsilondieresis", 0x03cb, "upsilondieresistonos", 0x03b0, "upsilonlatin", 0x028a, "upsilontonos", 0x03cd, "uptackbelowcmb", 0x031d, "uptackmod", 0x02d4, "uragurmukhi", 0x0a73, "uring", 0x016f, "ushortcyrillic", 0x045e, "usmallhiragana", 0x3045, "usmallkatakana", 0x30a5, "usmallkatakanahalfwidth", 0xff69, "ustraightcyrillic", 0x04af, "ustraightstrokecyrillic", 0x04b1, "utilde", 0x0169, "utildeacute", 0x1e79, "utildebelow", 0x1e75, "uubengali", 0x098a, "uudeva", 0x090a, "uugujarati", 0x0a8a, "uugurmukhi", 0x0a0a, "uumatragurmukhi", 0x0a42, "uuvowelsignbengali", 0x09c2, "uuvowelsigndeva", 0x0942, "uuvowelsigngujarati", 0x0ac2, "uvowelsignbengali", 0x09c1, "uvowelsigndeva", 0x0941, "uvowelsigngujarati", 0x0ac1, "v", 0x0076, "vadeva", 0x0935, "vagujarati", 0x0ab5, "vagurmukhi", 0x0a35, "vakatakana", 0x30f7, "vav", 0x05d5, "vavdagesh", 0xfb35, "vavdagesh65", 0xfb35, "vavdageshhebrew", 0xfb35, "vavhebrew", 0x05d5, "vavholam", 0xfb4b, "vavholamhebrew", 0xfb4b, "vavvavhebrew", 0x05f0, "vavyodhebrew", 0x05f1, "vcircle", 0x24e5, "vdotbelow", 0x1e7f, "vecyrillic", 0x0432, "veharabic", 0x06a4, "vehfinalarabic", 0xfb6b, "vehinitialarabic", 0xfb6c, "vehmedialarabic", 0xfb6d, "vekatakana", 0x30f9, "venus", 0x2640, "verticalbar", 0x007c, "verticallineabovecmb", 0x030d, "verticallinebelowcmb", 0x0329, "verticallinelowmod", 0x02cc, "verticallinemod", 0x02c8, "vewarmenian", 0x057e, "vhook", 0x028b, "vikatakana", 0x30f8, "viramabengali", 0x09cd, "viramadeva", 0x094d, "viramagujarati", 0x0acd, "visargabengali", 0x0983, "visargadeva", 0x0903, "visargagujarati", 0x0a83, "vmonospace", 0xff56, "voarmenian", 0x0578, "voicediterationhiragana", 0x309e, "voicediterationkatakana", 0x30fe, "voicedmarkkana", 0x309b, "voicedmarkkanahalfwidth", 0xff9e, "vokatakana", 0x30fa, "vparen", 0x24b1, "vtilde", 0x1e7d, "vturned", 0x028c, "vuhiragana", 0x3094, "vukatakana", 0x30f4, "w", 0x0077, "wacute", 0x1e83, "waekorean", 0x3159, "wahiragana", 0x308f, "wakatakana", 0x30ef, "wakatakanahalfwidth", 0xff9c, "wakorean", 0x3158, "wasmallhiragana", 0x308e, "wasmallkatakana", 0x30ee, "wattosquare", 0x3357, "wavedash", 0x301c, "wavyunderscorevertical", 0xfe34, "wawarabic", 0x0648, "wawfinalarabic", 0xfeee, "wawhamzaabovearabic", 0x0624, "wawhamzaabovefinalarabic", 0xfe86, "wbsquare", 0x33dd, "wcircle", 0x24e6, "wcircumflex", 0x0175, "wdieresis", 0x1e85, "wdotaccent", 0x1e87, "wdotbelow", 0x1e89, "wehiragana", 0x3091, "weierstrass", 0x2118, "wekatakana", 0x30f1, "wekorean", 0x315e, "weokorean", 0x315d, "wgrave", 0x1e81, "whitebullet", 0x25e6, "whitecircle", 0x25cb, "whitecircleinverse", 0x25d9, "whitecornerbracketleft", 0x300e, "whitecornerbracketleftvertical", 0xfe43, "whitecornerbracketright", 0x300f, "whitecornerbracketrightvertical", 0xfe44, "whitediamond", 0x25c7, "whitediamondcontainingblacksmalldiamond", 0x25c8, "whitedownpointingsmalltriangle", 0x25bf, "whitedownpointingtriangle", 0x25bd, "whiteleftpointingsmalltriangle", 0x25c3, "whiteleftpointingtriangle", 0x25c1, "whitelenticularbracketleft", 0x3016, "whitelenticularbracketright", 0x3017, "whiterightpointingsmalltriangle", 0x25b9, "whiterightpointingtriangle", 0x25b7, "whitesmallsquare", 0x25ab, "whitesmilingface", 0x263a, "whitesquare", 0x25a1, "whitestar", 0x2606, "whitetelephone", 0x260f, "whitetortoiseshellbracketleft", 0x3018, "whitetortoiseshellbracketright", 0x3019, "whiteuppointingsmalltriangle", 0x25b5, "whiteuppointingtriangle", 0x25b3, "wihiragana", 0x3090, "wikatakana", 0x30f0, "wikorean", 0x315f, "wmonospace", 0xff57, "wohiragana", 0x3092, "wokatakana", 0x30f2, "wokatakanahalfwidth", 0xff66, "won", 0x20a9, "wonmonospace", 0xffe6, "wowaenthai", 0x0e27, "wparen", 0x24b2, "wring", 0x1e98, "wsuperior", 0x02b7, "wturned", 0x028d, "wynn", 0x01bf, "x", 0x0078, "xabovecmb", 0x033d, "xbopomofo", 0x3112, "xcircle", 0x24e7, "xdieresis", 0x1e8d, "xdotaccent", 0x1e8b, "xeharmenian", 0x056d, "xi", 0x03be, "xmonospace", 0xff58, "xparen", 0x24b3, "xsuperior", 0x02e3, "y", 0x0079, "yaadosquare", 0x334e, "yabengali", 0x09af, "yacute", 0x00fd, "yadeva", 0x092f, "yaekorean", 0x3152, "yagujarati", 0x0aaf, "yagurmukhi", 0x0a2f, "yahiragana", 0x3084, "yakatakana", 0x30e4, "yakatakanahalfwidth", 0xff94, "yakorean", 0x3151, "yamakkanthai", 0x0e4e, "yasmallhiragana", 0x3083, "yasmallkatakana", 0x30e3, "yasmallkatakanahalfwidth", 0xff6c, "yatcyrillic", 0x0463, "ycircle", 0x24e8, "ycircumflex", 0x0177, "ydieresis", 0x00ff, "ydotaccent", 0x1e8f, "ydotbelow", 0x1ef5, "yeharabic", 0x064a, "yehbarreearabic", 0x06d2, "yehbarreefinalarabic", 0xfbaf, "yehfinalarabic", 0xfef2, "yehhamzaabovearabic", 0x0626, "yehhamzaabovefinalarabic", 0xfe8a, "yehhamzaaboveinitialarabic", 0xfe8b, "yehhamzaabovemedialarabic", 0xfe8c, "yehinitialarabic", 0xfef3, "yehmedialarabic", 0xfef4, "yehmeeminitialarabic", 0xfcdd, "yehmeemisolatedarabic", 0xfc58, "yehnoonfinalarabic", 0xfc94, "yehthreedotsbelowarabic", 0x06d1, "yekorean", 0x3156, "yen", 0x00a5, "yenmonospace", 0xffe5, "yeokorean", 0x3155, "yeorinhieuhkorean", 0x3186, "yerahbenyomohebrew", 0x05aa, "yerahbenyomolefthebrew", 0x05aa, "yericyrillic", 0x044b, "yerudieresiscyrillic", 0x04f9, "yesieungkorean", 0x3181, "yesieungpansioskorean", 0x3183, "yesieungsioskorean", 0x3182, "yetivhebrew", 0x059a, "ygrave", 0x1ef3, "yhook", 0x01b4, "yhookabove", 0x1ef7, "yiarmenian", 0x0575, "yicyrillic", 0x0457, "yikorean", 0x3162, "yinyang", 0x262f, "yiwnarmenian", 0x0582, "ymonospace", 0xff59, "yod", 0x05d9, "yoddagesh", 0xfb39, "yoddageshhebrew", 0xfb39, "yodhebrew", 0x05d9, "yodyodhebrew", 0x05f2, "yodyodpatahhebrew", 0xfb1f, "yohiragana", 0x3088, "yoikorean", 0x3189, "yokatakana", 0x30e8, "yokatakanahalfwidth", 0xff96, "yokorean", 0x315b, "yosmallhiragana", 0x3087, "yosmallkatakana", 0x30e7, "yosmallkatakanahalfwidth", 0xff6e, "yotgreek", 0x03f3, "yoyaekorean", 0x3188, "yoyakorean", 0x3187, "yoyakthai", 0x0e22, "yoyingthai", 0x0e0d, "yparen", 0x24b4, "ypogegrammeni", 0x037a, "ypogegrammenigreekcmb", 0x0345, "yr", 0x01a6, "yring", 0x1e99, "ysuperior", 0x02b8, "ytilde", 0x1ef9, "yturned", 0x028e, "yuhiragana", 0x3086, "yuikorean", 0x318c, "yukatakana", 0x30e6, "yukatakanahalfwidth", 0xff95, "yukorean", 0x3160, "yusbigcyrillic", 0x046b, "yusbigiotifiedcyrillic", 0x046d, "yuslittlecyrillic", 0x0467, "yuslittleiotifiedcyrillic", 0x0469, "yusmallhiragana", 0x3085, "yusmallkatakana", 0x30e5, "yusmallkatakanahalfwidth", 0xff6d, "yuyekorean", 0x318b, "yuyeokorean", 0x318a, "yyabengali", 0x09df, "yyadeva", 0x095f, "z", 0x007a, "zaarmenian", 0x0566, "zacute", 0x017a, "zadeva", 0x095b, "zagurmukhi", 0x0a5b, "zaharabic", 0x0638, "zahfinalarabic", 0xfec6, "zahinitialarabic", 0xfec7, "zahiragana", 0x3056, "zahmedialarabic", 0xfec8, "zainarabic", 0x0632, "zainfinalarabic", 0xfeb0, "zakatakana", 0x30b6, "zaqefgadolhebrew", 0x0595, "zaqefqatanhebrew", 0x0594, "zarqahebrew", 0x0598, "zayin", 0x05d6, "zayindagesh", 0xfb36, "zayindageshhebrew", 0xfb36, "zayinhebrew", 0x05d6, "zbopomofo", 0x3117, "zcaron", 0x017e, "zcircle", 0x24e9, "zcircumflex", 0x1e91, "zcurl", 0x0291, "zdot", 0x017c, "zdotaccent", 0x017c, "zdotbelow", 0x1e93, "zecyrillic", 0x0437, "zedescendercyrillic", 0x0499, "zedieresiscyrillic", 0x04df, "zehiragana", 0x305c, "zekatakana", 0x30bc, "zero", 0x0030, "zeroarabic", 0x0660, "zerobengali", 0x09e6, "zerodeva", 0x0966, "zerogujarati", 0x0ae6, "zerogurmukhi", 0x0a66, "zerohackarabic", 0x0660, "zeroinferior", 0x2080, "zeromonospace", 0xff10, "zerooldstyle", 0xf730, "zeropersian", 0x06f0, "zerosuperior", 0x2070, "zerothai", 0x0e50, "zerowidthjoiner", 0xfeff, "zerowidthnonjoiner", 0x200c, "zerowidthspace", 0x200b, "zeta", 0x03b6, "zhbopomofo", 0x3113, "zhearmenian", 0x056a, "zhebrevecyrillic", 0x04c2, "zhecyrillic", 0x0436, "zhedescendercyrillic", 0x0497, "zhedieresiscyrillic", 0x04dd, "zihiragana", 0x3058, "zikatakana", 0x30b8, "zinorhebrew", 0x05ae, "zlinebelow", 0x1e95, "zmonospace", 0xff5a, "zohiragana", 0x305e, "zokatakana", 0x30be, "zparen", 0x24b5, "zretroflexhook", 0x0290, "zstroke", 0x01b6, "zuhiragana", 0x305a, "zukatakana", 0x30ba, ".notdef", 0x0000, "angbracketleftbig", 0x2329, "angbracketleftBig", 0x2329, "angbracketleftbigg", 0x2329, "angbracketleftBigg", 0x2329, "angbracketrightBig", 0x232a, "angbracketrightbig", 0x232a, "angbracketrightBigg", 0x232a, "angbracketrightbigg", 0x232a, "arrowhookleft", 0x21aa, "arrowhookright", 0x21a9, "arrowlefttophalf", 0x21bc, "arrowleftbothalf", 0x21bd, "arrownortheast", 0x2197, "arrownorthwest", 0x2196, "arrowrighttophalf", 0x21c0, "arrowrightbothalf", 0x21c1, "arrowsoutheast", 0x2198, "arrowsouthwest", 0x2199, "backslashbig", 0x2216, "backslashBig", 0x2216, "backslashBigg", 0x2216, "backslashbigg", 0x2216, "bardbl", 0x2016, "bracehtipdownleft", 0xfe37, "bracehtipdownright", 0xfe37, "bracehtipupleft", 0xfe38, "bracehtipupright", 0xfe38, "braceleftBig", 0x007b, "braceleftbig", 0x007b, "braceleftbigg", 0x007b, "braceleftBigg", 0x007b, "bracerightBig", 0x007d, "bracerightbig", 0x007d, "bracerightbigg", 0x007d, "bracerightBigg", 0x007d, "bracketleftbig", 0x005b, "bracketleftBig", 0x005b, "bracketleftbigg", 0x005b, "bracketleftBigg", 0x005b, "bracketrightBig", 0x005d, "bracketrightbig", 0x005d, "bracketrightbigg", 0x005d, "bracketrightBigg", 0x005d, "ceilingleftbig", 0x2308, "ceilingleftBig", 0x2308, "ceilingleftBigg", 0x2308, "ceilingleftbigg", 0x2308, "ceilingrightbig", 0x2309, "ceilingrightBig", 0x2309, "ceilingrightbigg", 0x2309, "ceilingrightBigg", 0x2309, "circledotdisplay", 0x2299, "circledottext", 0x2299, "circlemultiplydisplay", 0x2297, "circlemultiplytext", 0x2297, "circleplusdisplay", 0x2295, "circleplustext", 0x2295, "contintegraldisplay", 0x222e, "contintegraltext", 0x222e, "coproductdisplay", 0x2210, "coproducttext", 0x2210, "floorleftBig", 0x230a, "floorleftbig", 0x230a, "floorleftbigg", 0x230a, "floorleftBigg", 0x230a, "floorrightbig", 0x230b, "floorrightBig", 0x230b, "floorrightBigg", 0x230b, "floorrightbigg", 0x230b, "hatwide", 0x0302, "hatwider", 0x0302, "hatwidest", 0x0302, "intercal", 0x1d40, "integraldisplay", 0x222b, "integraltext", 0x222b, "intersectiondisplay", 0x22c2, "intersectiontext", 0x22c2, "logicalanddisplay", 0x2227, "logicalandtext", 0x2227, "logicalordisplay", 0x2228, "logicalortext", 0x2228, "parenleftBig", 0x0028, "parenleftbig", 0x0028, "parenleftBigg", 0x0028, "parenleftbigg", 0x0028, "parenrightBig", 0x0029, "parenrightbig", 0x0029, "parenrightBigg", 0x0029, "parenrightbigg", 0x0029, "prime", 0x2032, "productdisplay", 0x220f, "producttext", 0x220f, "radicalbig", 0x221a, "radicalBig", 0x221a, "radicalBigg", 0x221a, "radicalbigg", 0x221a, "radicalbt", 0x221a, "radicaltp", 0x221a, "radicalvertex", 0x221a, "slashbig", 0x002f, "slashBig", 0x002f, "slashBigg", 0x002f, "slashbigg", 0x002f, "summationdisplay", 0x2211, "summationtext", 0x2211, "tildewide", 0x02dc, "tildewider", 0x02dc, "tildewidest", 0x02dc, "uniondisplay", 0x22c3, "unionmultidisplay", 0x228e, "unionmultitext", 0x228e, "unionsqdisplay", 0x2294, "unionsqtext", 0x2294, "uniontext", 0x22c3, "vextenddouble", 0x2225, "vextendsingle", 0x2223];
+});
+exports.getGlyphsUnicode = getGlyphsUnicode;
+const getDingbatsGlyphsUnicode = (0, _core_utils.getArrayLookupTableFactory)(function () {
+  return ["space", 0x0020, "a1", 0x2701, "a2", 0x2702, "a202", 0x2703, "a3", 0x2704, "a4", 0x260e, "a5", 0x2706, "a119", 0x2707, "a118", 0x2708, "a117", 0x2709, "a11", 0x261b, "a12", 0x261e, "a13", 0x270c, "a14", 0x270d, "a15", 0x270e, "a16", 0x270f, "a105", 0x2710, "a17", 0x2711, "a18", 0x2712, "a19", 0x2713, "a20", 0x2714, "a21", 0x2715, "a22", 0x2716, "a23", 0x2717, "a24", 0x2718, "a25", 0x2719, "a26", 0x271a, "a27", 0x271b, "a28", 0x271c, "a6", 0x271d, "a7", 0x271e, "a8", 0x271f, "a9", 0x2720, "a10", 0x2721, "a29", 0x2722, "a30", 0x2723, "a31", 0x2724, "a32", 0x2725, "a33", 0x2726, "a34", 0x2727, "a35", 0x2605, "a36", 0x2729, "a37", 0x272a, "a38", 0x272b, "a39", 0x272c, "a40", 0x272d, "a41", 0x272e, "a42", 0x272f, "a43", 0x2730, "a44", 0x2731, "a45", 0x2732, "a46", 0x2733, "a47", 0x2734, "a48", 0x2735, "a49", 0x2736, "a50", 0x2737, "a51", 0x2738, "a52", 0x2739, "a53", 0x273a, "a54", 0x273b, "a55", 0x273c, "a56", 0x273d, "a57", 0x273e, "a58", 0x273f, "a59", 0x2740, "a60", 0x2741, "a61", 0x2742, "a62", 0x2743, "a63", 0x2744, "a64", 0x2745, "a65", 0x2746, "a66", 0x2747, "a67", 0x2748, "a68", 0x2749, "a69", 0x274a, "a70", 0x274b, "a71", 0x25cf, "a72", 0x274d, "a73", 0x25a0, "a74", 0x274f, "a203", 0x2750, "a75", 0x2751, "a204", 0x2752, "a76", 0x25b2, "a77", 0x25bc, "a78", 0x25c6, "a79", 0x2756, "a81", 0x25d7, "a82", 0x2758, "a83", 0x2759, "a84", 0x275a, "a97", 0x275b, "a98", 0x275c, "a99", 0x275d, "a100", 0x275e, "a101", 0x2761, "a102", 0x2762, "a103", 0x2763, "a104", 0x2764, "a106", 0x2765, "a107", 0x2766, "a108", 0x2767, "a112", 0x2663, "a111", 0x2666, "a110", 0x2665, "a109", 0x2660, "a120", 0x2460, "a121", 0x2461, "a122", 0x2462, "a123", 0x2463, "a124", 0x2464, "a125", 0x2465, "a126", 0x2466, "a127", 0x2467, "a128", 0x2468, "a129", 0x2469, "a130", 0x2776, "a131", 0x2777, "a132", 0x2778, "a133", 0x2779, "a134", 0x277a, "a135", 0x277b, "a136", 0x277c, "a137", 0x277d, "a138", 0x277e, "a139", 0x277f, "a140", 0x2780, "a141", 0x2781, "a142", 0x2782, "a143", 0x2783, "a144", 0x2784, "a145", 0x2785, "a146", 0x2786, "a147", 0x2787, "a148", 0x2788, "a149", 0x2789, "a150", 0x278a, "a151", 0x278b, "a152", 0x278c, "a153", 0x278d, "a154", 0x278e, "a155", 0x278f, "a156", 0x2790, "a157", 0x2791, "a158", 0x2792, "a159", 0x2793, "a160", 0x2794, "a161", 0x2192, "a163", 0x2194, "a164", 0x2195, "a196", 0x2798, "a165", 0x2799, "a192", 0x279a, "a166", 0x279b, "a167", 0x279c, "a168", 0x279d, "a169", 0x279e, "a170", 0x279f, "a171", 0x27a0, "a172", 0x27a1, "a173", 0x27a2, "a162", 0x27a3, "a174", 0x27a4, "a175", 0x27a5, "a176", 0x27a6, "a177", 0x27a7, "a178", 0x27a8, "a179", 0x27a9, "a193", 0x27aa, "a180", 0x27ab, "a199", 0x27ac, "a181", 0x27ad, "a200", 0x27ae, "a182", 0x27af, "a201", 0x27b1, "a183", 0x27b2, "a184", 0x27b3, "a197", 0x27b4, "a185", 0x27b5, "a194", 0x27b6, "a198", 0x27b7, "a186", 0x27b8, "a195", 0x27b9, "a187", 0x27ba, "a188", 0x27bb, "a189", 0x27bc, "a190", 0x27bd, "a191", 0x27be, "a89", 0x2768, "a90", 0x2769, "a93", 0x276a, "a94", 0x276b, "a91", 0x276c, "a92", 0x276d, "a205", 0x276e, "a85", 0x276f, "a206", 0x2770, "a86", 0x2771, "a87", 0x2772, "a88", 0x2773, "a95", 0x2774, "a96", 0x2775, ".notdef", 0x0000];
+});
+exports.getDingbatsGlyphsUnicode = getDingbatsGlyphsUnicode;
+
+/***/ }),
+/* 21 */
+/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
+
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports.getUnicodeForGlyph = getUnicodeForGlyph;
+exports.getUnicodeRangeFor = getUnicodeRangeFor;
+exports.mapSpecialUnicodeValues = mapSpecialUnicodeValues;
+exports.reverseIfRtl = reverseIfRtl;
+exports.getNormalizedUnicodes = void 0;
+
+var _core_utils = __w_pdfjs_require__(9);
+
+const getSpecialPUASymbols = (0, _core_utils.getLookupTableFactory)(function (t) {
+  t[63721] = 0x00a9;
+  t[63193] = 0x00a9;
+  t[63720] = 0x00ae;
+  t[63194] = 0x00ae;
+  t[63722] = 0x2122;
+  t[63195] = 0x2122;
+  t[63729] = 0x23a7;
+  t[63730] = 0x23a8;
+  t[63731] = 0x23a9;
+  t[63740] = 0x23ab;
+  t[63741] = 0x23ac;
+  t[63742] = 0x23ad;
+  t[63726] = 0x23a1;
+  t[63727] = 0x23a2;
+  t[63728] = 0x23a3;
+  t[63737] = 0x23a4;
+  t[63738] = 0x23a5;
+  t[63739] = 0x23a6;
+  t[63723] = 0x239b;
+  t[63724] = 0x239c;
+  t[63725] = 0x239d;
+  t[63734] = 0x239e;
+  t[63735] = 0x239f;
+  t[63736] = 0x23a0;
+});
+
+function mapSpecialUnicodeValues(code) {
+  if (code >= 0xfff0 && code <= 0xffff) {
+    return 0;
+  } else if (code >= 0xf600 && code <= 0xf8ff) {
+    return getSpecialPUASymbols()[code] || code;
+  } else if (code === 0x00ad) {
+    return 0x002d;
+  }
+
+  return code;
+}
+
+function getUnicodeForGlyph(name, glyphsUnicodeMap) {
+  let unicode = glyphsUnicodeMap[name];
+
+  if (unicode !== undefined) {
+    return unicode;
+  }
+
+  if (!name) {
+    return -1;
+  }
+
+  if (name[0] === "u") {
+    const nameLen = name.length;
+    let hexStr;
+
+    if (nameLen === 7 && name[1] === "n" && name[2] === "i") {
+      hexStr = name.substring(3);
+    } else if (nameLen >= 5 && nameLen <= 7) {
+      hexStr = name.substring(1);
+    } else {
+      return -1;
+    }
+
+    if (hexStr === hexStr.toUpperCase()) {
+      unicode = parseInt(hexStr, 16);
+
+      if (unicode >= 0) {
+        return unicode;
+      }
+    }
+  }
+
+  return -1;
+}
+
+const UnicodeRanges = [{
+  begin: 0x0000,
+  end: 0x007f
+}, {
+  begin: 0x0080,
+  end: 0x00ff
+}, {
+  begin: 0x0100,
+  end: 0x017f
+}, {
+  begin: 0x0180,
+  end: 0x024f
+}, {
+  begin: 0x0250,
+  end: 0x02af
+}, {
+  begin: 0x02b0,
+  end: 0x02ff
+}, {
+  begin: 0x0300,
+  end: 0x036f
+}, {
+  begin: 0x0370,
+  end: 0x03ff
+}, {
+  begin: 0x2c80,
+  end: 0x2cff
+}, {
+  begin: 0x0400,
+  end: 0x04ff
+}, {
+  begin: 0x0530,
+  end: 0x058f
+}, {
+  begin: 0x0590,
+  end: 0x05ff
+}, {
+  begin: 0xa500,
+  end: 0xa63f
+}, {
+  begin: 0x0600,
+  end: 0x06ff
+}, {
+  begin: 0x07c0,
+  end: 0x07ff
+}, {
+  begin: 0x0900,
+  end: 0x097f
+}, {
+  begin: 0x0980,
+  end: 0x09ff
+}, {
+  begin: 0x0a00,
+  end: 0x0a7f
+}, {
+  begin: 0x0a80,
+  end: 0x0aff
+}, {
+  begin: 0x0b00,
+  end: 0x0b7f
+}, {
+  begin: 0x0b80,
+  end: 0x0bff
+}, {
+  begin: 0x0c00,
+  end: 0x0c7f
+}, {
+  begin: 0x0c80,
+  end: 0x0cff
+}, {
+  begin: 0x0d00,
+  end: 0x0d7f
+}, {
+  begin: 0x0e00,
+  end: 0x0e7f
+}, {
+  begin: 0x0e80,
+  end: 0x0eff
+}, {
+  begin: 0x10a0,
+  end: 0x10ff
+}, {
+  begin: 0x1b00,
+  end: 0x1b7f
+}, {
+  begin: 0x1100,
+  end: 0x11ff
+}, {
+  begin: 0x1e00,
+  end: 0x1eff
+}, {
+  begin: 0x1f00,
+  end: 0x1fff
+}, {
+  begin: 0x2000,
+  end: 0x206f
+}, {
+  begin: 0x2070,
+  end: 0x209f
+}, {
+  begin: 0x20a0,
+  end: 0x20cf
+}, {
+  begin: 0x20d0,
+  end: 0x20ff
+}, {
+  begin: 0x2100,
+  end: 0x214f
+}, {
+  begin: 0x2150,
+  end: 0x218f
+}, {
+  begin: 0x2190,
+  end: 0x21ff
+}, {
+  begin: 0x2200,
+  end: 0x22ff
+}, {
+  begin: 0x2300,
+  end: 0x23ff
+}, {
+  begin: 0x2400,
+  end: 0x243f
+}, {
+  begin: 0x2440,
+  end: 0x245f
+}, {
+  begin: 0x2460,
+  end: 0x24ff
+}, {
+  begin: 0x2500,
+  end: 0x257f
+}, {
+  begin: 0x2580,
+  end: 0x259f
+}, {
+  begin: 0x25a0,
+  end: 0x25ff
+}, {
+  begin: 0x2600,
+  end: 0x26ff
+}, {
+  begin: 0x2700,
+  end: 0x27bf
+}, {
+  begin: 0x3000,
+  end: 0x303f
+}, {
+  begin: 0x3040,
+  end: 0x309f
+}, {
+  begin: 0x30a0,
+  end: 0x30ff
+}, {
+  begin: 0x3100,
+  end: 0x312f
+}, {
+  begin: 0x3130,
+  end: 0x318f
+}, {
+  begin: 0xa840,
+  end: 0xa87f
+}, {
+  begin: 0x3200,
+  end: 0x32ff
+}, {
+  begin: 0x3300,
+  end: 0x33ff
+}, {
+  begin: 0xac00,
+  end: 0xd7af
+}, {
+  begin: 0xd800,
+  end: 0xdfff
+}, {
+  begin: 0x10900,
+  end: 0x1091f
+}, {
+  begin: 0x4e00,
+  end: 0x9fff
+}, {
+  begin: 0xe000,
+  end: 0xf8ff
+}, {
+  begin: 0x31c0,
+  end: 0x31ef
+}, {
+  begin: 0xfb00,
+  end: 0xfb4f
+}, {
+  begin: 0xfb50,
+  end: 0xfdff
+}, {
+  begin: 0xfe20,
+  end: 0xfe2f
+}, {
+  begin: 0xfe10,
+  end: 0xfe1f
+}, {
+  begin: 0xfe50,
+  end: 0xfe6f
+}, {
+  begin: 0xfe70,
+  end: 0xfeff
+}, {
+  begin: 0xff00,
+  end: 0xffef
+}, {
+  begin: 0xfff0,
+  end: 0xffff
+}, {
+  begin: 0x0f00,
+  end: 0x0fff
+}, {
+  begin: 0x0700,
+  end: 0x074f
+}, {
+  begin: 0x0780,
+  end: 0x07bf
+}, {
+  begin: 0x0d80,
+  end: 0x0dff
+}, {
+  begin: 0x1000,
+  end: 0x109f
+}, {
+  begin: 0x1200,
+  end: 0x137f
+}, {
+  begin: 0x13a0,
+  end: 0x13ff
+}, {
+  begin: 0x1400,
+  end: 0x167f
+}, {
+  begin: 0x1680,
+  end: 0x169f
+}, {
+  begin: 0x16a0,
+  end: 0x16ff
+}, {
+  begin: 0x1780,
+  end: 0x17ff
+}, {
+  begin: 0x1800,
+  end: 0x18af
+}, {
+  begin: 0x2800,
+  end: 0x28ff
+}, {
+  begin: 0xa000,
+  end: 0xa48f
+}, {
+  begin: 0x1700,
+  end: 0x171f
+}, {
+  begin: 0x10300,
+  end: 0x1032f
+}, {
+  begin: 0x10330,
+  end: 0x1034f
+}, {
+  begin: 0x10400,
+  end: 0x1044f
+}, {
+  begin: 0x1d000,
+  end: 0x1d0ff
+}, {
+  begin: 0x1d400,
+  end: 0x1d7ff
+}, {
+  begin: 0xff000,
+  end: 0xffffd
+}, {
+  begin: 0xfe00,
+  end: 0xfe0f
+}, {
+  begin: 0xe0000,
+  end: 0xe007f
+}, {
+  begin: 0x1900,
+  end: 0x194f
+}, {
+  begin: 0x1950,
+  end: 0x197f
+}, {
+  begin: 0x1980,
+  end: 0x19df
+}, {
+  begin: 0x1a00,
+  end: 0x1a1f
+}, {
+  begin: 0x2c00,
+  end: 0x2c5f
+}, {
+  begin: 0x2d30,
+  end: 0x2d7f
+}, {
+  begin: 0x4dc0,
+  end: 0x4dff
+}, {
+  begin: 0xa800,
+  end: 0xa82f
+}, {
+  begin: 0x10000,
+  end: 0x1007f
+}, {
+  begin: 0x10140,
+  end: 0x1018f
+}, {
+  begin: 0x10380,
+  end: 0x1039f
+}, {
+  begin: 0x103a0,
+  end: 0x103df
+}, {
+  begin: 0x10450,
+  end: 0x1047f
+}, {
+  begin: 0x10480,
+  end: 0x104af
+}, {
+  begin: 0x10800,
+  end: 0x1083f
+}, {
+  begin: 0x10a00,
+  end: 0x10a5f
+}, {
+  begin: 0x1d300,
+  end: 0x1d35f
+}, {
+  begin: 0x12000,
+  end: 0x123ff
+}, {
+  begin: 0x1d360,
+  end: 0x1d37f
+}, {
+  begin: 0x1b80,
+  end: 0x1bbf
+}, {
+  begin: 0x1c00,
+  end: 0x1c4f
+}, {
+  begin: 0x1c50,
+  end: 0x1c7f
+}, {
+  begin: 0xa880,
+  end: 0xa8df
+}, {
+  begin: 0xa900,
+  end: 0xa92f
+}, {
+  begin: 0xa930,
+  end: 0xa95f
+}, {
+  begin: 0xaa00,
+  end: 0xaa5f
+}, {
+  begin: 0x10190,
+  end: 0x101cf
+}, {
+  begin: 0x101d0,
+  end: 0x101ff
+}, {
+  begin: 0x102a0,
+  end: 0x102df
+}, {
+  begin: 0x1f030,
+  end: 0x1f09f
+}];
+
+function getUnicodeRangeFor(value) {
+  for (let i = 0, ii = UnicodeRanges.length; i < ii; i++) {
+    const range = UnicodeRanges[i];
+
+    if (value >= range.begin && value < range.end) {
+      return i;
+    }
+  }
+
+  return -1;
+}
+
+function isRTLRangeFor(value) {
+  let range = UnicodeRanges[13];
+
+  if (value >= range.begin && value < range.end) {
+    return true;
+  }
+
+  range = UnicodeRanges[11];
+
+  if (value >= range.begin && value < range.end) {
+    return true;
+  }
+
+  return false;
+}
+
+const getNormalizedUnicodes = (0, _core_utils.getArrayLookupTableFactory)(function () {
+  return ["\u00A8", "\u0020\u0308", "\u00AF", "\u0020\u0304", "\u00B4", "\u0020\u0301", "\u00B5", "\u03BC", "\u00B8", "\u0020\u0327", "\u0132", "\u0049\u004A", "\u0133", "\u0069\u006A", "\u013F", "\u004C\u00B7", "\u0140", "\u006C\u00B7", "\u0149", "\u02BC\u006E", "\u017F", "\u0073", "\u01C4", "\u0044\u017D", "\u01C5", "\u0044\u017E", "\u01C6", "\u0064\u017E", "\u01C7", "\u004C\u004A", "\u01C8", "\u004C\u006A", "\u01C9", "\u006C\u006A", "\u01CA", "\u004E\u004A", "\u01CB", "\u004E\u006A", "\u01CC", "\u006E\u006A", "\u01F1", "\u0044\u005A", "\u01F2", "\u0044\u007A", "\u01F3", "\u0064\u007A", "\u02D8", "\u0020\u0306", "\u02D9", "\u0020\u0307", "\u02DA", "\u0020\u030A", "\u02DB", "\u0020\u0328", "\u02DC", "\u0020\u0303", "\u02DD", "\u0020\u030B", "\u037A", "\u0020\u0345", "\u0384", "\u0020\u0301", "\u03D0", "\u03B2", "\u03D1", "\u03B8", "\u03D2", "\u03A5", "\u03D5", "\u03C6", "\u03D6", "\u03C0", "\u03F0", "\u03BA", "\u03F1", "\u03C1", "\u03F2", "\u03C2", "\u03F4", "\u0398", "\u03F5", "\u03B5", "\u03F9", "\u03A3", "\u0587", "\u0565\u0582", "\u0675", "\u0627\u0674", "\u0676", "\u0648\u0674", "\u0677", "\u06C7\u0674", "\u0678", "\u064A\u0674", "\u0E33", "\u0E4D\u0E32", "\u0EB3", "\u0ECD\u0EB2", "\u0EDC", "\u0EAB\u0E99", "\u0EDD", "\u0EAB\u0EA1", "\u0F77", "\u0FB2\u0F81", "\u0F79", "\u0FB3\u0F81", "\u1E9A", "\u0061\u02BE", "\u1FBD", "\u0020\u0313", "\u1FBF", "\u0020\u0313", "\u1FC0", "\u0020\u0342", "\u1FFE", "\u0020\u0314", "\u2002", "\u0020", "\u2003", "\u0020", "\u2004", "\u0020", "\u2005", "\u0020", "\u2006", "\u0020", "\u2008", "\u0020", "\u2009", "\u0020", "\u200A", "\u0020", "\u2017", "\u0020\u0333", "\u2024", "\u002E", "\u2025", "\u002E\u002E", "\u2026", "\u002E\u002E\u002E", "\u2033", "\u2032\u2032", "\u2034", "\u2032\u2032\u2032", "\u2036", "\u2035\u2035", "\u2037", "\u2035\u2035\u2035", "\u203C", "\u0021\u0021", "\u203E", "\u0020\u0305", "\u2047", "\u003F\u003F", "\u2048", "\u003F\u0021", "\u2049", "\u0021\u003F", "\u2057", "\u2032\u2032\u2032\u2032", "\u205F", "\u0020", "\u20A8", "\u0052\u0073", "\u2100", "\u0061\u002F\u0063", "\u2101", "\u0061\u002F\u0073", "\u2103", "\u00B0\u0043", "\u2105", "\u0063\u002F\u006F", "\u2106", "\u0063\u002F\u0075", "\u2107", "\u0190", "\u2109", "\u00B0\u0046", "\u2116", "\u004E\u006F", "\u2121", "\u0054\u0045\u004C", "\u2135", "\u05D0", "\u2136", "\u05D1", "\u2137", "\u05D2", "\u2138", "\u05D3", "\u213B", "\u0046\u0041\u0058", "\u2160", "\u0049", "\u2161", "\u0049\u0049", "\u2162", "\u0049\u0049\u0049", "\u2163", "\u0049\u0056", "\u2164", "\u0056", "\u2165", "\u0056\u0049", "\u2166", "\u0056\u0049\u0049", "\u2167", "\u0056\u0049\u0049\u0049", "\u2168", "\u0049\u0058", "\u2169", "\u0058", "\u216A", "\u0058\u0049", "\u216B", "\u0058\u0049\u0049", "\u216C", "\u004C", "\u216D", "\u0043", "\u216E", "\u0044", "\u216F", "\u004D", "\u2170", "\u0069", "\u2171", "\u0069\u0069", "\u2172", "\u0069\u0069\u0069", "\u2173", "\u0069\u0076", "\u2174", "\u0076", "\u2175", "\u0076\u0069", "\u2176", "\u0076\u0069\u0069", "\u2177", "\u0076\u0069\u0069\u0069", "\u2178", "\u0069\u0078", "\u2179", "\u0078", "\u217A", "\u0078\u0069", "\u217B", "\u0078\u0069\u0069", "\u217C", "\u006C", "\u217D", "\u0063", "\u217E", "\u0064", "\u217F", "\u006D", "\u222C", "\u222B\u222B", "\u222D", "\u222B\u222B\u222B", "\u222F", "\u222E\u222E", "\u2230", "\u222E\u222E\u222E", "\u2474", "\u0028\u0031\u0029", "\u2475", "\u0028\u0032\u0029", "\u2476", "\u0028\u0033\u0029", "\u2477", "\u0028\u0034\u0029", "\u2478", "\u0028\u0035\u0029", "\u2479", "\u0028\u0036\u0029", "\u247A", "\u0028\u0037\u0029", "\u247B", "\u0028\u0038\u0029", "\u247C", "\u0028\u0039\u0029", "\u247D", "\u0028\u0031\u0030\u0029", "\u247E", "\u0028\u0031\u0031\u0029", "\u247F", "\u0028\u0031\u0032\u0029", "\u2480", "\u0028\u0031\u0033\u0029", "\u2481", "\u0028\u0031\u0034\u0029", "\u2482", "\u0028\u0031\u0035\u0029", "\u2483", "\u0028\u0031\u0036\u0029", "\u2484", "\u0028\u0031\u0037\u0029", "\u2485", "\u0028\u0031\u0038\u0029", "\u2486", "\u0028\u0031\u0039\u0029", "\u2487", "\u0028\u0032\u0030\u0029", "\u2488", "\u0031\u002E", "\u2489", "\u0032\u002E", "\u248A", "\u0033\u002E", "\u248B", "\u0034\u002E", "\u248C", "\u0035\u002E", "\u248D", "\u0036\u002E", "\u248E", "\u0037\u002E", "\u248F", "\u0038\u002E", "\u2490", "\u0039\u002E", "\u2491", "\u0031\u0030\u002E", "\u2492", "\u0031\u0031\u002E", "\u2493", "\u0031\u0032\u002E", "\u2494", "\u0031\u0033\u002E", "\u2495", "\u0031\u0034\u002E", "\u2496", "\u0031\u0035\u002E", "\u2497", "\u0031\u0036\u002E", "\u2498", "\u0031\u0037\u002E", "\u2499", "\u0031\u0038\u002E", "\u249A", "\u0031\u0039\u002E", "\u249B", "\u0032\u0030\u002E", "\u249C", "\u0028\u0061\u0029", "\u249D", "\u0028\u0062\u0029", "\u249E", "\u0028\u0063\u0029", "\u249F", "\u0028\u0064\u0029", "\u24A0", "\u0028\u0065\u0029", "\u24A1", "\u0028\u0066\u0029", "\u24A2", "\u0028\u0067\u0029", "\u24A3", "\u0028\u0068\u0029", "\u24A4", "\u0028\u0069\u0029", "\u24A5", "\u0028\u006A\u0029", "\u24A6", "\u0028\u006B\u0029", "\u24A7", "\u0028\u006C\u0029", "\u24A8", "\u0028\u006D\u0029", "\u24A9", "\u0028\u006E\u0029", "\u24AA", "\u0028\u006F\u0029", "\u24AB", "\u0028\u0070\u0029", "\u24AC", "\u0028\u0071\u0029", "\u24AD", "\u0028\u0072\u0029", "\u24AE", "\u0028\u0073\u0029", "\u24AF", "\u0028\u0074\u0029", "\u24B0", "\u0028\u0075\u0029", "\u24B1", "\u0028\u0076\u0029", "\u24B2", "\u0028\u0077\u0029", "\u24B3", "\u0028\u0078\u0029", "\u24B4", "\u0028\u0079\u0029", "\u24B5", "\u0028\u007A\u0029", "\u2A0C", "\u222B\u222B\u222B\u222B", "\u2A74", "\u003A\u003A\u003D", "\u2A75", "\u003D\u003D", "\u2A76", "\u003D\u003D\u003D", "\u2E9F", "\u6BCD", "\u2EF3", "\u9F9F", "\u2F00", "\u4E00", "\u2F01", "\u4E28", "\u2F02", "\u4E36", "\u2F03", "\u4E3F", "\u2F04", "\u4E59", "\u2F05", "\u4E85", "\u2F06", "\u4E8C", "\u2F07", "\u4EA0", "\u2F08", "\u4EBA", "\u2F09", "\u513F", "\u2F0A", "\u5165", "\u2F0B", "\u516B", "\u2F0C", "\u5182", "\u2F0D", "\u5196", "\u2F0E", "\u51AB", "\u2F0F", "\u51E0", "\u2F10", "\u51F5", "\u2F11", "\u5200", "\u2F12", "\u529B", "\u2F13", "\u52F9", "\u2F14", "\u5315", "\u2F15", "\u531A", "\u2F16", "\u5338", "\u2F17", "\u5341", "\u2F18", "\u535C", "\u2F19", "\u5369", "\u2F1A", "\u5382", "\u2F1B", "\u53B6", "\u2F1C", "\u53C8", "\u2F1D", "\u53E3", "\u2F1E", "\u56D7", "\u2F1F", "\u571F", "\u2F20", "\u58EB", "\u2F21", "\u5902", "\u2F22", "\u590A", "\u2F23", "\u5915", "\u2F24", "\u5927", "\u2F25", "\u5973", "\u2F26", "\u5B50", "\u2F27", "\u5B80", "\u2F28", "\u5BF8", "\u2F29", "\u5C0F", "\u2F2A", "\u5C22", "\u2F2B", "\u5C38", "\u2F2C", "\u5C6E", "\u2F2D", "\u5C71", "\u2F2E", "\u5DDB", "\u2F2F", "\u5DE5", "\u2F30", "\u5DF1", "\u2F31", "\u5DFE", "\u2F32", "\u5E72", "\u2F33", "\u5E7A", "\u2F34", "\u5E7F", "\u2F35", "\u5EF4", "\u2F36", "\u5EFE", "\u2F37", "\u5F0B", "\u2F38", "\u5F13", "\u2F39", "\u5F50", "\u2F3A", "\u5F61", "\u2F3B", "\u5F73", "\u2F3C", "\u5FC3", "\u2F3D", "\u6208", "\u2F3E", "\u6236", "\u2F3F", "\u624B", "\u2F40", "\u652F", "\u2F41", "\u6534", "\u2F42", "\u6587", "\u2F43", "\u6597", "\u2F44", "\u65A4", "\u2F45", "\u65B9", "\u2F46", "\u65E0", "\u2F47", "\u65E5", "\u2F48", "\u66F0", "\u2F49", "\u6708", "\u2F4A", "\u6728", "\u2F4B", "\u6B20", "\u2F4C", "\u6B62", "\u2F4D", "\u6B79", "\u2F4E", "\u6BB3", "\u2F4F", "\u6BCB", "\u2F50", "\u6BD4", "\u2F51", "\u6BDB", "\u2F52", "\u6C0F", "\u2F53", "\u6C14", "\u2F54", "\u6C34", "\u2F55", "\u706B", "\u2F56", "\u722A", "\u2F57", "\u7236", "\u2F58", "\u723B", "\u2F59", "\u723F", "\u2F5A", "\u7247", "\u2F5B", "\u7259", "\u2F5C", "\u725B", "\u2F5D", "\u72AC", "\u2F5E", "\u7384", "\u2F5F", "\u7389", "\u2F60", "\u74DC", "\u2F61", "\u74E6", "\u2F62", "\u7518", "\u2F63", "\u751F", "\u2F64", "\u7528", "\u2F65", "\u7530", "\u2F66", "\u758B", "\u2F67", "\u7592", "\u2F68", "\u7676", "\u2F69", "\u767D", "\u2F6A", "\u76AE", "\u2F6B", "\u76BF", "\u2F6C", "\u76EE", "\u2F6D", "\u77DB", "\u2F6E", "\u77E2", "\u2F6F", "\u77F3", "\u2F70", "\u793A", "\u2F71", "\u79B8", "\u2F72", "\u79BE", "\u2F73", "\u7A74", "\u2F74", "\u7ACB", "\u2F75", "\u7AF9", "\u2F76", "\u7C73", "\u2F77", "\u7CF8", "\u2F78", "\u7F36", "\u2F79", "\u7F51", "\u2F7A", "\u7F8A", "\u2F7B", "\u7FBD", "\u2F7C", "\u8001", "\u2F7D", "\u800C", "\u2F7E", "\u8012", "\u2F7F", "\u8033", "\u2F80", "\u807F", "\u2F81", "\u8089", "\u2F82", "\u81E3", "\u2F83", "\u81EA", "\u2F84", "\u81F3", "\u2F85", "\u81FC", "\u2F86", "\u820C", "\u2F87", "\u821B", "\u2F88", "\u821F", "\u2F89", "\u826E", "\u2F8A", "\u8272", "\u2F8B", "\u8278", "\u2F8C", "\u864D", "\u2F8D", "\u866B", "\u2F8E", "\u8840", "\u2F8F", "\u884C", "\u2F90", "\u8863", "\u2F91", "\u897E", "\u2F92", "\u898B", "\u2F93", "\u89D2", "\u2F94", "\u8A00", "\u2F95", "\u8C37", "\u2F96", "\u8C46", "\u2F97", "\u8C55", "\u2F98", "\u8C78", "\u2F99", "\u8C9D", "\u2F9A", "\u8D64", "\u2F9B", "\u8D70", "\u2F9C", "\u8DB3", "\u2F9D", "\u8EAB", "\u2F9E", "\u8ECA", "\u2F9F", "\u8F9B", "\u2FA0", "\u8FB0", "\u2FA1", "\u8FB5", "\u2FA2", "\u9091", "\u2FA3", "\u9149", "\u2FA4", "\u91C6", "\u2FA5", "\u91CC", "\u2FA6", "\u91D1", "\u2FA7", "\u9577", "\u2FA8", "\u9580", "\u2FA9", "\u961C", "\u2FAA", "\u96B6", "\u2FAB", "\u96B9", "\u2FAC", "\u96E8", "\u2FAD", "\u9751", "\u2FAE", "\u975E", "\u2FAF", "\u9762", "\u2FB0", "\u9769", "\u2FB1", "\u97CB", "\u2FB2", "\u97ED", "\u2FB3", "\u97F3", "\u2FB4", "\u9801", "\u2FB5", "\u98A8", "\u2FB6", "\u98DB", "\u2FB7", "\u98DF", "\u2FB8", "\u9996", "\u2FB9", "\u9999", "\u2FBA", "\u99AC", "\u2FBB", "\u9AA8", "\u2FBC", "\u9AD8", "\u2FBD", "\u9ADF", "\u2FBE", "\u9B25", "\u2FBF", "\u9B2F", "\u2FC0", "\u9B32", "\u2FC1", "\u9B3C", "\u2FC2", "\u9B5A", "\u2FC3", "\u9CE5", "\u2FC4", "\u9E75", "\u2FC5", "\u9E7F", "\u2FC6", "\u9EA5", "\u2FC7", "\u9EBB", "\u2FC8", "\u9EC3", "\u2FC9", "\u9ECD", "\u2FCA", "\u9ED1", "\u2FCB", "\u9EF9", "\u2FCC", "\u9EFD", "\u2FCD", "\u9F0E", "\u2FCE", "\u9F13", "\u2FCF", "\u9F20", "\u2FD0", "\u9F3B", "\u2FD1", "\u9F4A", "\u2FD2", "\u9F52", "\u2FD3", "\u9F8D", "\u2FD4", "\u9F9C", "\u2FD5", "\u9FA0", "\u3036", "\u3012", "\u3038", "\u5341", "\u3039", "\u5344", "\u303A", "\u5345", "\u309B", "\u0020\u3099", "\u309C", "\u0020\u309A", "\u3131", "\u1100", "\u3132", "\u1101", "\u3133", "\u11AA", "\u3134", "\u1102", "\u3135", "\u11AC", "\u3136", "\u11AD", "\u3137", "\u1103", "\u3138", "\u1104", "\u3139", "\u1105", "\u313A", "\u11B0", "\u313B", "\u11B1", "\u313C", "\u11B2", "\u313D", "\u11B3", "\u313E", "\u11B4", "\u313F", "\u11B5", "\u3140", "\u111A", "\u3141", "\u1106", "\u3142", "\u1107", "\u3143", "\u1108", "\u3144", "\u1121", "\u3145", "\u1109", "\u3146", "\u110A", "\u3147", "\u110B", "\u3148", "\u110C", "\u3149", "\u110D", "\u314A", "\u110E", "\u314B", "\u110F", "\u314C", "\u1110", "\u314D", "\u1111", "\u314E", "\u1112", "\u314F", "\u1161", "\u3150", "\u1162", "\u3151", "\u1163", "\u3152", "\u1164", "\u3153", "\u1165", "\u3154", "\u1166", "\u3155", "\u1167", "\u3156", "\u1168", "\u3157", "\u1169", "\u3158", "\u116A", "\u3159", "\u116B", "\u315A", "\u116C", "\u315B", "\u116D", "\u315C", "\u116E", "\u315D", "\u116F", "\u315E", "\u1170", "\u315F", "\u1171", "\u3160", "\u1172", "\u3161", "\u1173", "\u3162", "\u1174", "\u3163", "\u1175", "\u3164", "\u1160", "\u3165", "\u1114", "\u3166", "\u1115", "\u3167", "\u11C7", "\u3168", "\u11C8", "\u3169", "\u11CC", "\u316A", "\u11CE", "\u316B", "\u11D3", "\u316C", "\u11D7", "\u316D", "\u11D9", "\u316E", "\u111C", "\u316F", "\u11DD", "\u3170", "\u11DF", "\u3171", "\u111D", "\u3172", "\u111E", "\u3173", "\u1120", "\u3174", "\u1122", "\u3175", "\u1123", "\u3176", "\u1127", "\u3177", "\u1129", "\u3178", "\u112B", "\u3179", "\u112C", "\u317A", "\u112D", "\u317B", "\u112E", "\u317C", "\u112F", "\u317D", "\u1132", "\u317E", "\u1136", "\u317F", "\u1140", "\u3180", "\u1147", "\u3181", "\u114C", "\u3182", "\u11F1", "\u3183", "\u11F2", "\u3184", "\u1157", "\u3185", "\u1158", "\u3186", "\u1159", "\u3187", "\u1184", "\u3188", "\u1185", "\u3189", "\u1188", "\u318A", "\u1191", "\u318B", "\u1192", "\u318C", "\u1194", "\u318D", "\u119E", "\u318E", "\u11A1", "\u3200", "\u0028\u1100\u0029", "\u3201", "\u0028\u1102\u0029", "\u3202", "\u0028\u1103\u0029", "\u3203", "\u0028\u1105\u0029", "\u3204", "\u0028\u1106\u0029", "\u3205", "\u0028\u1107\u0029", "\u3206", "\u0028\u1109\u0029", "\u3207", "\u0028\u110B\u0029", "\u3208", "\u0028\u110C\u0029", "\u3209", "\u0028\u110E\u0029", "\u320A", "\u0028\u110F\u0029", "\u320B", "\u0028\u1110\u0029", "\u320C", "\u0028\u1111\u0029", "\u320D", "\u0028\u1112\u0029", "\u320E", "\u0028\u1100\u1161\u0029", "\u320F", "\u0028\u1102\u1161\u0029", "\u3210", "\u0028\u1103\u1161\u0029", "\u3211", "\u0028\u1105\u1161\u0029", "\u3212", "\u0028\u1106\u1161\u0029", "\u3213", "\u0028\u1107\u1161\u0029", "\u3214", "\u0028\u1109\u1161\u0029", "\u3215", "\u0028\u110B\u1161\u0029", "\u3216", "\u0028\u110C\u1161\u0029", "\u3217", "\u0028\u110E\u1161\u0029", "\u3218", "\u0028\u110F\u1161\u0029", "\u3219", "\u0028\u1110\u1161\u0029", "\u321A", "\u0028\u1111\u1161\u0029", "\u321B", "\u0028\u1112\u1161\u0029", "\u321C", "\u0028\u110C\u116E\u0029", "\u321D", "\u0028\u110B\u1169\u110C\u1165\u11AB\u0029", "\u321E", "\u0028\u110B\u1169\u1112\u116E\u0029", "\u3220", "\u0028\u4E00\u0029", "\u3221", "\u0028\u4E8C\u0029", "\u3222", "\u0028\u4E09\u0029", "\u3223", "\u0028\u56DB\u0029", "\u3224", "\u0028\u4E94\u0029", "\u3225", "\u0028\u516D\u0029", "\u3226", "\u0028\u4E03\u0029", "\u3227", "\u0028\u516B\u0029", "\u3228", "\u0028\u4E5D\u0029", "\u3229", "\u0028\u5341\u0029", "\u322A", "\u0028\u6708\u0029", "\u322B", "\u0028\u706B\u0029", "\u322C", "\u0028\u6C34\u0029", "\u322D", "\u0028\u6728\u0029", "\u322E", "\u0028\u91D1\u0029", "\u322F", "\u0028\u571F\u0029", "\u3230", "\u0028\u65E5\u0029", "\u3231", "\u0028\u682A\u0029", "\u3232", "\u0028\u6709\u0029", "\u3233", "\u0028\u793E\u0029", "\u3234", "\u0028\u540D\u0029", "\u3235", "\u0028\u7279\u0029", "\u3236", "\u0028\u8CA1\u0029", "\u3237", "\u0028\u795D\u0029", "\u3238", "\u0028\u52B4\u0029", "\u3239", "\u0028\u4EE3\u0029", "\u323A", "\u0028\u547C\u0029", "\u323B", "\u0028\u5B66\u0029", "\u323C", "\u0028\u76E3\u0029", "\u323D", "\u0028\u4F01\u0029", "\u323E", "\u0028\u8CC7\u0029", "\u323F", "\u0028\u5354\u0029", "\u3240", "\u0028\u796D\u0029", "\u3241", "\u0028\u4F11\u0029", "\u3242", "\u0028\u81EA\u0029", "\u3243", "\u0028\u81F3\u0029", "\u32C0", "\u0031\u6708", "\u32C1", "\u0032\u6708", "\u32C2", "\u0033\u6708", "\u32C3", "\u0034\u6708", "\u32C4", "\u0035\u6708", "\u32C5", "\u0036\u6708", "\u32C6", "\u0037\u6708", "\u32C7", "\u0038\u6708", "\u32C8", "\u0039\u6708", "\u32C9", "\u0031\u0030\u6708", "\u32CA", "\u0031\u0031\u6708", "\u32CB", "\u0031\u0032\u6708", "\u3358", "\u0030\u70B9", "\u3359", "\u0031\u70B9", "\u335A", "\u0032\u70B9", "\u335B", "\u0033\u70B9", "\u335C", "\u0034\u70B9", "\u335D", "\u0035\u70B9", "\u335E", "\u0036\u70B9", "\u335F", "\u0037\u70B9", "\u3360", "\u0038\u70B9", "\u3361", "\u0039\u70B9", "\u3362", "\u0031\u0030\u70B9", "\u3363", "\u0031\u0031\u70B9", "\u3364", "\u0031\u0032\u70B9", "\u3365", "\u0031\u0033\u70B9", "\u3366", "\u0031\u0034\u70B9", "\u3367", "\u0031\u0035\u70B9", "\u3368", "\u0031\u0036\u70B9", "\u3369", "\u0031\u0037\u70B9", "\u336A", "\u0031\u0038\u70B9", "\u336B", "\u0031\u0039\u70B9", "\u336C", "\u0032\u0030\u70B9", "\u336D", "\u0032\u0031\u70B9", "\u336E", "\u0032\u0032\u70B9", "\u336F", "\u0032\u0033\u70B9", "\u3370", "\u0032\u0034\u70B9", "\u33E0", "\u0031\u65E5", "\u33E1", "\u0032\u65E5", "\u33E2", "\u0033\u65E5", "\u33E3", "\u0034\u65E5", "\u33E4", "\u0035\u65E5", "\u33E5", "\u0036\u65E5", "\u33E6", "\u0037\u65E5", "\u33E7", "\u0038\u65E5", "\u33E8", "\u0039\u65E5", "\u33E9", "\u0031\u0030\u65E5", "\u33EA", "\u0031\u0031\u65E5", "\u33EB", "\u0031\u0032\u65E5", "\u33EC", "\u0031\u0033\u65E5", "\u33ED", "\u0031\u0034\u65E5", "\u33EE", "\u0031\u0035\u65E5", "\u33EF", "\u0031\u0036\u65E5", "\u33F0", "\u0031\u0037\u65E5", "\u33F1", "\u0031\u0038\u65E5", "\u33F2", "\u0031\u0039\u65E5", "\u33F3", "\u0032\u0030\u65E5", "\u33F4", "\u0032\u0031\u65E5", "\u33F5", "\u0032\u0032\u65E5", "\u33F6", "\u0032\u0033\u65E5", "\u33F7", "\u0032\u0034\u65E5", "\u33F8", "\u0032\u0035\u65E5", "\u33F9", "\u0032\u0036\u65E5", "\u33FA", "\u0032\u0037\u65E5", "\u33FB", "\u0032\u0038\u65E5", "\u33FC", "\u0032\u0039\u65E5", "\u33FD", "\u0033\u0030\u65E5", "\u33FE", "\u0033\u0031\u65E5", "\uFB00", "\u0066\u0066", "\uFB01", "\u0066\u0069", "\uFB02", "\u0066\u006C", "\uFB03", "\u0066\u0066\u0069", "\uFB04", "\u0066\u0066\u006C", "\uFB05", "\u017F\u0074", "\uFB06", "\u0073\u0074", "\uFB13", "\u0574\u0576", "\uFB14", "\u0574\u0565", "\uFB15", "\u0574\u056B", "\uFB16", "\u057E\u0576", "\uFB17", "\u0574\u056D", "\uFB4F", "\u05D0\u05DC", "\uFB50", "\u0671", "\uFB51", "\u0671", "\uFB52", "\u067B", "\uFB53", "\u067B", "\uFB54", "\u067B", "\uFB55", "\u067B", "\uFB56", "\u067E", "\uFB57", "\u067E", "\uFB58", "\u067E", "\uFB59", "\u067E", "\uFB5A", "\u0680", "\uFB5B", "\u0680", "\uFB5C", "\u0680", "\uFB5D", "\u0680", "\uFB5E", "\u067A", "\uFB5F", "\u067A", "\uFB60", "\u067A", "\uFB61", "\u067A", "\uFB62", "\u067F", "\uFB63", "\u067F", "\uFB64", "\u067F", "\uFB65", "\u067F", "\uFB66", "\u0679", "\uFB67", "\u0679", "\uFB68", "\u0679", "\uFB69", "\u0679", "\uFB6A", "\u06A4", "\uFB6B", "\u06A4", "\uFB6C", "\u06A4", "\uFB6D", "\u06A4", "\uFB6E", "\u06A6", "\uFB6F", "\u06A6", "\uFB70", "\u06A6", "\uFB71", "\u06A6", "\uFB72", "\u0684", "\uFB73", "\u0684", "\uFB74", "\u0684", "\uFB75", "\u0684", "\uFB76", "\u0683", "\uFB77", "\u0683", "\uFB78", "\u0683", "\uFB79", "\u0683", "\uFB7A", "\u0686", "\uFB7B", "\u0686", "\uFB7C", "\u0686", "\uFB7D", "\u0686", "\uFB7E", "\u0687", "\uFB7F", "\u0687", "\uFB80", "\u0687", "\uFB81", "\u0687", "\uFB82", "\u068D", "\uFB83", "\u068D", "\uFB84", "\u068C", "\uFB85", "\u068C", "\uFB86", "\u068E", "\uFB87", "\u068E", "\uFB88", "\u0688", "\uFB89", "\u0688", "\uFB8A", "\u0698", "\uFB8B", "\u0698", "\uFB8C", "\u0691", "\uFB8D", "\u0691", "\uFB8E", "\u06A9", "\uFB8F", "\u06A9", "\uFB90", "\u06A9", "\uFB91", "\u06A9", "\uFB92", "\u06AF", "\uFB93", "\u06AF", "\uFB94", "\u06AF", "\uFB95", "\u06AF", "\uFB96", "\u06B3", "\uFB97", "\u06B3", "\uFB98", "\u06B3", "\uFB99", "\u06B3", "\uFB9A", "\u06B1", "\uFB9B", "\u06B1", "\uFB9C", "\u06B1", "\uFB9D", "\u06B1", "\uFB9E", "\u06BA", "\uFB9F", "\u06BA", "\uFBA0", "\u06BB", "\uFBA1", "\u06BB", "\uFBA2", "\u06BB", "\uFBA3", "\u06BB", "\uFBA4", "\u06C0", "\uFBA5", "\u06C0", "\uFBA6", "\u06C1", "\uFBA7", "\u06C1", "\uFBA8", "\u06C1", "\uFBA9", "\u06C1", "\uFBAA", "\u06BE", "\uFBAB", "\u06BE", "\uFBAC", "\u06BE", "\uFBAD", "\u06BE", "\uFBAE", "\u06D2", "\uFBAF", "\u06D2", "\uFBB0", "\u06D3", "\uFBB1", "\u06D3", "\uFBD3", "\u06AD", "\uFBD4", "\u06AD", "\uFBD5", "\u06AD", "\uFBD6", "\u06AD", "\uFBD7", "\u06C7", "\uFBD8", "\u06C7", "\uFBD9", "\u06C6", "\uFBDA", "\u06C6", "\uFBDB", "\u06C8", "\uFBDC", "\u06C8", "\uFBDD", "\u0677", "\uFBDE", "\u06CB", "\uFBDF", "\u06CB", "\uFBE0", "\u06C5", "\uFBE1", "\u06C5", "\uFBE2", "\u06C9", "\uFBE3", "\u06C9", "\uFBE4", "\u06D0", "\uFBE5", "\u06D0", "\uFBE6", "\u06D0", "\uFBE7", "\u06D0", "\uFBE8", "\u0649", "\uFBE9", "\u0649", "\uFBEA", "\u0626\u0627", "\uFBEB", "\u0626\u0627", "\uFBEC", "\u0626\u06D5", "\uFBED", "\u0626\u06D5", "\uFBEE", "\u0626\u0648", "\uFBEF", "\u0626\u0648", "\uFBF0", "\u0626\u06C7", "\uFBF1", "\u0626\u06C7", "\uFBF2", "\u0626\u06C6", "\uFBF3", "\u0626\u06C6", "\uFBF4", "\u0626\u06C8", "\uFBF5", "\u0626\u06C8", "\uFBF6", "\u0626\u06D0", "\uFBF7", "\u0626\u06D0", "\uFBF8", "\u0626\u06D0", "\uFBF9", "\u0626\u0649", "\uFBFA", "\u0626\u0649", "\uFBFB", "\u0626\u0649", "\uFBFC", "\u06CC", "\uFBFD", "\u06CC", "\uFBFE", "\u06CC", "\uFBFF", "\u06CC", "\uFC00", "\u0626\u062C", "\uFC01", "\u0626\u062D", "\uFC02", "\u0626\u0645", "\uFC03", "\u0626\u0649", "\uFC04", "\u0626\u064A", "\uFC05", "\u0628\u062C", "\uFC06", "\u0628\u062D", "\uFC07", "\u0628\u062E", "\uFC08", "\u0628\u0645", "\uFC09", "\u0628\u0649", "\uFC0A", "\u0628\u064A", "\uFC0B", "\u062A\u062C", "\uFC0C", "\u062A\u062D", "\uFC0D", "\u062A\u062E", "\uFC0E", "\u062A\u0645", "\uFC0F", "\u062A\u0649", "\uFC10", "\u062A\u064A", "\uFC11", "\u062B\u062C", "\uFC12", "\u062B\u0645", "\uFC13", "\u062B\u0649", "\uFC14", "\u062B\u064A", "\uFC15", "\u062C\u062D", "\uFC16", "\u062C\u0645", "\uFC17", "\u062D\u062C", "\uFC18", "\u062D\u0645", "\uFC19", "\u062E\u062C", "\uFC1A", "\u062E\u062D", "\uFC1B", "\u062E\u0645", "\uFC1C", "\u0633\u062C", "\uFC1D", "\u0633\u062D", "\uFC1E", "\u0633\u062E", "\uFC1F", "\u0633\u0645", "\uFC20", "\u0635\u062D", "\uFC21", "\u0635\u0645", "\uFC22", "\u0636\u062C", "\uFC23", "\u0636\u062D", "\uFC24", "\u0636\u062E", "\uFC25", "\u0636\u0645", "\uFC26", "\u0637\u062D", "\uFC27", "\u0637\u0645", "\uFC28", "\u0638\u0645", "\uFC29", "\u0639\u062C", "\uFC2A", "\u0639\u0645", "\uFC2B", "\u063A\u062C", "\uFC2C", "\u063A\u0645", "\uFC2D", "\u0641\u062C", "\uFC2E", "\u0641\u062D", "\uFC2F", "\u0641\u062E", "\uFC30", "\u0641\u0645", "\uFC31", "\u0641\u0649", "\uFC32", "\u0641\u064A", "\uFC33", "\u0642\u062D", "\uFC34", "\u0642\u0645", "\uFC35", "\u0642\u0649", "\uFC36", "\u0642\u064A", "\uFC37", "\u0643\u0627", "\uFC38", "\u0643\u062C", "\uFC39", "\u0643\u062D", "\uFC3A", "\u0643\u062E", "\uFC3B", "\u0643\u0644", "\uFC3C", "\u0643\u0645", "\uFC3D", "\u0643\u0649", "\uFC3E", "\u0643\u064A", "\uFC3F", "\u0644\u062C", "\uFC40", "\u0644\u062D", "\uFC41", "\u0644\u062E", "\uFC42", "\u0644\u0645", "\uFC43", "\u0644\u0649", "\uFC44", "\u0644\u064A", "\uFC45", "\u0645\u062C", "\uFC46", "\u0645\u062D", "\uFC47", "\u0645\u062E", "\uFC48", "\u0645\u0645", "\uFC49", "\u0645\u0649", "\uFC4A", "\u0645\u064A", "\uFC4B", "\u0646\u062C", "\uFC4C", "\u0646\u062D", "\uFC4D", "\u0646\u062E", "\uFC4E", "\u0646\u0645", "\uFC4F", "\u0646\u0649", "\uFC50", "\u0646\u064A", "\uFC51", "\u0647\u062C", "\uFC52", "\u0647\u0645", "\uFC53", "\u0647\u0649", "\uFC54", "\u0647\u064A", "\uFC55", "\u064A\u062C", "\uFC56", "\u064A\u062D", "\uFC57", "\u064A\u062E", "\uFC58", "\u064A\u0645", "\uFC59", "\u064A\u0649", "\uFC5A", "\u064A\u064A", "\uFC5B", "\u0630\u0670", "\uFC5C", "\u0631\u0670", "\uFC5D", "\u0649\u0670", "\uFC5E", "\u0020\u064C\u0651", "\uFC5F", "\u0020\u064D\u0651", "\uFC60", "\u0020\u064E\u0651", "\uFC61", "\u0020\u064F\u0651", "\uFC62", "\u0020\u0650\u0651", "\uFC63", "\u0020\u0651\u0670", "\uFC64", "\u0626\u0631", "\uFC65", "\u0626\u0632", "\uFC66", "\u0626\u0645", "\uFC67", "\u0626\u0646", "\uFC68", "\u0626\u0649", "\uFC69", "\u0626\u064A", "\uFC6A", "\u0628\u0631", "\uFC6B", "\u0628\u0632", "\uFC6C", "\u0628\u0645", "\uFC6D", "\u0628\u0646", "\uFC6E", "\u0628\u0649", "\uFC6F", "\u0628\u064A", "\uFC70", "\u062A\u0631", "\uFC71", "\u062A\u0632", "\uFC72", "\u062A\u0645", "\uFC73", "\u062A\u0646", "\uFC74", "\u062A\u0649", "\uFC75", "\u062A\u064A", "\uFC76", "\u062B\u0631", "\uFC77", "\u062B\u0632", "\uFC78", "\u062B\u0645", "\uFC79", "\u062B\u0646", "\uFC7A", "\u062B\u0649", "\uFC7B", "\u062B\u064A", "\uFC7C", "\u0641\u0649", "\uFC7D", "\u0641\u064A", "\uFC7E", "\u0642\u0649", "\uFC7F", "\u0642\u064A", "\uFC80", "\u0643\u0627", "\uFC81", "\u0643\u0644", "\uFC82", "\u0643\u0645", "\uFC83", "\u0643\u0649", "\uFC84", "\u0643\u064A", "\uFC85", "\u0644\u0645", "\uFC86", "\u0644\u0649", "\uFC87", "\u0644\u064A", "\uFC88", "\u0645\u0627", "\uFC89", "\u0645\u0645", "\uFC8A", "\u0646\u0631", "\uFC8B", "\u0646\u0632", "\uFC8C", "\u0646\u0645", "\uFC8D", "\u0646\u0646", "\uFC8E", "\u0646\u0649", "\uFC8F", "\u0646\u064A", "\uFC90", "\u0649\u0670", "\uFC91", "\u064A\u0631", "\uFC92", "\u064A\u0632", "\uFC93", "\u064A\u0645", "\uFC94", "\u064A\u0646", "\uFC95", "\u064A\u0649", "\uFC96", "\u064A\u064A", "\uFC97", "\u0626\u062C", "\uFC98", "\u0626\u062D", "\uFC99", "\u0626\u062E", "\uFC9A", "\u0626\u0645", "\uFC9B", "\u0626\u0647", "\uFC9C", "\u0628\u062C", "\uFC9D", "\u0628\u062D", "\uFC9E", "\u0628\u062E", "\uFC9F", "\u0628\u0645", "\uFCA0", "\u0628\u0647", "\uFCA1", "\u062A\u062C", "\uFCA2", "\u062A\u062D", "\uFCA3", "\u062A\u062E", "\uFCA4", "\u062A\u0645", "\uFCA5", "\u062A\u0647", "\uFCA6", "\u062B\u0645", "\uFCA7", "\u062C\u062D", "\uFCA8", "\u062C\u0645", "\uFCA9", "\u062D\u062C", "\uFCAA", "\u062D\u0645", "\uFCAB", "\u062E\u062C", "\uFCAC", "\u062E\u0645", "\uFCAD", "\u0633\u062C", "\uFCAE", "\u0633\u062D", "\uFCAF", "\u0633\u062E", "\uFCB0", "\u0633\u0645", "\uFCB1", "\u0635\u062D", "\uFCB2", "\u0635\u062E", "\uFCB3", "\u0635\u0645", "\uFCB4", "\u0636\u062C", "\uFCB5", "\u0636\u062D", "\uFCB6", "\u0636\u062E", "\uFCB7", "\u0636\u0645", "\uFCB8", "\u0637\u062D", "\uFCB9", "\u0638\u0645", "\uFCBA", "\u0639\u062C", "\uFCBB", "\u0639\u0645", "\uFCBC", "\u063A\u062C", "\uFCBD", "\u063A\u0645", "\uFCBE", "\u0641\u062C", "\uFCBF", "\u0641\u062D", "\uFCC0", "\u0641\u062E", "\uFCC1", "\u0641\u0645", "\uFCC2", "\u0642\u062D", "\uFCC3", "\u0642\u0645", "\uFCC4", "\u0643\u062C", "\uFCC5", "\u0643\u062D", "\uFCC6", "\u0643\u062E", "\uFCC7", "\u0643\u0644", "\uFCC8", "\u0643\u0645", "\uFCC9", "\u0644\u062C", "\uFCCA", "\u0644\u062D", "\uFCCB", "\u0644\u062E", "\uFCCC", "\u0644\u0645", "\uFCCD", "\u0644\u0647", "\uFCCE", "\u0645\u062C", "\uFCCF", "\u0645\u062D", "\uFCD0", "\u0645\u062E", "\uFCD1", "\u0645\u0645", "\uFCD2", "\u0646\u062C", "\uFCD3", "\u0646\u062D", "\uFCD4", "\u0646\u062E", "\uFCD5", "\u0646\u0645", "\uFCD6", "\u0646\u0647", "\uFCD7", "\u0647\u062C", "\uFCD8", "\u0647\u0645", "\uFCD9", "\u0647\u0670", "\uFCDA", "\u064A\u062C", "\uFCDB", "\u064A\u062D", "\uFCDC", "\u064A\u062E", "\uFCDD", "\u064A\u0645", "\uFCDE", "\u064A\u0647", "\uFCDF", "\u0626\u0645", "\uFCE0", "\u0626\u0647", "\uFCE1", "\u0628\u0645", "\uFCE2", "\u0628\u0647", "\uFCE3", "\u062A\u0645", "\uFCE4", "\u062A\u0647", "\uFCE5", "\u062B\u0645", "\uFCE6", "\u062B\u0647", "\uFCE7", "\u0633\u0645", "\uFCE8", "\u0633\u0647", "\uFCE9", "\u0634\u0645", "\uFCEA", "\u0634\u0647", "\uFCEB", "\u0643\u0644", "\uFCEC", "\u0643\u0645", "\uFCED", "\u0644\u0645", "\uFCEE", "\u0646\u0645", "\uFCEF", "\u0646\u0647", "\uFCF0", "\u064A\u0645", "\uFCF1", "\u064A\u0647", "\uFCF2", "\u0640\u064E\u0651", "\uFCF3", "\u0640\u064F\u0651", "\uFCF4", "\u0640\u0650\u0651", "\uFCF5", "\u0637\u0649", "\uFCF6", "\u0637\u064A", "\uFCF7", "\u0639\u0649", "\uFCF8", "\u0639\u064A", "\uFCF9", "\u063A\u0649", "\uFCFA", "\u063A\u064A", "\uFCFB", "\u0633\u0649", "\uFCFC", "\u0633\u064A", "\uFCFD", "\u0634\u0649", "\uFCFE", "\u0634\u064A", "\uFCFF", "\u062D\u0649", "\uFD00", "\u062D\u064A", "\uFD01", "\u062C\u0649", "\uFD02", "\u062C\u064A", "\uFD03", "\u062E\u0649", "\uFD04", "\u062E\u064A", "\uFD05", "\u0635\u0649", "\uFD06", "\u0635\u064A", "\uFD07", "\u0636\u0649", "\uFD08", "\u0636\u064A", "\uFD09", "\u0634\u062C", "\uFD0A", "\u0634\u062D", "\uFD0B", "\u0634\u062E", "\uFD0C", "\u0634\u0645", "\uFD0D", "\u0634\u0631", "\uFD0E", "\u0633\u0631", "\uFD0F", "\u0635\u0631", "\uFD10", "\u0636\u0631", "\uFD11", "\u0637\u0649", "\uFD12", "\u0637\u064A", "\uFD13", "\u0639\u0649", "\uFD14", "\u0639\u064A", "\uFD15", "\u063A\u0649", "\uFD16", "\u063A\u064A", "\uFD17", "\u0633\u0649", "\uFD18", "\u0633\u064A", "\uFD19", "\u0634\u0649", "\uFD1A", "\u0634\u064A", "\uFD1B", "\u062D\u0649", "\uFD1C", "\u062D\u064A", "\uFD1D", "\u062C\u0649", "\uFD1E", "\u062C\u064A", "\uFD1F", "\u062E\u0649", "\uFD20", "\u062E\u064A", "\uFD21", "\u0635\u0649", "\uFD22", "\u0635\u064A", "\uFD23", "\u0636\u0649", "\uFD24", "\u0636\u064A", "\uFD25", "\u0634\u062C", "\uFD26", "\u0634\u062D", "\uFD27", "\u0634\u062E", "\uFD28", "\u0634\u0645", "\uFD29", "\u0634\u0631", "\uFD2A", "\u0633\u0631", "\uFD2B", "\u0635\u0631", "\uFD2C", "\u0636\u0631", "\uFD2D", "\u0634\u062C", "\uFD2E", "\u0634\u062D", "\uFD2F", "\u0634\u062E", "\uFD30", "\u0634\u0645", "\uFD31", "\u0633\u0647", "\uFD32", "\u0634\u0647", "\uFD33", "\u0637\u0645", "\uFD34", "\u0633\u062C", "\uFD35", "\u0633\u062D", "\uFD36", "\u0633\u062E", "\uFD37", "\u0634\u062C", "\uFD38", "\u0634\u062D", "\uFD39", "\u0634\u062E", "\uFD3A", "\u0637\u0645", "\uFD3B", "\u0638\u0645", "\uFD3C", "\u0627\u064B", "\uFD3D", "\u0627\u064B", "\uFD50", "\u062A\u062C\u0645", "\uFD51", "\u062A\u062D\u062C", "\uFD52", "\u062A\u062D\u062C", "\uFD53", "\u062A\u062D\u0645", "\uFD54", "\u062A\u062E\u0645", "\uFD55", "\u062A\u0645\u062C", "\uFD56", "\u062A\u0645\u062D", "\uFD57", "\u062A\u0645\u062E", "\uFD58", "\u062C\u0645\u062D", "\uFD59", "\u062C\u0645\u062D", "\uFD5A", "\u062D\u0645\u064A", "\uFD5B", "\u062D\u0645\u0649", "\uFD5C", "\u0633\u062D\u062C", "\uFD5D", "\u0633\u062C\u062D", "\uFD5E", "\u0633\u062C\u0649", "\uFD5F", "\u0633\u0645\u062D", "\uFD60", "\u0633\u0645\u062D", "\uFD61", "\u0633\u0645\u062C", "\uFD62", "\u0633\u0645\u0645", "\uFD63", "\u0633\u0645\u0645", "\uFD64", "\u0635\u062D\u062D", "\uFD65", "\u0635\u062D\u062D", "\uFD66", "\u0635\u0645\u0645", "\uFD67", "\u0634\u062D\u0645", "\uFD68", "\u0634\u062D\u0645", "\uFD69", "\u0634\u062C\u064A", "\uFD6A", "\u0634\u0645\u062E", "\uFD6B", "\u0634\u0645\u062E", "\uFD6C", "\u0634\u0645\u0645", "\uFD6D", "\u0634\u0645\u0645", "\uFD6E", "\u0636\u062D\u0649", "\uFD6F", "\u0636\u062E\u0645", "\uFD70", "\u0636\u062E\u0645", "\uFD71", "\u0637\u0645\u062D", "\uFD72", "\u0637\u0645\u062D", "\uFD73", "\u0637\u0645\u0645", "\uFD74", "\u0637\u0645\u064A", "\uFD75", "\u0639\u062C\u0645", "\uFD76", "\u0639\u0645\u0645", "\uFD77", "\u0639\u0645\u0645", "\uFD78", "\u0639\u0645\u0649", "\uFD79", "\u063A\u0645\u0645", "\uFD7A", "\u063A\u0645\u064A", "\uFD7B", "\u063A\u0645\u0649", "\uFD7C", "\u0641\u062E\u0645", "\uFD7D", "\u0641\u062E\u0645", "\uFD7E", "\u0642\u0645\u062D", "\uFD7F", "\u0642\u0645\u0645", "\uFD80", "\u0644\u062D\u0645", "\uFD81", "\u0644\u062D\u064A", "\uFD82", "\u0644\u062D\u0649", "\uFD83", "\u0644\u062C\u062C", "\uFD84", "\u0644\u062C\u062C", "\uFD85", "\u0644\u062E\u0645", "\uFD86", "\u0644\u062E\u0645", "\uFD87", "\u0644\u0645\u062D", "\uFD88", "\u0644\u0645\u062D", "\uFD89", "\u0645\u062D\u062C", "\uFD8A", "\u0645\u062D\u0645", "\uFD8B", "\u0645\u062D\u064A", "\uFD8C", "\u0645\u062C\u062D", "\uFD8D", "\u0645\u062C\u0645", "\uFD8E", "\u0645\u062E\u062C", "\uFD8F", "\u0645\u062E\u0645", "\uFD92", "\u0645\u062C\u062E", "\uFD93", "\u0647\u0645\u062C", "\uFD94", "\u0647\u0645\u0645", "\uFD95", "\u0646\u062D\u0645", "\uFD96", "\u0646\u062D\u0649", "\uFD97", "\u0646\u062C\u0645", "\uFD98", "\u0646\u062C\u0645", "\uFD99", "\u0646\u062C\u0649", "\uFD9A", "\u0646\u0645\u064A", "\uFD9B", "\u0646\u0645\u0649", "\uFD9C", "\u064A\u0645\u0645", "\uFD9D", "\u064A\u0645\u0645", "\uFD9E", "\u0628\u062E\u064A", "\uFD9F", "\u062A\u062C\u064A", "\uFDA0", "\u062A\u062C\u0649", "\uFDA1", "\u062A\u062E\u064A", "\uFDA2", "\u062A\u062E\u0649", "\uFDA3", "\u062A\u0645\u064A", "\uFDA4", "\u062A\u0645\u0649", "\uFDA5", "\u062C\u0645\u064A", "\uFDA6", "\u062C\u062D\u0649", "\uFDA7", "\u062C\u0645\u0649", "\uFDA8", "\u0633\u062E\u0649", "\uFDA9", "\u0635\u062D\u064A", "\uFDAA", "\u0634\u062D\u064A", "\uFDAB", "\u0636\u062D\u064A", "\uFDAC", "\u0644\u062C\u064A", "\uFDAD", "\u0644\u0645\u064A", "\uFDAE", "\u064A\u062D\u064A", "\uFDAF", "\u064A\u062C\u064A", "\uFDB0", "\u064A\u0645\u064A", "\uFDB1", "\u0645\u0645\u064A", "\uFDB2", "\u0642\u0645\u064A", "\uFDB3", "\u0646\u062D\u064A", "\uFDB4", "\u0642\u0645\u062D", "\uFDB5", "\u0644\u062D\u0645", "\uFDB6", "\u0639\u0645\u064A", "\uFDB7", "\u0643\u0645\u064A", "\uFDB8", "\u0646\u062C\u062D", "\uFDB9", "\u0645\u062E\u064A", "\uFDBA", "\u0644\u062C\u0645", "\uFDBB", "\u0643\u0645\u0645", "\uFDBC", "\u0644\u062C\u0645", "\uFDBD", "\u0646\u062C\u062D", "\uFDBE", "\u062C\u062D\u064A", "\uFDBF", "\u062D\u062C\u064A", "\uFDC0", "\u0645\u062C\u064A", "\uFDC1", "\u0641\u0645\u064A", "\uFDC2", "\u0628\u062D\u064A", "\uFDC3", "\u0643\u0645\u0645", "\uFDC4", "\u0639\u062C\u0645", "\uFDC5", "\u0635\u0645\u0645", "\uFDC6", "\u0633\u062E\u064A", "\uFDC7", "\u0646\u062C\u064A", "\uFE49", "\u203E", "\uFE4A", "\u203E", "\uFE4B", "\u203E", "\uFE4C", "\u203E", "\uFE4D", "\u005F", "\uFE4E", "\u005F", "\uFE4F", "\u005F", "\uFE80", "\u0621", "\uFE81", "\u0622", "\uFE82", "\u0622", "\uFE83", "\u0623", "\uFE84", "\u0623", "\uFE85", "\u0624", "\uFE86", "\u0624", "\uFE87", "\u0625", "\uFE88", "\u0625", "\uFE89", "\u0626", "\uFE8A", "\u0626", "\uFE8B", "\u0626", "\uFE8C", "\u0626", "\uFE8D", "\u0627", "\uFE8E", "\u0627", "\uFE8F", "\u0628", "\uFE90", "\u0628", "\uFE91", "\u0628", "\uFE92", "\u0628", "\uFE93", "\u0629", "\uFE94", "\u0629", "\uFE95", "\u062A", "\uFE96", "\u062A", "\uFE97", "\u062A", "\uFE98", "\u062A", "\uFE99", "\u062B", "\uFE9A", "\u062B", "\uFE9B", "\u062B", "\uFE9C", "\u062B", "\uFE9D", "\u062C", "\uFE9E", "\u062C", "\uFE9F", "\u062C", "\uFEA0", "\u062C", "\uFEA1", "\u062D", "\uFEA2", "\u062D", "\uFEA3", "\u062D", "\uFEA4", "\u062D", "\uFEA5", "\u062E", "\uFEA6", "\u062E", "\uFEA7", "\u062E", "\uFEA8", "\u062E", "\uFEA9", "\u062F", "\uFEAA", "\u062F", "\uFEAB", "\u0630", "\uFEAC", "\u0630", "\uFEAD", "\u0631", "\uFEAE", "\u0631", "\uFEAF", "\u0632", "\uFEB0", "\u0632", "\uFEB1", "\u0633", "\uFEB2", "\u0633", "\uFEB3", "\u0633", "\uFEB4", "\u0633", "\uFEB5", "\u0634", "\uFEB6", "\u0634", "\uFEB7", "\u0634", "\uFEB8", "\u0634", "\uFEB9", "\u0635", "\uFEBA", "\u0635", "\uFEBB", "\u0635", "\uFEBC", "\u0635", "\uFEBD", "\u0636", "\uFEBE", "\u0636", "\uFEBF", "\u0636", "\uFEC0", "\u0636", "\uFEC1", "\u0637", "\uFEC2", "\u0637", "\uFEC3", "\u0637", "\uFEC4", "\u0637", "\uFEC5", "\u0638", "\uFEC6", "\u0638", "\uFEC7", "\u0638", "\uFEC8", "\u0638", "\uFEC9", "\u0639", "\uFECA", "\u0639", "\uFECB", "\u0639", "\uFECC", "\u0639", "\uFECD", "\u063A", "\uFECE", "\u063A", "\uFECF", "\u063A", "\uFED0", "\u063A", "\uFED1", "\u0641", "\uFED2", "\u0641", "\uFED3", "\u0641", "\uFED4", "\u0641", "\uFED5", "\u0642", "\uFED6", "\u0642", "\uFED7", "\u0642", "\uFED8", "\u0642", "\uFED9", "\u0643", "\uFEDA", "\u0643", "\uFEDB", "\u0643", "\uFEDC", "\u0643", "\uFEDD", "\u0644", "\uFEDE", "\u0644", "\uFEDF", "\u0644", "\uFEE0", "\u0644", "\uFEE1", "\u0645", "\uFEE2", "\u0645", "\uFEE3", "\u0645", "\uFEE4", "\u0645", "\uFEE5", "\u0646", "\uFEE6", "\u0646", "\uFEE7", "\u0646", "\uFEE8", "\u0646", "\uFEE9", "\u0647", "\uFEEA", "\u0647", "\uFEEB", "\u0647", "\uFEEC", "\u0647", "\uFEED", "\u0648", "\uFEEE", "\u0648", "\uFEEF", "\u0649", "\uFEF0", "\u0649", "\uFEF1", "\u064A", "\uFEF2", "\u064A", "\uFEF3", "\u064A", "\uFEF4", "\u064A", "\uFEF5", "\u0644\u0622", "\uFEF6", "\u0644\u0622", "\uFEF7", "\u0644\u0623", "\uFEF8", "\u0644\u0623", "\uFEF9", "\u0644\u0625", "\uFEFA", "\u0644\u0625", "\uFEFB", "\u0644\u0627", "\uFEFC", "\u0644\u0627"];
+});
+exports.getNormalizedUnicodes = getNormalizedUnicodes;
+
+function reverseIfRtl(chars) {
+  const charsLength = chars.length;
+
+  if (charsLength <= 1 || !isRTLRangeFor(chars.charCodeAt(0))) {
+    return chars;
+  }
+
+  const buf = [];
+
+  for (let ii = charsLength - 1; ii >= 0; ii--) {
+    buf.push(chars[ii]);
+  }
+
+  return buf.join("");
+}
+
+/***/ }),
+/* 22 */
+/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
+
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
 exports.getQuadPoints = getQuadPoints;
 exports.MarkupAnnotation = exports.AnnotationFactory = exports.AnnotationBorderStyle = exports.Annotation = void 0;
 
@@ -4574,23 +5900,23 @@ var _util = __w_pdfjs_require__(2);
 
 var _core_utils = __w_pdfjs_require__(9);
 
-var _default_appearance = __w_pdfjs_require__(13);
+var _default_appearance = __w_pdfjs_require__(23);
 
 var _primitives = __w_pdfjs_require__(5);
 
-var _catalog = __w_pdfjs_require__(57);
+var _catalog = __w_pdfjs_require__(64);
 
-var _colorspace = __w_pdfjs_require__(14);
+var _colorspace = __w_pdfjs_require__(24);
 
-var _file_spec = __w_pdfjs_require__(59);
+var _file_spec = __w_pdfjs_require__(66);
 
-var _object_loader = __w_pdfjs_require__(63);
+var _object_loader = __w_pdfjs_require__(70);
 
-var _operator_list = __w_pdfjs_require__(55);
+var _operator_list = __w_pdfjs_require__(62);
 
 var _stream = __w_pdfjs_require__(10);
 
-var _writer = __w_pdfjs_require__(64);
+var _writer = __w_pdfjs_require__(71);
 
 class AnnotationFactory {
   static create(xref, ref, pdfManager, idFactory, collectFields) {
@@ -4891,14 +6217,24 @@ class Annotation {
     return this._hasFlag(flags, _util.AnnotationFlag.PRINT) && !this._hasFlag(flags, _util.AnnotationFlag.INVISIBLE);
   }
 
-  isHidden(annotationStorage) {
+  mustBeViewed(annotationStorage) {
     const storageEntry = annotationStorage && annotationStorage.get(this.data.id);
 
     if (storageEntry && storageEntry.hidden !== undefined) {
-      return storageEntry.hidden;
+      return !storageEntry.hidden;
     }
 
-    return this._hasFlag(this.flags, _util.AnnotationFlag.HIDDEN);
+    return this.viewable && !this._hasFlag(this.flags, _util.AnnotationFlag.HIDDEN);
+  }
+
+  mustBePrinted(annotationStorage) {
+    const storageEntry = annotationStorage && annotationStorage.get(this.data.id);
+
+    if (storageEntry && storageEntry.print !== undefined) {
+      return storageEntry.print;
+    }
+
+    return this.printable;
   }
 
   get viewable() {
@@ -5041,7 +6377,7 @@ class Annotation {
     const transform = getTransformMatrix(data.rect, bbox, matrix);
     return resourcesPromise.then(resources => {
       const opList = new _operator_list.OperatorList();
-      opList.addOp(_util.OPS.beginAnnotation, [data.rect, transform, matrix]);
+      opList.addOp(_util.OPS.beginAnnotation, [data.id, data.rect, transform, matrix]);
       return evaluator.getOperatorList({
         stream: appearance,
         task,
@@ -5292,6 +6628,8 @@ class MarkupAnnotation extends Annotation {
     strokeColor,
     fillColor,
     blendMode,
+    strokeAlpha,
+    fillAlpha,
     pointsCallback
   }) {
     let minX = Number.MAX_VALUE;
@@ -5349,6 +6687,14 @@ class MarkupAnnotation extends Annotation {
 
     if (blendMode) {
       gsDict.set("BM", _primitives.Name.get(blendMode));
+    }
+
+    if (typeof strokeAlpha === "number") {
+      gsDict.set("CA", strokeAlpha);
+    }
+
+    if (typeof fillAlpha === "number") {
+      gsDict.set("ca", fillAlpha);
     }
 
     const stateDict = new _primitives.Dict(xref);
@@ -5478,7 +6824,7 @@ class WidgetAnnotation extends Annotation {
       const matrix = [1, 0, 0, 1, 0, 0];
       const bbox = [0, 0, this.data.rect[2] - this.data.rect[0], this.data.rect[3] - this.data.rect[1]];
       const transform = getTransformMatrix(this.data.rect, bbox, matrix);
-      operatorList.addOp(_util.OPS.beginAnnotation, [this.data.rect, transform, matrix]);
+      operatorList.addOp(_util.OPS.beginAnnotation, [this.data.id, this.data.rect, transform, matrix]);
       const stream = new _stream.StringStream(content);
       return evaluator.getOperatorList({
         stream,
@@ -5550,9 +6896,7 @@ class WidgetAnnotation extends Annotation {
     bufferOriginal.push("\nendobj\n");
     const bufferNew = [`${newRef.num} ${newRef.gen} obj\n`];
     (0, _writer.writeDict)(appearanceDict, bufferNew, newTransform);
-    bufferNew.push(" stream\n");
-    bufferNew.push(appearance);
-    bufferNew.push("\nendstream\nendobj\n");
+    bufferNew.push(" stream\n", appearance, "\nendstream\nendobj\n");
     return [{
       ref: this.ref,
       data: bufferOriginal.join(""),
@@ -6119,6 +7463,10 @@ class ButtonWidgetAnnotation extends WidgetAnnotation {
       exportValues.push("Off");
     }
 
+    if (!exportValues.includes(this.data.fieldValue)) {
+      this.data.fieldValue = null;
+    }
+
     if (exportValues.length !== 2) {
       return;
     }
@@ -6424,20 +7772,33 @@ class LineAnnotation extends MarkupAnnotation {
 
     if (!this.appearance) {
       const strokeColor = this.color ? Array.from(this.color).map(c => c / 255) : [0, 0, 0];
-      const borderWidth = this.borderStyle.width;
+      const strokeAlpha = parameters.dict.get("CA");
+      let fillColor = null,
+          interiorColor = parameters.dict.getArray("IC");
 
-      if ((0, _util.isArrayEqual)(this.rectangle, [0, 0, 0, 0])) {
-        this.rectangle = [this.data.lineCoordinates[0] - 2 * borderWidth, this.data.lineCoordinates[1] - 2 * borderWidth, this.data.lineCoordinates[2] + 2 * borderWidth, this.data.lineCoordinates[3] + 2 * borderWidth];
+      if (interiorColor) {
+        interiorColor = getRgbColor(interiorColor);
+        fillColor = interiorColor ? Array.from(interiorColor).map(c => c / 255) : null;
+      }
+
+      const fillAlpha = fillColor ? strokeAlpha : null;
+      const borderWidth = this.borderStyle.width || 1,
+            borderAdjust = 2 * borderWidth;
+      const bbox = [this.data.lineCoordinates[0] - borderAdjust, this.data.lineCoordinates[1] - borderAdjust, this.data.lineCoordinates[2] + borderAdjust, this.data.lineCoordinates[3] + borderAdjust];
+
+      if (!_util.Util.intersect(this.rectangle, bbox)) {
+        this.rectangle = bbox;
       }
 
       this._setDefaultAppearance({
         xref: parameters.xref,
         extra: `${borderWidth} w`,
         strokeColor,
+        fillColor,
+        strokeAlpha,
+        fillAlpha,
         pointsCallback: (buffer, points) => {
-          buffer.push(`${lineCoordinates[0]} ${lineCoordinates[1]} m`);
-          buffer.push(`${lineCoordinates[2]} ${lineCoordinates[3]} l`);
-          buffer.push("S");
+          buffer.push(`${lineCoordinates[0]} ${lineCoordinates[1]} m`, `${lineCoordinates[2]} ${lineCoordinates[3]} l`, "S");
           return [points[0].x - borderWidth, points[1].x + borderWidth, points[3].y - borderWidth, points[1].y + borderWidth];
         }
       });
@@ -6453,19 +7814,24 @@ class SquareAnnotation extends MarkupAnnotation {
 
     if (!this.appearance) {
       const strokeColor = this.color ? Array.from(this.color).map(c => c / 255) : [0, 0, 0];
-      let fillColor = null;
-      let interiorColor = parameters.dict.getArray("IC");
+      const strokeAlpha = parameters.dict.get("CA");
+      let fillColor = null,
+          interiorColor = parameters.dict.getArray("IC");
 
       if (interiorColor) {
         interiorColor = getRgbColor(interiorColor);
         fillColor = interiorColor ? Array.from(interiorColor).map(c => c / 255) : null;
       }
 
+      const fillAlpha = fillColor ? strokeAlpha : null;
+
       this._setDefaultAppearance({
         xref: parameters.xref,
         extra: `${this.borderStyle.width} w`,
         strokeColor,
         fillColor,
+        strokeAlpha,
+        fillAlpha,
         pointsCallback: (buffer, points) => {
           const x = points[2].x + this.borderStyle.width / 2;
           const y = points[2].y + this.borderStyle.width / 2;
@@ -6494,6 +7860,7 @@ class CircleAnnotation extends MarkupAnnotation {
 
     if (!this.appearance) {
       const strokeColor = this.color ? Array.from(this.color).map(c => c / 255) : [0, 0, 0];
+      const strokeAlpha = parameters.dict.get("CA");
       let fillColor = null;
       let interiorColor = parameters.dict.getArray("IC");
 
@@ -6502,6 +7869,7 @@ class CircleAnnotation extends MarkupAnnotation {
         fillColor = interiorColor ? Array.from(interiorColor).map(c => c / 255) : null;
       }
 
+      const fillAlpha = fillColor ? strokeAlpha : null;
       const controlPointsDistance = 4 / 3 * Math.tan(Math.PI / (2 * 4));
 
       this._setDefaultAppearance({
@@ -6509,6 +7877,8 @@ class CircleAnnotation extends MarkupAnnotation {
         extra: `${this.borderStyle.width} w`,
         strokeColor,
         fillColor,
+        strokeAlpha,
+        fillAlpha,
         pointsCallback: (buffer, points) => {
           const x0 = points[0].x + this.borderStyle.width / 2;
           const y0 = points[0].y - this.borderStyle.width / 2;
@@ -6518,12 +7888,7 @@ class CircleAnnotation extends MarkupAnnotation {
           const yMid = y0 + (y1 - y0) / 2;
           const xOffset = (x1 - x0) / 2 * controlPointsDistance;
           const yOffset = (y1 - y0) / 2 * controlPointsDistance;
-          buffer.push(`${xMid} ${y1} m`);
-          buffer.push(`${xMid + xOffset} ${y1} ${x1} ${yMid + yOffset} ${x1} ${yMid} c`);
-          buffer.push(`${x1} ${yMid - yOffset} ${xMid + xOffset} ${y0} ${xMid} ${y0} c`);
-          buffer.push(`${xMid - xOffset} ${y0} ${x0} ${yMid - yOffset} ${x0} ${yMid} c`);
-          buffer.push(`${x0} ${yMid + yOffset} ${xMid - xOffset} ${y1} ${xMid} ${y1} c`);
-          buffer.push("h");
+          buffer.push(`${xMid} ${y1} m`, `${xMid + xOffset} ${y1} ${x1} ${yMid + yOffset} ${x1} ${yMid} c`, `${x1} ${yMid - yOffset} ${xMid + xOffset} ${y0} ${xMid} ${y0} c`, `${xMid - xOffset} ${y0} ${x0} ${yMid - yOffset} ${x0} ${yMid} c`, `${x0} ${yMid + yOffset} ${xMid - xOffset} ${y1} ${xMid} ${y1} c`, "h");
 
           if (fillColor) {
             buffer.push("B");
@@ -6559,12 +7924,27 @@ class PolylineAnnotation extends MarkupAnnotation {
 
     if (!this.appearance) {
       const strokeColor = this.color ? Array.from(this.color).map(c => c / 255) : [0, 0, 0];
-      const borderWidth = this.borderStyle.width || 1;
+      const strokeAlpha = parameters.dict.get("CA");
+      const borderWidth = this.borderStyle.width || 1,
+            borderAdjust = 2 * borderWidth;
+      const bbox = [Infinity, Infinity, -Infinity, -Infinity];
+
+      for (const vertex of this.data.vertices) {
+        bbox[0] = Math.min(bbox[0], vertex.x - borderAdjust);
+        bbox[1] = Math.min(bbox[1], vertex.y - borderAdjust);
+        bbox[2] = Math.max(bbox[2], vertex.x + borderAdjust);
+        bbox[3] = Math.max(bbox[3], vertex.y + borderAdjust);
+      }
+
+      if (!_util.Util.intersect(this.rectangle, bbox)) {
+        this.rectangle = bbox;
+      }
 
       this._setDefaultAppearance({
         xref: parameters.xref,
         extra: `${borderWidth} w`,
         strokeColor,
+        strokeAlpha,
         pointsCallback: (buffer, points) => {
           const vertices = this.data.vertices;
 
@@ -6623,12 +8003,29 @@ class InkAnnotation extends MarkupAnnotation {
 
     if (!this.appearance) {
       const strokeColor = this.color ? Array.from(this.color).map(c => c / 255) : [0, 0, 0];
-      const borderWidth = this.borderStyle.width || 1;
+      const strokeAlpha = parameters.dict.get("CA");
+      const borderWidth = this.borderStyle.width || 1,
+            borderAdjust = 2 * borderWidth;
+      const bbox = [Infinity, Infinity, -Infinity, -Infinity];
+
+      for (const inkLists of this.data.inkLists) {
+        for (const vertex of inkLists) {
+          bbox[0] = Math.min(bbox[0], vertex.x - borderAdjust);
+          bbox[1] = Math.min(bbox[1], vertex.y - borderAdjust);
+          bbox[2] = Math.max(bbox[2], vertex.x + borderAdjust);
+          bbox[3] = Math.max(bbox[3], vertex.y + borderAdjust);
+        }
+      }
+
+      if (!_util.Util.intersect(this.rectangle, bbox)) {
+        this.rectangle = bbox;
+      }
 
       this._setDefaultAppearance({
         xref: parameters.xref,
         extra: `${borderWidth} w`,
         strokeColor,
+        strokeAlpha,
         pointsCallback: (buffer, points) => {
           for (const inkList of this.data.inkLists) {
             for (let i = 0, ii = inkList.length; i < ii; i++) {
@@ -6653,19 +8050,23 @@ class HighlightAnnotation extends MarkupAnnotation {
     const quadPoints = this.data.quadPoints = getQuadPoints(parameters.dict, null);
 
     if (quadPoints) {
-      if (!this.appearance) {
+      const resources = this.appearance && this.appearance.dict.get("Resources");
+
+      if (!this.appearance || !(resources && resources.has("ExtGState"))) {
+        if (this.appearance) {
+          (0, _util.warn)("HighlightAnnotation - ignoring built-in appearance stream.");
+        }
+
         const fillColor = this.color ? Array.from(this.color).map(c => c / 255) : [1, 1, 0];
+        const fillAlpha = parameters.dict.get("CA");
 
         this._setDefaultAppearance({
           xref: parameters.xref,
           fillColor,
           blendMode: "Multiply",
+          fillAlpha,
           pointsCallback: (buffer, points) => {
-            buffer.push(`${points[0].x} ${points[0].y} m`);
-            buffer.push(`${points[1].x} ${points[1].y} l`);
-            buffer.push(`${points[3].x} ${points[3].y} l`);
-            buffer.push(`${points[2].x} ${points[2].y} l`);
-            buffer.push("f");
+            buffer.push(`${points[0].x} ${points[0].y} m`, `${points[1].x} ${points[1].y} l`, `${points[3].x} ${points[3].y} l`, `${points[2].x} ${points[2].y} l`, "f");
             return [points[0].x, points[1].x, points[3].y, points[1].y];
           }
         });
@@ -6686,15 +8087,15 @@ class UnderlineAnnotation extends MarkupAnnotation {
     if (quadPoints) {
       if (!this.appearance) {
         const strokeColor = this.color ? Array.from(this.color).map(c => c / 255) : [0, 0, 0];
+        const strokeAlpha = parameters.dict.get("CA");
 
         this._setDefaultAppearance({
           xref: parameters.xref,
           extra: "[] 0 d 1 w",
           strokeColor,
+          strokeAlpha,
           pointsCallback: (buffer, points) => {
-            buffer.push(`${points[2].x} ${points[2].y} m`);
-            buffer.push(`${points[3].x} ${points[3].y} l`);
-            buffer.push("S");
+            buffer.push(`${points[2].x} ${points[2].y} m`, `${points[3].x} ${points[3].y} l`, "S");
             return [points[0].x, points[1].x, points[3].y, points[1].y];
           }
         });
@@ -6715,11 +8116,13 @@ class SquigglyAnnotation extends MarkupAnnotation {
     if (quadPoints) {
       if (!this.appearance) {
         const strokeColor = this.color ? Array.from(this.color).map(c => c / 255) : [0, 0, 0];
+        const strokeAlpha = parameters.dict.get("CA");
 
         this._setDefaultAppearance({
           xref: parameters.xref,
           extra: "[] 0 d 1 w",
           strokeColor,
+          strokeAlpha,
           pointsCallback: (buffer, points) => {
             const dy = (points[0].y - points[2].y) / 6;
             let shift = dy;
@@ -6755,15 +8158,15 @@ class StrikeOutAnnotation extends MarkupAnnotation {
     if (quadPoints) {
       if (!this.appearance) {
         const strokeColor = this.color ? Array.from(this.color).map(c => c / 255) : [0, 0, 0];
+        const strokeAlpha = parameters.dict.get("CA");
 
         this._setDefaultAppearance({
           xref: parameters.xref,
           extra: "[] 0 d 1 w",
           strokeColor,
+          strokeAlpha,
           pointsCallback: (buffer, points) => {
-            buffer.push(`${(points[0].x + points[2].x) / 2}` + ` ${(points[0].y + points[2].y) / 2} m`);
-            buffer.push(`${(points[1].x + points[3].x) / 2}` + ` ${(points[1].y + points[3].y) / 2} l`);
-            buffer.push("S");
+            buffer.push(`${(points[0].x + points[2].x) / 2} ` + `${(points[0].y + points[2].y) / 2} m`, `${(points[1].x + points[3].x) / 2} ` + `${(points[1].y + points[3].y) / 2} l`, "S");
             return [points[0].x, points[1].x, points[3].y, points[1].y];
           }
         });
@@ -6794,7 +8197,7 @@ class FileAttachmentAnnotation extends MarkupAnnotation {
 }
 
 /***/ }),
-/* 13 */
+/* 23 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -6807,11 +8210,11 @@ exports.parseDefaultAppearance = parseDefaultAppearance;
 
 var _util = __w_pdfjs_require__(2);
 
-var _colorspace = __w_pdfjs_require__(14);
+var _colorspace = __w_pdfjs_require__(24);
 
 var _core_utils = __w_pdfjs_require__(9);
 
-var _evaluator = __w_pdfjs_require__(15);
+var _evaluator = __w_pdfjs_require__(25);
 
 var _primitives = __w_pdfjs_require__(5);
 
@@ -6910,7 +8313,7 @@ function createDefaultAppearance({
 }
 
 /***/ }),
-/* 14 */
+/* 24 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -7977,7 +9380,7 @@ const LabCS = function LabCSClosure() {
 }();
 
 /***/ }),
-/* 15 */
+/* 25 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -7989,56 +9392,61 @@ exports.PartialEvaluator = exports.EvaluatorPreprocessor = void 0;
 
 var _util = __w_pdfjs_require__(2);
 
-var _cmap = __w_pdfjs_require__(16);
+var _cmap = __w_pdfjs_require__(26);
 
 var _primitives = __w_pdfjs_require__(5);
 
-var _fonts = __w_pdfjs_require__(34);
+var _fonts = __w_pdfjs_require__(44);
 
-var _fonts_utils = __w_pdfjs_require__(38);
+var _fonts_utils = __w_pdfjs_require__(18);
 
-var _encodings = __w_pdfjs_require__(37);
+var _encodings = __w_pdfjs_require__(19);
 
-var _unicode = __w_pdfjs_require__(40);
+var _standard_fonts = __w_pdfjs_require__(47);
 
-var _standard_fonts = __w_pdfjs_require__(41);
+var _unicode = __w_pdfjs_require__(21);
 
-var _pattern = __w_pdfjs_require__(48);
+var _pattern = __w_pdfjs_require__(55);
 
-var _to_unicode_map = __w_pdfjs_require__(42);
+var _xfa_fonts = __w_pdfjs_require__(12);
 
-var _function = __w_pdfjs_require__(49);
+var _to_unicode_map = __w_pdfjs_require__(48);
 
-var _parser = __w_pdfjs_require__(17);
+var _function = __w_pdfjs_require__(56);
 
-var _image_utils = __w_pdfjs_require__(51);
+var _parser = __w_pdfjs_require__(27);
 
-var _bidi = __w_pdfjs_require__(52);
-
-var _colorspace = __w_pdfjs_require__(14);
-
-var _decode_stream = __w_pdfjs_require__(19);
-
-var _glyphlist = __w_pdfjs_require__(39);
-
-var _core_utils = __w_pdfjs_require__(9);
-
-var _metrics = __w_pdfjs_require__(53);
-
-var _murmurhash = __w_pdfjs_require__(54);
+var _image_utils = __w_pdfjs_require__(58);
 
 var _stream = __w_pdfjs_require__(10);
 
-var _operator_list = __w_pdfjs_require__(55);
+var _bidi = __w_pdfjs_require__(59);
 
-var _image = __w_pdfjs_require__(56);
+var _colorspace = __w_pdfjs_require__(24);
+
+var _decode_stream = __w_pdfjs_require__(29);
+
+var _glyphlist = __w_pdfjs_require__(20);
+
+var _core_utils = __w_pdfjs_require__(9);
+
+var _metrics = __w_pdfjs_require__(60);
+
+var _murmurhash = __w_pdfjs_require__(61);
+
+var _operator_list = __w_pdfjs_require__(62);
+
+var _image = __w_pdfjs_require__(63);
 
 const DefaultPartialEvaluatorOptions = Object.freeze({
   maxImageSize: -1,
   disableFontFace: false,
   ignoreErrors: false,
   isEvalSupported: true,
-  fontExtraProperties: false
+  fontExtraProperties: false,
+  useSystemFonts: true,
+  cMapUrl: null,
+  standardFontDataUrl: null
 });
 const PatternType = {
   TILING: 1,
@@ -8164,6 +9572,7 @@ class PartialEvaluator {
     idFactory,
     fontCache,
     builtInCMapCache,
+    standardFontDataCache,
     globalImageCache,
     options = null
   }) {
@@ -8173,6 +9582,7 @@ class PartialEvaluator {
     this.idFactory = idFactory;
     this.fontCache = fontCache;
     this.builtInCMapCache = builtInCMapCache;
+    this.standardFontDataCache = standardFontDataCache;
     this.globalImageCache = globalImageCache;
     this.options = options || DefaultPartialEvaluatorOptions;
     this.parsingType3Font = false;
@@ -8187,9 +9597,9 @@ class PartialEvaluator {
     return (0, _util.shadow)(this, "_pdfFunctionFactory", pdfFunctionFactory);
   }
 
-  clone(newOptions = DefaultPartialEvaluatorOptions) {
+  clone(newOptions = null) {
     const newEvaluator = Object.create(this);
-    newEvaluator.options = newOptions;
+    newEvaluator.options = Object.assign(Object.create(null), this.options, newOptions);
     return newEvaluator;
   }
 
@@ -8319,33 +9729,73 @@ class PartialEvaluator {
       return cachedData;
     }
 
-    const readableStream = this.handler.sendWithStream("FetchBuiltInCMap", {
-      name
-    });
-    const reader = readableStream.getReader();
-    const data = await new Promise(function (resolve, reject) {
-      function pump() {
-        reader.read().then(function ({
-          value,
-          done
-        }) {
-          if (done) {
-            return;
-          }
+    let data;
 
-          resolve(value);
-          pump();
-        }, reject);
+    if (this.options.cMapUrl !== null) {
+      const url = `${this.options.cMapUrl}${name}.bcmap`;
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        throw new Error(`fetchBuiltInCMap: failed to fetch file "${url}" with "${response.statusText}".`);
       }
 
-      pump();
-    });
+      data = {
+        cMapData: new Uint8Array(await response.arrayBuffer()),
+        compressionType: _util.CMapCompressionType.BINARY
+      };
+    } else {
+      data = await this.handler.sendWithPromise("FetchBuiltInCMap", {
+        name
+      });
+    }
 
     if (data.compressionType !== _util.CMapCompressionType.NONE) {
       this.builtInCMapCache.set(name, data);
     }
 
     return data;
+  }
+
+  async fetchStandardFontData(name) {
+    const cachedData = this.standardFontDataCache.get(name);
+
+    if (cachedData) {
+      return new _stream.Stream(cachedData);
+    }
+
+    if (this.options.useSystemFonts && name !== "Symbol" && name !== "ZapfDingbats") {
+      return null;
+    }
+
+    const standardFontNameToFileName = (0, _standard_fonts.getFontNameToFileMap)(),
+          filename = standardFontNameToFileName[name];
+    let data;
+
+    if (this.options.standardFontDataUrl !== null) {
+      const url = `${this.options.standardFontDataUrl}${filename}`;
+      const response = await fetch(url);
+
+      if (!response.ok) {
+        (0, _util.warn)(`fetchStandardFontData: failed to fetch file "${url}" with "${response.statusText}".`);
+      } else {
+        data = await response.arrayBuffer();
+      }
+    } else {
+      try {
+        data = await this.handler.sendWithPromise("FetchStandardFontData", {
+          filename
+        });
+      } catch (e) {
+        (0, _util.warn)(`fetchStandardFontData: failed to fetch file "${filename}" with "${e}".`);
+      }
+    }
+
+    if (!data) {
+      return null;
+    }
+
+    this.standardFontDataCache.set(name, data);
+    return new _stream.Stream(data);
   }
 
   async buildFormXObject(resources, xobj, smask, operatorList, task, initialState, localColorSpaceCache) {
@@ -8359,7 +9809,8 @@ class PartialEvaluator {
       bbox = null;
     }
 
-    let optionalContent = null;
+    let optionalContent = null,
+        groupOptions;
 
     if (dict.has("OC")) {
       optionalContent = await this.parseMarkedContentProps(dict.get("OC"), resources);
@@ -8369,7 +9820,7 @@ class PartialEvaluator {
     const group = dict.get("Group");
 
     if (group) {
-      var groupOptions = {
+      groupOptions = {
         matrix,
         bbox,
         smask,
@@ -8712,7 +10163,7 @@ class PartialEvaluator {
           loadedName: "g_font_error",
           font: new _fonts.ErrorFont(`Type3 font load error: ${reason}`),
           dict: translated.font,
-          extraProperties: this.options.fontExtraProperties
+          evaluatorOptions: this.options
         });
       });
     }).then(translated => {
@@ -8730,7 +10181,7 @@ class PartialEvaluator {
       const isAddToPathSet = !!(state.textRenderingMode & _util.TextRenderingMode.ADD_TO_PATH_FLAG);
 
       if (isAddToPathSet || state.fillColorSpace.name === "Pattern" || font.disableFontFace || this.options.disableFontFace) {
-        PartialEvaluator.buildFontPaths(font, glyphs, this.handler);
+        PartialEvaluator.buildFontPaths(font, glyphs, this.handler, this.options);
       }
     }
 
@@ -8867,7 +10318,7 @@ class PartialEvaluator {
         loadedName: "g_font_error",
         font: new _fonts.ErrorFont(`Font "${fontName}" is not available.`),
         dict: font,
-        extraProperties: this.options.fontExtraProperties
+        evaluatorOptions: this.options
       });
     };
 
@@ -8994,7 +10445,7 @@ class PartialEvaluator {
         loadedName: font.loadedName,
         font: translatedFont,
         dict: font,
-        extraProperties: this.options.fontExtraProperties
+        evaluatorOptions: this.options
       }));
     }).catch(reason => {
       this.handler.send("UnsupportedFeature", {
@@ -9014,7 +10465,7 @@ class PartialEvaluator {
         loadedName: font.loadedName,
         font: new _fonts.ErrorFont(reason instanceof Error ? reason.message : reason),
         dict: font,
-        extraProperties: this.options.fontExtraProperties
+        evaluatorOptions: this.options
       }));
     });
     return fontCapability.promise;
@@ -9073,7 +10524,27 @@ class PartialEvaluator {
     });
   }
 
-  handleColorN(operatorList, fn, args, cs, patterns, resources, task, localColorSpaceCache, localTilingPatternCache) {
+  parseShading({
+    shading,
+    resources,
+    localColorSpaceCache,
+    localShadingPatternCache
+  }) {
+    let id = localShadingPatternCache.get(shading);
+
+    if (!id) {
+      var shadingFill = _pattern.Pattern.parseShading(shading, this.xref, resources, this.handler, this._pdfFunctionFactory, localColorSpaceCache);
+
+      const patternIR = shadingFill.getIR();
+      id = `pattern_${this.idFactory.createObjId()}`;
+      localShadingPatternCache.set(shading, id);
+      this.handler.send("obj", [id, this.pageIndex, "Pattern", patternIR]);
+    }
+
+    return id;
+  }
+
+  handleColorN(operatorList, fn, args, cs, patterns, resources, task, localColorSpaceCache, localTilingPatternCache, localShadingPatternCache) {
     const patternName = args.pop();
 
     if (patternName instanceof _primitives.Name) {
@@ -9089,7 +10560,7 @@ class PartialEvaluator {
         } catch (ex) {}
       }
 
-      let pattern = patterns.get(name);
+      const pattern = patterns.get(name);
 
       if (pattern) {
         const dict = (0, _primitives.isStream)(pattern) ? pattern.dict : pattern;
@@ -9101,8 +10572,13 @@ class PartialEvaluator {
         } else if (typeNum === PatternType.SHADING) {
           const shading = dict.get("Shading");
           const matrix = dict.getArray("Matrix");
-          pattern = _pattern.Pattern.parseShading(shading, matrix, this.xref, resources, this.handler, this._pdfFunctionFactory, localColorSpaceCache);
-          operatorList.addOp(fn, pattern.getIR());
+          const objId = this.parseShading({
+            shading,
+            resources,
+            localColorSpaceCache,
+            localShadingPatternCache
+          });
+          operatorList.addOp(fn, ["Shading", objId, matrix]);
           return undefined;
         }
 
@@ -9243,6 +10719,7 @@ class PartialEvaluator {
     const localColorSpaceCache = new _image_utils.LocalColorSpaceCache();
     const localGStateCache = new _image_utils.LocalGStateCache();
     const localTilingPatternCache = new _image_utils.LocalTilingPatternCache();
+    const localShadingPatternCache = new Map();
 
     const xobjs = resources.get("XObject") || _primitives.Dict.empty;
 
@@ -9272,7 +10749,7 @@ class PartialEvaluator {
       task.ensureNotTerminated();
       timeSlotManager.reset();
       const operation = {};
-      let stop, i, ii, cs, name;
+      let stop, i, ii, cs, name, isValidName;
 
       while (!(stop = timeSlotManager.check())) {
         operation.args = null;
@@ -9286,9 +10763,10 @@ class PartialEvaluator {
 
         switch (fn | 0) {
           case _util.OPS.paintXObject:
+            isValidName = args[0] instanceof _primitives.Name;
             name = args[0].name;
 
-            if (name) {
+            if (isValidName) {
               const localImage = localImageCache.getByName(name);
 
               if (localImage) {
@@ -9299,7 +10777,7 @@ class PartialEvaluator {
             }
 
             next(new Promise(function (resolveXObject, rejectXObject) {
-              if (!name) {
+              if (!isValidName) {
                 throw new _util.FormatError("XObject must be referred to by name.");
               }
 
@@ -9571,7 +11049,7 @@ class PartialEvaluator {
             cs = stateManager.state.fillColorSpace;
 
             if (cs.name === "Pattern") {
-              next(self.handleColorN(operatorList, _util.OPS.setFillColorN, args, cs, patterns, resources, task, localColorSpaceCache, localTilingPatternCache));
+              next(self.handleColorN(operatorList, _util.OPS.setFillColorN, args, cs, patterns, resources, task, localColorSpaceCache, localTilingPatternCache, localShadingPatternCache));
               return;
             }
 
@@ -9583,7 +11061,7 @@ class PartialEvaluator {
             cs = stateManager.state.strokeColorSpace;
 
             if (cs.name === "Pattern") {
-              next(self.handleColorN(operatorList, _util.OPS.setStrokeColorN, args, cs, patterns, resources, task, localColorSpaceCache, localTilingPatternCache));
+              next(self.handleColorN(operatorList, _util.OPS.setStrokeColorN, args, cs, patterns, resources, task, localColorSpaceCache, localTilingPatternCache, localShadingPatternCache));
               return;
             }
 
@@ -9604,17 +11082,21 @@ class PartialEvaluator {
               throw new _util.FormatError("No shading object found");
             }
 
-            var shadingFill = _pattern.Pattern.parseShading(shading, null, xref, resources, self.handler, self._pdfFunctionFactory, localColorSpaceCache);
-
-            var patternIR = shadingFill.getIR();
-            args = [patternIR];
+            const patternId = self.parseShading({
+              shading,
+              resources,
+              localColorSpaceCache,
+              localShadingPatternCache
+            });
+            args = [patternId];
             fn = _util.OPS.shadingFill;
             break;
 
           case _util.OPS.setGState:
+            isValidName = args[0] instanceof _primitives.Name;
             name = args[0].name;
 
-            if (name) {
+            if (isValidName) {
               const localGStateObj = localGStateCache.getByName(name);
 
               if (localGStateObj) {
@@ -9628,7 +11110,7 @@ class PartialEvaluator {
             }
 
             next(new Promise(function (resolveGState, rejectGState) {
-              if (!name) {
+              if (!isValidName) {
                 throw new _util.FormatError("GState must be referred to by name.");
               }
 
@@ -9817,7 +11299,7 @@ class PartialEvaluator {
       const font = textState.font;
       const tsm = [textState.fontSize * textState.textHScale, 0, 0, textState.fontSize, 0, textState.textRise];
 
-      if (font.isType3Font && textState.fontSize <= 1 && !(0, _util.isArrayEqual)(textState.fontMatrix, _util.FONT_IDENTITY_MATRIX)) {
+      if (font.isType3Font && (textState.fontSize <= 1 || font.isCharBBox) && !(0, _util.isArrayEqual)(textState.fontMatrix, _util.FONT_IDENTITY_MATRIX)) {
         const glyphHeight = font.bbox[3] - font.bbox[1];
 
         if (glyphHeight > 0) {
@@ -9933,6 +11415,14 @@ class PartialEvaluator {
 
     function handleSetFont(fontName, fontRef) {
       return self.loadFont(fontName, fontRef, resources).then(function (translated) {
+        if (!translated.font.isType3Font) {
+          return translated;
+        }
+
+        return translated.loadType3Data(self, resources, task).catch(function () {}).then(function () {
+          return translated;
+        });
+      }).then(function (translated) {
         textState.font = translated.font;
         textState.fontMatrix = translated.font.fontMatrix || _util.FONT_IDENTITY_MATRIX;
       });
@@ -10404,14 +11894,15 @@ class PartialEvaluator {
               xobjs = resources.get("XObject") || _primitives.Dict.empty;
             }
 
+            var isValidName = args[0] instanceof _primitives.Name;
             var name = args[0].name;
 
-            if (name && emptyXObjectCache.getByName(name)) {
+            if (isValidName && emptyXObjectCache.getByName(name)) {
               break;
             }
 
             next(new Promise(function (resolveXObject, rejectXObject) {
-              if (!name) {
+              if (!isValidName) {
                 throw new _util.FormatError("XObject must be referred to by name.");
               }
 
@@ -10507,14 +11998,15 @@ class PartialEvaluator {
             return;
 
           case _util.OPS.setGState:
+            isValidName = args[0] instanceof _primitives.Name;
             name = args[0].name;
 
-            if (name && emptyGStateCache.getByName(name)) {
+            if (isValidName && emptyGStateCache.getByName(name)) {
               break;
             }
 
             next(new Promise(function (resolveGState, rejectGState) {
-              if (!name) {
+              if (!isValidName) {
                 throw new _util.FormatError("GState must be referred to by name.");
               }
 
@@ -10700,7 +12192,7 @@ class PartialEvaluator {
       if (isSymbolicFont) {
         encoding = _encodings.MacRomanEncoding;
 
-        if (!properties.file) {
+        if (!properties.file || properties.isInternalFont) {
           if (/Symbol/i.test(properties.name)) {
             encoding = _encodings.SymbolSetEncoding;
           } else if (/Dingbats|Wingdings/i.test(properties.name)) {
@@ -10730,7 +12222,7 @@ class PartialEvaluator {
     });
   }
 
-  _buildSimpleFontToUnicode(properties, forceGlyphs = false) {
+  _simpleFontToUnicode(properties, forceGlyphs = false) {
     (0, _util.assert)(!properties.composite, "Must be a simple font.");
     const toUnicode = [];
     const encoding = properties.defaultEncoding.slice();
@@ -10785,7 +12277,7 @@ class PartialEvaluator {
               code = +codeStr;
 
               if (Number.isNaN(code) && Number.isInteger(parseInt(codeStr, 16))) {
-                return this._buildSimpleFontToUnicode(properties, true);
+                return this._simpleFontToUnicode(properties, true);
               }
             }
 
@@ -10819,53 +12311,53 @@ class PartialEvaluator {
       toUnicode[charcode] = String.fromCharCode(glyphsUnicodeMap[glyphName]);
     }
 
-    return new _to_unicode_map.ToUnicodeMap(toUnicode);
+    return toUnicode;
   }
 
-  buildToUnicode(properties) {
+  async buildToUnicode(properties) {
     properties.hasIncludedToUnicodeMap = !!properties.toUnicode && properties.toUnicode.length > 0;
 
     if (properties.hasIncludedToUnicodeMap) {
       if (!properties.composite && properties.hasEncoding) {
-        properties.fallbackToUnicode = this._buildSimpleFontToUnicode(properties);
+        properties.fallbackToUnicode = this._simpleFontToUnicode(properties);
       }
 
-      return Promise.resolve(properties.toUnicode);
+      return properties.toUnicode;
     }
 
     if (!properties.composite) {
-      return Promise.resolve(this._buildSimpleFontToUnicode(properties));
+      return new _to_unicode_map.ToUnicodeMap(this._simpleFontToUnicode(properties));
     }
 
     if (properties.composite && (properties.cMap.builtInCMap && !(properties.cMap instanceof _cmap.IdentityCMap) || properties.cidSystemInfo.registry === "Adobe" && (properties.cidSystemInfo.ordering === "GB1" || properties.cidSystemInfo.ordering === "CNS1" || properties.cidSystemInfo.ordering === "Japan1" || properties.cidSystemInfo.ordering === "Korea1"))) {
-      const registry = properties.cidSystemInfo.registry;
-      const ordering = properties.cidSystemInfo.ordering;
+      const {
+        registry,
+        ordering
+      } = properties.cidSystemInfo;
 
-      const ucs2CMapName = _primitives.Name.get(registry + "-" + ordering + "-UCS2");
+      const ucs2CMapName = _primitives.Name.get(`${registry}-${ordering}-UCS2`);
 
-      return _cmap.CMapFactory.create({
+      const ucs2CMap = await _cmap.CMapFactory.create({
         encoding: ucs2CMapName,
         fetchBuiltInCMap: this._fetchBuiltInCMapBound,
         useCMap: null
-      }).then(function (ucs2CMap) {
-        const cMap = properties.cMap;
-        const toUnicode = [];
-        cMap.forEach(function (charcode, cid) {
-          if (cid > 0xffff) {
-            throw new _util.FormatError("Max size of CID is 65,535");
-          }
-
-          const ucs2 = ucs2CMap.lookup(cid);
-
-          if (ucs2) {
-            toUnicode[charcode] = String.fromCharCode((ucs2.charCodeAt(0) << 8) + ucs2.charCodeAt(1));
-          }
-        });
-        return new _to_unicode_map.ToUnicodeMap(toUnicode);
       });
+      const toUnicode = [];
+      properties.cMap.forEach(function (charcode, cid) {
+        if (cid > 0xffff) {
+          throw new _util.FormatError("Max size of CID is 65,535");
+        }
+
+        const ucs2 = ucs2CMap.lookup(cid);
+
+        if (ucs2) {
+          toUnicode[charcode] = String.fromCharCode((ucs2.charCodeAt(0) << 8) + ucs2.charCodeAt(1));
+        }
+      });
+      return new _to_unicode_map.ToUnicodeMap(toUnicode);
     }
 
-    return Promise.resolve(new _to_unicode_map.IdentityToUnicodeMap(properties.firstChar, properties.lastChar));
+    return new _to_unicode_map.IdentityToUnicodeMap(properties.firstChar, properties.lastChar);
   }
 
   readToUnicode(cmapObj) {
@@ -11265,10 +12757,11 @@ class PartialEvaluator {
     toUnicode,
     cssFontInfo
   }) {
+    const isType3Font = type === "Type3";
     let properties;
 
     if (!descriptor) {
-      if (type === "Type3") {
+      if (isType3Font) {
         descriptor = new _primitives.Dict(null);
         descriptor.set("FontName", _primitives.Name.get(type));
         descriptor.set("FontBBox", dict.getArray("FontBBox") || [0, 0, 0, 0]);
@@ -11286,14 +12779,28 @@ class PartialEvaluator {
         properties = {
           type,
           name: baseFontName,
+          loadedName: baseDict.loadedName,
           widths: metrics.widths,
           defaultWidth: metrics.defaultWidth,
           flags,
           firstChar,
           lastChar,
-          toUnicode
+          toUnicode,
+          xHeight: 0,
+          capHeight: 0,
+          italicAngle: 0,
+          isType3Font
         };
         const widths = dict.get("Widths");
+        const standardFontName = (0, _standard_fonts.getStandardFontName)(baseFontName);
+        let file = null;
+
+        if (standardFontName) {
+          properties.isStandardFont = true;
+          file = await this.fetchStandardFontData(standardFontName);
+          properties.isInternalFont = !!file;
+        }
+
         return this.extractDataStructures(dict, dict, properties).then(newProperties => {
           if (widths) {
             const glyphWidths = [];
@@ -11308,7 +12815,7 @@ class PartialEvaluator {
             newProperties.widths = this.buildCharCodeToWidth(metrics.widths, newProperties);
           }
 
-          return new _fonts.Font(baseFontName, null, newProperties);
+          return new _fonts.Font(baseFontName, file, newProperties);
         });
       }
     }
@@ -11324,7 +12831,7 @@ class PartialEvaluator {
       baseFont = _primitives.Name.get(baseFont);
     }
 
-    if (type !== "Type3") {
+    if (!isType3Font) {
       const fontNameStr = fontName && fontName.name;
       const baseFontStr = baseFont && baseFont.name;
 
@@ -11343,7 +12850,7 @@ class PartialEvaluator {
       throw new _util.FormatError("invalid font name");
     }
 
-    let fontFile;
+    let fontFile, subtype, length1, length2, length3;
 
     try {
       fontFile = descriptor.get("FontFile", "FontFile2", "FontFile3");
@@ -11356,17 +12863,41 @@ class PartialEvaluator {
       fontFile = new _stream.NullStream();
     }
 
+    let isStandardFont = false;
+    let isInternalFont = false;
+    let glyphScaleFactors = null;
+
     if (fontFile) {
       if (fontFile.dict) {
-        var subtype = fontFile.dict.get("Subtype");
+        const subtypeEntry = fontFile.dict.get("Subtype");
 
-        if (subtype) {
-          subtype = subtype.name;
+        if (subtypeEntry instanceof _primitives.Name) {
+          subtype = subtypeEntry.name;
         }
 
-        var length1 = fontFile.dict.get("Length1");
-        var length2 = fontFile.dict.get("Length2");
-        var length3 = fontFile.dict.get("Length3");
+        length1 = fontFile.dict.get("Length1");
+        length2 = fontFile.dict.get("Length2");
+        length3 = fontFile.dict.get("Length3");
+      }
+    } else if (cssFontInfo) {
+      const standardFontName = (0, _xfa_fonts.getXfaFontName)(fontName.name);
+
+      if (standardFontName) {
+        cssFontInfo.fontFamily = `${cssFontInfo.fontFamily}-PdfJS-XFA`;
+        cssFontInfo.metrics = standardFontName.metrics || null;
+        glyphScaleFactors = standardFontName.factors || null;
+        fontFile = await this.fetchStandardFontData(standardFontName.name);
+        isInternalFont = !!fontFile;
+        baseDict = dict = (0, _xfa_fonts.getXfaFontDict)(fontName.name);
+        composite = true;
+      }
+    } else if (!isType3Font) {
+      const standardFontName = (0, _standard_fonts.getStandardFontName)(fontName.name);
+
+      if (standardFontName) {
+        isStandardFont = true;
+        fontFile = await this.fetchStandardFontData(standardFontName);
+        isInternalFont = !!fontFile;
       }
     }
 
@@ -11378,6 +12909,8 @@ class PartialEvaluator {
       length1,
       length2,
       length3,
+      isStandardFont,
+      isInternalFont,
       loadedName: baseDict.loadedName,
       composite,
       fixedPitch: false,
@@ -11385,15 +12918,16 @@ class PartialEvaluator {
       firstChar,
       lastChar,
       toUnicode,
-      bbox: descriptor.getArray("FontBBox"),
+      bbox: descriptor.getArray("FontBBox") || dict.getArray("FontBBox"),
       ascent: descriptor.get("Ascent"),
       descent: descriptor.get("Descent"),
-      xHeight: descriptor.get("XHeight"),
-      capHeight: descriptor.get("CapHeight"),
+      xHeight: descriptor.get("XHeight") || 0,
+      capHeight: descriptor.get("CapHeight") || 0,
       flags: descriptor.get("Flags"),
-      italicAngle: descriptor.get("ItalicAngle"),
-      isType3Font: false,
-      cssFontInfo
+      italicAngle: descriptor.get("ItalicAngle") || 0,
+      isType3Font,
+      cssFontInfo,
+      scaleFactors: glyphScaleFactors
     };
 
     if (composite) {
@@ -11414,22 +12948,31 @@ class PartialEvaluator {
 
     return this.extractDataStructures(dict, baseDict, properties).then(newProperties => {
       this.extractWidths(dict, descriptor, newProperties);
-
-      if (type === "Type3") {
-        newProperties.isType3Font = true;
-      }
-
       return new _fonts.Font(fontName.name, fontFile, newProperties);
     });
   }
 
-  static buildFontPaths(font, glyphs, handler) {
+  static buildFontPaths(font, glyphs, handler, evaluatorOptions) {
     function buildPath(fontChar) {
-      if (font.renderer.hasBuiltPath(fontChar)) {
-        return;
-      }
+      const glyphName = `${font.loadedName}_path_${fontChar}`;
 
-      handler.send("commonobj", [`${font.loadedName}_path_${fontChar}`, "FontPath", font.renderer.getPathJs(fontChar)]);
+      try {
+        if (font.renderer.hasBuiltPath(fontChar)) {
+          return;
+        }
+
+        handler.send("commonobj", [glyphName, "FontPath", font.renderer.getPathJs(fontChar)]);
+      } catch (reason) {
+        if (evaluatorOptions.ignoreErrors) {
+          handler.send("UnsupportedFeature", {
+            featureId: _util.UNSUPPORTED_FEATURES.errorFontBuildPath
+          });
+          (0, _util.warn)(`buildFontPaths - ignoring ${glyphName} glyph: "${reason}".`);
+          return;
+        }
+
+        throw reason;
+      }
     }
 
     for (const glyph of glyphs) {
@@ -11460,12 +13003,12 @@ class TranslatedFont {
     loadedName,
     font,
     dict,
-    extraProperties = false
+    evaluatorOptions
   }) {
     this.loadedName = loadedName;
     this.font = font;
     this.dict = dict;
-    this._extraProperties = extraProperties;
+    this._evaluatorOptions = evaluatorOptions || DefaultPartialEvaluatorOptions;
     this.type3Loaded = null;
     this.type3Dependencies = font.isType3Font ? new Set() : null;
     this.sent = false;
@@ -11477,7 +13020,7 @@ class TranslatedFont {
     }
 
     this.sent = true;
-    handler.send("commonobj", [this.loadedName, "Font", this.font.exportData(this._extraProperties)]);
+    handler.send("commonobj", [this.loadedName, "Font", this.font.exportData(this._evaluatorOptions.fontExtraProperties)]);
   }
 
   fallback(handler) {
@@ -11486,8 +13029,7 @@ class TranslatedFont {
     }
 
     this.font.disableFontFace = true;
-    const glyphs = this.font.glyphCacheValues;
-    PartialEvaluator.buildFontPaths(this.font, glyphs, handler);
+    PartialEvaluator.buildFontPaths(this.font, this.font.glyphCacheValues, handler, this._evaluatorOptions);
   }
 
   loadType3Data(evaluator, resources, task) {
@@ -11499,9 +13041,9 @@ class TranslatedFont {
       throw new Error("Must be a Type3 font.");
     }
 
-    const type3Options = Object.create(evaluator.options);
-    type3Options.ignoreErrors = false;
-    const type3Evaluator = evaluator.clone(type3Options);
+    const type3Evaluator = evaluator.clone({
+      ignoreErrors: false
+    });
     type3Evaluator.parsingType3Font = true;
     const translatedFont = this.font,
           type3Dependencies = this.type3Dependencies;
@@ -11509,6 +13051,7 @@ class TranslatedFont {
     const charProcs = this.dict.get("CharProcs");
     const fontResources = this.dict.get("Resources") || resources;
     const charProcOperatorList = Object.create(null);
+    const isEmptyBBox = !translatedFont.bbox || (0, _util.isArrayEqual)(translatedFont.bbox, [0, 0, 0, 0]);
 
     for (const key of charProcs.getKeys()) {
       loadCharProcsPromise = loadCharProcsPromise.then(() => {
@@ -11521,7 +13064,7 @@ class TranslatedFont {
           operatorList
         }).then(() => {
           if (operatorList.fnArray[0] === _util.OPS.setCharWidthAndBounds) {
-            this._removeType3ColorOperators(operatorList);
+            this._removeType3ColorOperators(operatorList, isEmptyBBox);
           }
 
           charProcOperatorList[key] = operatorList.getIR();
@@ -11537,13 +13080,31 @@ class TranslatedFont {
       });
     }
 
-    this.type3Loaded = loadCharProcsPromise.then(function () {
+    this.type3Loaded = loadCharProcsPromise.then(() => {
       translatedFont.charProcOperatorList = charProcOperatorList;
+
+      if (this._bbox) {
+        translatedFont.isCharBBox = true;
+        translatedFont.bbox = this._bbox;
+      }
     });
     return this.type3Loaded;
   }
 
-  _removeType3ColorOperators(operatorList) {
+  _removeType3ColorOperators(operatorList, isEmptyBBox = false) {
+    if (isEmptyBBox) {
+      if (!this._bbox) {
+        this._bbox = [Infinity, Infinity, -Infinity, -Infinity];
+      }
+
+      const charBBox = _util.Util.normalizeRect(operatorList.argsArray[0].slice(2));
+
+      this._bbox[0] = Math.min(this._bbox[0], charBBox[0]);
+      this._bbox[1] = Math.min(this._bbox[1], charBBox[1]);
+      this._bbox[2] = Math.max(this._bbox[2], charBBox[2]);
+      this._bbox[3] = Math.max(this._bbox[3], charBBox[3]);
+    }
+
     let i = 1,
         ii = operatorList.length;
 
@@ -12207,7 +13768,7 @@ class EvaluatorPreprocessor {
 exports.EvaluatorPreprocessor = EvaluatorPreprocessor;
 
 /***/ }),
-/* 16 */
+/* 26 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -12221,7 +13782,7 @@ var _util = __w_pdfjs_require__(2);
 
 var _primitives = __w_pdfjs_require__(5);
 
-var _parser = __w_pdfjs_require__(17);
+var _parser = __w_pdfjs_require__(27);
 
 var _core_utils = __w_pdfjs_require__(9);
 
@@ -12576,7 +14137,7 @@ const BinaryCMapReader = function BinaryCMapReaderClosure() {
 
       while (i >= 0) {
         while (bufferSize < 8 && stack.length > 0) {
-          buffer = stack[--sp] << bufferSize | buffer;
+          buffer |= stack[--sp] << bufferSize;
           bufferSize += 7;
         }
 
@@ -13123,7 +14684,7 @@ const CMapFactory = function CMapFactoryClosure() {
 exports.CMapFactory = CMapFactory;
 
 /***/ }),
-/* 17 */
+/* 27 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -13139,27 +14700,27 @@ var _primitives = __w_pdfjs_require__(5);
 
 var _core_utils = __w_pdfjs_require__(9);
 
-var _ascii_85_stream = __w_pdfjs_require__(18);
+var _ascii_85_stream = __w_pdfjs_require__(28);
 
-var _ascii_hex_stream = __w_pdfjs_require__(20);
+var _ascii_hex_stream = __w_pdfjs_require__(30);
 
-var _ccitt_stream = __w_pdfjs_require__(21);
+var _ccitt_stream = __w_pdfjs_require__(31);
 
-var _flate_stream = __w_pdfjs_require__(23);
+var _flate_stream = __w_pdfjs_require__(33);
 
-var _jbig2_stream = __w_pdfjs_require__(24);
+var _jbig2_stream = __w_pdfjs_require__(34);
 
-var _jpeg_stream = __w_pdfjs_require__(27);
+var _jpeg_stream = __w_pdfjs_require__(37);
 
-var _jpx_stream = __w_pdfjs_require__(29);
+var _jpx_stream = __w_pdfjs_require__(39);
 
-var _lzw_stream = __w_pdfjs_require__(31);
+var _lzw_stream = __w_pdfjs_require__(41);
 
 var _stream = __w_pdfjs_require__(10);
 
-var _predictor_stream = __w_pdfjs_require__(32);
+var _predictor_stream = __w_pdfjs_require__(42);
 
-var _run_length_stream = __w_pdfjs_require__(33);
+var _run_length_stream = __w_pdfjs_require__(43);
 
 const MAX_LENGTH_TO_CACHE = 1000;
 const MAX_ADLER32_LENGTH = 5552;
@@ -13237,11 +14798,11 @@ class Parser {
           }
 
           if ((0, _primitives.isEOF)(this.buf1)) {
-            if (!this.recoveryMode) {
-              throw new _util.FormatError("End of file inside array");
+            if (this.recoveryMode) {
+              return array;
             }
 
-            return array;
+            throw new _core_utils.ParserEOFException("End of file inside array.");
           }
 
           this.shift();
@@ -13268,11 +14829,11 @@ class Parser {
           }
 
           if ((0, _primitives.isEOF)(this.buf1)) {
-            if (!this.recoveryMode) {
-              throw new _util.FormatError("End of file inside dictionary");
+            if (this.recoveryMode) {
+              return dict;
             }
 
-            return dict;
+            throw new _core_utils.ParserEOFException("End of file inside dictionary.");
           }
 
           if ((0, _primitives.isCmd)(this.buf2, "stream")) {
@@ -13711,7 +15272,7 @@ class Parser {
     if (this.tryShift() && (0, _primitives.isCmd)(this.buf2, "endstream")) {
       this.shift();
     } else {
-      const ENDSTREAM_SIGNATURE = new Uint8Array([0x65, 0x6E, 0x64, 0x73, 0x74, 0x72, 0x65, 0x61, 0x6D]);
+      const ENDSTREAM_SIGNATURE = new Uint8Array([0x65, 0x6e, 0x64, 0x73, 0x74, 0x72, 0x65, 0x61, 0x6d]);
 
       let actualLength = this._findStreamLength(startPos, ENDSTREAM_SIGNATURE);
 
@@ -14176,6 +15737,8 @@ class Lexer {
 
     if (strBuf.length > 127) {
       (0, _util.warn)(`Name token is longer than allowed by the spec: ${strBuf.length}`);
+    } else if (strBuf.length === 0) {
+      (0, _util.warn)("Name token is empty.");
     }
 
     return _primitives.Name.get(strBuf.join(""));
@@ -14478,7 +16041,7 @@ class Linearization {
 exports.Linearization = Linearization;
 
 /***/ }),
-/* 18 */
+/* 28 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -14488,14 +16051,14 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.Ascii85Stream = void 0;
 
-var _decode_stream = __w_pdfjs_require__(19);
+var _decode_stream = __w_pdfjs_require__(29);
 
 var _core_utils = __w_pdfjs_require__(9);
 
 class Ascii85Stream extends _decode_stream.DecodeStream {
   constructor(str, maybeLength) {
     if (maybeLength) {
-      maybeLength = 0.8 * maybeLength;
+      maybeLength *= 0.8;
     }
 
     super(maybeLength);
@@ -14578,7 +16141,7 @@ class Ascii85Stream extends _decode_stream.DecodeStream {
 exports.Ascii85Stream = Ascii85Stream;
 
 /***/ }),
-/* 19 */
+/* 29 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -14710,7 +16273,7 @@ class DecodeStream extends _base_stream.BaseStream {
 exports.DecodeStream = DecodeStream;
 
 class StreamsSequenceStream extends DecodeStream {
-  constructor(streams) {
+  constructor(streams, onError = null) {
     let maybeLength = 0;
 
     for (const stream of streams) {
@@ -14719,6 +16282,7 @@ class StreamsSequenceStream extends DecodeStream {
 
     super(maybeLength);
     this.streams = streams;
+    this._onError = onError;
   }
 
   readBlock() {
@@ -14730,7 +16294,20 @@ class StreamsSequenceStream extends DecodeStream {
     }
 
     const stream = streams.shift();
-    const chunk = stream.getBytes();
+    let chunk;
+
+    try {
+      chunk = stream.getBytes();
+    } catch (reason) {
+      if (this._onError) {
+        this._onError(reason, stream.dict && stream.dict.objId);
+
+        return;
+      }
+
+      throw reason;
+    }
+
     const bufferLength = this.bufferLength;
     const newLength = bufferLength + chunk.length;
     const buffer = this.ensureBuffer(newLength);
@@ -14757,7 +16334,7 @@ class StreamsSequenceStream extends DecodeStream {
 exports.StreamsSequenceStream = StreamsSequenceStream;
 
 /***/ }),
-/* 20 */
+/* 30 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -14767,12 +16344,12 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.AsciiHexStream = void 0;
 
-var _decode_stream = __w_pdfjs_require__(19);
+var _decode_stream = __w_pdfjs_require__(29);
 
 class AsciiHexStream extends _decode_stream.DecodeStream {
   constructor(str, maybeLength) {
     if (maybeLength) {
-      maybeLength = 0.5 * maybeLength;
+      maybeLength *= 0.5;
     }
 
     super(maybeLength);
@@ -14831,7 +16408,7 @@ class AsciiHexStream extends _decode_stream.DecodeStream {
 exports.AsciiHexStream = AsciiHexStream;
 
 /***/ }),
-/* 21 */
+/* 31 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -14843,9 +16420,9 @@ exports.CCITTFaxStream = void 0;
 
 var _primitives = __w_pdfjs_require__(5);
 
-var _ccitt = __w_pdfjs_require__(22);
+var _ccitt = __w_pdfjs_require__(32);
 
-var _decode_stream = __w_pdfjs_require__(19);
+var _decode_stream = __w_pdfjs_require__(29);
 
 class CCITTFaxStream extends _decode_stream.DecodeStream {
   constructor(str, maybeLength, params) {
@@ -14893,7 +16470,7 @@ class CCITTFaxStream extends _decode_stream.DecodeStream {
 exports.CCITTFaxStream = CCITTFaxStream;
 
 /***/ }),
-/* 22 */
+/* 32 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -15594,7 +17171,7 @@ class CCITTFaxDecoder {
 exports.CCITTFaxDecoder = CCITTFaxDecoder;
 
 /***/ }),
-/* 23 */
+/* 33 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -15604,7 +17181,7 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.FlateStream = void 0;
 
-var _decode_stream = __w_pdfjs_require__(19);
+var _decode_stream = __w_pdfjs_require__(29);
 
 var _util = __w_pdfjs_require__(2);
 
@@ -15909,7 +17486,7 @@ class FlateStream extends _decode_stream.DecodeStream {
 exports.FlateStream = FlateStream;
 
 /***/ }),
-/* 24 */
+/* 34 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -15921,9 +17498,9 @@ exports.Jbig2Stream = void 0;
 
 var _primitives = __w_pdfjs_require__(5);
 
-var _decode_stream = __w_pdfjs_require__(19);
+var _decode_stream = __w_pdfjs_require__(29);
 
-var _jbig = __w_pdfjs_require__(25);
+var _jbig = __w_pdfjs_require__(35);
 
 var _util = __w_pdfjs_require__(2);
 
@@ -15985,7 +17562,7 @@ class Jbig2Stream extends _decode_stream.DecodeStream {
 exports.Jbig2Stream = Jbig2Stream;
 
 /***/ }),
-/* 25 */
+/* 35 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -15999,9 +17576,9 @@ var _util = __w_pdfjs_require__(2);
 
 var _core_utils = __w_pdfjs_require__(9);
 
-var _arithmetic_decoder = __w_pdfjs_require__(26);
+var _arithmetic_decoder = __w_pdfjs_require__(36);
 
-var _ccitt = __w_pdfjs_require__(22);
+var _ccitt = __w_pdfjs_require__(32);
 
 class Jbig2Error extends _util.BaseException {
   constructor(msg) {
@@ -16810,12 +18387,10 @@ function decodePatternDictionary(mmr, patternWidth, patternHeight, maxPatternInd
       at.push({
         x: -3,
         y: -1
-      });
-      at.push({
+      }, {
         x: 2,
         y: -2
-      });
-      at.push({
+      }, {
         x: -2,
         y: -2
       });
@@ -16884,12 +18459,10 @@ function decodeHalftoneRegion(mmr, patterns, template, regionWidth, regionHeight
       at.push({
         x: -3,
         y: -1
-      });
-      at.push({
+      }, {
         x: 2,
         y: -2
-      });
-      at.push({
+      }, {
         x: -2,
         y: -2
       });
@@ -16921,7 +18494,7 @@ function decodeHalftoneRegion(mmr, patterns, template, regionWidth, regionHeight
       patternIndex = 0;
 
       for (j = bitsPerValue - 1; j >= 0; j--) {
-        bit = grayScaleBitPlanes[j][mg][ng] ^ bit;
+        bit ^= grayScaleBitPlanes[j][mg][ng];
         patternIndex |= bit << j;
       }
 
@@ -18188,7 +19761,7 @@ class Jbig2Image {
 exports.Jbig2Image = Jbig2Image;
 
 /***/ }),
-/* 26 */
+/* 36 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -18541,7 +20114,7 @@ class ArithmeticDecoder {
 exports.ArithmeticDecoder = ArithmeticDecoder;
 
 /***/ }),
-/* 27 */
+/* 37 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -18551,11 +20124,11 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.JpegStream = void 0;
 
-var _decode_stream = __w_pdfjs_require__(19);
+var _decode_stream = __w_pdfjs_require__(29);
 
 var _primitives = __w_pdfjs_require__(5);
 
-var _jpg = __w_pdfjs_require__(28);
+var _jpg = __w_pdfjs_require__(38);
 
 var _util = __w_pdfjs_require__(2);
 
@@ -18641,7 +20214,7 @@ class JpegStream extends _decode_stream.DecodeStream {
 exports.JpegStream = JpegStream;
 
 /***/ }),
-/* 28 */
+/* 38 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -19883,7 +21456,7 @@ class JpegImage {
 exports.JpegImage = JpegImage;
 
 /***/ }),
-/* 29 */
+/* 39 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -19893,9 +21466,9 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.JpxStream = void 0;
 
-var _decode_stream = __w_pdfjs_require__(19);
+var _decode_stream = __w_pdfjs_require__(29);
 
-var _jpx = __w_pdfjs_require__(30);
+var _jpx = __w_pdfjs_require__(40);
 
 var _util = __w_pdfjs_require__(2);
 
@@ -19963,7 +21536,7 @@ class JpxStream extends _decode_stream.DecodeStream {
 exports.JpxStream = JpxStream;
 
 /***/ }),
-/* 30 */
+/* 40 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -19977,7 +21550,7 @@ var _util = __w_pdfjs_require__(2);
 
 var _core_utils = __w_pdfjs_require__(9);
 
-var _arithmetic_decoder = __w_pdfjs_require__(26);
+var _arithmetic_decoder = __w_pdfjs_require__(36);
 
 class JpxError extends _util.BaseException {
   constructor(msg) {
@@ -22197,7 +23770,7 @@ class Transform {
 class IrreversibleTransform extends Transform {
   filter(x, offset, length) {
     const len = length >> 1;
-    offset = offset | 0;
+    offset |= 0;
     let j, n, current, next;
     const alpha = -1.586134342059924;
     const beta = -0.052980118572961;
@@ -22283,7 +23856,7 @@ class IrreversibleTransform extends Transform {
 class ReversibleTransform extends Transform {
   filter(x, offset, length) {
     const len = length >> 1;
-    offset = offset | 0;
+    offset |= 0;
     let j, n;
 
     for (j = offset, n = len + 1; n--; j += 2) {
@@ -22298,7 +23871,7 @@ class ReversibleTransform extends Transform {
 }
 
 /***/ }),
-/* 31 */
+/* 41 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -22308,7 +23881,7 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.LZWStream = void 0;
 
-var _decode_stream = __w_pdfjs_require__(19);
+var _decode_stream = __w_pdfjs_require__(29);
 
 class LZWStream extends _decode_stream.DecodeStream {
   constructor(str, maybeLength, earlyChange) {
@@ -22448,7 +24021,7 @@ class LZWStream extends _decode_stream.DecodeStream {
 exports.LZWStream = LZWStream;
 
 /***/ }),
-/* 32 */
+/* 42 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -22458,7 +24031,7 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.PredictorStream = void 0;
 
-var _decode_stream = __w_pdfjs_require__(19);
+var _decode_stream = __w_pdfjs_require__(29);
 
 var _util = __w_pdfjs_require__(2);
 
@@ -22700,7 +24273,7 @@ class PredictorStream extends _decode_stream.DecodeStream {
 exports.PredictorStream = PredictorStream;
 
 /***/ }),
-/* 33 */
+/* 43 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -22710,7 +24283,7 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.RunLengthStream = void 0;
 
-var _decode_stream = __w_pdfjs_require__(19);
+var _decode_stream = __w_pdfjs_require__(29);
 
 class RunLengthStream extends _decode_stream.DecodeStream {
   constructor(str, maybeLength) {
@@ -22758,7 +24331,7 @@ class RunLengthStream extends _decode_stream.DecodeStream {
 exports.RunLengthStream = RunLengthStream;
 
 /***/ }),
-/* 34 */
+/* 44 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -22770,33 +24343,35 @@ exports.Font = exports.ErrorFont = void 0;
 
 var _util = __w_pdfjs_require__(2);
 
-var _cff_parser = __w_pdfjs_require__(35);
+var _cff_parser = __w_pdfjs_require__(45);
 
-var _fonts_utils = __w_pdfjs_require__(38);
+var _fonts_utils = __w_pdfjs_require__(18);
 
-var _glyphlist = __w_pdfjs_require__(39);
+var _glyphlist = __w_pdfjs_require__(20);
 
-var _encodings = __w_pdfjs_require__(37);
+var _encodings = __w_pdfjs_require__(19);
 
-var _standard_fonts = __w_pdfjs_require__(41);
+var _standard_fonts = __w_pdfjs_require__(47);
 
-var _unicode = __w_pdfjs_require__(40);
+var _unicode = __w_pdfjs_require__(21);
 
-var _to_unicode_map = __w_pdfjs_require__(42);
+var _to_unicode_map = __w_pdfjs_require__(48);
 
-var _cff_font = __w_pdfjs_require__(43);
+var _cff_font = __w_pdfjs_require__(49);
 
-var _font_renderer = __w_pdfjs_require__(44);
+var _font_renderer = __w_pdfjs_require__(50);
 
-var _cmap = __w_pdfjs_require__(16);
+var _glyf = __w_pdfjs_require__(51);
 
-var _opentype_file_builder = __w_pdfjs_require__(45);
+var _cmap = __w_pdfjs_require__(26);
+
+var _opentype_file_builder = __w_pdfjs_require__(52);
 
 var _core_utils = __w_pdfjs_require__(9);
 
 var _stream = __w_pdfjs_require__(10);
 
-var _type1_font = __w_pdfjs_require__(46);
+var _type1_font = __w_pdfjs_require__(53);
 
 const PRIVATE_USE_AREAS = [[0xe000, 0xf8ff], [0x100000, 0x10fffd]];
 const PDF_GLYPH_SPACE_UNITS = 1000;
@@ -22823,7 +24398,7 @@ function adjustWidths(properties) {
 }
 
 function adjustToUnicode(properties, builtInEncoding) {
-  if (properties.hasIncludedToUnicodeMap) {
+  if (properties.isInternalFont) {
     return;
   }
 
@@ -22839,8 +24414,14 @@ function adjustToUnicode(properties, builtInEncoding) {
         glyphsUnicodeMap = (0, _glyphlist.getGlyphsUnicode)();
 
   for (const charCode in builtInEncoding) {
-    if (properties.hasEncoding && properties.differences[charCode] !== undefined) {
-      continue;
+    if (properties.hasIncludedToUnicodeMap) {
+      if (properties.toUnicode.has(charCode)) {
+        continue;
+      }
+    } else {
+      if (properties.hasEncoding && properties.differences[charCode] !== undefined) {
+        continue;
+      }
     }
 
     const glyphName = builtInEncoding[charCode];
@@ -22851,11 +24432,38 @@ function adjustToUnicode(properties, builtInEncoding) {
     }
   }
 
-  properties.toUnicode.amend(toUnicode);
+  if (toUnicode.length > 0) {
+    properties.toUnicode.amend(toUnicode);
+  }
+}
+
+function amendFallbackToUnicode(properties) {
+  if (!properties.fallbackToUnicode) {
+    return;
+  }
+
+  if (properties.toUnicode instanceof _to_unicode_map.IdentityToUnicodeMap) {
+    return;
+  }
+
+  const toUnicode = [];
+
+  for (const charCode in properties.fallbackToUnicode) {
+    if (properties.toUnicode.has(charCode)) {
+      continue;
+    }
+
+    toUnicode[charCode] = properties.fallbackToUnicode[charCode];
+  }
+
+  if (toUnicode.length > 0) {
+    properties.toUnicode.amend(toUnicode);
+  }
 }
 
 class Glyph {
-  constructor(fontChar, unicode, accent, width, vmetric, operatorListId, isSpace, isInFont) {
+  constructor(originalCharCode, fontChar, unicode, accent, width, vmetric, operatorListId, isSpace, isInFont) {
+    this.originalCharCode = originalCharCode;
     this.fontChar = fontChar;
     this.unicode = unicode;
     this.accent = accent;
@@ -22866,8 +24474,8 @@ class Glyph {
     this.isInFont = isInFont;
   }
 
-  matchesForCache(fontChar, unicode, accent, width, vmetric, operatorListId, isSpace, isInFont) {
-    return this.fontChar === fontChar && this.unicode === unicode && this.accent === accent && this.width === width && this.vmetric === vmetric && this.operatorListId === operatorListId && this.isSpace === isSpace && this.isInFont === isInFont;
+  matchesForCache(originalCharCode, fontChar, unicode, accent, width, vmetric, operatorListId, isSpace, isInFont) {
+    return this.originalCharCode === originalCharCode && this.fontChar === fontChar && this.unicode === unicode && this.accent === accent && this.width === width && this.vmetric === vmetric && this.operatorListId === operatorListId && this.isSpace === isSpace && this.isInFont === isInFont;
   }
 
 }
@@ -23298,7 +24906,11 @@ function createOS2Table(properties, charstrings, override) {
 
 function createPostTable(properties) {
   const angle = Math.floor(properties.italicAngle * 2 ** 16);
-  return "\x00\x03\x00\x00" + (0, _util.string32)(angle) + "\x00\x00" + "\x00\x00" + (0, _util.string32)(properties.fixedPitch) + "\x00\x00\x00\x00" + "\x00\x00\x00\x00" + "\x00\x00\x00\x00" + "\x00\x00\x00\x00";
+  return "\x00\x03\x00\x00" + (0, _util.string32)(angle) + "\x00\x00" + "\x00\x00" + (0, _util.string32)(properties.fixedPitch ? 1 : 0) + "\x00\x00\x00\x00" + "\x00\x00\x00\x00" + "\x00\x00\x00\x00" + "\x00\x00\x00\x00";
+}
+
+function createPostscriptName(name) {
+  return name.replace(/[^\x21-\x7E]|[[\](){}<>/%]/g, "").slice(0, 63);
 }
 
 function createNameTable(name, proto) {
@@ -23306,7 +24918,7 @@ function createNameTable(name, proto) {
     proto = [[], []];
   }
 
-  const strings = [proto[0][0] || "Original licence", proto[0][1] || name, proto[0][2] || "Unknown", proto[0][3] || "uniqueID", proto[0][4] || name, proto[0][5] || "Version 0.11", proto[0][6] || "", proto[0][7] || "Unknown", proto[0][8] || "Unknown", proto[0][9] || "Unknown"];
+  const strings = [proto[0][0] || "Original licence", proto[0][1] || name, proto[0][2] || "Unknown", proto[0][3] || "uniqueID", proto[0][4] || name, proto[0][5] || "Version 0.11", proto[0][6] || createPostscriptName(name), proto[0][7] || "Unknown", proto[0][8] || "Unknown", proto[0][9] || "Unknown"];
   const stringsUnicode = [];
   let i, ii, j, jj, str;
 
@@ -23347,13 +24959,15 @@ function createNameTable(name, proto) {
 class Font {
   constructor(name, file, properties) {
     this.name = name;
+    this.psName = null;
     this.mimetype = null;
     this.disableFontFace = false;
     this.loadedName = properties.loadedName;
     this.isType3Font = properties.isType3Font;
     this.missingFile = false;
     this.cssFontInfo = properties.cssFontInfo;
-    this.glyphCache = Object.create(null);
+    this._charsCache = Object.create(null);
+    this._glyphCache = Object.create(null);
     this.isSerifFont = !!(properties.flags & _fonts_utils.FontFlags.Serif);
     this.isSymbolicFont = !!(properties.flags & _fonts_utils.FontFlags.Symbolic);
     this.isMonospace = !!(properties.flags & _fonts_utils.FontFlags.FixedPitch);
@@ -23378,11 +24992,11 @@ class Font {
     this.capHeight = properties.capHeight / PDF_GLYPH_SPACE_UNITS;
     this.ascent = properties.ascent / PDF_GLYPH_SPACE_UNITS;
     this.descent = properties.descent / PDF_GLYPH_SPACE_UNITS;
+    this.lineHeight = this.ascent - this.descent;
     this.fontMatrix = properties.fontMatrix;
     this.bbox = properties.bbox;
     this.defaultEncoding = properties.defaultEncoding;
     this.toUnicode = properties.toUnicode;
-    this.fallbackToUnicode = properties.fallbackToUnicode || new _to_unicode_map.ToUnicodeMap();
     this.toFontChar = [];
 
     if (properties.type === "Type3") {
@@ -23454,8 +25068,9 @@ class Font {
       return;
     }
 
+    amendFallbackToUnicode(properties);
     this.data = data;
-    this.fontType = (0, _fonts_utils.getFontType)(type, subtype);
+    this.fontType = (0, _fonts_utils.getFontType)(type, subtype, properties.isStandardFont);
     this.fontMatrix = properties.fontMatrix;
     this.widths = properties.widths;
     this.defaultWidth = properties.defaultWidth;
@@ -23490,7 +25105,7 @@ class Font {
     const name = this.name;
     const type = this.type;
     const subtype = this.subtype;
-    let fontName = name.replace(/[,_]/g, "-").replace(/\s/g, "");
+    let fontName = (0, _fonts_utils.normalizeFontName)(name);
     const stdFontMap = (0, _standard_fonts.getStdFontMap)(),
           nonStdFontMap = (0, _standard_fonts.getNonStdFontMap)();
     const isStandardFont = !!stdFontMap[fontName];
@@ -23584,8 +25199,9 @@ class Font {
       this.toFontChar = map;
     }
 
+    amendFallbackToUnicode(properties);
     this.loadedName = fontName.split("-")[0];
-    this.fontType = (0, _fonts_utils.getFontType)(type, subtype);
+    this.fontType = (0, _fonts_utils.getFontType)(type, subtype, properties.isStandardFont);
   }
 
   checkAndRepair(name, font, properties) {
@@ -23791,7 +25407,20 @@ class Font {
           }
         } else if (isSymbolicFont && platformId === 3 && encodingId === 0) {
           useTable = true;
-          canBreak = true;
+          let correctlySorted = true;
+
+          if (i < numTables - 1) {
+            const nextBytes = file.peekBytes(2),
+                  nextPlatformId = int16(nextBytes[0], nextBytes[1]);
+
+            if (nextPlatformId < platformId) {
+              correctlySorted = false;
+            }
+          }
+
+          if (correctlySorted) {
+            canBreak = true;
+          }
         }
 
         if (useTable) {
@@ -23948,7 +25577,7 @@ class Font {
       };
     }
 
-    function sanitizeMetrics(file, header, metrics, numGlyphs, dupFirstEntry) {
+    function sanitizeMetrics(file, header, metrics, headTable, numGlyphs, dupFirstEntry) {
       if (!header) {
         if (metrics) {
           metrics.data = null;
@@ -23968,13 +25597,22 @@ class Font {
       file.pos += 2;
       file.pos += 2;
       file.pos += 2;
-      file.pos += 2;
+      const caretOffset = file.getUint16();
       file.pos += 8;
       file.pos += 2;
       let numOfMetrics = file.getUint16();
 
+      if (caretOffset !== 0) {
+        const macStyle = int16(headTable.data[44], headTable.data[45]);
+
+        if (!(macStyle & 2)) {
+          header.data[22] = 0;
+          header.data[23] = 0;
+        }
+      }
+
       if (numOfMetrics > numGlyphs) {
-        (0, _util.info)("The numOfMetrics (" + numOfMetrics + ") should not be " + "greater than the numGlyphs (" + numGlyphs + ")");
+        (0, _util.info)(`The numOfMetrics (${numOfMetrics}) should not be ` + `greater than the numGlyphs (${numGlyphs}).`);
         numOfMetrics = numGlyphs;
         header.data[34] = (numOfMetrics & 0xff00) >> 8;
         header.data[35] = numOfMetrics & 0x00ff;
@@ -24744,6 +26382,44 @@ class Font {
     font.pos = (font.start || 0) + tables.maxp.offset;
     const version = font.getInt32();
     const numGlyphs = font.getUint16();
+
+    if (properties.scaleFactors && properties.scaleFactors.length === numGlyphs && isTrueType) {
+      const {
+        scaleFactors
+      } = properties;
+      const isGlyphLocationsLong = int16(tables.head.data[50], tables.head.data[51]);
+      const glyphs = new _glyf.GlyfTable({
+        glyfTable: tables.glyf.data,
+        isGlyphLocationsLong,
+        locaTable: tables.loca.data,
+        numGlyphs
+      });
+      glyphs.scale(scaleFactors);
+      const {
+        glyf,
+        loca,
+        isLocationLong
+      } = glyphs.write();
+      tables.glyf.data = glyf;
+      tables.loca.data = loca;
+
+      if (isLocationLong !== !!isGlyphLocationsLong) {
+        tables.head.data[50] = 0;
+        tables.head.data[51] = isLocationLong ? 1 : 0;
+      }
+
+      const metrics = tables.hmtx.data;
+
+      for (let i = 0; i < numGlyphs; i++) {
+        const j = 4 * i;
+        const advanceWidth = Math.round(scaleFactors[i] * int16(metrics[j], metrics[j + 1]));
+        metrics[j] = advanceWidth >> 8 & 0xff;
+        metrics[j + 1] = advanceWidth & 0xff;
+        const lsb = Math.round(scaleFactors[i] * signedInt16(metrics[j + 2], metrics[j + 3]));
+        writeSignedInt16(metrics, j + 2, lsb);
+      }
+    }
+
     let numGlyphsOut = numGlyphs + 1;
     let dupFirstEntry = true;
 
@@ -24781,7 +26457,7 @@ class Font {
       delete tables["cvt "];
     }
 
-    sanitizeMetrics(font, tables.hhea, tables.hmtx, numGlyphsOut, dupFirstEntry);
+    sanitizeMetrics(font, tables.hhea, tables.hmtx, tables.head, numGlyphsOut, dupFirstEntry);
 
     if (!tables.head) {
       throw new _util.FormatError('Required "head" table is not found');
@@ -24814,11 +26490,20 @@ class Font {
       unitsPerEm: int16(tables.head.data[18], tables.head.data[19]),
       yMax: int16(tables.head.data[42], tables.head.data[43]),
       yMin: signedInt16(tables.head.data[38], tables.head.data[39]),
-      ascent: int16(tables.hhea.data[4], tables.hhea.data[5]),
-      descent: signedInt16(tables.hhea.data[6], tables.hhea.data[7])
+      ascent: signedInt16(tables.hhea.data[4], tables.hhea.data[5]),
+      descent: signedInt16(tables.hhea.data[6], tables.hhea.data[7]),
+      lineGap: signedInt16(tables.hhea.data[8], tables.hhea.data[9])
     };
     this.ascent = metricsOverride.ascent / metricsOverride.unitsPerEm;
     this.descent = metricsOverride.descent / metricsOverride.unitsPerEm;
+    this.lineGap = metricsOverride.lineGap / metricsOverride.unitsPerEm;
+
+    if (this.cssFontInfo && this.cssFontInfo.lineHeight) {
+      this.lineHeight = this.cssFontInfo.metrics.lineHeight;
+      this.lineGap = this.cssFontInfo.metrics.lineGap;
+    } else {
+      this.lineHeight = this.ascent - this.descent + this.lineGap;
+    }
 
     if (tables.post) {
       readPostScriptTable(tables.post, properties, numGlyphs);
@@ -24872,9 +26557,9 @@ class Font {
         for (let charCode = 0; charCode < 256; charCode++) {
           let glyphName;
 
-          if (this.differences && charCode in this.differences) {
+          if (this.differences[charCode] !== undefined) {
             glyphName = this.differences[charCode];
-          } else if (charCode in baseEncoding && baseEncoding[charCode] !== "") {
+          } else if (baseEncoding[charCode] !== "") {
             glyphName = baseEncoding[charCode];
           } else {
             glyphName = _encodings.StandardEncoding[charCode];
@@ -24986,6 +26671,7 @@ class Font {
     } else {
       const namePrototype = readNameTable(tables.name);
       tables.name.data = createNameTable(name, namePrototype);
+      this.psName = namePrototype[0][6] || null;
     }
 
     const builder = new _opentype_file_builder.OpenTypeFileBuilder(header.version);
@@ -25011,8 +26697,15 @@ class Font {
     }
 
     const mapping = font.getGlyphMapping(properties);
-    const newMapping = adjustMapping(mapping, font.hasGlyphId.bind(font), glyphZeroId);
-    this.toFontChar = newMapping.toFontChar;
+    let newMapping = null;
+    let newCharCodeToGlyphId = mapping;
+
+    if (!properties.cssFontInfo) {
+      newMapping = adjustMapping(mapping, font.hasGlyphId.bind(font), glyphZeroId);
+      this.toFontChar = newMapping.toFontChar;
+      newCharCodeToGlyphId = newMapping.charCodeToGlyphId;
+    }
+
     const numGlyphs = font.numGlyphs;
 
     function getCharCodes(charCodeToGlyphId, glyphId) {
@@ -25044,7 +26737,7 @@ class Font {
 
     const seacs = font.seacs;
 
-    if (_fonts_utils.SEAC_ANALYSIS_ENABLED && seacs && seacs.length) {
+    if (newMapping && _fonts_utils.SEAC_ANALYSIS_ENABLED && seacs && seacs.length) {
       const matrix = properties.fontMatrix || _util.FONT_IDENTITY_MATRIX;
       const charset = font.getCharset();
       const seacMap = Object.create(null);
@@ -25090,8 +26783,8 @@ class Font {
     const unitsPerEm = 1 / (properties.fontMatrix || _util.FONT_IDENTITY_MATRIX)[0];
     const builder = new _opentype_file_builder.OpenTypeFileBuilder("\x4F\x54\x54\x4F");
     builder.addTable("CFF ", font.data);
-    builder.addTable("OS/2", createOS2Table(properties, newMapping.charCodeToGlyphId));
-    builder.addTable("cmap", createCmapTable(newMapping.charCodeToGlyphId, numGlyphs));
+    builder.addTable("OS/2", createOS2Table(properties, newCharCodeToGlyphId));
+    builder.addTable("cmap", createCmapTable(newCharCodeToGlyphId, numGlyphs));
     builder.addTable("head", "\x00\x01\x00\x00" + "\x00\x00\x10\x00" + "\x00\x00\x00\x00" + "\x5F\x0F\x3C\xF5" + "\x00\x00" + safeString16(unitsPerEm) + "\x00\x00\x00\x00\x9e\x0b\x7e\x27" + "\x00\x00\x00\x00\x9e\x0b\x7e\x27" + "\x00\x00" + safeString16(properties.descent) + "\x0F\xFF" + safeString16(properties.ascent) + string16(properties.italicAngle ? 2 : 0) + "\x00\x11" + "\x00\x00" + "\x00\x00" + "\x00\x00");
     builder.addTable("hhea", "\x00\x01\x00\x00" + safeString16(properties.ascent) + safeString16(properties.descent) + "\x00\x00" + "\xFF\xFF" + "\x00\x00" + "\x00\x00" + "\x00\x00" + safeString16(properties.capHeight) + safeString16(Math.tan(properties.italicAngle) * properties.xHeight) + "\x00\x00" + "\x00\x00" + "\x00\x00" + "\x00\x00" + "\x00\x00" + "\x00\x00" + string16(numGlyphs));
     builder.addTable("hmtx", function fontFieldsHmtx() {
@@ -25170,13 +26863,13 @@ class Font {
     width = this.widths[widthCode];
     width = (0, _util.isNum)(width) ? width : this.defaultWidth;
     const vmetric = this.vmetrics && this.vmetrics[widthCode];
-    let unicode = this.toUnicode.get(charcode) || this.fallbackToUnicode.get(charcode) || charcode;
+    let unicode = this.toUnicode.get(charcode) || charcode;
 
     if (typeof unicode === "number") {
       unicode = String.fromCharCode(unicode);
     }
 
-    let isInFont = (charcode in this.toFontChar);
+    let isInFont = this.toFontChar[charcode] !== undefined;
     fontCharCode = this.toFontChar[charcode] || charcode;
 
     if (this.missingFile) {
@@ -25215,58 +26908,53 @@ class Font {
       }
     }
 
-    let glyph = this.glyphCache[charcode];
+    let glyph = this._glyphCache[charcode];
 
-    if (!glyph || !glyph.matchesForCache(fontChar, unicode, accent, width, vmetric, operatorListId, isSpace, isInFont)) {
-      glyph = new Glyph(fontChar, unicode, accent, width, vmetric, operatorListId, isSpace, isInFont);
-      this.glyphCache[charcode] = glyph;
+    if (!glyph || !glyph.matchesForCache(charcode, fontChar, unicode, accent, width, vmetric, operatorListId, isSpace, isInFont)) {
+      glyph = new Glyph(charcode, fontChar, unicode, accent, width, vmetric, operatorListId, isSpace, isInFont);
+      this._glyphCache[charcode] = glyph;
     }
 
     return glyph;
   }
 
   charsToGlyphs(chars) {
-    let charsCache = this.charsCache;
-    let glyphs, glyph, charcode;
+    let glyphs = this._charsCache[chars];
 
-    if (charsCache) {
-      glyphs = charsCache[chars];
-
-      if (glyphs) {
-        return glyphs;
-      }
-    }
-
-    if (!charsCache) {
-      charsCache = this.charsCache = Object.create(null);
+    if (glyphs) {
+      return glyphs;
     }
 
     glyphs = [];
-    const charsCacheKey = chars;
-    let i = 0,
-        ii;
 
     if (this.cMap) {
-      const c = Object.create(null);
+      const c = Object.create(null),
+            ii = chars.length;
+      let i = 0;
 
-      while (i < chars.length) {
+      while (i < ii) {
         this.cMap.readCharCode(chars, i, c);
-        charcode = c.charcode;
-        const length = c.length;
+        const {
+          charcode,
+          length
+        } = c;
         i += length;
-        const isSpace = length === 1 && chars.charCodeAt(i - 1) === 0x20;
-        glyph = this._charToGlyph(charcode, isSpace);
+
+        const glyph = this._charToGlyph(charcode, length === 1 && chars.charCodeAt(i - 1) === 0x20);
+
         glyphs.push(glyph);
       }
     } else {
-      for (i = 0, ii = chars.length; i < ii; ++i) {
-        charcode = chars.charCodeAt(i);
-        glyph = this._charToGlyph(charcode, charcode === 0x20);
+      for (let i = 0, ii = chars.length; i < ii; ++i) {
+        const charcode = chars.charCodeAt(i);
+
+        const glyph = this._charToGlyph(charcode, charcode === 0x20);
+
         glyphs.push(glyph);
       }
     }
 
-    return charsCache[charsCacheKey] = glyphs;
+    return this._charsCache[chars] = glyphs;
   }
 
   getCharPositions(chars) {
@@ -25292,7 +26980,7 @@ class Font {
   }
 
   get glyphCacheValues() {
-    return Object.values(this.glyphCache);
+    return Object.values(this._glyphCache);
   }
 
   encodeString(str) {
@@ -25300,6 +26988,8 @@ class Font {
     const currentBuf = [];
 
     const hasCurrentBufErrors = () => buffers.length % 2 === 1;
+
+    const getCharCode = this.toUnicode instanceof _to_unicode_map.IdentityToUnicodeMap ? unicode => this.toUnicode.charCodeOf(unicode) : unicode => this.toUnicode.charCodeOf(String.fromCodePoint(unicode));
 
     for (let i = 0, ii = str.length; i < ii; i++) {
       const unicode = str.codePointAt(i);
@@ -25309,8 +26999,7 @@ class Font {
       }
 
       if (this.toUnicode) {
-        const char = String.fromCodePoint(unicode);
-        const charCode = this.toUnicode.charCodeOf(char);
+        const charCode = getCharCode(unicode);
 
         if (charCode !== -1) {
           if (hasCurrentBufErrors()) {
@@ -25370,7 +27059,7 @@ class ErrorFont {
 exports.ErrorFont = ErrorFont;
 
 /***/ }),
-/* 35 */
+/* 45 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -25382,9 +27071,9 @@ exports.CFFTopDict = exports.CFFStrings = exports.CFFStandardStrings = exports.C
 
 var _util = __w_pdfjs_require__(2);
 
-var _charsets = __w_pdfjs_require__(36);
+var _charsets = __w_pdfjs_require__(46);
 
-var _encodings = __w_pdfjs_require__(37);
+var _encodings = __w_pdfjs_require__(19);
 
 const MAX_SUBR_NESTING = 10;
 const CFFStandardStrings = [".notdef", "space", "exclam", "quotedbl", "numbersign", "dollar", "percent", "ampersand", "quoteright", "parenleft", "parenright", "asterisk", "plus", "comma", "hyphen", "period", "slash", "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "colon", "semicolon", "less", "equal", "greater", "question", "at", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "bracketleft", "backslash", "bracketright", "asciicircum", "underscore", "quoteleft", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "braceleft", "bar", "braceright", "asciitilde", "exclamdown", "cent", "sterling", "fraction", "yen", "florin", "section", "currency", "quotesingle", "quotedblleft", "guillemotleft", "guilsinglleft", "guilsinglright", "fi", "fl", "endash", "dagger", "daggerdbl", "periodcentered", "paragraph", "bullet", "quotesinglbase", "quotedblbase", "quotedblright", "guillemotright", "ellipsis", "perthousand", "questiondown", "grave", "acute", "circumflex", "tilde", "macron", "breve", "dotaccent", "dieresis", "ring", "cedilla", "hungarumlaut", "ogonek", "caron", "emdash", "AE", "ordfeminine", "Lslash", "Oslash", "OE", "ordmasculine", "ae", "dotlessi", "lslash", "oslash", "oe", "germandbls", "onesuperior", "logicalnot", "mu", "trademark", "Eth", "onehalf", "plusminus", "Thorn", "onequarter", "divide", "brokenbar", "degree", "thorn", "threequarters", "twosuperior", "registered", "minus", "eth", "multiply", "threesuperior", "copyright", "Aacute", "Acircumflex", "Adieresis", "Agrave", "Aring", "Atilde", "Ccedilla", "Eacute", "Ecircumflex", "Edieresis", "Egrave", "Iacute", "Icircumflex", "Idieresis", "Igrave", "Ntilde", "Oacute", "Ocircumflex", "Odieresis", "Ograve", "Otilde", "Scaron", "Uacute", "Ucircumflex", "Udieresis", "Ugrave", "Yacute", "Ydieresis", "Zcaron", "aacute", "acircumflex", "adieresis", "agrave", "aring", "atilde", "ccedilla", "eacute", "ecircumflex", "edieresis", "egrave", "iacute", "icircumflex", "idieresis", "igrave", "ntilde", "oacute", "ocircumflex", "odieresis", "ograve", "otilde", "scaron", "uacute", "ucircumflex", "udieresis", "ugrave", "yacute", "ydieresis", "zcaron", "exclamsmall", "Hungarumlautsmall", "dollaroldstyle", "dollarsuperior", "ampersandsmall", "Acutesmall", "parenleftsuperior", "parenrightsuperior", "twodotenleader", "onedotenleader", "zerooldstyle", "oneoldstyle", "twooldstyle", "threeoldstyle", "fouroldstyle", "fiveoldstyle", "sixoldstyle", "sevenoldstyle", "eightoldstyle", "nineoldstyle", "commasuperior", "threequartersemdash", "periodsuperior", "questionsmall", "asuperior", "bsuperior", "centsuperior", "dsuperior", "esuperior", "isuperior", "lsuperior", "msuperior", "nsuperior", "osuperior", "rsuperior", "ssuperior", "tsuperior", "ff", "ffi", "ffl", "parenleftinferior", "parenrightinferior", "Circumflexsmall", "hyphensuperior", "Gravesmall", "Asmall", "Bsmall", "Csmall", "Dsmall", "Esmall", "Fsmall", "Gsmall", "Hsmall", "Ismall", "Jsmall", "Ksmall", "Lsmall", "Msmall", "Nsmall", "Osmall", "Psmall", "Qsmall", "Rsmall", "Ssmall", "Tsmall", "Usmall", "Vsmall", "Wsmall", "Xsmall", "Ysmall", "Zsmall", "colonmonetary", "onefitted", "rupiah", "Tildesmall", "exclamdownsmall", "centoldstyle", "Lslashsmall", "Scaronsmall", "Zcaronsmall", "Dieresissmall", "Brevesmall", "Caronsmall", "Dotaccentsmall", "Macronsmall", "figuredash", "hypheninferior", "Ogoneksmall", "Ringsmall", "Cedillasmall", "questiondownsmall", "oneeighth", "threeeighths", "fiveeighths", "seveneighths", "onethird", "twothirds", "zerosuperior", "foursuperior", "fivesuperior", "sixsuperior", "sevensuperior", "eightsuperior", "ninesuperior", "zeroinferior", "oneinferior", "twoinferior", "threeinferior", "fourinferior", "fiveinferior", "sixinferior", "seveninferior", "eightinferior", "nineinferior", "centinferior", "dollarinferior", "periodinferior", "commainferior", "Agravesmall", "Aacutesmall", "Acircumflexsmall", "Atildesmall", "Adieresissmall", "Aringsmall", "AEsmall", "Ccedillasmall", "Egravesmall", "Eacutesmall", "Ecircumflexsmall", "Edieresissmall", "Igravesmall", "Iacutesmall", "Icircumflexsmall", "Idieresissmall", "Ethsmall", "Ntildesmall", "Ogravesmall", "Oacutesmall", "Ocircumflexsmall", "Otildesmall", "Odieresissmall", "OEsmall", "Oslashsmall", "Ugravesmall", "Uacutesmall", "Ucircumflexsmall", "Udieresissmall", "Yacutesmall", "Thornsmall", "Ydieresissmall", "001.000", "001.001", "001.002", "001.003", "Black", "Bold", "Book", "Light", "Medium", "Regular", "Roman", "Semibold"];
@@ -25962,6 +27651,9 @@ const CFFParser = function CFFParserClosure() {
         } else if (value === 11) {
           state.stackSize = stackSize;
           return true;
+        } else if (value === 0 && j === data.length) {
+          data[j - 1] = 14;
+          validationCommand = CharstringValidationData[14];
         } else {
           validationCommand = CharstringValidationData[value];
         }
@@ -25981,6 +27673,12 @@ const CFFParser = function CFFParserClosure() {
           if ("min" in validationCommand) {
             if (!state.undefStack && stackSize < validationCommand.min) {
               (0, _util.warn)("Not enough parameters for " + validationCommand.id + "; actual: " + stackSize + ", expected: " + validationCommand.min);
+
+              if (stackSize === 0) {
+                data[j - 1] = 14;
+                return true;
+              }
+
               return false;
             }
           }
@@ -25995,7 +27693,7 @@ const CFFParser = function CFFParserClosure() {
               (0, _util.warn)("Found too many parameters for stack-clearing command");
             }
 
-            if (stackSize > 0 && stack[stackSize - 1] >= 0) {
+            if (stackSize > 0) {
               state.width = stack[stackSize - 1];
             }
           }
@@ -26280,7 +27978,7 @@ const CFFParser = function CFFParserClosure() {
         raw = bytes.subarray(dataStart, dataEnd);
       }
 
-      format = format & 0x7f;
+      format &= 0x7f;
       return new CFFEncoding(predefined, format, encoding, raw);
     }
 
@@ -26843,7 +28541,7 @@ class CFFCompiler {
     if (value >= -107 && value <= 107) {
       code = [value + 139];
     } else if (value >= 108 && value <= 1131) {
-      value = value - 108;
+      value -= 108;
       code = [(value >> 8) + 247, value & 0xff];
     } else if (value >= -1131 && value <= -108) {
       value = -value - 108;
@@ -27206,7 +28904,7 @@ class CFFCompiler {
 exports.CFFCompiler = CFFCompiler;
 
 /***/ }),
-/* 36 */
+/* 46 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -27223,60 +28921,7 @@ const ExpertSubsetCharset = [".notdef", "space", "dollaroldstyle", "dollarsuperi
 exports.ExpertSubsetCharset = ExpertSubsetCharset;
 
 /***/ }),
-/* 37 */
-/***/ ((__unused_webpack_module, exports) => {
-
-
-
-Object.defineProperty(exports, "__esModule", ({
-  value: true
-}));
-exports.getEncoding = getEncoding;
-exports.ZapfDingbatsEncoding = exports.WinAnsiEncoding = exports.SymbolSetEncoding = exports.StandardEncoding = exports.MacRomanEncoding = exports.ExpertEncoding = void 0;
-const ExpertEncoding = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "space", "exclamsmall", "Hungarumlautsmall", "", "dollaroldstyle", "dollarsuperior", "ampersandsmall", "Acutesmall", "parenleftsuperior", "parenrightsuperior", "twodotenleader", "onedotenleader", "comma", "hyphen", "period", "fraction", "zerooldstyle", "oneoldstyle", "twooldstyle", "threeoldstyle", "fouroldstyle", "fiveoldstyle", "sixoldstyle", "sevenoldstyle", "eightoldstyle", "nineoldstyle", "colon", "semicolon", "commasuperior", "threequartersemdash", "periodsuperior", "questionsmall", "", "asuperior", "bsuperior", "centsuperior", "dsuperior", "esuperior", "", "", "", "isuperior", "", "", "lsuperior", "msuperior", "nsuperior", "osuperior", "", "", "rsuperior", "ssuperior", "tsuperior", "", "ff", "fi", "fl", "ffi", "ffl", "parenleftinferior", "", "parenrightinferior", "Circumflexsmall", "hyphensuperior", "Gravesmall", "Asmall", "Bsmall", "Csmall", "Dsmall", "Esmall", "Fsmall", "Gsmall", "Hsmall", "Ismall", "Jsmall", "Ksmall", "Lsmall", "Msmall", "Nsmall", "Osmall", "Psmall", "Qsmall", "Rsmall", "Ssmall", "Tsmall", "Usmall", "Vsmall", "Wsmall", "Xsmall", "Ysmall", "Zsmall", "colonmonetary", "onefitted", "rupiah", "Tildesmall", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "exclamdownsmall", "centoldstyle", "Lslashsmall", "", "", "Scaronsmall", "Zcaronsmall", "Dieresissmall", "Brevesmall", "Caronsmall", "", "Dotaccentsmall", "", "", "Macronsmall", "", "", "figuredash", "hypheninferior", "", "", "Ogoneksmall", "Ringsmall", "Cedillasmall", "", "", "", "onequarter", "onehalf", "threequarters", "questiondownsmall", "oneeighth", "threeeighths", "fiveeighths", "seveneighths", "onethird", "twothirds", "", "", "zerosuperior", "onesuperior", "twosuperior", "threesuperior", "foursuperior", "fivesuperior", "sixsuperior", "sevensuperior", "eightsuperior", "ninesuperior", "zeroinferior", "oneinferior", "twoinferior", "threeinferior", "fourinferior", "fiveinferior", "sixinferior", "seveninferior", "eightinferior", "nineinferior", "centinferior", "dollarinferior", "periodinferior", "commainferior", "Agravesmall", "Aacutesmall", "Acircumflexsmall", "Atildesmall", "Adieresissmall", "Aringsmall", "AEsmall", "Ccedillasmall", "Egravesmall", "Eacutesmall", "Ecircumflexsmall", "Edieresissmall", "Igravesmall", "Iacutesmall", "Icircumflexsmall", "Idieresissmall", "Ethsmall", "Ntildesmall", "Ogravesmall", "Oacutesmall", "Ocircumflexsmall", "Otildesmall", "Odieresissmall", "OEsmall", "Oslashsmall", "Ugravesmall", "Uacutesmall", "Ucircumflexsmall", "Udieresissmall", "Yacutesmall", "Thornsmall", "Ydieresissmall"];
-exports.ExpertEncoding = ExpertEncoding;
-const MacExpertEncoding = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "space", "exclamsmall", "Hungarumlautsmall", "centoldstyle", "dollaroldstyle", "dollarsuperior", "ampersandsmall", "Acutesmall", "parenleftsuperior", "parenrightsuperior", "twodotenleader", "onedotenleader", "comma", "hyphen", "period", "fraction", "zerooldstyle", "oneoldstyle", "twooldstyle", "threeoldstyle", "fouroldstyle", "fiveoldstyle", "sixoldstyle", "sevenoldstyle", "eightoldstyle", "nineoldstyle", "colon", "semicolon", "", "threequartersemdash", "", "questionsmall", "", "", "", "", "Ethsmall", "", "", "onequarter", "onehalf", "threequarters", "oneeighth", "threeeighths", "fiveeighths", "seveneighths", "onethird", "twothirds", "", "", "", "", "", "", "ff", "fi", "fl", "ffi", "ffl", "parenleftinferior", "", "parenrightinferior", "Circumflexsmall", "hypheninferior", "Gravesmall", "Asmall", "Bsmall", "Csmall", "Dsmall", "Esmall", "Fsmall", "Gsmall", "Hsmall", "Ismall", "Jsmall", "Ksmall", "Lsmall", "Msmall", "Nsmall", "Osmall", "Psmall", "Qsmall", "Rsmall", "Ssmall", "Tsmall", "Usmall", "Vsmall", "Wsmall", "Xsmall", "Ysmall", "Zsmall", "colonmonetary", "onefitted", "rupiah", "Tildesmall", "", "", "asuperior", "centsuperior", "", "", "", "", "Aacutesmall", "Agravesmall", "Acircumflexsmall", "Adieresissmall", "Atildesmall", "Aringsmall", "Ccedillasmall", "Eacutesmall", "Egravesmall", "Ecircumflexsmall", "Edieresissmall", "Iacutesmall", "Igravesmall", "Icircumflexsmall", "Idieresissmall", "Ntildesmall", "Oacutesmall", "Ogravesmall", "Ocircumflexsmall", "Odieresissmall", "Otildesmall", "Uacutesmall", "Ugravesmall", "Ucircumflexsmall", "Udieresissmall", "", "eightsuperior", "fourinferior", "threeinferior", "sixinferior", "eightinferior", "seveninferior", "Scaronsmall", "", "centinferior", "twoinferior", "", "Dieresissmall", "", "Caronsmall", "osuperior", "fiveinferior", "", "commainferior", "periodinferior", "Yacutesmall", "", "dollarinferior", "", "", "Thornsmall", "", "nineinferior", "zeroinferior", "Zcaronsmall", "AEsmall", "Oslashsmall", "questiondownsmall", "oneinferior", "Lslashsmall", "", "", "", "", "", "", "Cedillasmall", "", "", "", "", "", "OEsmall", "figuredash", "hyphensuperior", "", "", "", "", "exclamdownsmall", "", "Ydieresissmall", "", "onesuperior", "twosuperior", "threesuperior", "foursuperior", "fivesuperior", "sixsuperior", "sevensuperior", "ninesuperior", "zerosuperior", "", "esuperior", "rsuperior", "tsuperior", "", "", "isuperior", "ssuperior", "dsuperior", "", "", "", "", "", "lsuperior", "Ogoneksmall", "Brevesmall", "Macronsmall", "bsuperior", "nsuperior", "msuperior", "commasuperior", "periodsuperior", "Dotaccentsmall", "Ringsmall", "", "", "", ""];
-const MacRomanEncoding = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "space", "exclam", "quotedbl", "numbersign", "dollar", "percent", "ampersand", "quotesingle", "parenleft", "parenright", "asterisk", "plus", "comma", "hyphen", "period", "slash", "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "colon", "semicolon", "less", "equal", "greater", "question", "at", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "bracketleft", "backslash", "bracketright", "asciicircum", "underscore", "grave", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "braceleft", "bar", "braceright", "asciitilde", "", "Adieresis", "Aring", "Ccedilla", "Eacute", "Ntilde", "Odieresis", "Udieresis", "aacute", "agrave", "acircumflex", "adieresis", "atilde", "aring", "ccedilla", "eacute", "egrave", "ecircumflex", "edieresis", "iacute", "igrave", "icircumflex", "idieresis", "ntilde", "oacute", "ograve", "ocircumflex", "odieresis", "otilde", "uacute", "ugrave", "ucircumflex", "udieresis", "dagger", "degree", "cent", "sterling", "section", "bullet", "paragraph", "germandbls", "registered", "copyright", "trademark", "acute", "dieresis", "notequal", "AE", "Oslash", "infinity", "plusminus", "lessequal", "greaterequal", "yen", "mu", "partialdiff", "summation", "product", "pi", "integral", "ordfeminine", "ordmasculine", "Omega", "ae", "oslash", "questiondown", "exclamdown", "logicalnot", "radical", "florin", "approxequal", "Delta", "guillemotleft", "guillemotright", "ellipsis", "space", "Agrave", "Atilde", "Otilde", "OE", "oe", "endash", "emdash", "quotedblleft", "quotedblright", "quoteleft", "quoteright", "divide", "lozenge", "ydieresis", "Ydieresis", "fraction", "currency", "guilsinglleft", "guilsinglright", "fi", "fl", "daggerdbl", "periodcentered", "quotesinglbase", "quotedblbase", "perthousand", "Acircumflex", "Ecircumflex", "Aacute", "Edieresis", "Egrave", "Iacute", "Icircumflex", "Idieresis", "Igrave", "Oacute", "Ocircumflex", "apple", "Ograve", "Uacute", "Ucircumflex", "Ugrave", "dotlessi", "circumflex", "tilde", "macron", "breve", "dotaccent", "ring", "cedilla", "hungarumlaut", "ogonek", "caron"];
-exports.MacRomanEncoding = MacRomanEncoding;
-const StandardEncoding = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "space", "exclam", "quotedbl", "numbersign", "dollar", "percent", "ampersand", "quoteright", "parenleft", "parenright", "asterisk", "plus", "comma", "hyphen", "period", "slash", "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "colon", "semicolon", "less", "equal", "greater", "question", "at", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "bracketleft", "backslash", "bracketright", "asciicircum", "underscore", "quoteleft", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "braceleft", "bar", "braceright", "asciitilde", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "exclamdown", "cent", "sterling", "fraction", "yen", "florin", "section", "currency", "quotesingle", "quotedblleft", "guillemotleft", "guilsinglleft", "guilsinglright", "fi", "fl", "", "endash", "dagger", "daggerdbl", "periodcentered", "", "paragraph", "bullet", "quotesinglbase", "quotedblbase", "quotedblright", "guillemotright", "ellipsis", "perthousand", "", "questiondown", "", "grave", "acute", "circumflex", "tilde", "macron", "breve", "dotaccent", "dieresis", "", "ring", "cedilla", "", "hungarumlaut", "ogonek", "caron", "emdash", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "AE", "", "ordfeminine", "", "", "", "", "Lslash", "Oslash", "OE", "ordmasculine", "", "", "", "", "", "ae", "", "", "", "dotlessi", "", "", "lslash", "oslash", "oe", "germandbls", "", "", "", ""];
-exports.StandardEncoding = StandardEncoding;
-const WinAnsiEncoding = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "space", "exclam", "quotedbl", "numbersign", "dollar", "percent", "ampersand", "quotesingle", "parenleft", "parenright", "asterisk", "plus", "comma", "hyphen", "period", "slash", "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "colon", "semicolon", "less", "equal", "greater", "question", "at", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "bracketleft", "backslash", "bracketright", "asciicircum", "underscore", "grave", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "braceleft", "bar", "braceright", "asciitilde", "bullet", "Euro", "bullet", "quotesinglbase", "florin", "quotedblbase", "ellipsis", "dagger", "daggerdbl", "circumflex", "perthousand", "Scaron", "guilsinglleft", "OE", "bullet", "Zcaron", "bullet", "bullet", "quoteleft", "quoteright", "quotedblleft", "quotedblright", "bullet", "endash", "emdash", "tilde", "trademark", "scaron", "guilsinglright", "oe", "bullet", "zcaron", "Ydieresis", "space", "exclamdown", "cent", "sterling", "currency", "yen", "brokenbar", "section", "dieresis", "copyright", "ordfeminine", "guillemotleft", "logicalnot", "hyphen", "registered", "macron", "degree", "plusminus", "twosuperior", "threesuperior", "acute", "mu", "paragraph", "periodcentered", "cedilla", "onesuperior", "ordmasculine", "guillemotright", "onequarter", "onehalf", "threequarters", "questiondown", "Agrave", "Aacute", "Acircumflex", "Atilde", "Adieresis", "Aring", "AE", "Ccedilla", "Egrave", "Eacute", "Ecircumflex", "Edieresis", "Igrave", "Iacute", "Icircumflex", "Idieresis", "Eth", "Ntilde", "Ograve", "Oacute", "Ocircumflex", "Otilde", "Odieresis", "multiply", "Oslash", "Ugrave", "Uacute", "Ucircumflex", "Udieresis", "Yacute", "Thorn", "germandbls", "agrave", "aacute", "acircumflex", "atilde", "adieresis", "aring", "ae", "ccedilla", "egrave", "eacute", "ecircumflex", "edieresis", "igrave", "iacute", "icircumflex", "idieresis", "eth", "ntilde", "ograve", "oacute", "ocircumflex", "otilde", "odieresis", "divide", "oslash", "ugrave", "uacute", "ucircumflex", "udieresis", "yacute", "thorn", "ydieresis"];
-exports.WinAnsiEncoding = WinAnsiEncoding;
-const SymbolSetEncoding = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "space", "exclam", "universal", "numbersign", "existential", "percent", "ampersand", "suchthat", "parenleft", "parenright", "asteriskmath", "plus", "comma", "minus", "period", "slash", "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "colon", "semicolon", "less", "equal", "greater", "question", "congruent", "Alpha", "Beta", "Chi", "Delta", "Epsilon", "Phi", "Gamma", "Eta", "Iota", "theta1", "Kappa", "Lambda", "Mu", "Nu", "Omicron", "Pi", "Theta", "Rho", "Sigma", "Tau", "Upsilon", "sigma1", "Omega", "Xi", "Psi", "Zeta", "bracketleft", "therefore", "bracketright", "perpendicular", "underscore", "radicalex", "alpha", "beta", "chi", "delta", "epsilon", "phi", "gamma", "eta", "iota", "phi1", "kappa", "lambda", "mu", "nu", "omicron", "pi", "theta", "rho", "sigma", "tau", "upsilon", "omega1", "omega", "xi", "psi", "zeta", "braceleft", "bar", "braceright", "similar", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "Euro", "Upsilon1", "minute", "lessequal", "fraction", "infinity", "florin", "club", "diamond", "heart", "spade", "arrowboth", "arrowleft", "arrowup", "arrowright", "arrowdown", "degree", "plusminus", "second", "greaterequal", "multiply", "proportional", "partialdiff", "bullet", "divide", "notequal", "equivalence", "approxequal", "ellipsis", "arrowvertex", "arrowhorizex", "carriagereturn", "aleph", "Ifraktur", "Rfraktur", "weierstrass", "circlemultiply", "circleplus", "emptyset", "intersection", "union", "propersuperset", "reflexsuperset", "notsubset", "propersubset", "reflexsubset", "element", "notelement", "angle", "gradient", "registerserif", "copyrightserif", "trademarkserif", "product", "radical", "dotmath", "logicalnot", "logicaland", "logicalor", "arrowdblboth", "arrowdblleft", "arrowdblup", "arrowdblright", "arrowdbldown", "lozenge", "angleleft", "registersans", "copyrightsans", "trademarksans", "summation", "parenlefttp", "parenleftex", "parenleftbt", "bracketlefttp", "bracketleftex", "bracketleftbt", "bracelefttp", "braceleftmid", "braceleftbt", "braceex", "", "angleright", "integral", "integraltp", "integralex", "integralbt", "parenrighttp", "parenrightex", "parenrightbt", "bracketrighttp", "bracketrightex", "bracketrightbt", "bracerighttp", "bracerightmid", "bracerightbt", ""];
-exports.SymbolSetEncoding = SymbolSetEncoding;
-const ZapfDingbatsEncoding = ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "space", "a1", "a2", "a202", "a3", "a4", "a5", "a119", "a118", "a117", "a11", "a12", "a13", "a14", "a15", "a16", "a105", "a17", "a18", "a19", "a20", "a21", "a22", "a23", "a24", "a25", "a26", "a27", "a28", "a6", "a7", "a8", "a9", "a10", "a29", "a30", "a31", "a32", "a33", "a34", "a35", "a36", "a37", "a38", "a39", "a40", "a41", "a42", "a43", "a44", "a45", "a46", "a47", "a48", "a49", "a50", "a51", "a52", "a53", "a54", "a55", "a56", "a57", "a58", "a59", "a60", "a61", "a62", "a63", "a64", "a65", "a66", "a67", "a68", "a69", "a70", "a71", "a72", "a73", "a74", "a203", "a75", "a204", "a76", "a77", "a78", "a79", "a81", "a82", "a83", "a84", "a97", "a98", "a99", "a100", "", "a89", "a90", "a93", "a94", "a91", "a92", "a205", "a85", "a206", "a86", "a87", "a88", "a95", "a96", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "a101", "a102", "a103", "a104", "a106", "a107", "a108", "a112", "a111", "a110", "a109", "a120", "a121", "a122", "a123", "a124", "a125", "a126", "a127", "a128", "a129", "a130", "a131", "a132", "a133", "a134", "a135", "a136", "a137", "a138", "a139", "a140", "a141", "a142", "a143", "a144", "a145", "a146", "a147", "a148", "a149", "a150", "a151", "a152", "a153", "a154", "a155", "a156", "a157", "a158", "a159", "a160", "a161", "a163", "a164", "a196", "a165", "a192", "a166", "a167", "a168", "a169", "a170", "a171", "a172", "a173", "a162", "a174", "a175", "a176", "a177", "a178", "a179", "a193", "a180", "a199", "a181", "a200", "a182", "", "a201", "a183", "a184", "a197", "a185", "a194", "a198", "a186", "a195", "a187", "a188", "a189", "a190", "a191", ""];
-exports.ZapfDingbatsEncoding = ZapfDingbatsEncoding;
-
-function getEncoding(encodingName) {
-  switch (encodingName) {
-    case "WinAnsiEncoding":
-      return WinAnsiEncoding;
-
-    case "StandardEncoding":
-      return StandardEncoding;
-
-    case "MacRomanEncoding":
-      return MacRomanEncoding;
-
-    case "SymbolSetEncoding":
-      return SymbolSetEncoding;
-
-    case "ZapfDingbatsEncoding":
-      return ZapfDingbatsEncoding;
-
-    case "ExpertEncoding":
-      return ExpertEncoding;
-
-    case "MacExpertEncoding":
-      return MacExpertEncoding;
-
-    default:
-      return null;
-  }
-}
-
-/***/ }),
-/* 38 */
+/* 47 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -27284,696 +28929,28 @@ function getEncoding(encodingName) {
 Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
-exports.getFontType = getFontType;
-exports.recoverGlyphName = recoverGlyphName;
-exports.type1FontGlyphMapping = type1FontGlyphMapping;
-exports.SEAC_ANALYSIS_ENABLED = exports.MacStandardGlyphOrdering = exports.FontFlags = void 0;
-
-var _util = __w_pdfjs_require__(2);
-
-var _encodings = __w_pdfjs_require__(37);
-
-var _glyphlist = __w_pdfjs_require__(39);
-
-var _unicode = __w_pdfjs_require__(40);
-
-const SEAC_ANALYSIS_ENABLED = true;
-exports.SEAC_ANALYSIS_ENABLED = SEAC_ANALYSIS_ENABLED;
-const FontFlags = {
-  FixedPitch: 1,
-  Serif: 2,
-  Symbolic: 4,
-  Script: 8,
-  Nonsymbolic: 32,
-  Italic: 64,
-  AllCap: 65536,
-  SmallCap: 131072,
-  ForceBold: 262144
-};
-exports.FontFlags = FontFlags;
-const MacStandardGlyphOrdering = [".notdef", ".null", "nonmarkingreturn", "space", "exclam", "quotedbl", "numbersign", "dollar", "percent", "ampersand", "quotesingle", "parenleft", "parenright", "asterisk", "plus", "comma", "hyphen", "period", "slash", "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "colon", "semicolon", "less", "equal", "greater", "question", "at", "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q", "R", "S", "T", "U", "V", "W", "X", "Y", "Z", "bracketleft", "backslash", "bracketright", "asciicircum", "underscore", "grave", "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z", "braceleft", "bar", "braceright", "asciitilde", "Adieresis", "Aring", "Ccedilla", "Eacute", "Ntilde", "Odieresis", "Udieresis", "aacute", "agrave", "acircumflex", "adieresis", "atilde", "aring", "ccedilla", "eacute", "egrave", "ecircumflex", "edieresis", "iacute", "igrave", "icircumflex", "idieresis", "ntilde", "oacute", "ograve", "ocircumflex", "odieresis", "otilde", "uacute", "ugrave", "ucircumflex", "udieresis", "dagger", "degree", "cent", "sterling", "section", "bullet", "paragraph", "germandbls", "registered", "copyright", "trademark", "acute", "dieresis", "notequal", "AE", "Oslash", "infinity", "plusminus", "lessequal", "greaterequal", "yen", "mu", "partialdiff", "summation", "product", "pi", "integral", "ordfeminine", "ordmasculine", "Omega", "ae", "oslash", "questiondown", "exclamdown", "logicalnot", "radical", "florin", "approxequal", "Delta", "guillemotleft", "guillemotright", "ellipsis", "nonbreakingspace", "Agrave", "Atilde", "Otilde", "OE", "oe", "endash", "emdash", "quotedblleft", "quotedblright", "quoteleft", "quoteright", "divide", "lozenge", "ydieresis", "Ydieresis", "fraction", "currency", "guilsinglleft", "guilsinglright", "fi", "fl", "daggerdbl", "periodcentered", "quotesinglbase", "quotedblbase", "perthousand", "Acircumflex", "Ecircumflex", "Aacute", "Edieresis", "Egrave", "Iacute", "Icircumflex", "Idieresis", "Igrave", "Oacute", "Ocircumflex", "apple", "Ograve", "Uacute", "Ucircumflex", "Ugrave", "dotlessi", "circumflex", "tilde", "macron", "breve", "dotaccent", "ring", "cedilla", "hungarumlaut", "ogonek", "caron", "Lslash", "lslash", "Scaron", "scaron", "Zcaron", "zcaron", "brokenbar", "Eth", "eth", "Yacute", "yacute", "Thorn", "thorn", "minus", "multiply", "onesuperior", "twosuperior", "threesuperior", "onehalf", "onequarter", "threequarters", "franc", "Gbreve", "gbreve", "Idotaccent", "Scedilla", "scedilla", "Cacute", "cacute", "Ccaron", "ccaron", "dcroat"];
-exports.MacStandardGlyphOrdering = MacStandardGlyphOrdering;
-
-function getFontType(type, subtype) {
-  switch (type) {
-    case "Type1":
-      return subtype === "Type1C" ? _util.FontType.TYPE1C : _util.FontType.TYPE1;
-
-    case "CIDFontType0":
-      return subtype === "CIDFontType0C" ? _util.FontType.CIDFONTTYPE0C : _util.FontType.CIDFONTTYPE0;
-
-    case "OpenType":
-      return _util.FontType.OPENTYPE;
-
-    case "TrueType":
-      return _util.FontType.TRUETYPE;
-
-    case "CIDFontType2":
-      return _util.FontType.CIDFONTTYPE2;
-
-    case "MMType1":
-      return _util.FontType.MMTYPE1;
-
-    case "Type0":
-      return _util.FontType.TYPE0;
-
-    default:
-      return _util.FontType.UNKNOWN;
-  }
-}
-
-function recoverGlyphName(name, glyphsUnicodeMap) {
-  if (glyphsUnicodeMap[name] !== undefined) {
-    return name;
-  }
-
-  const unicode = (0, _unicode.getUnicodeForGlyph)(name, glyphsUnicodeMap);
-
-  if (unicode !== -1) {
-    for (const key in glyphsUnicodeMap) {
-      if (glyphsUnicodeMap[key] === unicode) {
-        return key;
-      }
-    }
-  }
-
-  (0, _util.info)("Unable to recover a standard glyph name for: " + name);
-  return name;
-}
-
-function type1FontGlyphMapping(properties, builtInEncoding, glyphNames) {
-  const charCodeToGlyphId = Object.create(null);
-  let glyphId, charCode, baseEncoding;
-  const isSymbolicFont = !!(properties.flags & FontFlags.Symbolic);
-
-  if (properties.baseEncodingName) {
-    baseEncoding = (0, _encodings.getEncoding)(properties.baseEncodingName);
-
-    for (charCode = 0; charCode < baseEncoding.length; charCode++) {
-      glyphId = glyphNames.indexOf(baseEncoding[charCode]);
-
-      if (glyphId >= 0) {
-        charCodeToGlyphId[charCode] = glyphId;
-      } else {
-        charCodeToGlyphId[charCode] = 0;
-      }
-    }
-  } else if (isSymbolicFont) {
-    for (charCode in builtInEncoding) {
-      charCodeToGlyphId[charCode] = builtInEncoding[charCode];
-    }
-  } else {
-    baseEncoding = _encodings.StandardEncoding;
-
-    for (charCode = 0; charCode < baseEncoding.length; charCode++) {
-      glyphId = glyphNames.indexOf(baseEncoding[charCode]);
-
-      if (glyphId >= 0) {
-        charCodeToGlyphId[charCode] = glyphId;
-      } else {
-        charCodeToGlyphId[charCode] = 0;
-      }
-    }
-  }
-
-  const differences = properties.differences;
-  let glyphsUnicodeMap;
-
-  if (differences) {
-    for (charCode in differences) {
-      const glyphName = differences[charCode];
-      glyphId = glyphNames.indexOf(glyphName);
-
-      if (glyphId === -1) {
-        if (!glyphsUnicodeMap) {
-          glyphsUnicodeMap = (0, _glyphlist.getGlyphsUnicode)();
-        }
-
-        const standardGlyphName = recoverGlyphName(glyphName, glyphsUnicodeMap);
-
-        if (standardGlyphName !== glyphName) {
-          glyphId = glyphNames.indexOf(standardGlyphName);
-        }
-      }
-
-      if (glyphId >= 0) {
-        charCodeToGlyphId[charCode] = glyphId;
-      } else {
-        charCodeToGlyphId[charCode] = 0;
-      }
-    }
-  }
-
-  return charCodeToGlyphId;
-}
-
-/***/ }),
-/* 39 */
-/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
-
-
-
-Object.defineProperty(exports, "__esModule", ({
-  value: true
-}));
-exports.getGlyphsUnicode = exports.getDingbatsGlyphsUnicode = void 0;
+exports.getStandardFontName = getStandardFontName;
+exports.getSymbolsFonts = exports.getSupplementalGlyphMapForCalibri = exports.getSupplementalGlyphMapForArialBlack = exports.getStdFontMap = exports.getSerifFonts = exports.getNonStdFontMap = exports.getGlyphMapForStandardFonts = exports.getFontNameToFileMap = void 0;
 
 var _core_utils = __w_pdfjs_require__(9);
 
-const getGlyphsUnicode = (0, _core_utils.getArrayLookupTableFactory)(function () {
-  return ["A", 0x0041, "AE", 0x00c6, "AEacute", 0x01fc, "AEmacron", 0x01e2, "AEsmall", 0xf7e6, "Aacute", 0x00c1, "Aacutesmall", 0xf7e1, "Abreve", 0x0102, "Abreveacute", 0x1eae, "Abrevecyrillic", 0x04d0, "Abrevedotbelow", 0x1eb6, "Abrevegrave", 0x1eb0, "Abrevehookabove", 0x1eb2, "Abrevetilde", 0x1eb4, "Acaron", 0x01cd, "Acircle", 0x24b6, "Acircumflex", 0x00c2, "Acircumflexacute", 0x1ea4, "Acircumflexdotbelow", 0x1eac, "Acircumflexgrave", 0x1ea6, "Acircumflexhookabove", 0x1ea8, "Acircumflexsmall", 0xf7e2, "Acircumflextilde", 0x1eaa, "Acute", 0xf6c9, "Acutesmall", 0xf7b4, "Acyrillic", 0x0410, "Adblgrave", 0x0200, "Adieresis", 0x00c4, "Adieresiscyrillic", 0x04d2, "Adieresismacron", 0x01de, "Adieresissmall", 0xf7e4, "Adotbelow", 0x1ea0, "Adotmacron", 0x01e0, "Agrave", 0x00c0, "Agravesmall", 0xf7e0, "Ahookabove", 0x1ea2, "Aiecyrillic", 0x04d4, "Ainvertedbreve", 0x0202, "Alpha", 0x0391, "Alphatonos", 0x0386, "Amacron", 0x0100, "Amonospace", 0xff21, "Aogonek", 0x0104, "Aring", 0x00c5, "Aringacute", 0x01fa, "Aringbelow", 0x1e00, "Aringsmall", 0xf7e5, "Asmall", 0xf761, "Atilde", 0x00c3, "Atildesmall", 0xf7e3, "Aybarmenian", 0x0531, "B", 0x0042, "Bcircle", 0x24b7, "Bdotaccent", 0x1e02, "Bdotbelow", 0x1e04, "Becyrillic", 0x0411, "Benarmenian", 0x0532, "Beta", 0x0392, "Bhook", 0x0181, "Blinebelow", 0x1e06, "Bmonospace", 0xff22, "Brevesmall", 0xf6f4, "Bsmall", 0xf762, "Btopbar", 0x0182, "C", 0x0043, "Caarmenian", 0x053e, "Cacute", 0x0106, "Caron", 0xf6ca, "Caronsmall", 0xf6f5, "Ccaron", 0x010c, "Ccedilla", 0x00c7, "Ccedillaacute", 0x1e08, "Ccedillasmall", 0xf7e7, "Ccircle", 0x24b8, "Ccircumflex", 0x0108, "Cdot", 0x010a, "Cdotaccent", 0x010a, "Cedillasmall", 0xf7b8, "Chaarmenian", 0x0549, "Cheabkhasiancyrillic", 0x04bc, "Checyrillic", 0x0427, "Chedescenderabkhasiancyrillic", 0x04be, "Chedescendercyrillic", 0x04b6, "Chedieresiscyrillic", 0x04f4, "Cheharmenian", 0x0543, "Chekhakassiancyrillic", 0x04cb, "Cheverticalstrokecyrillic", 0x04b8, "Chi", 0x03a7, "Chook", 0x0187, "Circumflexsmall", 0xf6f6, "Cmonospace", 0xff23, "Coarmenian", 0x0551, "Csmall", 0xf763, "D", 0x0044, "DZ", 0x01f1, "DZcaron", 0x01c4, "Daarmenian", 0x0534, "Dafrican", 0x0189, "Dcaron", 0x010e, "Dcedilla", 0x1e10, "Dcircle", 0x24b9, "Dcircumflexbelow", 0x1e12, "Dcroat", 0x0110, "Ddotaccent", 0x1e0a, "Ddotbelow", 0x1e0c, "Decyrillic", 0x0414, "Deicoptic", 0x03ee, "Delta", 0x2206, "Deltagreek", 0x0394, "Dhook", 0x018a, "Dieresis", 0xf6cb, "DieresisAcute", 0xf6cc, "DieresisGrave", 0xf6cd, "Dieresissmall", 0xf7a8, "Digammagreek", 0x03dc, "Djecyrillic", 0x0402, "Dlinebelow", 0x1e0e, "Dmonospace", 0xff24, "Dotaccentsmall", 0xf6f7, "Dslash", 0x0110, "Dsmall", 0xf764, "Dtopbar", 0x018b, "Dz", 0x01f2, "Dzcaron", 0x01c5, "Dzeabkhasiancyrillic", 0x04e0, "Dzecyrillic", 0x0405, "Dzhecyrillic", 0x040f, "E", 0x0045, "Eacute", 0x00c9, "Eacutesmall", 0xf7e9, "Ebreve", 0x0114, "Ecaron", 0x011a, "Ecedillabreve", 0x1e1c, "Echarmenian", 0x0535, "Ecircle", 0x24ba, "Ecircumflex", 0x00ca, "Ecircumflexacute", 0x1ebe, "Ecircumflexbelow", 0x1e18, "Ecircumflexdotbelow", 0x1ec6, "Ecircumflexgrave", 0x1ec0, "Ecircumflexhookabove", 0x1ec2, "Ecircumflexsmall", 0xf7ea, "Ecircumflextilde", 0x1ec4, "Ecyrillic", 0x0404, "Edblgrave", 0x0204, "Edieresis", 0x00cb, "Edieresissmall", 0xf7eb, "Edot", 0x0116, "Edotaccent", 0x0116, "Edotbelow", 0x1eb8, "Efcyrillic", 0x0424, "Egrave", 0x00c8, "Egravesmall", 0xf7e8, "Eharmenian", 0x0537, "Ehookabove", 0x1eba, "Eightroman", 0x2167, "Einvertedbreve", 0x0206, "Eiotifiedcyrillic", 0x0464, "Elcyrillic", 0x041b, "Elevenroman", 0x216a, "Emacron", 0x0112, "Emacronacute", 0x1e16, "Emacrongrave", 0x1e14, "Emcyrillic", 0x041c, "Emonospace", 0xff25, "Encyrillic", 0x041d, "Endescendercyrillic", 0x04a2, "Eng", 0x014a, "Enghecyrillic", 0x04a4, "Enhookcyrillic", 0x04c7, "Eogonek", 0x0118, "Eopen", 0x0190, "Epsilon", 0x0395, "Epsilontonos", 0x0388, "Ercyrillic", 0x0420, "Ereversed", 0x018e, "Ereversedcyrillic", 0x042d, "Escyrillic", 0x0421, "Esdescendercyrillic", 0x04aa, "Esh", 0x01a9, "Esmall", 0xf765, "Eta", 0x0397, "Etarmenian", 0x0538, "Etatonos", 0x0389, "Eth", 0x00d0, "Ethsmall", 0xf7f0, "Etilde", 0x1ebc, "Etildebelow", 0x1e1a, "Euro", 0x20ac, "Ezh", 0x01b7, "Ezhcaron", 0x01ee, "Ezhreversed", 0x01b8, "F", 0x0046, "Fcircle", 0x24bb, "Fdotaccent", 0x1e1e, "Feharmenian", 0x0556, "Feicoptic", 0x03e4, "Fhook", 0x0191, "Fitacyrillic", 0x0472, "Fiveroman", 0x2164, "Fmonospace", 0xff26, "Fourroman", 0x2163, "Fsmall", 0xf766, "G", 0x0047, "GBsquare", 0x3387, "Gacute", 0x01f4, "Gamma", 0x0393, "Gammaafrican", 0x0194, "Gangiacoptic", 0x03ea, "Gbreve", 0x011e, "Gcaron", 0x01e6, "Gcedilla", 0x0122, "Gcircle", 0x24bc, "Gcircumflex", 0x011c, "Gcommaaccent", 0x0122, "Gdot", 0x0120, "Gdotaccent", 0x0120, "Gecyrillic", 0x0413, "Ghadarmenian", 0x0542, "Ghemiddlehookcyrillic", 0x0494, "Ghestrokecyrillic", 0x0492, "Gheupturncyrillic", 0x0490, "Ghook", 0x0193, "Gimarmenian", 0x0533, "Gjecyrillic", 0x0403, "Gmacron", 0x1e20, "Gmonospace", 0xff27, "Grave", 0xf6ce, "Gravesmall", 0xf760, "Gsmall", 0xf767, "Gsmallhook", 0x029b, "Gstroke", 0x01e4, "H", 0x0048, "H18533", 0x25cf, "H18543", 0x25aa, "H18551", 0x25ab, "H22073", 0x25a1, "HPsquare", 0x33cb, "Haabkhasiancyrillic", 0x04a8, "Hadescendercyrillic", 0x04b2, "Hardsigncyrillic", 0x042a, "Hbar", 0x0126, "Hbrevebelow", 0x1e2a, "Hcedilla", 0x1e28, "Hcircle", 0x24bd, "Hcircumflex", 0x0124, "Hdieresis", 0x1e26, "Hdotaccent", 0x1e22, "Hdotbelow", 0x1e24, "Hmonospace", 0xff28, "Hoarmenian", 0x0540, "Horicoptic", 0x03e8, "Hsmall", 0xf768, "Hungarumlaut", 0xf6cf, "Hungarumlautsmall", 0xf6f8, "Hzsquare", 0x3390, "I", 0x0049, "IAcyrillic", 0x042f, "IJ", 0x0132, "IUcyrillic", 0x042e, "Iacute", 0x00cd, "Iacutesmall", 0xf7ed, "Ibreve", 0x012c, "Icaron", 0x01cf, "Icircle", 0x24be, "Icircumflex", 0x00ce, "Icircumflexsmall", 0xf7ee, "Icyrillic", 0x0406, "Idblgrave", 0x0208, "Idieresis", 0x00cf, "Idieresisacute", 0x1e2e, "Idieresiscyrillic", 0x04e4, "Idieresissmall", 0xf7ef, "Idot", 0x0130, "Idotaccent", 0x0130, "Idotbelow", 0x1eca, "Iebrevecyrillic", 0x04d6, "Iecyrillic", 0x0415, "Ifraktur", 0x2111, "Igrave", 0x00cc, "Igravesmall", 0xf7ec, "Ihookabove", 0x1ec8, "Iicyrillic", 0x0418, "Iinvertedbreve", 0x020a, "Iishortcyrillic", 0x0419, "Imacron", 0x012a, "Imacroncyrillic", 0x04e2, "Imonospace", 0xff29, "Iniarmenian", 0x053b, "Iocyrillic", 0x0401, "Iogonek", 0x012e, "Iota", 0x0399, "Iotaafrican", 0x0196, "Iotadieresis", 0x03aa, "Iotatonos", 0x038a, "Ismall", 0xf769, "Istroke", 0x0197, "Itilde", 0x0128, "Itildebelow", 0x1e2c, "Izhitsacyrillic", 0x0474, "Izhitsadblgravecyrillic", 0x0476, "J", 0x004a, "Jaarmenian", 0x0541, "Jcircle", 0x24bf, "Jcircumflex", 0x0134, "Jecyrillic", 0x0408, "Jheharmenian", 0x054b, "Jmonospace", 0xff2a, "Jsmall", 0xf76a, "K", 0x004b, "KBsquare", 0x3385, "KKsquare", 0x33cd, "Kabashkircyrillic", 0x04a0, "Kacute", 0x1e30, "Kacyrillic", 0x041a, "Kadescendercyrillic", 0x049a, "Kahookcyrillic", 0x04c3, "Kappa", 0x039a, "Kastrokecyrillic", 0x049e, "Kaverticalstrokecyrillic", 0x049c, "Kcaron", 0x01e8, "Kcedilla", 0x0136, "Kcircle", 0x24c0, "Kcommaaccent", 0x0136, "Kdotbelow", 0x1e32, "Keharmenian", 0x0554, "Kenarmenian", 0x053f, "Khacyrillic", 0x0425, "Kheicoptic", 0x03e6, "Khook", 0x0198, "Kjecyrillic", 0x040c, "Klinebelow", 0x1e34, "Kmonospace", 0xff2b, "Koppacyrillic", 0x0480, "Koppagreek", 0x03de, "Ksicyrillic", 0x046e, "Ksmall", 0xf76b, "L", 0x004c, "LJ", 0x01c7, "LL", 0xf6bf, "Lacute", 0x0139, "Lambda", 0x039b, "Lcaron", 0x013d, "Lcedilla", 0x013b, "Lcircle", 0x24c1, "Lcircumflexbelow", 0x1e3c, "Lcommaaccent", 0x013b, "Ldot", 0x013f, "Ldotaccent", 0x013f, "Ldotbelow", 0x1e36, "Ldotbelowmacron", 0x1e38, "Liwnarmenian", 0x053c, "Lj", 0x01c8, "Ljecyrillic", 0x0409, "Llinebelow", 0x1e3a, "Lmonospace", 0xff2c, "Lslash", 0x0141, "Lslashsmall", 0xf6f9, "Lsmall", 0xf76c, "M", 0x004d, "MBsquare", 0x3386, "Macron", 0xf6d0, "Macronsmall", 0xf7af, "Macute", 0x1e3e, "Mcircle", 0x24c2, "Mdotaccent", 0x1e40, "Mdotbelow", 0x1e42, "Menarmenian", 0x0544, "Mmonospace", 0xff2d, "Msmall", 0xf76d, "Mturned", 0x019c, "Mu", 0x039c, "N", 0x004e, "NJ", 0x01ca, "Nacute", 0x0143, "Ncaron", 0x0147, "Ncedilla", 0x0145, "Ncircle", 0x24c3, "Ncircumflexbelow", 0x1e4a, "Ncommaaccent", 0x0145, "Ndotaccent", 0x1e44, "Ndotbelow", 0x1e46, "Nhookleft", 0x019d, "Nineroman", 0x2168, "Nj", 0x01cb, "Njecyrillic", 0x040a, "Nlinebelow", 0x1e48, "Nmonospace", 0xff2e, "Nowarmenian", 0x0546, "Nsmall", 0xf76e, "Ntilde", 0x00d1, "Ntildesmall", 0xf7f1, "Nu", 0x039d, "O", 0x004f, "OE", 0x0152, "OEsmall", 0xf6fa, "Oacute", 0x00d3, "Oacutesmall", 0xf7f3, "Obarredcyrillic", 0x04e8, "Obarreddieresiscyrillic", 0x04ea, "Obreve", 0x014e, "Ocaron", 0x01d1, "Ocenteredtilde", 0x019f, "Ocircle", 0x24c4, "Ocircumflex", 0x00d4, "Ocircumflexacute", 0x1ed0, "Ocircumflexdotbelow", 0x1ed8, "Ocircumflexgrave", 0x1ed2, "Ocircumflexhookabove", 0x1ed4, "Ocircumflexsmall", 0xf7f4, "Ocircumflextilde", 0x1ed6, "Ocyrillic", 0x041e, "Odblacute", 0x0150, "Odblgrave", 0x020c, "Odieresis", 0x00d6, "Odieresiscyrillic", 0x04e6, "Odieresissmall", 0xf7f6, "Odotbelow", 0x1ecc, "Ogoneksmall", 0xf6fb, "Ograve", 0x00d2, "Ogravesmall", 0xf7f2, "Oharmenian", 0x0555, "Ohm", 0x2126, "Ohookabove", 0x1ece, "Ohorn", 0x01a0, "Ohornacute", 0x1eda, "Ohorndotbelow", 0x1ee2, "Ohorngrave", 0x1edc, "Ohornhookabove", 0x1ede, "Ohorntilde", 0x1ee0, "Ohungarumlaut", 0x0150, "Oi", 0x01a2, "Oinvertedbreve", 0x020e, "Omacron", 0x014c, "Omacronacute", 0x1e52, "Omacrongrave", 0x1e50, "Omega", 0x2126, "Omegacyrillic", 0x0460, "Omegagreek", 0x03a9, "Omegaroundcyrillic", 0x047a, "Omegatitlocyrillic", 0x047c, "Omegatonos", 0x038f, "Omicron", 0x039f, "Omicrontonos", 0x038c, "Omonospace", 0xff2f, "Oneroman", 0x2160, "Oogonek", 0x01ea, "Oogonekmacron", 0x01ec, "Oopen", 0x0186, "Oslash", 0x00d8, "Oslashacute", 0x01fe, "Oslashsmall", 0xf7f8, "Osmall", 0xf76f, "Ostrokeacute", 0x01fe, "Otcyrillic", 0x047e, "Otilde", 0x00d5, "Otildeacute", 0x1e4c, "Otildedieresis", 0x1e4e, "Otildesmall", 0xf7f5, "P", 0x0050, "Pacute", 0x1e54, "Pcircle", 0x24c5, "Pdotaccent", 0x1e56, "Pecyrillic", 0x041f, "Peharmenian", 0x054a, "Pemiddlehookcyrillic", 0x04a6, "Phi", 0x03a6, "Phook", 0x01a4, "Pi", 0x03a0, "Piwrarmenian", 0x0553, "Pmonospace", 0xff30, "Psi", 0x03a8, "Psicyrillic", 0x0470, "Psmall", 0xf770, "Q", 0x0051, "Qcircle", 0x24c6, "Qmonospace", 0xff31, "Qsmall", 0xf771, "R", 0x0052, "Raarmenian", 0x054c, "Racute", 0x0154, "Rcaron", 0x0158, "Rcedilla", 0x0156, "Rcircle", 0x24c7, "Rcommaaccent", 0x0156, "Rdblgrave", 0x0210, "Rdotaccent", 0x1e58, "Rdotbelow", 0x1e5a, "Rdotbelowmacron", 0x1e5c, "Reharmenian", 0x0550, "Rfraktur", 0x211c, "Rho", 0x03a1, "Ringsmall", 0xf6fc, "Rinvertedbreve", 0x0212, "Rlinebelow", 0x1e5e, "Rmonospace", 0xff32, "Rsmall", 0xf772, "Rsmallinverted", 0x0281, "Rsmallinvertedsuperior", 0x02b6, "S", 0x0053, "SF010000", 0x250c, "SF020000", 0x2514, "SF030000", 0x2510, "SF040000", 0x2518, "SF050000", 0x253c, "SF060000", 0x252c, "SF070000", 0x2534, "SF080000", 0x251c, "SF090000", 0x2524, "SF100000", 0x2500, "SF110000", 0x2502, "SF190000", 0x2561, "SF200000", 0x2562, "SF210000", 0x2556, "SF220000", 0x2555, "SF230000", 0x2563, "SF240000", 0x2551, "SF250000", 0x2557, "SF260000", 0x255d, "SF270000", 0x255c, "SF280000", 0x255b, "SF360000", 0x255e, "SF370000", 0x255f, "SF380000", 0x255a, "SF390000", 0x2554, "SF400000", 0x2569, "SF410000", 0x2566, "SF420000", 0x2560, "SF430000", 0x2550, "SF440000", 0x256c, "SF450000", 0x2567, "SF460000", 0x2568, "SF470000", 0x2564, "SF480000", 0x2565, "SF490000", 0x2559, "SF500000", 0x2558, "SF510000", 0x2552, "SF520000", 0x2553, "SF530000", 0x256b, "SF540000", 0x256a, "Sacute", 0x015a, "Sacutedotaccent", 0x1e64, "Sampigreek", 0x03e0, "Scaron", 0x0160, "Scarondotaccent", 0x1e66, "Scaronsmall", 0xf6fd, "Scedilla", 0x015e, "Schwa", 0x018f, "Schwacyrillic", 0x04d8, "Schwadieresiscyrillic", 0x04da, "Scircle", 0x24c8, "Scircumflex", 0x015c, "Scommaaccent", 0x0218, "Sdotaccent", 0x1e60, "Sdotbelow", 0x1e62, "Sdotbelowdotaccent", 0x1e68, "Seharmenian", 0x054d, "Sevenroman", 0x2166, "Shaarmenian", 0x0547, "Shacyrillic", 0x0428, "Shchacyrillic", 0x0429, "Sheicoptic", 0x03e2, "Shhacyrillic", 0x04ba, "Shimacoptic", 0x03ec, "Sigma", 0x03a3, "Sixroman", 0x2165, "Smonospace", 0xff33, "Softsigncyrillic", 0x042c, "Ssmall", 0xf773, "Stigmagreek", 0x03da, "T", 0x0054, "Tau", 0x03a4, "Tbar", 0x0166, "Tcaron", 0x0164, "Tcedilla", 0x0162, "Tcircle", 0x24c9, "Tcircumflexbelow", 0x1e70, "Tcommaaccent", 0x0162, "Tdotaccent", 0x1e6a, "Tdotbelow", 0x1e6c, "Tecyrillic", 0x0422, "Tedescendercyrillic", 0x04ac, "Tenroman", 0x2169, "Tetsecyrillic", 0x04b4, "Theta", 0x0398, "Thook", 0x01ac, "Thorn", 0x00de, "Thornsmall", 0xf7fe, "Threeroman", 0x2162, "Tildesmall", 0xf6fe, "Tiwnarmenian", 0x054f, "Tlinebelow", 0x1e6e, "Tmonospace", 0xff34, "Toarmenian", 0x0539, "Tonefive", 0x01bc, "Tonesix", 0x0184, "Tonetwo", 0x01a7, "Tretroflexhook", 0x01ae, "Tsecyrillic", 0x0426, "Tshecyrillic", 0x040b, "Tsmall", 0xf774, "Twelveroman", 0x216b, "Tworoman", 0x2161, "U", 0x0055, "Uacute", 0x00da, "Uacutesmall", 0xf7fa, "Ubreve", 0x016c, "Ucaron", 0x01d3, "Ucircle", 0x24ca, "Ucircumflex", 0x00db, "Ucircumflexbelow", 0x1e76, "Ucircumflexsmall", 0xf7fb, "Ucyrillic", 0x0423, "Udblacute", 0x0170, "Udblgrave", 0x0214, "Udieresis", 0x00dc, "Udieresisacute", 0x01d7, "Udieresisbelow", 0x1e72, "Udieresiscaron", 0x01d9, "Udieresiscyrillic", 0x04f0, "Udieresisgrave", 0x01db, "Udieresismacron", 0x01d5, "Udieresissmall", 0xf7fc, "Udotbelow", 0x1ee4, "Ugrave", 0x00d9, "Ugravesmall", 0xf7f9, "Uhookabove", 0x1ee6, "Uhorn", 0x01af, "Uhornacute", 0x1ee8, "Uhorndotbelow", 0x1ef0, "Uhorngrave", 0x1eea, "Uhornhookabove", 0x1eec, "Uhorntilde", 0x1eee, "Uhungarumlaut", 0x0170, "Uhungarumlautcyrillic", 0x04f2, "Uinvertedbreve", 0x0216, "Ukcyrillic", 0x0478, "Umacron", 0x016a, "Umacroncyrillic", 0x04ee, "Umacrondieresis", 0x1e7a, "Umonospace", 0xff35, "Uogonek", 0x0172, "Upsilon", 0x03a5, "Upsilon1", 0x03d2, "Upsilonacutehooksymbolgreek", 0x03d3, "Upsilonafrican", 0x01b1, "Upsilondieresis", 0x03ab, "Upsilondieresishooksymbolgreek", 0x03d4, "Upsilonhooksymbol", 0x03d2, "Upsilontonos", 0x038e, "Uring", 0x016e, "Ushortcyrillic", 0x040e, "Usmall", 0xf775, "Ustraightcyrillic", 0x04ae, "Ustraightstrokecyrillic", 0x04b0, "Utilde", 0x0168, "Utildeacute", 0x1e78, "Utildebelow", 0x1e74, "V", 0x0056, "Vcircle", 0x24cb, "Vdotbelow", 0x1e7e, "Vecyrillic", 0x0412, "Vewarmenian", 0x054e, "Vhook", 0x01b2, "Vmonospace", 0xff36, "Voarmenian", 0x0548, "Vsmall", 0xf776, "Vtilde", 0x1e7c, "W", 0x0057, "Wacute", 0x1e82, "Wcircle", 0x24cc, "Wcircumflex", 0x0174, "Wdieresis", 0x1e84, "Wdotaccent", 0x1e86, "Wdotbelow", 0x1e88, "Wgrave", 0x1e80, "Wmonospace", 0xff37, "Wsmall", 0xf777, "X", 0x0058, "Xcircle", 0x24cd, "Xdieresis", 0x1e8c, "Xdotaccent", 0x1e8a, "Xeharmenian", 0x053d, "Xi", 0x039e, "Xmonospace", 0xff38, "Xsmall", 0xf778, "Y", 0x0059, "Yacute", 0x00dd, "Yacutesmall", 0xf7fd, "Yatcyrillic", 0x0462, "Ycircle", 0x24ce, "Ycircumflex", 0x0176, "Ydieresis", 0x0178, "Ydieresissmall", 0xf7ff, "Ydotaccent", 0x1e8e, "Ydotbelow", 0x1ef4, "Yericyrillic", 0x042b, "Yerudieresiscyrillic", 0x04f8, "Ygrave", 0x1ef2, "Yhook", 0x01b3, "Yhookabove", 0x1ef6, "Yiarmenian", 0x0545, "Yicyrillic", 0x0407, "Yiwnarmenian", 0x0552, "Ymonospace", 0xff39, "Ysmall", 0xf779, "Ytilde", 0x1ef8, "Yusbigcyrillic", 0x046a, "Yusbigiotifiedcyrillic", 0x046c, "Yuslittlecyrillic", 0x0466, "Yuslittleiotifiedcyrillic", 0x0468, "Z", 0x005a, "Zaarmenian", 0x0536, "Zacute", 0x0179, "Zcaron", 0x017d, "Zcaronsmall", 0xf6ff, "Zcircle", 0x24cf, "Zcircumflex", 0x1e90, "Zdot", 0x017b, "Zdotaccent", 0x017b, "Zdotbelow", 0x1e92, "Zecyrillic", 0x0417, "Zedescendercyrillic", 0x0498, "Zedieresiscyrillic", 0x04de, "Zeta", 0x0396, "Zhearmenian", 0x053a, "Zhebrevecyrillic", 0x04c1, "Zhecyrillic", 0x0416, "Zhedescendercyrillic", 0x0496, "Zhedieresiscyrillic", 0x04dc, "Zlinebelow", 0x1e94, "Zmonospace", 0xff3a, "Zsmall", 0xf77a, "Zstroke", 0x01b5, "a", 0x0061, "aabengali", 0x0986, "aacute", 0x00e1, "aadeva", 0x0906, "aagujarati", 0x0a86, "aagurmukhi", 0x0a06, "aamatragurmukhi", 0x0a3e, "aarusquare", 0x3303, "aavowelsignbengali", 0x09be, "aavowelsigndeva", 0x093e, "aavowelsigngujarati", 0x0abe, "abbreviationmarkarmenian", 0x055f, "abbreviationsigndeva", 0x0970, "abengali", 0x0985, "abopomofo", 0x311a, "abreve", 0x0103, "abreveacute", 0x1eaf, "abrevecyrillic", 0x04d1, "abrevedotbelow", 0x1eb7, "abrevegrave", 0x1eb1, "abrevehookabove", 0x1eb3, "abrevetilde", 0x1eb5, "acaron", 0x01ce, "acircle", 0x24d0, "acircumflex", 0x00e2, "acircumflexacute", 0x1ea5, "acircumflexdotbelow", 0x1ead, "acircumflexgrave", 0x1ea7, "acircumflexhookabove", 0x1ea9, "acircumflextilde", 0x1eab, "acute", 0x00b4, "acutebelowcmb", 0x0317, "acutecmb", 0x0301, "acutecomb", 0x0301, "acutedeva", 0x0954, "acutelowmod", 0x02cf, "acutetonecmb", 0x0341, "acyrillic", 0x0430, "adblgrave", 0x0201, "addakgurmukhi", 0x0a71, "adeva", 0x0905, "adieresis", 0x00e4, "adieresiscyrillic", 0x04d3, "adieresismacron", 0x01df, "adotbelow", 0x1ea1, "adotmacron", 0x01e1, "ae", 0x00e6, "aeacute", 0x01fd, "aekorean", 0x3150, "aemacron", 0x01e3, "afii00208", 0x2015, "afii08941", 0x20a4, "afii10017", 0x0410, "afii10018", 0x0411, "afii10019", 0x0412, "afii10020", 0x0413, "afii10021", 0x0414, "afii10022", 0x0415, "afii10023", 0x0401, "afii10024", 0x0416, "afii10025", 0x0417, "afii10026", 0x0418, "afii10027", 0x0419, "afii10028", 0x041a, "afii10029", 0x041b, "afii10030", 0x041c, "afii10031", 0x041d, "afii10032", 0x041e, "afii10033", 0x041f, "afii10034", 0x0420, "afii10035", 0x0421, "afii10036", 0x0422, "afii10037", 0x0423, "afii10038", 0x0424, "afii10039", 0x0425, "afii10040", 0x0426, "afii10041", 0x0427, "afii10042", 0x0428, "afii10043", 0x0429, "afii10044", 0x042a, "afii10045", 0x042b, "afii10046", 0x042c, "afii10047", 0x042d, "afii10048", 0x042e, "afii10049", 0x042f, "afii10050", 0x0490, "afii10051", 0x0402, "afii10052", 0x0403, "afii10053", 0x0404, "afii10054", 0x0405, "afii10055", 0x0406, "afii10056", 0x0407, "afii10057", 0x0408, "afii10058", 0x0409, "afii10059", 0x040a, "afii10060", 0x040b, "afii10061", 0x040c, "afii10062", 0x040e, "afii10063", 0xf6c4, "afii10064", 0xf6c5, "afii10065", 0x0430, "afii10066", 0x0431, "afii10067", 0x0432, "afii10068", 0x0433, "afii10069", 0x0434, "afii10070", 0x0435, "afii10071", 0x0451, "afii10072", 0x0436, "afii10073", 0x0437, "afii10074", 0x0438, "afii10075", 0x0439, "afii10076", 0x043a, "afii10077", 0x043b, "afii10078", 0x043c, "afii10079", 0x043d, "afii10080", 0x043e, "afii10081", 0x043f, "afii10082", 0x0440, "afii10083", 0x0441, "afii10084", 0x0442, "afii10085", 0x0443, "afii10086", 0x0444, "afii10087", 0x0445, "afii10088", 0x0446, "afii10089", 0x0447, "afii10090", 0x0448, "afii10091", 0x0449, "afii10092", 0x044a, "afii10093", 0x044b, "afii10094", 0x044c, "afii10095", 0x044d, "afii10096", 0x044e, "afii10097", 0x044f, "afii10098", 0x0491, "afii10099", 0x0452, "afii10100", 0x0453, "afii10101", 0x0454, "afii10102", 0x0455, "afii10103", 0x0456, "afii10104", 0x0457, "afii10105", 0x0458, "afii10106", 0x0459, "afii10107", 0x045a, "afii10108", 0x045b, "afii10109", 0x045c, "afii10110", 0x045e, "afii10145", 0x040f, "afii10146", 0x0462, "afii10147", 0x0472, "afii10148", 0x0474, "afii10192", 0xf6c6, "afii10193", 0x045f, "afii10194", 0x0463, "afii10195", 0x0473, "afii10196", 0x0475, "afii10831", 0xf6c7, "afii10832", 0xf6c8, "afii10846", 0x04d9, "afii299", 0x200e, "afii300", 0x200f, "afii301", 0x200d, "afii57381", 0x066a, "afii57388", 0x060c, "afii57392", 0x0660, "afii57393", 0x0661, "afii57394", 0x0662, "afii57395", 0x0663, "afii57396", 0x0664, "afii57397", 0x0665, "afii57398", 0x0666, "afii57399", 0x0667, "afii57400", 0x0668, "afii57401", 0x0669, "afii57403", 0x061b, "afii57407", 0x061f, "afii57409", 0x0621, "afii57410", 0x0622, "afii57411", 0x0623, "afii57412", 0x0624, "afii57413", 0x0625, "afii57414", 0x0626, "afii57415", 0x0627, "afii57416", 0x0628, "afii57417", 0x0629, "afii57418", 0x062a, "afii57419", 0x062b, "afii57420", 0x062c, "afii57421", 0x062d, "afii57422", 0x062e, "afii57423", 0x062f, "afii57424", 0x0630, "afii57425", 0x0631, "afii57426", 0x0632, "afii57427", 0x0633, "afii57428", 0x0634, "afii57429", 0x0635, "afii57430", 0x0636, "afii57431", 0x0637, "afii57432", 0x0638, "afii57433", 0x0639, "afii57434", 0x063a, "afii57440", 0x0640, "afii57441", 0x0641, "afii57442", 0x0642, "afii57443", 0x0643, "afii57444", 0x0644, "afii57445", 0x0645, "afii57446", 0x0646, "afii57448", 0x0648, "afii57449", 0x0649, "afii57450", 0x064a, "afii57451", 0x064b, "afii57452", 0x064c, "afii57453", 0x064d, "afii57454", 0x064e, "afii57455", 0x064f, "afii57456", 0x0650, "afii57457", 0x0651, "afii57458", 0x0652, "afii57470", 0x0647, "afii57505", 0x06a4, "afii57506", 0x067e, "afii57507", 0x0686, "afii57508", 0x0698, "afii57509", 0x06af, "afii57511", 0x0679, "afii57512", 0x0688, "afii57513", 0x0691, "afii57514", 0x06ba, "afii57519", 0x06d2, "afii57534", 0x06d5, "afii57636", 0x20aa, "afii57645", 0x05be, "afii57658", 0x05c3, "afii57664", 0x05d0, "afii57665", 0x05d1, "afii57666", 0x05d2, "afii57667", 0x05d3, "afii57668", 0x05d4, "afii57669", 0x05d5, "afii57670", 0x05d6, "afii57671", 0x05d7, "afii57672", 0x05d8, "afii57673", 0x05d9, "afii57674", 0x05da, "afii57675", 0x05db, "afii57676", 0x05dc, "afii57677", 0x05dd, "afii57678", 0x05de, "afii57679", 0x05df, "afii57680", 0x05e0, "afii57681", 0x05e1, "afii57682", 0x05e2, "afii57683", 0x05e3, "afii57684", 0x05e4, "afii57685", 0x05e5, "afii57686", 0x05e6, "afii57687", 0x05e7, "afii57688", 0x05e8, "afii57689", 0x05e9, "afii57690", 0x05ea, "afii57694", 0xfb2a, "afii57695", 0xfb2b, "afii57700", 0xfb4b, "afii57705", 0xfb1f, "afii57716", 0x05f0, "afii57717", 0x05f1, "afii57718", 0x05f2, "afii57723", 0xfb35, "afii57793", 0x05b4, "afii57794", 0x05b5, "afii57795", 0x05b6, "afii57796", 0x05bb, "afii57797", 0x05b8, "afii57798", 0x05b7, "afii57799", 0x05b0, "afii57800", 0x05b2, "afii57801", 0x05b1, "afii57802", 0x05b3, "afii57803", 0x05c2, "afii57804", 0x05c1, "afii57806", 0x05b9, "afii57807", 0x05bc, "afii57839", 0x05bd, "afii57841", 0x05bf, "afii57842", 0x05c0, "afii57929", 0x02bc, "afii61248", 0x2105, "afii61289", 0x2113, "afii61352", 0x2116, "afii61573", 0x202c, "afii61574", 0x202d, "afii61575", 0x202e, "afii61664", 0x200c, "afii63167", 0x066d, "afii64937", 0x02bd, "agrave", 0x00e0, "agujarati", 0x0a85, "agurmukhi", 0x0a05, "ahiragana", 0x3042, "ahookabove", 0x1ea3, "aibengali", 0x0990, "aibopomofo", 0x311e, "aideva", 0x0910, "aiecyrillic", 0x04d5, "aigujarati", 0x0a90, "aigurmukhi", 0x0a10, "aimatragurmukhi", 0x0a48, "ainarabic", 0x0639, "ainfinalarabic", 0xfeca, "aininitialarabic", 0xfecb, "ainmedialarabic", 0xfecc, "ainvertedbreve", 0x0203, "aivowelsignbengali", 0x09c8, "aivowelsigndeva", 0x0948, "aivowelsigngujarati", 0x0ac8, "akatakana", 0x30a2, "akatakanahalfwidth", 0xff71, "akorean", 0x314f, "alef", 0x05d0, "alefarabic", 0x0627, "alefdageshhebrew", 0xfb30, "aleffinalarabic", 0xfe8e, "alefhamzaabovearabic", 0x0623, "alefhamzaabovefinalarabic", 0xfe84, "alefhamzabelowarabic", 0x0625, "alefhamzabelowfinalarabic", 0xfe88, "alefhebrew", 0x05d0, "aleflamedhebrew", 0xfb4f, "alefmaddaabovearabic", 0x0622, "alefmaddaabovefinalarabic", 0xfe82, "alefmaksuraarabic", 0x0649, "alefmaksurafinalarabic", 0xfef0, "alefmaksurainitialarabic", 0xfef3, "alefmaksuramedialarabic", 0xfef4, "alefpatahhebrew", 0xfb2e, "alefqamatshebrew", 0xfb2f, "aleph", 0x2135, "allequal", 0x224c, "alpha", 0x03b1, "alphatonos", 0x03ac, "amacron", 0x0101, "amonospace", 0xff41, "ampersand", 0x0026, "ampersandmonospace", 0xff06, "ampersandsmall", 0xf726, "amsquare", 0x33c2, "anbopomofo", 0x3122, "angbopomofo", 0x3124, "angbracketleft", 0x3008, "angbracketright", 0x3009, "angkhankhuthai", 0x0e5a, "angle", 0x2220, "anglebracketleft", 0x3008, "anglebracketleftvertical", 0xfe3f, "anglebracketright", 0x3009, "anglebracketrightvertical", 0xfe40, "angleleft", 0x2329, "angleright", 0x232a, "angstrom", 0x212b, "anoteleia", 0x0387, "anudattadeva", 0x0952, "anusvarabengali", 0x0982, "anusvaradeva", 0x0902, "anusvaragujarati", 0x0a82, "aogonek", 0x0105, "apaatosquare", 0x3300, "aparen", 0x249c, "apostrophearmenian", 0x055a, "apostrophemod", 0x02bc, "apple", 0xf8ff, "approaches", 0x2250, "approxequal", 0x2248, "approxequalorimage", 0x2252, "approximatelyequal", 0x2245, "araeaekorean", 0x318e, "araeakorean", 0x318d, "arc", 0x2312, "arighthalfring", 0x1e9a, "aring", 0x00e5, "aringacute", 0x01fb, "aringbelow", 0x1e01, "arrowboth", 0x2194, "arrowdashdown", 0x21e3, "arrowdashleft", 0x21e0, "arrowdashright", 0x21e2, "arrowdashup", 0x21e1, "arrowdblboth", 0x21d4, "arrowdbldown", 0x21d3, "arrowdblleft", 0x21d0, "arrowdblright", 0x21d2, "arrowdblup", 0x21d1, "arrowdown", 0x2193, "arrowdownleft", 0x2199, "arrowdownright", 0x2198, "arrowdownwhite", 0x21e9, "arrowheaddownmod", 0x02c5, "arrowheadleftmod", 0x02c2, "arrowheadrightmod", 0x02c3, "arrowheadupmod", 0x02c4, "arrowhorizex", 0xf8e7, "arrowleft", 0x2190, "arrowleftdbl", 0x21d0, "arrowleftdblstroke", 0x21cd, "arrowleftoverright", 0x21c6, "arrowleftwhite", 0x21e6, "arrowright", 0x2192, "arrowrightdblstroke", 0x21cf, "arrowrightheavy", 0x279e, "arrowrightoverleft", 0x21c4, "arrowrightwhite", 0x21e8, "arrowtableft", 0x21e4, "arrowtabright", 0x21e5, "arrowup", 0x2191, "arrowupdn", 0x2195, "arrowupdnbse", 0x21a8, "arrowupdownbase", 0x21a8, "arrowupleft", 0x2196, "arrowupleftofdown", 0x21c5, "arrowupright", 0x2197, "arrowupwhite", 0x21e7, "arrowvertex", 0xf8e6, "asciicircum", 0x005e, "asciicircummonospace", 0xff3e, "asciitilde", 0x007e, "asciitildemonospace", 0xff5e, "ascript", 0x0251, "ascriptturned", 0x0252, "asmallhiragana", 0x3041, "asmallkatakana", 0x30a1, "asmallkatakanahalfwidth", 0xff67, "asterisk", 0x002a, "asteriskaltonearabic", 0x066d, "asteriskarabic", 0x066d, "asteriskmath", 0x2217, "asteriskmonospace", 0xff0a, "asterisksmall", 0xfe61, "asterism", 0x2042, "asuperior", 0xf6e9, "asymptoticallyequal", 0x2243, "at", 0x0040, "atilde", 0x00e3, "atmonospace", 0xff20, "atsmall", 0xfe6b, "aturned", 0x0250, "aubengali", 0x0994, "aubopomofo", 0x3120, "audeva", 0x0914, "augujarati", 0x0a94, "augurmukhi", 0x0a14, "aulengthmarkbengali", 0x09d7, "aumatragurmukhi", 0x0a4c, "auvowelsignbengali", 0x09cc, "auvowelsigndeva", 0x094c, "auvowelsigngujarati", 0x0acc, "avagrahadeva", 0x093d, "aybarmenian", 0x0561, "ayin", 0x05e2, "ayinaltonehebrew", 0xfb20, "ayinhebrew", 0x05e2, "b", 0x0062, "babengali", 0x09ac, "backslash", 0x005c, "backslashmonospace", 0xff3c, "badeva", 0x092c, "bagujarati", 0x0aac, "bagurmukhi", 0x0a2c, "bahiragana", 0x3070, "bahtthai", 0x0e3f, "bakatakana", 0x30d0, "bar", 0x007c, "barmonospace", 0xff5c, "bbopomofo", 0x3105, "bcircle", 0x24d1, "bdotaccent", 0x1e03, "bdotbelow", 0x1e05, "beamedsixteenthnotes", 0x266c, "because", 0x2235, "becyrillic", 0x0431, "beharabic", 0x0628, "behfinalarabic", 0xfe90, "behinitialarabic", 0xfe91, "behiragana", 0x3079, "behmedialarabic", 0xfe92, "behmeeminitialarabic", 0xfc9f, "behmeemisolatedarabic", 0xfc08, "behnoonfinalarabic", 0xfc6d, "bekatakana", 0x30d9, "benarmenian", 0x0562, "bet", 0x05d1, "beta", 0x03b2, "betasymbolgreek", 0x03d0, "betdagesh", 0xfb31, "betdageshhebrew", 0xfb31, "bethebrew", 0x05d1, "betrafehebrew", 0xfb4c, "bhabengali", 0x09ad, "bhadeva", 0x092d, "bhagujarati", 0x0aad, "bhagurmukhi", 0x0a2d, "bhook", 0x0253, "bihiragana", 0x3073, "bikatakana", 0x30d3, "bilabialclick", 0x0298, "bindigurmukhi", 0x0a02, "birusquare", 0x3331, "blackcircle", 0x25cf, "blackdiamond", 0x25c6, "blackdownpointingtriangle", 0x25bc, "blackleftpointingpointer", 0x25c4, "blackleftpointingtriangle", 0x25c0, "blacklenticularbracketleft", 0x3010, "blacklenticularbracketleftvertical", 0xfe3b, "blacklenticularbracketright", 0x3011, "blacklenticularbracketrightvertical", 0xfe3c, "blacklowerlefttriangle", 0x25e3, "blacklowerrighttriangle", 0x25e2, "blackrectangle", 0x25ac, "blackrightpointingpointer", 0x25ba, "blackrightpointingtriangle", 0x25b6, "blacksmallsquare", 0x25aa, "blacksmilingface", 0x263b, "blacksquare", 0x25a0, "blackstar", 0x2605, "blackupperlefttriangle", 0x25e4, "blackupperrighttriangle", 0x25e5, "blackuppointingsmalltriangle", 0x25b4, "blackuppointingtriangle", 0x25b2, "blank", 0x2423, "blinebelow", 0x1e07, "block", 0x2588, "bmonospace", 0xff42, "bobaimaithai", 0x0e1a, "bohiragana", 0x307c, "bokatakana", 0x30dc, "bparen", 0x249d, "bqsquare", 0x33c3, "braceex", 0xf8f4, "braceleft", 0x007b, "braceleftbt", 0xf8f3, "braceleftmid", 0xf8f2, "braceleftmonospace", 0xff5b, "braceleftsmall", 0xfe5b, "bracelefttp", 0xf8f1, "braceleftvertical", 0xfe37, "braceright", 0x007d, "bracerightbt", 0xf8fe, "bracerightmid", 0xf8fd, "bracerightmonospace", 0xff5d, "bracerightsmall", 0xfe5c, "bracerighttp", 0xf8fc, "bracerightvertical", 0xfe38, "bracketleft", 0x005b, "bracketleftbt", 0xf8f0, "bracketleftex", 0xf8ef, "bracketleftmonospace", 0xff3b, "bracketlefttp", 0xf8ee, "bracketright", 0x005d, "bracketrightbt", 0xf8fb, "bracketrightex", 0xf8fa, "bracketrightmonospace", 0xff3d, "bracketrighttp", 0xf8f9, "breve", 0x02d8, "brevebelowcmb", 0x032e, "brevecmb", 0x0306, "breveinvertedbelowcmb", 0x032f, "breveinvertedcmb", 0x0311, "breveinverteddoublecmb", 0x0361, "bridgebelowcmb", 0x032a, "bridgeinvertedbelowcmb", 0x033a, "brokenbar", 0x00a6, "bstroke", 0x0180, "bsuperior", 0xf6ea, "btopbar", 0x0183, "buhiragana", 0x3076, "bukatakana", 0x30d6, "bullet", 0x2022, "bulletinverse", 0x25d8, "bulletoperator", 0x2219, "bullseye", 0x25ce, "c", 0x0063, "caarmenian", 0x056e, "cabengali", 0x099a, "cacute", 0x0107, "cadeva", 0x091a, "cagujarati", 0x0a9a, "cagurmukhi", 0x0a1a, "calsquare", 0x3388, "candrabindubengali", 0x0981, "candrabinducmb", 0x0310, "candrabindudeva", 0x0901, "candrabindugujarati", 0x0a81, "capslock", 0x21ea, "careof", 0x2105, "caron", 0x02c7, "caronbelowcmb", 0x032c, "caroncmb", 0x030c, "carriagereturn", 0x21b5, "cbopomofo", 0x3118, "ccaron", 0x010d, "ccedilla", 0x00e7, "ccedillaacute", 0x1e09, "ccircle", 0x24d2, "ccircumflex", 0x0109, "ccurl", 0x0255, "cdot", 0x010b, "cdotaccent", 0x010b, "cdsquare", 0x33c5, "cedilla", 0x00b8, "cedillacmb", 0x0327, "cent", 0x00a2, "centigrade", 0x2103, "centinferior", 0xf6df, "centmonospace", 0xffe0, "centoldstyle", 0xf7a2, "centsuperior", 0xf6e0, "chaarmenian", 0x0579, "chabengali", 0x099b, "chadeva", 0x091b, "chagujarati", 0x0a9b, "chagurmukhi", 0x0a1b, "chbopomofo", 0x3114, "cheabkhasiancyrillic", 0x04bd, "checkmark", 0x2713, "checyrillic", 0x0447, "chedescenderabkhasiancyrillic", 0x04bf, "chedescendercyrillic", 0x04b7, "chedieresiscyrillic", 0x04f5, "cheharmenian", 0x0573, "chekhakassiancyrillic", 0x04cc, "cheverticalstrokecyrillic", 0x04b9, "chi", 0x03c7, "chieuchacirclekorean", 0x3277, "chieuchaparenkorean", 0x3217, "chieuchcirclekorean", 0x3269, "chieuchkorean", 0x314a, "chieuchparenkorean", 0x3209, "chochangthai", 0x0e0a, "chochanthai", 0x0e08, "chochingthai", 0x0e09, "chochoethai", 0x0e0c, "chook", 0x0188, "cieucacirclekorean", 0x3276, "cieucaparenkorean", 0x3216, "cieuccirclekorean", 0x3268, "cieuckorean", 0x3148, "cieucparenkorean", 0x3208, "cieucuparenkorean", 0x321c, "circle", 0x25cb, "circlecopyrt", 0x00a9, "circlemultiply", 0x2297, "circleot", 0x2299, "circleplus", 0x2295, "circlepostalmark", 0x3036, "circlewithlefthalfblack", 0x25d0, "circlewithrighthalfblack", 0x25d1, "circumflex", 0x02c6, "circumflexbelowcmb", 0x032d, "circumflexcmb", 0x0302, "clear", 0x2327, "clickalveolar", 0x01c2, "clickdental", 0x01c0, "clicklateral", 0x01c1, "clickretroflex", 0x01c3, "club", 0x2663, "clubsuitblack", 0x2663, "clubsuitwhite", 0x2667, "cmcubedsquare", 0x33a4, "cmonospace", 0xff43, "cmsquaredsquare", 0x33a0, "coarmenian", 0x0581, "colon", 0x003a, "colonmonetary", 0x20a1, "colonmonospace", 0xff1a, "colonsign", 0x20a1, "colonsmall", 0xfe55, "colontriangularhalfmod", 0x02d1, "colontriangularmod", 0x02d0, "comma", 0x002c, "commaabovecmb", 0x0313, "commaaboverightcmb", 0x0315, "commaaccent", 0xf6c3, "commaarabic", 0x060c, "commaarmenian", 0x055d, "commainferior", 0xf6e1, "commamonospace", 0xff0c, "commareversedabovecmb", 0x0314, "commareversedmod", 0x02bd, "commasmall", 0xfe50, "commasuperior", 0xf6e2, "commaturnedabovecmb", 0x0312, "commaturnedmod", 0x02bb, "compass", 0x263c, "congruent", 0x2245, "contourintegral", 0x222e, "control", 0x2303, "controlACK", 0x0006, "controlBEL", 0x0007, "controlBS", 0x0008, "controlCAN", 0x0018, "controlCR", 0x000d, "controlDC1", 0x0011, "controlDC2", 0x0012, "controlDC3", 0x0013, "controlDC4", 0x0014, "controlDEL", 0x007f, "controlDLE", 0x0010, "controlEM", 0x0019, "controlENQ", 0x0005, "controlEOT", 0x0004, "controlESC", 0x001b, "controlETB", 0x0017, "controlETX", 0x0003, "controlFF", 0x000c, "controlFS", 0x001c, "controlGS", 0x001d, "controlHT", 0x0009, "controlLF", 0x000a, "controlNAK", 0x0015, "controlNULL", 0x0000, "controlRS", 0x001e, "controlSI", 0x000f, "controlSO", 0x000e, "controlSOT", 0x0002, "controlSTX", 0x0001, "controlSUB", 0x001a, "controlSYN", 0x0016, "controlUS", 0x001f, "controlVT", 0x000b, "copyright", 0x00a9, "copyrightsans", 0xf8e9, "copyrightserif", 0xf6d9, "cornerbracketleft", 0x300c, "cornerbracketlefthalfwidth", 0xff62, "cornerbracketleftvertical", 0xfe41, "cornerbracketright", 0x300d, "cornerbracketrighthalfwidth", 0xff63, "cornerbracketrightvertical", 0xfe42, "corporationsquare", 0x337f, "cosquare", 0x33c7, "coverkgsquare", 0x33c6, "cparen", 0x249e, "cruzeiro", 0x20a2, "cstretched", 0x0297, "curlyand", 0x22cf, "curlyor", 0x22ce, "currency", 0x00a4, "cyrBreve", 0xf6d1, "cyrFlex", 0xf6d2, "cyrbreve", 0xf6d4, "cyrflex", 0xf6d5, "d", 0x0064, "daarmenian", 0x0564, "dabengali", 0x09a6, "dadarabic", 0x0636, "dadeva", 0x0926, "dadfinalarabic", 0xfebe, "dadinitialarabic", 0xfebf, "dadmedialarabic", 0xfec0, "dagesh", 0x05bc, "dageshhebrew", 0x05bc, "dagger", 0x2020, "daggerdbl", 0x2021, "dagujarati", 0x0aa6, "dagurmukhi", 0x0a26, "dahiragana", 0x3060, "dakatakana", 0x30c0, "dalarabic", 0x062f, "dalet", 0x05d3, "daletdagesh", 0xfb33, "daletdageshhebrew", 0xfb33, "dalethebrew", 0x05d3, "dalfinalarabic", 0xfeaa, "dammaarabic", 0x064f, "dammalowarabic", 0x064f, "dammatanaltonearabic", 0x064c, "dammatanarabic", 0x064c, "danda", 0x0964, "dargahebrew", 0x05a7, "dargalefthebrew", 0x05a7, "dasiapneumatacyrilliccmb", 0x0485, "dblGrave", 0xf6d3, "dblanglebracketleft", 0x300a, "dblanglebracketleftvertical", 0xfe3d, "dblanglebracketright", 0x300b, "dblanglebracketrightvertical", 0xfe3e, "dblarchinvertedbelowcmb", 0x032b, "dblarrowleft", 0x21d4, "dblarrowright", 0x21d2, "dbldanda", 0x0965, "dblgrave", 0xf6d6, "dblgravecmb", 0x030f, "dblintegral", 0x222c, "dbllowline", 0x2017, "dbllowlinecmb", 0x0333, "dbloverlinecmb", 0x033f, "dblprimemod", 0x02ba, "dblverticalbar", 0x2016, "dblverticallineabovecmb", 0x030e, "dbopomofo", 0x3109, "dbsquare", 0x33c8, "dcaron", 0x010f, "dcedilla", 0x1e11, "dcircle", 0x24d3, "dcircumflexbelow", 0x1e13, "dcroat", 0x0111, "ddabengali", 0x09a1, "ddadeva", 0x0921, "ddagujarati", 0x0aa1, "ddagurmukhi", 0x0a21, "ddalarabic", 0x0688, "ddalfinalarabic", 0xfb89, "dddhadeva", 0x095c, "ddhabengali", 0x09a2, "ddhadeva", 0x0922, "ddhagujarati", 0x0aa2, "ddhagurmukhi", 0x0a22, "ddotaccent", 0x1e0b, "ddotbelow", 0x1e0d, "decimalseparatorarabic", 0x066b, "decimalseparatorpersian", 0x066b, "decyrillic", 0x0434, "degree", 0x00b0, "dehihebrew", 0x05ad, "dehiragana", 0x3067, "deicoptic", 0x03ef, "dekatakana", 0x30c7, "deleteleft", 0x232b, "deleteright", 0x2326, "delta", 0x03b4, "deltaturned", 0x018d, "denominatorminusonenumeratorbengali", 0x09f8, "dezh", 0x02a4, "dhabengali", 0x09a7, "dhadeva", 0x0927, "dhagujarati", 0x0aa7, "dhagurmukhi", 0x0a27, "dhook", 0x0257, "dialytikatonos", 0x0385, "dialytikatonoscmb", 0x0344, "diamond", 0x2666, "diamondsuitwhite", 0x2662, "dieresis", 0x00a8, "dieresisacute", 0xf6d7, "dieresisbelowcmb", 0x0324, "dieresiscmb", 0x0308, "dieresisgrave", 0xf6d8, "dieresistonos", 0x0385, "dihiragana", 0x3062, "dikatakana", 0x30c2, "dittomark", 0x3003, "divide", 0x00f7, "divides", 0x2223, "divisionslash", 0x2215, "djecyrillic", 0x0452, "dkshade", 0x2593, "dlinebelow", 0x1e0f, "dlsquare", 0x3397, "dmacron", 0x0111, "dmonospace", 0xff44, "dnblock", 0x2584, "dochadathai", 0x0e0e, "dodekthai", 0x0e14, "dohiragana", 0x3069, "dokatakana", 0x30c9, "dollar", 0x0024, "dollarinferior", 0xf6e3, "dollarmonospace", 0xff04, "dollaroldstyle", 0xf724, "dollarsmall", 0xfe69, "dollarsuperior", 0xf6e4, "dong", 0x20ab, "dorusquare", 0x3326, "dotaccent", 0x02d9, "dotaccentcmb", 0x0307, "dotbelowcmb", 0x0323, "dotbelowcomb", 0x0323, "dotkatakana", 0x30fb, "dotlessi", 0x0131, "dotlessj", 0xf6be, "dotlessjstrokehook", 0x0284, "dotmath", 0x22c5, "dottedcircle", 0x25cc, "doubleyodpatah", 0xfb1f, "doubleyodpatahhebrew", 0xfb1f, "downtackbelowcmb", 0x031e, "downtackmod", 0x02d5, "dparen", 0x249f, "dsuperior", 0xf6eb, "dtail", 0x0256, "dtopbar", 0x018c, "duhiragana", 0x3065, "dukatakana", 0x30c5, "dz", 0x01f3, "dzaltone", 0x02a3, "dzcaron", 0x01c6, "dzcurl", 0x02a5, "dzeabkhasiancyrillic", 0x04e1, "dzecyrillic", 0x0455, "dzhecyrillic", 0x045f, "e", 0x0065, "eacute", 0x00e9, "earth", 0x2641, "ebengali", 0x098f, "ebopomofo", 0x311c, "ebreve", 0x0115, "ecandradeva", 0x090d, "ecandragujarati", 0x0a8d, "ecandravowelsigndeva", 0x0945, "ecandravowelsigngujarati", 0x0ac5, "ecaron", 0x011b, "ecedillabreve", 0x1e1d, "echarmenian", 0x0565, "echyiwnarmenian", 0x0587, "ecircle", 0x24d4, "ecircumflex", 0x00ea, "ecircumflexacute", 0x1ebf, "ecircumflexbelow", 0x1e19, "ecircumflexdotbelow", 0x1ec7, "ecircumflexgrave", 0x1ec1, "ecircumflexhookabove", 0x1ec3, "ecircumflextilde", 0x1ec5, "ecyrillic", 0x0454, "edblgrave", 0x0205, "edeva", 0x090f, "edieresis", 0x00eb, "edot", 0x0117, "edotaccent", 0x0117, "edotbelow", 0x1eb9, "eegurmukhi", 0x0a0f, "eematragurmukhi", 0x0a47, "efcyrillic", 0x0444, "egrave", 0x00e8, "egujarati", 0x0a8f, "eharmenian", 0x0567, "ehbopomofo", 0x311d, "ehiragana", 0x3048, "ehookabove", 0x1ebb, "eibopomofo", 0x311f, "eight", 0x0038, "eightarabic", 0x0668, "eightbengali", 0x09ee, "eightcircle", 0x2467, "eightcircleinversesansserif", 0x2791, "eightdeva", 0x096e, "eighteencircle", 0x2471, "eighteenparen", 0x2485, "eighteenperiod", 0x2499, "eightgujarati", 0x0aee, "eightgurmukhi", 0x0a6e, "eighthackarabic", 0x0668, "eighthangzhou", 0x3028, "eighthnotebeamed", 0x266b, "eightideographicparen", 0x3227, "eightinferior", 0x2088, "eightmonospace", 0xff18, "eightoldstyle", 0xf738, "eightparen", 0x247b, "eightperiod", 0x248f, "eightpersian", 0x06f8, "eightroman", 0x2177, "eightsuperior", 0x2078, "eightthai", 0x0e58, "einvertedbreve", 0x0207, "eiotifiedcyrillic", 0x0465, "ekatakana", 0x30a8, "ekatakanahalfwidth", 0xff74, "ekonkargurmukhi", 0x0a74, "ekorean", 0x3154, "elcyrillic", 0x043b, "element", 0x2208, "elevencircle", 0x246a, "elevenparen", 0x247e, "elevenperiod", 0x2492, "elevenroman", 0x217a, "ellipsis", 0x2026, "ellipsisvertical", 0x22ee, "emacron", 0x0113, "emacronacute", 0x1e17, "emacrongrave", 0x1e15, "emcyrillic", 0x043c, "emdash", 0x2014, "emdashvertical", 0xfe31, "emonospace", 0xff45, "emphasismarkarmenian", 0x055b, "emptyset", 0x2205, "enbopomofo", 0x3123, "encyrillic", 0x043d, "endash", 0x2013, "endashvertical", 0xfe32, "endescendercyrillic", 0x04a3, "eng", 0x014b, "engbopomofo", 0x3125, "enghecyrillic", 0x04a5, "enhookcyrillic", 0x04c8, "enspace", 0x2002, "eogonek", 0x0119, "eokorean", 0x3153, "eopen", 0x025b, "eopenclosed", 0x029a, "eopenreversed", 0x025c, "eopenreversedclosed", 0x025e, "eopenreversedhook", 0x025d, "eparen", 0x24a0, "epsilon", 0x03b5, "epsilontonos", 0x03ad, "equal", 0x003d, "equalmonospace", 0xff1d, "equalsmall", 0xfe66, "equalsuperior", 0x207c, "equivalence", 0x2261, "erbopomofo", 0x3126, "ercyrillic", 0x0440, "ereversed", 0x0258, "ereversedcyrillic", 0x044d, "escyrillic", 0x0441, "esdescendercyrillic", 0x04ab, "esh", 0x0283, "eshcurl", 0x0286, "eshortdeva", 0x090e, "eshortvowelsigndeva", 0x0946, "eshreversedloop", 0x01aa, "eshsquatreversed", 0x0285, "esmallhiragana", 0x3047, "esmallkatakana", 0x30a7, "esmallkatakanahalfwidth", 0xff6a, "estimated", 0x212e, "esuperior", 0xf6ec, "eta", 0x03b7, "etarmenian", 0x0568, "etatonos", 0x03ae, "eth", 0x00f0, "etilde", 0x1ebd, "etildebelow", 0x1e1b, "etnahtafoukhhebrew", 0x0591, "etnahtafoukhlefthebrew", 0x0591, "etnahtahebrew", 0x0591, "etnahtalefthebrew", 0x0591, "eturned", 0x01dd, "eukorean", 0x3161, "euro", 0x20ac, "evowelsignbengali", 0x09c7, "evowelsigndeva", 0x0947, "evowelsigngujarati", 0x0ac7, "exclam", 0x0021, "exclamarmenian", 0x055c, "exclamdbl", 0x203c, "exclamdown", 0x00a1, "exclamdownsmall", 0xf7a1, "exclammonospace", 0xff01, "exclamsmall", 0xf721, "existential", 0x2203, "ezh", 0x0292, "ezhcaron", 0x01ef, "ezhcurl", 0x0293, "ezhreversed", 0x01b9, "ezhtail", 0x01ba, "f", 0x0066, "fadeva", 0x095e, "fagurmukhi", 0x0a5e, "fahrenheit", 0x2109, "fathaarabic", 0x064e, "fathalowarabic", 0x064e, "fathatanarabic", 0x064b, "fbopomofo", 0x3108, "fcircle", 0x24d5, "fdotaccent", 0x1e1f, "feharabic", 0x0641, "feharmenian", 0x0586, "fehfinalarabic", 0xfed2, "fehinitialarabic", 0xfed3, "fehmedialarabic", 0xfed4, "feicoptic", 0x03e5, "female", 0x2640, "ff", 0xfb00, "f_f", 0xfb00, "ffi", 0xfb03, "ffl", 0xfb04, "fi", 0xfb01, "fifteencircle", 0x246e, "fifteenparen", 0x2482, "fifteenperiod", 0x2496, "figuredash", 0x2012, "filledbox", 0x25a0, "filledrect", 0x25ac, "finalkaf", 0x05da, "finalkafdagesh", 0xfb3a, "finalkafdageshhebrew", 0xfb3a, "finalkafhebrew", 0x05da, "finalmem", 0x05dd, "finalmemhebrew", 0x05dd, "finalnun", 0x05df, "finalnunhebrew", 0x05df, "finalpe", 0x05e3, "finalpehebrew", 0x05e3, "finaltsadi", 0x05e5, "finaltsadihebrew", 0x05e5, "firsttonechinese", 0x02c9, "fisheye", 0x25c9, "fitacyrillic", 0x0473, "five", 0x0035, "fivearabic", 0x0665, "fivebengali", 0x09eb, "fivecircle", 0x2464, "fivecircleinversesansserif", 0x278e, "fivedeva", 0x096b, "fiveeighths", 0x215d, "fivegujarati", 0x0aeb, "fivegurmukhi", 0x0a6b, "fivehackarabic", 0x0665, "fivehangzhou", 0x3025, "fiveideographicparen", 0x3224, "fiveinferior", 0x2085, "fivemonospace", 0xff15, "fiveoldstyle", 0xf735, "fiveparen", 0x2478, "fiveperiod", 0x248c, "fivepersian", 0x06f5, "fiveroman", 0x2174, "fivesuperior", 0x2075, "fivethai", 0x0e55, "fl", 0xfb02, "florin", 0x0192, "fmonospace", 0xff46, "fmsquare", 0x3399, "fofanthai", 0x0e1f, "fofathai", 0x0e1d, "fongmanthai", 0x0e4f, "forall", 0x2200, "four", 0x0034, "fourarabic", 0x0664, "fourbengali", 0x09ea, "fourcircle", 0x2463, "fourcircleinversesansserif", 0x278d, "fourdeva", 0x096a, "fourgujarati", 0x0aea, "fourgurmukhi", 0x0a6a, "fourhackarabic", 0x0664, "fourhangzhou", 0x3024, "fourideographicparen", 0x3223, "fourinferior", 0x2084, "fourmonospace", 0xff14, "fournumeratorbengali", 0x09f7, "fouroldstyle", 0xf734, "fourparen", 0x2477, "fourperiod", 0x248b, "fourpersian", 0x06f4, "fourroman", 0x2173, "foursuperior", 0x2074, "fourteencircle", 0x246d, "fourteenparen", 0x2481, "fourteenperiod", 0x2495, "fourthai", 0x0e54, "fourthtonechinese", 0x02cb, "fparen", 0x24a1, "fraction", 0x2044, "franc", 0x20a3, "g", 0x0067, "gabengali", 0x0997, "gacute", 0x01f5, "gadeva", 0x0917, "gafarabic", 0x06af, "gaffinalarabic", 0xfb93, "gafinitialarabic", 0xfb94, "gafmedialarabic", 0xfb95, "gagujarati", 0x0a97, "gagurmukhi", 0x0a17, "gahiragana", 0x304c, "gakatakana", 0x30ac, "gamma", 0x03b3, "gammalatinsmall", 0x0263, "gammasuperior", 0x02e0, "gangiacoptic", 0x03eb, "gbopomofo", 0x310d, "gbreve", 0x011f, "gcaron", 0x01e7, "gcedilla", 0x0123, "gcircle", 0x24d6, "gcircumflex", 0x011d, "gcommaaccent", 0x0123, "gdot", 0x0121, "gdotaccent", 0x0121, "gecyrillic", 0x0433, "gehiragana", 0x3052, "gekatakana", 0x30b2, "geometricallyequal", 0x2251, "gereshaccenthebrew", 0x059c, "gereshhebrew", 0x05f3, "gereshmuqdamhebrew", 0x059d, "germandbls", 0x00df, "gershayimaccenthebrew", 0x059e, "gershayimhebrew", 0x05f4, "getamark", 0x3013, "ghabengali", 0x0998, "ghadarmenian", 0x0572, "ghadeva", 0x0918, "ghagujarati", 0x0a98, "ghagurmukhi", 0x0a18, "ghainarabic", 0x063a, "ghainfinalarabic", 0xfece, "ghaininitialarabic", 0xfecf, "ghainmedialarabic", 0xfed0, "ghemiddlehookcyrillic", 0x0495, "ghestrokecyrillic", 0x0493, "gheupturncyrillic", 0x0491, "ghhadeva", 0x095a, "ghhagurmukhi", 0x0a5a, "ghook", 0x0260, "ghzsquare", 0x3393, "gihiragana", 0x304e, "gikatakana", 0x30ae, "gimarmenian", 0x0563, "gimel", 0x05d2, "gimeldagesh", 0xfb32, "gimeldageshhebrew", 0xfb32, "gimelhebrew", 0x05d2, "gjecyrillic", 0x0453, "glottalinvertedstroke", 0x01be, "glottalstop", 0x0294, "glottalstopinverted", 0x0296, "glottalstopmod", 0x02c0, "glottalstopreversed", 0x0295, "glottalstopreversedmod", 0x02c1, "glottalstopreversedsuperior", 0x02e4, "glottalstopstroke", 0x02a1, "glottalstopstrokereversed", 0x02a2, "gmacron", 0x1e21, "gmonospace", 0xff47, "gohiragana", 0x3054, "gokatakana", 0x30b4, "gparen", 0x24a2, "gpasquare", 0x33ac, "gradient", 0x2207, "grave", 0x0060, "gravebelowcmb", 0x0316, "gravecmb", 0x0300, "gravecomb", 0x0300, "gravedeva", 0x0953, "gravelowmod", 0x02ce, "gravemonospace", 0xff40, "gravetonecmb", 0x0340, "greater", 0x003e, "greaterequal", 0x2265, "greaterequalorless", 0x22db, "greatermonospace", 0xff1e, "greaterorequivalent", 0x2273, "greaterorless", 0x2277, "greateroverequal", 0x2267, "greatersmall", 0xfe65, "gscript", 0x0261, "gstroke", 0x01e5, "guhiragana", 0x3050, "guillemotleft", 0x00ab, "guillemotright", 0x00bb, "guilsinglleft", 0x2039, "guilsinglright", 0x203a, "gukatakana", 0x30b0, "guramusquare", 0x3318, "gysquare", 0x33c9, "h", 0x0068, "haabkhasiancyrillic", 0x04a9, "haaltonearabic", 0x06c1, "habengali", 0x09b9, "hadescendercyrillic", 0x04b3, "hadeva", 0x0939, "hagujarati", 0x0ab9, "hagurmukhi", 0x0a39, "haharabic", 0x062d, "hahfinalarabic", 0xfea2, "hahinitialarabic", 0xfea3, "hahiragana", 0x306f, "hahmedialarabic", 0xfea4, "haitusquare", 0x332a, "hakatakana", 0x30cf, "hakatakanahalfwidth", 0xff8a, "halantgurmukhi", 0x0a4d, "hamzaarabic", 0x0621, "hamzalowarabic", 0x0621, "hangulfiller", 0x3164, "hardsigncyrillic", 0x044a, "harpoonleftbarbup", 0x21bc, "harpoonrightbarbup", 0x21c0, "hasquare", 0x33ca, "hatafpatah", 0x05b2, "hatafpatah16", 0x05b2, "hatafpatah23", 0x05b2, "hatafpatah2f", 0x05b2, "hatafpatahhebrew", 0x05b2, "hatafpatahnarrowhebrew", 0x05b2, "hatafpatahquarterhebrew", 0x05b2, "hatafpatahwidehebrew", 0x05b2, "hatafqamats", 0x05b3, "hatafqamats1b", 0x05b3, "hatafqamats28", 0x05b3, "hatafqamats34", 0x05b3, "hatafqamatshebrew", 0x05b3, "hatafqamatsnarrowhebrew", 0x05b3, "hatafqamatsquarterhebrew", 0x05b3, "hatafqamatswidehebrew", 0x05b3, "hatafsegol", 0x05b1, "hatafsegol17", 0x05b1, "hatafsegol24", 0x05b1, "hatafsegol30", 0x05b1, "hatafsegolhebrew", 0x05b1, "hatafsegolnarrowhebrew", 0x05b1, "hatafsegolquarterhebrew", 0x05b1, "hatafsegolwidehebrew", 0x05b1, "hbar", 0x0127, "hbopomofo", 0x310f, "hbrevebelow", 0x1e2b, "hcedilla", 0x1e29, "hcircle", 0x24d7, "hcircumflex", 0x0125, "hdieresis", 0x1e27, "hdotaccent", 0x1e23, "hdotbelow", 0x1e25, "he", 0x05d4, "heart", 0x2665, "heartsuitblack", 0x2665, "heartsuitwhite", 0x2661, "hedagesh", 0xfb34, "hedageshhebrew", 0xfb34, "hehaltonearabic", 0x06c1, "heharabic", 0x0647, "hehebrew", 0x05d4, "hehfinalaltonearabic", 0xfba7, "hehfinalalttwoarabic", 0xfeea, "hehfinalarabic", 0xfeea, "hehhamzaabovefinalarabic", 0xfba5, "hehhamzaaboveisolatedarabic", 0xfba4, "hehinitialaltonearabic", 0xfba8, "hehinitialarabic", 0xfeeb, "hehiragana", 0x3078, "hehmedialaltonearabic", 0xfba9, "hehmedialarabic", 0xfeec, "heiseierasquare", 0x337b, "hekatakana", 0x30d8, "hekatakanahalfwidth", 0xff8d, "hekutaarusquare", 0x3336, "henghook", 0x0267, "herutusquare", 0x3339, "het", 0x05d7, "hethebrew", 0x05d7, "hhook", 0x0266, "hhooksuperior", 0x02b1, "hieuhacirclekorean", 0x327b, "hieuhaparenkorean", 0x321b, "hieuhcirclekorean", 0x326d, "hieuhkorean", 0x314e, "hieuhparenkorean", 0x320d, "hihiragana", 0x3072, "hikatakana", 0x30d2, "hikatakanahalfwidth", 0xff8b, "hiriq", 0x05b4, "hiriq14", 0x05b4, "hiriq21", 0x05b4, "hiriq2d", 0x05b4, "hiriqhebrew", 0x05b4, "hiriqnarrowhebrew", 0x05b4, "hiriqquarterhebrew", 0x05b4, "hiriqwidehebrew", 0x05b4, "hlinebelow", 0x1e96, "hmonospace", 0xff48, "hoarmenian", 0x0570, "hohipthai", 0x0e2b, "hohiragana", 0x307b, "hokatakana", 0x30db, "hokatakanahalfwidth", 0xff8e, "holam", 0x05b9, "holam19", 0x05b9, "holam26", 0x05b9, "holam32", 0x05b9, "holamhebrew", 0x05b9, "holamnarrowhebrew", 0x05b9, "holamquarterhebrew", 0x05b9, "holamwidehebrew", 0x05b9, "honokhukthai", 0x0e2e, "hookabovecomb", 0x0309, "hookcmb", 0x0309, "hookpalatalizedbelowcmb", 0x0321, "hookretroflexbelowcmb", 0x0322, "hoonsquare", 0x3342, "horicoptic", 0x03e9, "horizontalbar", 0x2015, "horncmb", 0x031b, "hotsprings", 0x2668, "house", 0x2302, "hparen", 0x24a3, "hsuperior", 0x02b0, "hturned", 0x0265, "huhiragana", 0x3075, "huiitosquare", 0x3333, "hukatakana", 0x30d5, "hukatakanahalfwidth", 0xff8c, "hungarumlaut", 0x02dd, "hungarumlautcmb", 0x030b, "hv", 0x0195, "hyphen", 0x002d, "hypheninferior", 0xf6e5, "hyphenmonospace", 0xff0d, "hyphensmall", 0xfe63, "hyphensuperior", 0xf6e6, "hyphentwo", 0x2010, "i", 0x0069, "iacute", 0x00ed, "iacyrillic", 0x044f, "ibengali", 0x0987, "ibopomofo", 0x3127, "ibreve", 0x012d, "icaron", 0x01d0, "icircle", 0x24d8, "icircumflex", 0x00ee, "icyrillic", 0x0456, "idblgrave", 0x0209, "ideographearthcircle", 0x328f, "ideographfirecircle", 0x328b, "ideographicallianceparen", 0x323f, "ideographiccallparen", 0x323a, "ideographiccentrecircle", 0x32a5, "ideographicclose", 0x3006, "ideographiccomma", 0x3001, "ideographiccommaleft", 0xff64, "ideographiccongratulationparen", 0x3237, "ideographiccorrectcircle", 0x32a3, "ideographicearthparen", 0x322f, "ideographicenterpriseparen", 0x323d, "ideographicexcellentcircle", 0x329d, "ideographicfestivalparen", 0x3240, "ideographicfinancialcircle", 0x3296, "ideographicfinancialparen", 0x3236, "ideographicfireparen", 0x322b, "ideographichaveparen", 0x3232, "ideographichighcircle", 0x32a4, "ideographiciterationmark", 0x3005, "ideographiclaborcircle", 0x3298, "ideographiclaborparen", 0x3238, "ideographicleftcircle", 0x32a7, "ideographiclowcircle", 0x32a6, "ideographicmedicinecircle", 0x32a9, "ideographicmetalparen", 0x322e, "ideographicmoonparen", 0x322a, "ideographicnameparen", 0x3234, "ideographicperiod", 0x3002, "ideographicprintcircle", 0x329e, "ideographicreachparen", 0x3243, "ideographicrepresentparen", 0x3239, "ideographicresourceparen", 0x323e, "ideographicrightcircle", 0x32a8, "ideographicsecretcircle", 0x3299, "ideographicselfparen", 0x3242, "ideographicsocietyparen", 0x3233, "ideographicspace", 0x3000, "ideographicspecialparen", 0x3235, "ideographicstockparen", 0x3231, "ideographicstudyparen", 0x323b, "ideographicsunparen", 0x3230, "ideographicsuperviseparen", 0x323c, "ideographicwaterparen", 0x322c, "ideographicwoodparen", 0x322d, "ideographiczero", 0x3007, "ideographmetalcircle", 0x328e, "ideographmooncircle", 0x328a, "ideographnamecircle", 0x3294, "ideographsuncircle", 0x3290, "ideographwatercircle", 0x328c, "ideographwoodcircle", 0x328d, "ideva", 0x0907, "idieresis", 0x00ef, "idieresisacute", 0x1e2f, "idieresiscyrillic", 0x04e5, "idotbelow", 0x1ecb, "iebrevecyrillic", 0x04d7, "iecyrillic", 0x0435, "ieungacirclekorean", 0x3275, "ieungaparenkorean", 0x3215, "ieungcirclekorean", 0x3267, "ieungkorean", 0x3147, "ieungparenkorean", 0x3207, "igrave", 0x00ec, "igujarati", 0x0a87, "igurmukhi", 0x0a07, "ihiragana", 0x3044, "ihookabove", 0x1ec9, "iibengali", 0x0988, "iicyrillic", 0x0438, "iideva", 0x0908, "iigujarati", 0x0a88, "iigurmukhi", 0x0a08, "iimatragurmukhi", 0x0a40, "iinvertedbreve", 0x020b, "iishortcyrillic", 0x0439, "iivowelsignbengali", 0x09c0, "iivowelsigndeva", 0x0940, "iivowelsigngujarati", 0x0ac0, "ij", 0x0133, "ikatakana", 0x30a4, "ikatakanahalfwidth", 0xff72, "ikorean", 0x3163, "ilde", 0x02dc, "iluyhebrew", 0x05ac, "imacron", 0x012b, "imacroncyrillic", 0x04e3, "imageorapproximatelyequal", 0x2253, "imatragurmukhi", 0x0a3f, "imonospace", 0xff49, "increment", 0x2206, "infinity", 0x221e, "iniarmenian", 0x056b, "integral", 0x222b, "integralbottom", 0x2321, "integralbt", 0x2321, "integralex", 0xf8f5, "integraltop", 0x2320, "integraltp", 0x2320, "intersection", 0x2229, "intisquare", 0x3305, "invbullet", 0x25d8, "invcircle", 0x25d9, "invsmileface", 0x263b, "iocyrillic", 0x0451, "iogonek", 0x012f, "iota", 0x03b9, "iotadieresis", 0x03ca, "iotadieresistonos", 0x0390, "iotalatin", 0x0269, "iotatonos", 0x03af, "iparen", 0x24a4, "irigurmukhi", 0x0a72, "ismallhiragana", 0x3043, "ismallkatakana", 0x30a3, "ismallkatakanahalfwidth", 0xff68, "issharbengali", 0x09fa, "istroke", 0x0268, "isuperior", 0xf6ed, "iterationhiragana", 0x309d, "iterationkatakana", 0x30fd, "itilde", 0x0129, "itildebelow", 0x1e2d, "iubopomofo", 0x3129, "iucyrillic", 0x044e, "ivowelsignbengali", 0x09bf, "ivowelsigndeva", 0x093f, "ivowelsigngujarati", 0x0abf, "izhitsacyrillic", 0x0475, "izhitsadblgravecyrillic", 0x0477, "j", 0x006a, "jaarmenian", 0x0571, "jabengali", 0x099c, "jadeva", 0x091c, "jagujarati", 0x0a9c, "jagurmukhi", 0x0a1c, "jbopomofo", 0x3110, "jcaron", 0x01f0, "jcircle", 0x24d9, "jcircumflex", 0x0135, "jcrossedtail", 0x029d, "jdotlessstroke", 0x025f, "jecyrillic", 0x0458, "jeemarabic", 0x062c, "jeemfinalarabic", 0xfe9e, "jeeminitialarabic", 0xfe9f, "jeemmedialarabic", 0xfea0, "jeharabic", 0x0698, "jehfinalarabic", 0xfb8b, "jhabengali", 0x099d, "jhadeva", 0x091d, "jhagujarati", 0x0a9d, "jhagurmukhi", 0x0a1d, "jheharmenian", 0x057b, "jis", 0x3004, "jmonospace", 0xff4a, "jparen", 0x24a5, "jsuperior", 0x02b2, "k", 0x006b, "kabashkircyrillic", 0x04a1, "kabengali", 0x0995, "kacute", 0x1e31, "kacyrillic", 0x043a, "kadescendercyrillic", 0x049b, "kadeva", 0x0915, "kaf", 0x05db, "kafarabic", 0x0643, "kafdagesh", 0xfb3b, "kafdageshhebrew", 0xfb3b, "kaffinalarabic", 0xfeda, "kafhebrew", 0x05db, "kafinitialarabic", 0xfedb, "kafmedialarabic", 0xfedc, "kafrafehebrew", 0xfb4d, "kagujarati", 0x0a95, "kagurmukhi", 0x0a15, "kahiragana", 0x304b, "kahookcyrillic", 0x04c4, "kakatakana", 0x30ab, "kakatakanahalfwidth", 0xff76, "kappa", 0x03ba, "kappasymbolgreek", 0x03f0, "kapyeounmieumkorean", 0x3171, "kapyeounphieuphkorean", 0x3184, "kapyeounpieupkorean", 0x3178, "kapyeounssangpieupkorean", 0x3179, "karoriisquare", 0x330d, "kashidaautoarabic", 0x0640, "kashidaautonosidebearingarabic", 0x0640, "kasmallkatakana", 0x30f5, "kasquare", 0x3384, "kasraarabic", 0x0650, "kasratanarabic", 0x064d, "kastrokecyrillic", 0x049f, "katahiraprolongmarkhalfwidth", 0xff70, "kaverticalstrokecyrillic", 0x049d, "kbopomofo", 0x310e, "kcalsquare", 0x3389, "kcaron", 0x01e9, "kcedilla", 0x0137, "kcircle", 0x24da, "kcommaaccent", 0x0137, "kdotbelow", 0x1e33, "keharmenian", 0x0584, "kehiragana", 0x3051, "kekatakana", 0x30b1, "kekatakanahalfwidth", 0xff79, "kenarmenian", 0x056f, "kesmallkatakana", 0x30f6, "kgreenlandic", 0x0138, "khabengali", 0x0996, "khacyrillic", 0x0445, "khadeva", 0x0916, "khagujarati", 0x0a96, "khagurmukhi", 0x0a16, "khaharabic", 0x062e, "khahfinalarabic", 0xfea6, "khahinitialarabic", 0xfea7, "khahmedialarabic", 0xfea8, "kheicoptic", 0x03e7, "khhadeva", 0x0959, "khhagurmukhi", 0x0a59, "khieukhacirclekorean", 0x3278, "khieukhaparenkorean", 0x3218, "khieukhcirclekorean", 0x326a, "khieukhkorean", 0x314b, "khieukhparenkorean", 0x320a, "khokhaithai", 0x0e02, "khokhonthai", 0x0e05, "khokhuatthai", 0x0e03, "khokhwaithai", 0x0e04, "khomutthai", 0x0e5b, "khook", 0x0199, "khorakhangthai", 0x0e06, "khzsquare", 0x3391, "kihiragana", 0x304d, "kikatakana", 0x30ad, "kikatakanahalfwidth", 0xff77, "kiroguramusquare", 0x3315, "kiromeetorusquare", 0x3316, "kirosquare", 0x3314, "kiyeokacirclekorean", 0x326e, "kiyeokaparenkorean", 0x320e, "kiyeokcirclekorean", 0x3260, "kiyeokkorean", 0x3131, "kiyeokparenkorean", 0x3200, "kiyeoksioskorean", 0x3133, "kjecyrillic", 0x045c, "klinebelow", 0x1e35, "klsquare", 0x3398, "kmcubedsquare", 0x33a6, "kmonospace", 0xff4b, "kmsquaredsquare", 0x33a2, "kohiragana", 0x3053, "kohmsquare", 0x33c0, "kokaithai", 0x0e01, "kokatakana", 0x30b3, "kokatakanahalfwidth", 0xff7a, "kooposquare", 0x331e, "koppacyrillic", 0x0481, "koreanstandardsymbol", 0x327f, "koroniscmb", 0x0343, "kparen", 0x24a6, "kpasquare", 0x33aa, "ksicyrillic", 0x046f, "ktsquare", 0x33cf, "kturned", 0x029e, "kuhiragana", 0x304f, "kukatakana", 0x30af, "kukatakanahalfwidth", 0xff78, "kvsquare", 0x33b8, "kwsquare", 0x33be, "l", 0x006c, "labengali", 0x09b2, "lacute", 0x013a, "ladeva", 0x0932, "lagujarati", 0x0ab2, "lagurmukhi", 0x0a32, "lakkhangyaothai", 0x0e45, "lamaleffinalarabic", 0xfefc, "lamalefhamzaabovefinalarabic", 0xfef8, "lamalefhamzaaboveisolatedarabic", 0xfef7, "lamalefhamzabelowfinalarabic", 0xfefa, "lamalefhamzabelowisolatedarabic", 0xfef9, "lamalefisolatedarabic", 0xfefb, "lamalefmaddaabovefinalarabic", 0xfef6, "lamalefmaddaaboveisolatedarabic", 0xfef5, "lamarabic", 0x0644, "lambda", 0x03bb, "lambdastroke", 0x019b, "lamed", 0x05dc, "lameddagesh", 0xfb3c, "lameddageshhebrew", 0xfb3c, "lamedhebrew", 0x05dc, "lamfinalarabic", 0xfede, "lamhahinitialarabic", 0xfcca, "laminitialarabic", 0xfedf, "lamjeeminitialarabic", 0xfcc9, "lamkhahinitialarabic", 0xfccb, "lamlamhehisolatedarabic", 0xfdf2, "lammedialarabic", 0xfee0, "lammeemhahinitialarabic", 0xfd88, "lammeeminitialarabic", 0xfccc, "largecircle", 0x25ef, "lbar", 0x019a, "lbelt", 0x026c, "lbopomofo", 0x310c, "lcaron", 0x013e, "lcedilla", 0x013c, "lcircle", 0x24db, "lcircumflexbelow", 0x1e3d, "lcommaaccent", 0x013c, "ldot", 0x0140, "ldotaccent", 0x0140, "ldotbelow", 0x1e37, "ldotbelowmacron", 0x1e39, "leftangleabovecmb", 0x031a, "lefttackbelowcmb", 0x0318, "less", 0x003c, "lessequal", 0x2264, "lessequalorgreater", 0x22da, "lessmonospace", 0xff1c, "lessorequivalent", 0x2272, "lessorgreater", 0x2276, "lessoverequal", 0x2266, "lesssmall", 0xfe64, "lezh", 0x026e, "lfblock", 0x258c, "lhookretroflex", 0x026d, "lira", 0x20a4, "liwnarmenian", 0x056c, "lj", 0x01c9, "ljecyrillic", 0x0459, "ll", 0xf6c0, "lladeva", 0x0933, "llagujarati", 0x0ab3, "llinebelow", 0x1e3b, "llladeva", 0x0934, "llvocalicbengali", 0x09e1, "llvocalicdeva", 0x0961, "llvocalicvowelsignbengali", 0x09e3, "llvocalicvowelsigndeva", 0x0963, "lmiddletilde", 0x026b, "lmonospace", 0xff4c, "lmsquare", 0x33d0, "lochulathai", 0x0e2c, "logicaland", 0x2227, "logicalnot", 0x00ac, "logicalnotreversed", 0x2310, "logicalor", 0x2228, "lolingthai", 0x0e25, "longs", 0x017f, "lowlinecenterline", 0xfe4e, "lowlinecmb", 0x0332, "lowlinedashed", 0xfe4d, "lozenge", 0x25ca, "lparen", 0x24a7, "lslash", 0x0142, "lsquare", 0x2113, "lsuperior", 0xf6ee, "ltshade", 0x2591, "luthai", 0x0e26, "lvocalicbengali", 0x098c, "lvocalicdeva", 0x090c, "lvocalicvowelsignbengali", 0x09e2, "lvocalicvowelsigndeva", 0x0962, "lxsquare", 0x33d3, "m", 0x006d, "mabengali", 0x09ae, "macron", 0x00af, "macronbelowcmb", 0x0331, "macroncmb", 0x0304, "macronlowmod", 0x02cd, "macronmonospace", 0xffe3, "macute", 0x1e3f, "madeva", 0x092e, "magujarati", 0x0aae, "magurmukhi", 0x0a2e, "mahapakhhebrew", 0x05a4, "mahapakhlefthebrew", 0x05a4, "mahiragana", 0x307e, "maichattawalowleftthai", 0xf895, "maichattawalowrightthai", 0xf894, "maichattawathai", 0x0e4b, "maichattawaupperleftthai", 0xf893, "maieklowleftthai", 0xf88c, "maieklowrightthai", 0xf88b, "maiekthai", 0x0e48, "maiekupperleftthai", 0xf88a, "maihanakatleftthai", 0xf884, "maihanakatthai", 0x0e31, "maitaikhuleftthai", 0xf889, "maitaikhuthai", 0x0e47, "maitholowleftthai", 0xf88f, "maitholowrightthai", 0xf88e, "maithothai", 0x0e49, "maithoupperleftthai", 0xf88d, "maitrilowleftthai", 0xf892, "maitrilowrightthai", 0xf891, "maitrithai", 0x0e4a, "maitriupperleftthai", 0xf890, "maiyamokthai", 0x0e46, "makatakana", 0x30de, "makatakanahalfwidth", 0xff8f, "male", 0x2642, "mansyonsquare", 0x3347, "maqafhebrew", 0x05be, "mars", 0x2642, "masoracirclehebrew", 0x05af, "masquare", 0x3383, "mbopomofo", 0x3107, "mbsquare", 0x33d4, "mcircle", 0x24dc, "mcubedsquare", 0x33a5, "mdotaccent", 0x1e41, "mdotbelow", 0x1e43, "meemarabic", 0x0645, "meemfinalarabic", 0xfee2, "meeminitialarabic", 0xfee3, "meemmedialarabic", 0xfee4, "meemmeeminitialarabic", 0xfcd1, "meemmeemisolatedarabic", 0xfc48, "meetorusquare", 0x334d, "mehiragana", 0x3081, "meizierasquare", 0x337e, "mekatakana", 0x30e1, "mekatakanahalfwidth", 0xff92, "mem", 0x05de, "memdagesh", 0xfb3e, "memdageshhebrew", 0xfb3e, "memhebrew", 0x05de, "menarmenian", 0x0574, "merkhahebrew", 0x05a5, "merkhakefulahebrew", 0x05a6, "merkhakefulalefthebrew", 0x05a6, "merkhalefthebrew", 0x05a5, "mhook", 0x0271, "mhzsquare", 0x3392, "middledotkatakanahalfwidth", 0xff65, "middot", 0x00b7, "mieumacirclekorean", 0x3272, "mieumaparenkorean", 0x3212, "mieumcirclekorean", 0x3264, "mieumkorean", 0x3141, "mieumpansioskorean", 0x3170, "mieumparenkorean", 0x3204, "mieumpieupkorean", 0x316e, "mieumsioskorean", 0x316f, "mihiragana", 0x307f, "mikatakana", 0x30df, "mikatakanahalfwidth", 0xff90, "minus", 0x2212, "minusbelowcmb", 0x0320, "minuscircle", 0x2296, "minusmod", 0x02d7, "minusplus", 0x2213, "minute", 0x2032, "miribaarusquare", 0x334a, "mirisquare", 0x3349, "mlonglegturned", 0x0270, "mlsquare", 0x3396, "mmcubedsquare", 0x33a3, "mmonospace", 0xff4d, "mmsquaredsquare", 0x339f, "mohiragana", 0x3082, "mohmsquare", 0x33c1, "mokatakana", 0x30e2, "mokatakanahalfwidth", 0xff93, "molsquare", 0x33d6, "momathai", 0x0e21, "moverssquare", 0x33a7, "moverssquaredsquare", 0x33a8, "mparen", 0x24a8, "mpasquare", 0x33ab, "mssquare", 0x33b3, "msuperior", 0xf6ef, "mturned", 0x026f, "mu", 0x00b5, "mu1", 0x00b5, "muasquare", 0x3382, "muchgreater", 0x226b, "muchless", 0x226a, "mufsquare", 0x338c, "mugreek", 0x03bc, "mugsquare", 0x338d, "muhiragana", 0x3080, "mukatakana", 0x30e0, "mukatakanahalfwidth", 0xff91, "mulsquare", 0x3395, "multiply", 0x00d7, "mumsquare", 0x339b, "munahhebrew", 0x05a3, "munahlefthebrew", 0x05a3, "musicalnote", 0x266a, "musicalnotedbl", 0x266b, "musicflatsign", 0x266d, "musicsharpsign", 0x266f, "mussquare", 0x33b2, "muvsquare", 0x33b6, "muwsquare", 0x33bc, "mvmegasquare", 0x33b9, "mvsquare", 0x33b7, "mwmegasquare", 0x33bf, "mwsquare", 0x33bd, "n", 0x006e, "nabengali", 0x09a8, "nabla", 0x2207, "nacute", 0x0144, "nadeva", 0x0928, "nagujarati", 0x0aa8, "nagurmukhi", 0x0a28, "nahiragana", 0x306a, "nakatakana", 0x30ca, "nakatakanahalfwidth", 0xff85, "napostrophe", 0x0149, "nasquare", 0x3381, "nbopomofo", 0x310b, "nbspace", 0x00a0, "ncaron", 0x0148, "ncedilla", 0x0146, "ncircle", 0x24dd, "ncircumflexbelow", 0x1e4b, "ncommaaccent", 0x0146, "ndotaccent", 0x1e45, "ndotbelow", 0x1e47, "nehiragana", 0x306d, "nekatakana", 0x30cd, "nekatakanahalfwidth", 0xff88, "newsheqelsign", 0x20aa, "nfsquare", 0x338b, "ngabengali", 0x0999, "ngadeva", 0x0919, "ngagujarati", 0x0a99, "ngagurmukhi", 0x0a19, "ngonguthai", 0x0e07, "nhiragana", 0x3093, "nhookleft", 0x0272, "nhookretroflex", 0x0273, "nieunacirclekorean", 0x326f, "nieunaparenkorean", 0x320f, "nieuncieuckorean", 0x3135, "nieuncirclekorean", 0x3261, "nieunhieuhkorean", 0x3136, "nieunkorean", 0x3134, "nieunpansioskorean", 0x3168, "nieunparenkorean", 0x3201, "nieunsioskorean", 0x3167, "nieuntikeutkorean", 0x3166, "nihiragana", 0x306b, "nikatakana", 0x30cb, "nikatakanahalfwidth", 0xff86, "nikhahitleftthai", 0xf899, "nikhahitthai", 0x0e4d, "nine", 0x0039, "ninearabic", 0x0669, "ninebengali", 0x09ef, "ninecircle", 0x2468, "ninecircleinversesansserif", 0x2792, "ninedeva", 0x096f, "ninegujarati", 0x0aef, "ninegurmukhi", 0x0a6f, "ninehackarabic", 0x0669, "ninehangzhou", 0x3029, "nineideographicparen", 0x3228, "nineinferior", 0x2089, "ninemonospace", 0xff19, "nineoldstyle", 0xf739, "nineparen", 0x247c, "nineperiod", 0x2490, "ninepersian", 0x06f9, "nineroman", 0x2178, "ninesuperior", 0x2079, "nineteencircle", 0x2472, "nineteenparen", 0x2486, "nineteenperiod", 0x249a, "ninethai", 0x0e59, "nj", 0x01cc, "njecyrillic", 0x045a, "nkatakana", 0x30f3, "nkatakanahalfwidth", 0xff9d, "nlegrightlong", 0x019e, "nlinebelow", 0x1e49, "nmonospace", 0xff4e, "nmsquare", 0x339a, "nnabengali", 0x09a3, "nnadeva", 0x0923, "nnagujarati", 0x0aa3, "nnagurmukhi", 0x0a23, "nnnadeva", 0x0929, "nohiragana", 0x306e, "nokatakana", 0x30ce, "nokatakanahalfwidth", 0xff89, "nonbreakingspace", 0x00a0, "nonenthai", 0x0e13, "nonuthai", 0x0e19, "noonarabic", 0x0646, "noonfinalarabic", 0xfee6, "noonghunnaarabic", 0x06ba, "noonghunnafinalarabic", 0xfb9f, "nooninitialarabic", 0xfee7, "noonjeeminitialarabic", 0xfcd2, "noonjeemisolatedarabic", 0xfc4b, "noonmedialarabic", 0xfee8, "noonmeeminitialarabic", 0xfcd5, "noonmeemisolatedarabic", 0xfc4e, "noonnoonfinalarabic", 0xfc8d, "notcontains", 0x220c, "notelement", 0x2209, "notelementof", 0x2209, "notequal", 0x2260, "notgreater", 0x226f, "notgreaternorequal", 0x2271, "notgreaternorless", 0x2279, "notidentical", 0x2262, "notless", 0x226e, "notlessnorequal", 0x2270, "notparallel", 0x2226, "notprecedes", 0x2280, "notsubset", 0x2284, "notsucceeds", 0x2281, "notsuperset", 0x2285, "nowarmenian", 0x0576, "nparen", 0x24a9, "nssquare", 0x33b1, "nsuperior", 0x207f, "ntilde", 0x00f1, "nu", 0x03bd, "nuhiragana", 0x306c, "nukatakana", 0x30cc, "nukatakanahalfwidth", 0xff87, "nuktabengali", 0x09bc, "nuktadeva", 0x093c, "nuktagujarati", 0x0abc, "nuktagurmukhi", 0x0a3c, "numbersign", 0x0023, "numbersignmonospace", 0xff03, "numbersignsmall", 0xfe5f, "numeralsigngreek", 0x0374, "numeralsignlowergreek", 0x0375, "numero", 0x2116, "nun", 0x05e0, "nundagesh", 0xfb40, "nundageshhebrew", 0xfb40, "nunhebrew", 0x05e0, "nvsquare", 0x33b5, "nwsquare", 0x33bb, "nyabengali", 0x099e, "nyadeva", 0x091e, "nyagujarati", 0x0a9e, "nyagurmukhi", 0x0a1e, "o", 0x006f, "oacute", 0x00f3, "oangthai", 0x0e2d, "obarred", 0x0275, "obarredcyrillic", 0x04e9, "obarreddieresiscyrillic", 0x04eb, "obengali", 0x0993, "obopomofo", 0x311b, "obreve", 0x014f, "ocandradeva", 0x0911, "ocandragujarati", 0x0a91, "ocandravowelsigndeva", 0x0949, "ocandravowelsigngujarati", 0x0ac9, "ocaron", 0x01d2, "ocircle", 0x24de, "ocircumflex", 0x00f4, "ocircumflexacute", 0x1ed1, "ocircumflexdotbelow", 0x1ed9, "ocircumflexgrave", 0x1ed3, "ocircumflexhookabove", 0x1ed5, "ocircumflextilde", 0x1ed7, "ocyrillic", 0x043e, "odblacute", 0x0151, "odblgrave", 0x020d, "odeva", 0x0913, "odieresis", 0x00f6, "odieresiscyrillic", 0x04e7, "odotbelow", 0x1ecd, "oe", 0x0153, "oekorean", 0x315a, "ogonek", 0x02db, "ogonekcmb", 0x0328, "ograve", 0x00f2, "ogujarati", 0x0a93, "oharmenian", 0x0585, "ohiragana", 0x304a, "ohookabove", 0x1ecf, "ohorn", 0x01a1, "ohornacute", 0x1edb, "ohorndotbelow", 0x1ee3, "ohorngrave", 0x1edd, "ohornhookabove", 0x1edf, "ohorntilde", 0x1ee1, "ohungarumlaut", 0x0151, "oi", 0x01a3, "oinvertedbreve", 0x020f, "okatakana", 0x30aa, "okatakanahalfwidth", 0xff75, "okorean", 0x3157, "olehebrew", 0x05ab, "omacron", 0x014d, "omacronacute", 0x1e53, "omacrongrave", 0x1e51, "omdeva", 0x0950, "omega", 0x03c9, "omega1", 0x03d6, "omegacyrillic", 0x0461, "omegalatinclosed", 0x0277, "omegaroundcyrillic", 0x047b, "omegatitlocyrillic", 0x047d, "omegatonos", 0x03ce, "omgujarati", 0x0ad0, "omicron", 0x03bf, "omicrontonos", 0x03cc, "omonospace", 0xff4f, "one", 0x0031, "onearabic", 0x0661, "onebengali", 0x09e7, "onecircle", 0x2460, "onecircleinversesansserif", 0x278a, "onedeva", 0x0967, "onedotenleader", 0x2024, "oneeighth", 0x215b, "onefitted", 0xf6dc, "onegujarati", 0x0ae7, "onegurmukhi", 0x0a67, "onehackarabic", 0x0661, "onehalf", 0x00bd, "onehangzhou", 0x3021, "oneideographicparen", 0x3220, "oneinferior", 0x2081, "onemonospace", 0xff11, "onenumeratorbengali", 0x09f4, "oneoldstyle", 0xf731, "oneparen", 0x2474, "oneperiod", 0x2488, "onepersian", 0x06f1, "onequarter", 0x00bc, "oneroman", 0x2170, "onesuperior", 0x00b9, "onethai", 0x0e51, "onethird", 0x2153, "oogonek", 0x01eb, "oogonekmacron", 0x01ed, "oogurmukhi", 0x0a13, "oomatragurmukhi", 0x0a4b, "oopen", 0x0254, "oparen", 0x24aa, "openbullet", 0x25e6, "option", 0x2325, "ordfeminine", 0x00aa, "ordmasculine", 0x00ba, "orthogonal", 0x221f, "oshortdeva", 0x0912, "oshortvowelsigndeva", 0x094a, "oslash", 0x00f8, "oslashacute", 0x01ff, "osmallhiragana", 0x3049, "osmallkatakana", 0x30a9, "osmallkatakanahalfwidth", 0xff6b, "ostrokeacute", 0x01ff, "osuperior", 0xf6f0, "otcyrillic", 0x047f, "otilde", 0x00f5, "otildeacute", 0x1e4d, "otildedieresis", 0x1e4f, "oubopomofo", 0x3121, "overline", 0x203e, "overlinecenterline", 0xfe4a, "overlinecmb", 0x0305, "overlinedashed", 0xfe49, "overlinedblwavy", 0xfe4c, "overlinewavy", 0xfe4b, "overscore", 0x00af, "ovowelsignbengali", 0x09cb, "ovowelsigndeva", 0x094b, "ovowelsigngujarati", 0x0acb, "p", 0x0070, "paampssquare", 0x3380, "paasentosquare", 0x332b, "pabengali", 0x09aa, "pacute", 0x1e55, "padeva", 0x092a, "pagedown", 0x21df, "pageup", 0x21de, "pagujarati", 0x0aaa, "pagurmukhi", 0x0a2a, "pahiragana", 0x3071, "paiyannoithai", 0x0e2f, "pakatakana", 0x30d1, "palatalizationcyrilliccmb", 0x0484, "palochkacyrillic", 0x04c0, "pansioskorean", 0x317f, "paragraph", 0x00b6, "parallel", 0x2225, "parenleft", 0x0028, "parenleftaltonearabic", 0xfd3e, "parenleftbt", 0xf8ed, "parenleftex", 0xf8ec, "parenleftinferior", 0x208d, "parenleftmonospace", 0xff08, "parenleftsmall", 0xfe59, "parenleftsuperior", 0x207d, "parenlefttp", 0xf8eb, "parenleftvertical", 0xfe35, "parenright", 0x0029, "parenrightaltonearabic", 0xfd3f, "parenrightbt", 0xf8f8, "parenrightex", 0xf8f7, "parenrightinferior", 0x208e, "parenrightmonospace", 0xff09, "parenrightsmall", 0xfe5a, "parenrightsuperior", 0x207e, "parenrighttp", 0xf8f6, "parenrightvertical", 0xfe36, "partialdiff", 0x2202, "paseqhebrew", 0x05c0, "pashtahebrew", 0x0599, "pasquare", 0x33a9, "patah", 0x05b7, "patah11", 0x05b7, "patah1d", 0x05b7, "patah2a", 0x05b7, "patahhebrew", 0x05b7, "patahnarrowhebrew", 0x05b7, "patahquarterhebrew", 0x05b7, "patahwidehebrew", 0x05b7, "pazerhebrew", 0x05a1, "pbopomofo", 0x3106, "pcircle", 0x24df, "pdotaccent", 0x1e57, "pe", 0x05e4, "pecyrillic", 0x043f, "pedagesh", 0xfb44, "pedageshhebrew", 0xfb44, "peezisquare", 0x333b, "pefinaldageshhebrew", 0xfb43, "peharabic", 0x067e, "peharmenian", 0x057a, "pehebrew", 0x05e4, "pehfinalarabic", 0xfb57, "pehinitialarabic", 0xfb58, "pehiragana", 0x307a, "pehmedialarabic", 0xfb59, "pekatakana", 0x30da, "pemiddlehookcyrillic", 0x04a7, "perafehebrew", 0xfb4e, "percent", 0x0025, "percentarabic", 0x066a, "percentmonospace", 0xff05, "percentsmall", 0xfe6a, "period", 0x002e, "periodarmenian", 0x0589, "periodcentered", 0x00b7, "periodhalfwidth", 0xff61, "periodinferior", 0xf6e7, "periodmonospace", 0xff0e, "periodsmall", 0xfe52, "periodsuperior", 0xf6e8, "perispomenigreekcmb", 0x0342, "perpendicular", 0x22a5, "perthousand", 0x2030, "peseta", 0x20a7, "pfsquare", 0x338a, "phabengali", 0x09ab, "phadeva", 0x092b, "phagujarati", 0x0aab, "phagurmukhi", 0x0a2b, "phi", 0x03c6, "phi1", 0x03d5, "phieuphacirclekorean", 0x327a, "phieuphaparenkorean", 0x321a, "phieuphcirclekorean", 0x326c, "phieuphkorean", 0x314d, "phieuphparenkorean", 0x320c, "philatin", 0x0278, "phinthuthai", 0x0e3a, "phisymbolgreek", 0x03d5, "phook", 0x01a5, "phophanthai", 0x0e1e, "phophungthai", 0x0e1c, "phosamphaothai", 0x0e20, "pi", 0x03c0, "pieupacirclekorean", 0x3273, "pieupaparenkorean", 0x3213, "pieupcieuckorean", 0x3176, "pieupcirclekorean", 0x3265, "pieupkiyeokkorean", 0x3172, "pieupkorean", 0x3142, "pieupparenkorean", 0x3205, "pieupsioskiyeokkorean", 0x3174, "pieupsioskorean", 0x3144, "pieupsiostikeutkorean", 0x3175, "pieupthieuthkorean", 0x3177, "pieuptikeutkorean", 0x3173, "pihiragana", 0x3074, "pikatakana", 0x30d4, "pisymbolgreek", 0x03d6, "piwrarmenian", 0x0583, "plus", 0x002b, "plusbelowcmb", 0x031f, "pluscircle", 0x2295, "plusminus", 0x00b1, "plusmod", 0x02d6, "plusmonospace", 0xff0b, "plussmall", 0xfe62, "plussuperior", 0x207a, "pmonospace", 0xff50, "pmsquare", 0x33d8, "pohiragana", 0x307d, "pointingindexdownwhite", 0x261f, "pointingindexleftwhite", 0x261c, "pointingindexrightwhite", 0x261e, "pointingindexupwhite", 0x261d, "pokatakana", 0x30dd, "poplathai", 0x0e1b, "postalmark", 0x3012, "postalmarkface", 0x3020, "pparen", 0x24ab, "precedes", 0x227a, "prescription", 0x211e, "primemod", 0x02b9, "primereversed", 0x2035, "product", 0x220f, "projective", 0x2305, "prolongedkana", 0x30fc, "propellor", 0x2318, "propersubset", 0x2282, "propersuperset", 0x2283, "proportion", 0x2237, "proportional", 0x221d, "psi", 0x03c8, "psicyrillic", 0x0471, "psilipneumatacyrilliccmb", 0x0486, "pssquare", 0x33b0, "puhiragana", 0x3077, "pukatakana", 0x30d7, "pvsquare", 0x33b4, "pwsquare", 0x33ba, "q", 0x0071, "qadeva", 0x0958, "qadmahebrew", 0x05a8, "qafarabic", 0x0642, "qaffinalarabic", 0xfed6, "qafinitialarabic", 0xfed7, "qafmedialarabic", 0xfed8, "qamats", 0x05b8, "qamats10", 0x05b8, "qamats1a", 0x05b8, "qamats1c", 0x05b8, "qamats27", 0x05b8, "qamats29", 0x05b8, "qamats33", 0x05b8, "qamatsde", 0x05b8, "qamatshebrew", 0x05b8, "qamatsnarrowhebrew", 0x05b8, "qamatsqatanhebrew", 0x05b8, "qamatsqatannarrowhebrew", 0x05b8, "qamatsqatanquarterhebrew", 0x05b8, "qamatsqatanwidehebrew", 0x05b8, "qamatsquarterhebrew", 0x05b8, "qamatswidehebrew", 0x05b8, "qarneyparahebrew", 0x059f, "qbopomofo", 0x3111, "qcircle", 0x24e0, "qhook", 0x02a0, "qmonospace", 0xff51, "qof", 0x05e7, "qofdagesh", 0xfb47, "qofdageshhebrew", 0xfb47, "qofhebrew", 0x05e7, "qparen", 0x24ac, "quarternote", 0x2669, "qubuts", 0x05bb, "qubuts18", 0x05bb, "qubuts25", 0x05bb, "qubuts31", 0x05bb, "qubutshebrew", 0x05bb, "qubutsnarrowhebrew", 0x05bb, "qubutsquarterhebrew", 0x05bb, "qubutswidehebrew", 0x05bb, "question", 0x003f, "questionarabic", 0x061f, "questionarmenian", 0x055e, "questiondown", 0x00bf, "questiondownsmall", 0xf7bf, "questiongreek", 0x037e, "questionmonospace", 0xff1f, "questionsmall", 0xf73f, "quotedbl", 0x0022, "quotedblbase", 0x201e, "quotedblleft", 0x201c, "quotedblmonospace", 0xff02, "quotedblprime", 0x301e, "quotedblprimereversed", 0x301d, "quotedblright", 0x201d, "quoteleft", 0x2018, "quoteleftreversed", 0x201b, "quotereversed", 0x201b, "quoteright", 0x2019, "quoterightn", 0x0149, "quotesinglbase", 0x201a, "quotesingle", 0x0027, "quotesinglemonospace", 0xff07, "r", 0x0072, "raarmenian", 0x057c, "rabengali", 0x09b0, "racute", 0x0155, "radeva", 0x0930, "radical", 0x221a, "radicalex", 0xf8e5, "radoverssquare", 0x33ae, "radoverssquaredsquare", 0x33af, "radsquare", 0x33ad, "rafe", 0x05bf, "rafehebrew", 0x05bf, "ragujarati", 0x0ab0, "ragurmukhi", 0x0a30, "rahiragana", 0x3089, "rakatakana", 0x30e9, "rakatakanahalfwidth", 0xff97, "ralowerdiagonalbengali", 0x09f1, "ramiddlediagonalbengali", 0x09f0, "ramshorn", 0x0264, "ratio", 0x2236, "rbopomofo", 0x3116, "rcaron", 0x0159, "rcedilla", 0x0157, "rcircle", 0x24e1, "rcommaaccent", 0x0157, "rdblgrave", 0x0211, "rdotaccent", 0x1e59, "rdotbelow", 0x1e5b, "rdotbelowmacron", 0x1e5d, "referencemark", 0x203b, "reflexsubset", 0x2286, "reflexsuperset", 0x2287, "registered", 0x00ae, "registersans", 0xf8e8, "registerserif", 0xf6da, "reharabic", 0x0631, "reharmenian", 0x0580, "rehfinalarabic", 0xfeae, "rehiragana", 0x308c, "rekatakana", 0x30ec, "rekatakanahalfwidth", 0xff9a, "resh", 0x05e8, "reshdageshhebrew", 0xfb48, "reshhebrew", 0x05e8, "reversedtilde", 0x223d, "reviahebrew", 0x0597, "reviamugrashhebrew", 0x0597, "revlogicalnot", 0x2310, "rfishhook", 0x027e, "rfishhookreversed", 0x027f, "rhabengali", 0x09dd, "rhadeva", 0x095d, "rho", 0x03c1, "rhook", 0x027d, "rhookturned", 0x027b, "rhookturnedsuperior", 0x02b5, "rhosymbolgreek", 0x03f1, "rhotichookmod", 0x02de, "rieulacirclekorean", 0x3271, "rieulaparenkorean", 0x3211, "rieulcirclekorean", 0x3263, "rieulhieuhkorean", 0x3140, "rieulkiyeokkorean", 0x313a, "rieulkiyeoksioskorean", 0x3169, "rieulkorean", 0x3139, "rieulmieumkorean", 0x313b, "rieulpansioskorean", 0x316c, "rieulparenkorean", 0x3203, "rieulphieuphkorean", 0x313f, "rieulpieupkorean", 0x313c, "rieulpieupsioskorean", 0x316b, "rieulsioskorean", 0x313d, "rieulthieuthkorean", 0x313e, "rieultikeutkorean", 0x316a, "rieulyeorinhieuhkorean", 0x316d, "rightangle", 0x221f, "righttackbelowcmb", 0x0319, "righttriangle", 0x22bf, "rihiragana", 0x308a, "rikatakana", 0x30ea, "rikatakanahalfwidth", 0xff98, "ring", 0x02da, "ringbelowcmb", 0x0325, "ringcmb", 0x030a, "ringhalfleft", 0x02bf, "ringhalfleftarmenian", 0x0559, "ringhalfleftbelowcmb", 0x031c, "ringhalfleftcentered", 0x02d3, "ringhalfright", 0x02be, "ringhalfrightbelowcmb", 0x0339, "ringhalfrightcentered", 0x02d2, "rinvertedbreve", 0x0213, "rittorusquare", 0x3351, "rlinebelow", 0x1e5f, "rlongleg", 0x027c, "rlonglegturned", 0x027a, "rmonospace", 0xff52, "rohiragana", 0x308d, "rokatakana", 0x30ed, "rokatakanahalfwidth", 0xff9b, "roruathai", 0x0e23, "rparen", 0x24ad, "rrabengali", 0x09dc, "rradeva", 0x0931, "rragurmukhi", 0x0a5c, "rreharabic", 0x0691, "rrehfinalarabic", 0xfb8d, "rrvocalicbengali", 0x09e0, "rrvocalicdeva", 0x0960, "rrvocalicgujarati", 0x0ae0, "rrvocalicvowelsignbengali", 0x09c4, "rrvocalicvowelsigndeva", 0x0944, "rrvocalicvowelsigngujarati", 0x0ac4, "rsuperior", 0xf6f1, "rtblock", 0x2590, "rturned", 0x0279, "rturnedsuperior", 0x02b4, "ruhiragana", 0x308b, "rukatakana", 0x30eb, "rukatakanahalfwidth", 0xff99, "rupeemarkbengali", 0x09f2, "rupeesignbengali", 0x09f3, "rupiah", 0xf6dd, "ruthai", 0x0e24, "rvocalicbengali", 0x098b, "rvocalicdeva", 0x090b, "rvocalicgujarati", 0x0a8b, "rvocalicvowelsignbengali", 0x09c3, "rvocalicvowelsigndeva", 0x0943, "rvocalicvowelsigngujarati", 0x0ac3, "s", 0x0073, "sabengali", 0x09b8, "sacute", 0x015b, "sacutedotaccent", 0x1e65, "sadarabic", 0x0635, "sadeva", 0x0938, "sadfinalarabic", 0xfeba, "sadinitialarabic", 0xfebb, "sadmedialarabic", 0xfebc, "sagujarati", 0x0ab8, "sagurmukhi", 0x0a38, "sahiragana", 0x3055, "sakatakana", 0x30b5, "sakatakanahalfwidth", 0xff7b, "sallallahoualayhewasallamarabic", 0xfdfa, "samekh", 0x05e1, "samekhdagesh", 0xfb41, "samekhdageshhebrew", 0xfb41, "samekhhebrew", 0x05e1, "saraaathai", 0x0e32, "saraaethai", 0x0e41, "saraaimaimalaithai", 0x0e44, "saraaimaimuanthai", 0x0e43, "saraamthai", 0x0e33, "saraathai", 0x0e30, "saraethai", 0x0e40, "saraiileftthai", 0xf886, "saraiithai", 0x0e35, "saraileftthai", 0xf885, "saraithai", 0x0e34, "saraothai", 0x0e42, "saraueeleftthai", 0xf888, "saraueethai", 0x0e37, "saraueleftthai", 0xf887, "sarauethai", 0x0e36, "sarauthai", 0x0e38, "sarauuthai", 0x0e39, "sbopomofo", 0x3119, "scaron", 0x0161, "scarondotaccent", 0x1e67, "scedilla", 0x015f, "schwa", 0x0259, "schwacyrillic", 0x04d9, "schwadieresiscyrillic", 0x04db, "schwahook", 0x025a, "scircle", 0x24e2, "scircumflex", 0x015d, "scommaaccent", 0x0219, "sdotaccent", 0x1e61, "sdotbelow", 0x1e63, "sdotbelowdotaccent", 0x1e69, "seagullbelowcmb", 0x033c, "second", 0x2033, "secondtonechinese", 0x02ca, "section", 0x00a7, "seenarabic", 0x0633, "seenfinalarabic", 0xfeb2, "seeninitialarabic", 0xfeb3, "seenmedialarabic", 0xfeb4, "segol", 0x05b6, "segol13", 0x05b6, "segol1f", 0x05b6, "segol2c", 0x05b6, "segolhebrew", 0x05b6, "segolnarrowhebrew", 0x05b6, "segolquarterhebrew", 0x05b6, "segoltahebrew", 0x0592, "segolwidehebrew", 0x05b6, "seharmenian", 0x057d, "sehiragana", 0x305b, "sekatakana", 0x30bb, "sekatakanahalfwidth", 0xff7e, "semicolon", 0x003b, "semicolonarabic", 0x061b, "semicolonmonospace", 0xff1b, "semicolonsmall", 0xfe54, "semivoicedmarkkana", 0x309c, "semivoicedmarkkanahalfwidth", 0xff9f, "sentisquare", 0x3322, "sentosquare", 0x3323, "seven", 0x0037, "sevenarabic", 0x0667, "sevenbengali", 0x09ed, "sevencircle", 0x2466, "sevencircleinversesansserif", 0x2790, "sevendeva", 0x096d, "seveneighths", 0x215e, "sevengujarati", 0x0aed, "sevengurmukhi", 0x0a6d, "sevenhackarabic", 0x0667, "sevenhangzhou", 0x3027, "sevenideographicparen", 0x3226, "seveninferior", 0x2087, "sevenmonospace", 0xff17, "sevenoldstyle", 0xf737, "sevenparen", 0x247a, "sevenperiod", 0x248e, "sevenpersian", 0x06f7, "sevenroman", 0x2176, "sevensuperior", 0x2077, "seventeencircle", 0x2470, "seventeenparen", 0x2484, "seventeenperiod", 0x2498, "seventhai", 0x0e57, "sfthyphen", 0x00ad, "shaarmenian", 0x0577, "shabengali", 0x09b6, "shacyrillic", 0x0448, "shaddaarabic", 0x0651, "shaddadammaarabic", 0xfc61, "shaddadammatanarabic", 0xfc5e, "shaddafathaarabic", 0xfc60, "shaddakasraarabic", 0xfc62, "shaddakasratanarabic", 0xfc5f, "shade", 0x2592, "shadedark", 0x2593, "shadelight", 0x2591, "shademedium", 0x2592, "shadeva", 0x0936, "shagujarati", 0x0ab6, "shagurmukhi", 0x0a36, "shalshelethebrew", 0x0593, "shbopomofo", 0x3115, "shchacyrillic", 0x0449, "sheenarabic", 0x0634, "sheenfinalarabic", 0xfeb6, "sheeninitialarabic", 0xfeb7, "sheenmedialarabic", 0xfeb8, "sheicoptic", 0x03e3, "sheqel", 0x20aa, "sheqelhebrew", 0x20aa, "sheva", 0x05b0, "sheva115", 0x05b0, "sheva15", 0x05b0, "sheva22", 0x05b0, "sheva2e", 0x05b0, "shevahebrew", 0x05b0, "shevanarrowhebrew", 0x05b0, "shevaquarterhebrew", 0x05b0, "shevawidehebrew", 0x05b0, "shhacyrillic", 0x04bb, "shimacoptic", 0x03ed, "shin", 0x05e9, "shindagesh", 0xfb49, "shindageshhebrew", 0xfb49, "shindageshshindot", 0xfb2c, "shindageshshindothebrew", 0xfb2c, "shindageshsindot", 0xfb2d, "shindageshsindothebrew", 0xfb2d, "shindothebrew", 0x05c1, "shinhebrew", 0x05e9, "shinshindot", 0xfb2a, "shinshindothebrew", 0xfb2a, "shinsindot", 0xfb2b, "shinsindothebrew", 0xfb2b, "shook", 0x0282, "sigma", 0x03c3, "sigma1", 0x03c2, "sigmafinal", 0x03c2, "sigmalunatesymbolgreek", 0x03f2, "sihiragana", 0x3057, "sikatakana", 0x30b7, "sikatakanahalfwidth", 0xff7c, "siluqhebrew", 0x05bd, "siluqlefthebrew", 0x05bd, "similar", 0x223c, "sindothebrew", 0x05c2, "siosacirclekorean", 0x3274, "siosaparenkorean", 0x3214, "sioscieuckorean", 0x317e, "sioscirclekorean", 0x3266, "sioskiyeokkorean", 0x317a, "sioskorean", 0x3145, "siosnieunkorean", 0x317b, "siosparenkorean", 0x3206, "siospieupkorean", 0x317d, "siostikeutkorean", 0x317c, "six", 0x0036, "sixarabic", 0x0666, "sixbengali", 0x09ec, "sixcircle", 0x2465, "sixcircleinversesansserif", 0x278f, "sixdeva", 0x096c, "sixgujarati", 0x0aec, "sixgurmukhi", 0x0a6c, "sixhackarabic", 0x0666, "sixhangzhou", 0x3026, "sixideographicparen", 0x3225, "sixinferior", 0x2086, "sixmonospace", 0xff16, "sixoldstyle", 0xf736, "sixparen", 0x2479, "sixperiod", 0x248d, "sixpersian", 0x06f6, "sixroman", 0x2175, "sixsuperior", 0x2076, "sixteencircle", 0x246f, "sixteencurrencydenominatorbengali", 0x09f9, "sixteenparen", 0x2483, "sixteenperiod", 0x2497, "sixthai", 0x0e56, "slash", 0x002f, "slashmonospace", 0xff0f, "slong", 0x017f, "slongdotaccent", 0x1e9b, "smileface", 0x263a, "smonospace", 0xff53, "sofpasuqhebrew", 0x05c3, "softhyphen", 0x00ad, "softsigncyrillic", 0x044c, "sohiragana", 0x305d, "sokatakana", 0x30bd, "sokatakanahalfwidth", 0xff7f, "soliduslongoverlaycmb", 0x0338, "solidusshortoverlaycmb", 0x0337, "sorusithai", 0x0e29, "sosalathai", 0x0e28, "sosothai", 0x0e0b, "sosuathai", 0x0e2a, "space", 0x0020, "spacehackarabic", 0x0020, "spade", 0x2660, "spadesuitblack", 0x2660, "spadesuitwhite", 0x2664, "sparen", 0x24ae, "squarebelowcmb", 0x033b, "squarecc", 0x33c4, "squarecm", 0x339d, "squarediagonalcrosshatchfill", 0x25a9, "squarehorizontalfill", 0x25a4, "squarekg", 0x338f, "squarekm", 0x339e, "squarekmcapital", 0x33ce, "squareln", 0x33d1, "squarelog", 0x33d2, "squaremg", 0x338e, "squaremil", 0x33d5, "squaremm", 0x339c, "squaremsquared", 0x33a1, "squareorthogonalcrosshatchfill", 0x25a6, "squareupperlefttolowerrightfill", 0x25a7, "squareupperrighttolowerleftfill", 0x25a8, "squareverticalfill", 0x25a5, "squarewhitewithsmallblack", 0x25a3, "srsquare", 0x33db, "ssabengali", 0x09b7, "ssadeva", 0x0937, "ssagujarati", 0x0ab7, "ssangcieuckorean", 0x3149, "ssanghieuhkorean", 0x3185, "ssangieungkorean", 0x3180, "ssangkiyeokkorean", 0x3132, "ssangnieunkorean", 0x3165, "ssangpieupkorean", 0x3143, "ssangsioskorean", 0x3146, "ssangtikeutkorean", 0x3138, "ssuperior", 0xf6f2, "sterling", 0x00a3, "sterlingmonospace", 0xffe1, "strokelongoverlaycmb", 0x0336, "strokeshortoverlaycmb", 0x0335, "subset", 0x2282, "subsetnotequal", 0x228a, "subsetorequal", 0x2286, "succeeds", 0x227b, "suchthat", 0x220b, "suhiragana", 0x3059, "sukatakana", 0x30b9, "sukatakanahalfwidth", 0xff7d, "sukunarabic", 0x0652, "summation", 0x2211, "sun", 0x263c, "superset", 0x2283, "supersetnotequal", 0x228b, "supersetorequal", 0x2287, "svsquare", 0x33dc, "syouwaerasquare", 0x337c, "t", 0x0074, "tabengali", 0x09a4, "tackdown", 0x22a4, "tackleft", 0x22a3, "tadeva", 0x0924, "tagujarati", 0x0aa4, "tagurmukhi", 0x0a24, "taharabic", 0x0637, "tahfinalarabic", 0xfec2, "tahinitialarabic", 0xfec3, "tahiragana", 0x305f, "tahmedialarabic", 0xfec4, "taisyouerasquare", 0x337d, "takatakana", 0x30bf, "takatakanahalfwidth", 0xff80, "tatweelarabic", 0x0640, "tau", 0x03c4, "tav", 0x05ea, "tavdages", 0xfb4a, "tavdagesh", 0xfb4a, "tavdageshhebrew", 0xfb4a, "tavhebrew", 0x05ea, "tbar", 0x0167, "tbopomofo", 0x310a, "tcaron", 0x0165, "tccurl", 0x02a8, "tcedilla", 0x0163, "tcheharabic", 0x0686, "tchehfinalarabic", 0xfb7b, "tchehinitialarabic", 0xfb7c, "tchehmedialarabic", 0xfb7d, "tcircle", 0x24e3, "tcircumflexbelow", 0x1e71, "tcommaaccent", 0x0163, "tdieresis", 0x1e97, "tdotaccent", 0x1e6b, "tdotbelow", 0x1e6d, "tecyrillic", 0x0442, "tedescendercyrillic", 0x04ad, "teharabic", 0x062a, "tehfinalarabic", 0xfe96, "tehhahinitialarabic", 0xfca2, "tehhahisolatedarabic", 0xfc0c, "tehinitialarabic", 0xfe97, "tehiragana", 0x3066, "tehjeeminitialarabic", 0xfca1, "tehjeemisolatedarabic", 0xfc0b, "tehmarbutaarabic", 0x0629, "tehmarbutafinalarabic", 0xfe94, "tehmedialarabic", 0xfe98, "tehmeeminitialarabic", 0xfca4, "tehmeemisolatedarabic", 0xfc0e, "tehnoonfinalarabic", 0xfc73, "tekatakana", 0x30c6, "tekatakanahalfwidth", 0xff83, "telephone", 0x2121, "telephoneblack", 0x260e, "telishagedolahebrew", 0x05a0, "telishaqetanahebrew", 0x05a9, "tencircle", 0x2469, "tenideographicparen", 0x3229, "tenparen", 0x247d, "tenperiod", 0x2491, "tenroman", 0x2179, "tesh", 0x02a7, "tet", 0x05d8, "tetdagesh", 0xfb38, "tetdageshhebrew", 0xfb38, "tethebrew", 0x05d8, "tetsecyrillic", 0x04b5, "tevirhebrew", 0x059b, "tevirlefthebrew", 0x059b, "thabengali", 0x09a5, "thadeva", 0x0925, "thagujarati", 0x0aa5, "thagurmukhi", 0x0a25, "thalarabic", 0x0630, "thalfinalarabic", 0xfeac, "thanthakhatlowleftthai", 0xf898, "thanthakhatlowrightthai", 0xf897, "thanthakhatthai", 0x0e4c, "thanthakhatupperleftthai", 0xf896, "theharabic", 0x062b, "thehfinalarabic", 0xfe9a, "thehinitialarabic", 0xfe9b, "thehmedialarabic", 0xfe9c, "thereexists", 0x2203, "therefore", 0x2234, "theta", 0x03b8, "theta1", 0x03d1, "thetasymbolgreek", 0x03d1, "thieuthacirclekorean", 0x3279, "thieuthaparenkorean", 0x3219, "thieuthcirclekorean", 0x326b, "thieuthkorean", 0x314c, "thieuthparenkorean", 0x320b, "thirteencircle", 0x246c, "thirteenparen", 0x2480, "thirteenperiod", 0x2494, "thonangmonthothai", 0x0e11, "thook", 0x01ad, "thophuthaothai", 0x0e12, "thorn", 0x00fe, "thothahanthai", 0x0e17, "thothanthai", 0x0e10, "thothongthai", 0x0e18, "thothungthai", 0x0e16, "thousandcyrillic", 0x0482, "thousandsseparatorarabic", 0x066c, "thousandsseparatorpersian", 0x066c, "three", 0x0033, "threearabic", 0x0663, "threebengali", 0x09e9, "threecircle", 0x2462, "threecircleinversesansserif", 0x278c, "threedeva", 0x0969, "threeeighths", 0x215c, "threegujarati", 0x0ae9, "threegurmukhi", 0x0a69, "threehackarabic", 0x0663, "threehangzhou", 0x3023, "threeideographicparen", 0x3222, "threeinferior", 0x2083, "threemonospace", 0xff13, "threenumeratorbengali", 0x09f6, "threeoldstyle", 0xf733, "threeparen", 0x2476, "threeperiod", 0x248a, "threepersian", 0x06f3, "threequarters", 0x00be, "threequartersemdash", 0xf6de, "threeroman", 0x2172, "threesuperior", 0x00b3, "threethai", 0x0e53, "thzsquare", 0x3394, "tihiragana", 0x3061, "tikatakana", 0x30c1, "tikatakanahalfwidth", 0xff81, "tikeutacirclekorean", 0x3270, "tikeutaparenkorean", 0x3210, "tikeutcirclekorean", 0x3262, "tikeutkorean", 0x3137, "tikeutparenkorean", 0x3202, "tilde", 0x02dc, "tildebelowcmb", 0x0330, "tildecmb", 0x0303, "tildecomb", 0x0303, "tildedoublecmb", 0x0360, "tildeoperator", 0x223c, "tildeoverlaycmb", 0x0334, "tildeverticalcmb", 0x033e, "timescircle", 0x2297, "tipehahebrew", 0x0596, "tipehalefthebrew", 0x0596, "tippigurmukhi", 0x0a70, "titlocyrilliccmb", 0x0483, "tiwnarmenian", 0x057f, "tlinebelow", 0x1e6f, "tmonospace", 0xff54, "toarmenian", 0x0569, "tohiragana", 0x3068, "tokatakana", 0x30c8, "tokatakanahalfwidth", 0xff84, "tonebarextrahighmod", 0x02e5, "tonebarextralowmod", 0x02e9, "tonebarhighmod", 0x02e6, "tonebarlowmod", 0x02e8, "tonebarmidmod", 0x02e7, "tonefive", 0x01bd, "tonesix", 0x0185, "tonetwo", 0x01a8, "tonos", 0x0384, "tonsquare", 0x3327, "topatakthai", 0x0e0f, "tortoiseshellbracketleft", 0x3014, "tortoiseshellbracketleftsmall", 0xfe5d, "tortoiseshellbracketleftvertical", 0xfe39, "tortoiseshellbracketright", 0x3015, "tortoiseshellbracketrightsmall", 0xfe5e, "tortoiseshellbracketrightvertical", 0xfe3a, "totaothai", 0x0e15, "tpalatalhook", 0x01ab, "tparen", 0x24af, "trademark", 0x2122, "trademarksans", 0xf8ea, "trademarkserif", 0xf6db, "tretroflexhook", 0x0288, "triagdn", 0x25bc, "triaglf", 0x25c4, "triagrt", 0x25ba, "triagup", 0x25b2, "ts", 0x02a6, "tsadi", 0x05e6, "tsadidagesh", 0xfb46, "tsadidageshhebrew", 0xfb46, "tsadihebrew", 0x05e6, "tsecyrillic", 0x0446, "tsere", 0x05b5, "tsere12", 0x05b5, "tsere1e", 0x05b5, "tsere2b", 0x05b5, "tserehebrew", 0x05b5, "tserenarrowhebrew", 0x05b5, "tserequarterhebrew", 0x05b5, "tserewidehebrew", 0x05b5, "tshecyrillic", 0x045b, "tsuperior", 0xf6f3, "ttabengali", 0x099f, "ttadeva", 0x091f, "ttagujarati", 0x0a9f, "ttagurmukhi", 0x0a1f, "tteharabic", 0x0679, "ttehfinalarabic", 0xfb67, "ttehinitialarabic", 0xfb68, "ttehmedialarabic", 0xfb69, "tthabengali", 0x09a0, "tthadeva", 0x0920, "tthagujarati", 0x0aa0, "tthagurmukhi", 0x0a20, "tturned", 0x0287, "tuhiragana", 0x3064, "tukatakana", 0x30c4, "tukatakanahalfwidth", 0xff82, "tusmallhiragana", 0x3063, "tusmallkatakana", 0x30c3, "tusmallkatakanahalfwidth", 0xff6f, "twelvecircle", 0x246b, "twelveparen", 0x247f, "twelveperiod", 0x2493, "twelveroman", 0x217b, "twentycircle", 0x2473, "twentyhangzhou", 0x5344, "twentyparen", 0x2487, "twentyperiod", 0x249b, "two", 0x0032, "twoarabic", 0x0662, "twobengali", 0x09e8, "twocircle", 0x2461, "twocircleinversesansserif", 0x278b, "twodeva", 0x0968, "twodotenleader", 0x2025, "twodotleader", 0x2025, "twodotleadervertical", 0xfe30, "twogujarati", 0x0ae8, "twogurmukhi", 0x0a68, "twohackarabic", 0x0662, "twohangzhou", 0x3022, "twoideographicparen", 0x3221, "twoinferior", 0x2082, "twomonospace", 0xff12, "twonumeratorbengali", 0x09f5, "twooldstyle", 0xf732, "twoparen", 0x2475, "twoperiod", 0x2489, "twopersian", 0x06f2, "tworoman", 0x2171, "twostroke", 0x01bb, "twosuperior", 0x00b2, "twothai", 0x0e52, "twothirds", 0x2154, "u", 0x0075, "uacute", 0x00fa, "ubar", 0x0289, "ubengali", 0x0989, "ubopomofo", 0x3128, "ubreve", 0x016d, "ucaron", 0x01d4, "ucircle", 0x24e4, "ucircumflex", 0x00fb, "ucircumflexbelow", 0x1e77, "ucyrillic", 0x0443, "udattadeva", 0x0951, "udblacute", 0x0171, "udblgrave", 0x0215, "udeva", 0x0909, "udieresis", 0x00fc, "udieresisacute", 0x01d8, "udieresisbelow", 0x1e73, "udieresiscaron", 0x01da, "udieresiscyrillic", 0x04f1, "udieresisgrave", 0x01dc, "udieresismacron", 0x01d6, "udotbelow", 0x1ee5, "ugrave", 0x00f9, "ugujarati", 0x0a89, "ugurmukhi", 0x0a09, "uhiragana", 0x3046, "uhookabove", 0x1ee7, "uhorn", 0x01b0, "uhornacute", 0x1ee9, "uhorndotbelow", 0x1ef1, "uhorngrave", 0x1eeb, "uhornhookabove", 0x1eed, "uhorntilde", 0x1eef, "uhungarumlaut", 0x0171, "uhungarumlautcyrillic", 0x04f3, "uinvertedbreve", 0x0217, "ukatakana", 0x30a6, "ukatakanahalfwidth", 0xff73, "ukcyrillic", 0x0479, "ukorean", 0x315c, "umacron", 0x016b, "umacroncyrillic", 0x04ef, "umacrondieresis", 0x1e7b, "umatragurmukhi", 0x0a41, "umonospace", 0xff55, "underscore", 0x005f, "underscoredbl", 0x2017, "underscoremonospace", 0xff3f, "underscorevertical", 0xfe33, "underscorewavy", 0xfe4f, "union", 0x222a, "universal", 0x2200, "uogonek", 0x0173, "uparen", 0x24b0, "upblock", 0x2580, "upperdothebrew", 0x05c4, "upsilon", 0x03c5, "upsilondieresis", 0x03cb, "upsilondieresistonos", 0x03b0, "upsilonlatin", 0x028a, "upsilontonos", 0x03cd, "uptackbelowcmb", 0x031d, "uptackmod", 0x02d4, "uragurmukhi", 0x0a73, "uring", 0x016f, "ushortcyrillic", 0x045e, "usmallhiragana", 0x3045, "usmallkatakana", 0x30a5, "usmallkatakanahalfwidth", 0xff69, "ustraightcyrillic", 0x04af, "ustraightstrokecyrillic", 0x04b1, "utilde", 0x0169, "utildeacute", 0x1e79, "utildebelow", 0x1e75, "uubengali", 0x098a, "uudeva", 0x090a, "uugujarati", 0x0a8a, "uugurmukhi", 0x0a0a, "uumatragurmukhi", 0x0a42, "uuvowelsignbengali", 0x09c2, "uuvowelsigndeva", 0x0942, "uuvowelsigngujarati", 0x0ac2, "uvowelsignbengali", 0x09c1, "uvowelsigndeva", 0x0941, "uvowelsigngujarati", 0x0ac1, "v", 0x0076, "vadeva", 0x0935, "vagujarati", 0x0ab5, "vagurmukhi", 0x0a35, "vakatakana", 0x30f7, "vav", 0x05d5, "vavdagesh", 0xfb35, "vavdagesh65", 0xfb35, "vavdageshhebrew", 0xfb35, "vavhebrew", 0x05d5, "vavholam", 0xfb4b, "vavholamhebrew", 0xfb4b, "vavvavhebrew", 0x05f0, "vavyodhebrew", 0x05f1, "vcircle", 0x24e5, "vdotbelow", 0x1e7f, "vecyrillic", 0x0432, "veharabic", 0x06a4, "vehfinalarabic", 0xfb6b, "vehinitialarabic", 0xfb6c, "vehmedialarabic", 0xfb6d, "vekatakana", 0x30f9, "venus", 0x2640, "verticalbar", 0x007c, "verticallineabovecmb", 0x030d, "verticallinebelowcmb", 0x0329, "verticallinelowmod", 0x02cc, "verticallinemod", 0x02c8, "vewarmenian", 0x057e, "vhook", 0x028b, "vikatakana", 0x30f8, "viramabengali", 0x09cd, "viramadeva", 0x094d, "viramagujarati", 0x0acd, "visargabengali", 0x0983, "visargadeva", 0x0903, "visargagujarati", 0x0a83, "vmonospace", 0xff56, "voarmenian", 0x0578, "voicediterationhiragana", 0x309e, "voicediterationkatakana", 0x30fe, "voicedmarkkana", 0x309b, "voicedmarkkanahalfwidth", 0xff9e, "vokatakana", 0x30fa, "vparen", 0x24b1, "vtilde", 0x1e7d, "vturned", 0x028c, "vuhiragana", 0x3094, "vukatakana", 0x30f4, "w", 0x0077, "wacute", 0x1e83, "waekorean", 0x3159, "wahiragana", 0x308f, "wakatakana", 0x30ef, "wakatakanahalfwidth", 0xff9c, "wakorean", 0x3158, "wasmallhiragana", 0x308e, "wasmallkatakana", 0x30ee, "wattosquare", 0x3357, "wavedash", 0x301c, "wavyunderscorevertical", 0xfe34, "wawarabic", 0x0648, "wawfinalarabic", 0xfeee, "wawhamzaabovearabic", 0x0624, "wawhamzaabovefinalarabic", 0xfe86, "wbsquare", 0x33dd, "wcircle", 0x24e6, "wcircumflex", 0x0175, "wdieresis", 0x1e85, "wdotaccent", 0x1e87, "wdotbelow", 0x1e89, "wehiragana", 0x3091, "weierstrass", 0x2118, "wekatakana", 0x30f1, "wekorean", 0x315e, "weokorean", 0x315d, "wgrave", 0x1e81, "whitebullet", 0x25e6, "whitecircle", 0x25cb, "whitecircleinverse", 0x25d9, "whitecornerbracketleft", 0x300e, "whitecornerbracketleftvertical", 0xfe43, "whitecornerbracketright", 0x300f, "whitecornerbracketrightvertical", 0xfe44, "whitediamond", 0x25c7, "whitediamondcontainingblacksmalldiamond", 0x25c8, "whitedownpointingsmalltriangle", 0x25bf, "whitedownpointingtriangle", 0x25bd, "whiteleftpointingsmalltriangle", 0x25c3, "whiteleftpointingtriangle", 0x25c1, "whitelenticularbracketleft", 0x3016, "whitelenticularbracketright", 0x3017, "whiterightpointingsmalltriangle", 0x25b9, "whiterightpointingtriangle", 0x25b7, "whitesmallsquare", 0x25ab, "whitesmilingface", 0x263a, "whitesquare", 0x25a1, "whitestar", 0x2606, "whitetelephone", 0x260f, "whitetortoiseshellbracketleft", 0x3018, "whitetortoiseshellbracketright", 0x3019, "whiteuppointingsmalltriangle", 0x25b5, "whiteuppointingtriangle", 0x25b3, "wihiragana", 0x3090, "wikatakana", 0x30f0, "wikorean", 0x315f, "wmonospace", 0xff57, "wohiragana", 0x3092, "wokatakana", 0x30f2, "wokatakanahalfwidth", 0xff66, "won", 0x20a9, "wonmonospace", 0xffe6, "wowaenthai", 0x0e27, "wparen", 0x24b2, "wring", 0x1e98, "wsuperior", 0x02b7, "wturned", 0x028d, "wynn", 0x01bf, "x", 0x0078, "xabovecmb", 0x033d, "xbopomofo", 0x3112, "xcircle", 0x24e7, "xdieresis", 0x1e8d, "xdotaccent", 0x1e8b, "xeharmenian", 0x056d, "xi", 0x03be, "xmonospace", 0xff58, "xparen", 0x24b3, "xsuperior", 0x02e3, "y", 0x0079, "yaadosquare", 0x334e, "yabengali", 0x09af, "yacute", 0x00fd, "yadeva", 0x092f, "yaekorean", 0x3152, "yagujarati", 0x0aaf, "yagurmukhi", 0x0a2f, "yahiragana", 0x3084, "yakatakana", 0x30e4, "yakatakanahalfwidth", 0xff94, "yakorean", 0x3151, "yamakkanthai", 0x0e4e, "yasmallhiragana", 0x3083, "yasmallkatakana", 0x30e3, "yasmallkatakanahalfwidth", 0xff6c, "yatcyrillic", 0x0463, "ycircle", 0x24e8, "ycircumflex", 0x0177, "ydieresis", 0x00ff, "ydotaccent", 0x1e8f, "ydotbelow", 0x1ef5, "yeharabic", 0x064a, "yehbarreearabic", 0x06d2, "yehbarreefinalarabic", 0xfbaf, "yehfinalarabic", 0xfef2, "yehhamzaabovearabic", 0x0626, "yehhamzaabovefinalarabic", 0xfe8a, "yehhamzaaboveinitialarabic", 0xfe8b, "yehhamzaabovemedialarabic", 0xfe8c, "yehinitialarabic", 0xfef3, "yehmedialarabic", 0xfef4, "yehmeeminitialarabic", 0xfcdd, "yehmeemisolatedarabic", 0xfc58, "yehnoonfinalarabic", 0xfc94, "yehthreedotsbelowarabic", 0x06d1, "yekorean", 0x3156, "yen", 0x00a5, "yenmonospace", 0xffe5, "yeokorean", 0x3155, "yeorinhieuhkorean", 0x3186, "yerahbenyomohebrew", 0x05aa, "yerahbenyomolefthebrew", 0x05aa, "yericyrillic", 0x044b, "yerudieresiscyrillic", 0x04f9, "yesieungkorean", 0x3181, "yesieungpansioskorean", 0x3183, "yesieungsioskorean", 0x3182, "yetivhebrew", 0x059a, "ygrave", 0x1ef3, "yhook", 0x01b4, "yhookabove", 0x1ef7, "yiarmenian", 0x0575, "yicyrillic", 0x0457, "yikorean", 0x3162, "yinyang", 0x262f, "yiwnarmenian", 0x0582, "ymonospace", 0xff59, "yod", 0x05d9, "yoddagesh", 0xfb39, "yoddageshhebrew", 0xfb39, "yodhebrew", 0x05d9, "yodyodhebrew", 0x05f2, "yodyodpatahhebrew", 0xfb1f, "yohiragana", 0x3088, "yoikorean", 0x3189, "yokatakana", 0x30e8, "yokatakanahalfwidth", 0xff96, "yokorean", 0x315b, "yosmallhiragana", 0x3087, "yosmallkatakana", 0x30e7, "yosmallkatakanahalfwidth", 0xff6e, "yotgreek", 0x03f3, "yoyaekorean", 0x3188, "yoyakorean", 0x3187, "yoyakthai", 0x0e22, "yoyingthai", 0x0e0d, "yparen", 0x24b4, "ypogegrammeni", 0x037a, "ypogegrammenigreekcmb", 0x0345, "yr", 0x01a6, "yring", 0x1e99, "ysuperior", 0x02b8, "ytilde", 0x1ef9, "yturned", 0x028e, "yuhiragana", 0x3086, "yuikorean", 0x318c, "yukatakana", 0x30e6, "yukatakanahalfwidth", 0xff95, "yukorean", 0x3160, "yusbigcyrillic", 0x046b, "yusbigiotifiedcyrillic", 0x046d, "yuslittlecyrillic", 0x0467, "yuslittleiotifiedcyrillic", 0x0469, "yusmallhiragana", 0x3085, "yusmallkatakana", 0x30e5, "yusmallkatakanahalfwidth", 0xff6d, "yuyekorean", 0x318b, "yuyeokorean", 0x318a, "yyabengali", 0x09df, "yyadeva", 0x095f, "z", 0x007a, "zaarmenian", 0x0566, "zacute", 0x017a, "zadeva", 0x095b, "zagurmukhi", 0x0a5b, "zaharabic", 0x0638, "zahfinalarabic", 0xfec6, "zahinitialarabic", 0xfec7, "zahiragana", 0x3056, "zahmedialarabic", 0xfec8, "zainarabic", 0x0632, "zainfinalarabic", 0xfeb0, "zakatakana", 0x30b6, "zaqefgadolhebrew", 0x0595, "zaqefqatanhebrew", 0x0594, "zarqahebrew", 0x0598, "zayin", 0x05d6, "zayindagesh", 0xfb36, "zayindageshhebrew", 0xfb36, "zayinhebrew", 0x05d6, "zbopomofo", 0x3117, "zcaron", 0x017e, "zcircle", 0x24e9, "zcircumflex", 0x1e91, "zcurl", 0x0291, "zdot", 0x017c, "zdotaccent", 0x017c, "zdotbelow", 0x1e93, "zecyrillic", 0x0437, "zedescendercyrillic", 0x0499, "zedieresiscyrillic", 0x04df, "zehiragana", 0x305c, "zekatakana", 0x30bc, "zero", 0x0030, "zeroarabic", 0x0660, "zerobengali", 0x09e6, "zerodeva", 0x0966, "zerogujarati", 0x0ae6, "zerogurmukhi", 0x0a66, "zerohackarabic", 0x0660, "zeroinferior", 0x2080, "zeromonospace", 0xff10, "zerooldstyle", 0xf730, "zeropersian", 0x06f0, "zerosuperior", 0x2070, "zerothai", 0x0e50, "zerowidthjoiner", 0xfeff, "zerowidthnonjoiner", 0x200c, "zerowidthspace", 0x200b, "zeta", 0x03b6, "zhbopomofo", 0x3113, "zhearmenian", 0x056a, "zhebrevecyrillic", 0x04c2, "zhecyrillic", 0x0436, "zhedescendercyrillic", 0x0497, "zhedieresiscyrillic", 0x04dd, "zihiragana", 0x3058, "zikatakana", 0x30b8, "zinorhebrew", 0x05ae, "zlinebelow", 0x1e95, "zmonospace", 0xff5a, "zohiragana", 0x305e, "zokatakana", 0x30be, "zparen", 0x24b5, "zretroflexhook", 0x0290, "zstroke", 0x01b6, "zuhiragana", 0x305a, "zukatakana", 0x30ba, ".notdef", 0x0000, "angbracketleftbig", 0x2329, "angbracketleftBig", 0x2329, "angbracketleftbigg", 0x2329, "angbracketleftBigg", 0x2329, "angbracketrightBig", 0x232a, "angbracketrightbig", 0x232a, "angbracketrightBigg", 0x232a, "angbracketrightbigg", 0x232a, "arrowhookleft", 0x21aa, "arrowhookright", 0x21a9, "arrowlefttophalf", 0x21bc, "arrowleftbothalf", 0x21bd, "arrownortheast", 0x2197, "arrownorthwest", 0x2196, "arrowrighttophalf", 0x21c0, "arrowrightbothalf", 0x21c1, "arrowsoutheast", 0x2198, "arrowsouthwest", 0x2199, "backslashbig", 0x2216, "backslashBig", 0x2216, "backslashBigg", 0x2216, "backslashbigg", 0x2216, "bardbl", 0x2016, "bracehtipdownleft", 0xfe37, "bracehtipdownright", 0xfe37, "bracehtipupleft", 0xfe38, "bracehtipupright", 0xfe38, "braceleftBig", 0x007b, "braceleftbig", 0x007b, "braceleftbigg", 0x007b, "braceleftBigg", 0x007b, "bracerightBig", 0x007d, "bracerightbig", 0x007d, "bracerightbigg", 0x007d, "bracerightBigg", 0x007d, "bracketleftbig", 0x005b, "bracketleftBig", 0x005b, "bracketleftbigg", 0x005b, "bracketleftBigg", 0x005b, "bracketrightBig", 0x005d, "bracketrightbig", 0x005d, "bracketrightbigg", 0x005d, "bracketrightBigg", 0x005d, "ceilingleftbig", 0x2308, "ceilingleftBig", 0x2308, "ceilingleftBigg", 0x2308, "ceilingleftbigg", 0x2308, "ceilingrightbig", 0x2309, "ceilingrightBig", 0x2309, "ceilingrightbigg", 0x2309, "ceilingrightBigg", 0x2309, "circledotdisplay", 0x2299, "circledottext", 0x2299, "circlemultiplydisplay", 0x2297, "circlemultiplytext", 0x2297, "circleplusdisplay", 0x2295, "circleplustext", 0x2295, "contintegraldisplay", 0x222e, "contintegraltext", 0x222e, "coproductdisplay", 0x2210, "coproducttext", 0x2210, "floorleftBig", 0x230a, "floorleftbig", 0x230a, "floorleftbigg", 0x230a, "floorleftBigg", 0x230a, "floorrightbig", 0x230b, "floorrightBig", 0x230b, "floorrightBigg", 0x230b, "floorrightbigg", 0x230b, "hatwide", 0x0302, "hatwider", 0x0302, "hatwidest", 0x0302, "intercal", 0x1d40, "integraldisplay", 0x222b, "integraltext", 0x222b, "intersectiondisplay", 0x22c2, "intersectiontext", 0x22c2, "logicalanddisplay", 0x2227, "logicalandtext", 0x2227, "logicalordisplay", 0x2228, "logicalortext", 0x2228, "parenleftBig", 0x0028, "parenleftbig", 0x0028, "parenleftBigg", 0x0028, "parenleftbigg", 0x0028, "parenrightBig", 0x0029, "parenrightbig", 0x0029, "parenrightBigg", 0x0029, "parenrightbigg", 0x0029, "prime", 0x2032, "productdisplay", 0x220f, "producttext", 0x220f, "radicalbig", 0x221a, "radicalBig", 0x221a, "radicalBigg", 0x221a, "radicalbigg", 0x221a, "radicalbt", 0x221a, "radicaltp", 0x221a, "radicalvertex", 0x221a, "slashbig", 0x002f, "slashBig", 0x002f, "slashBigg", 0x002f, "slashbigg", 0x002f, "summationdisplay", 0x2211, "summationtext", 0x2211, "tildewide", 0x02dc, "tildewider", 0x02dc, "tildewidest", 0x02dc, "uniondisplay", 0x22c3, "unionmultidisplay", 0x228e, "unionmultitext", 0x228e, "unionsqdisplay", 0x2294, "unionsqtext", 0x2294, "uniontext", 0x22c3, "vextenddouble", 0x2225, "vextendsingle", 0x2223];
-});
-exports.getGlyphsUnicode = getGlyphsUnicode;
-const getDingbatsGlyphsUnicode = (0, _core_utils.getArrayLookupTableFactory)(function () {
-  return ["space", 0x0020, "a1", 0x2701, "a2", 0x2702, "a202", 0x2703, "a3", 0x2704, "a4", 0x260e, "a5", 0x2706, "a119", 0x2707, "a118", 0x2708, "a117", 0x2709, "a11", 0x261b, "a12", 0x261e, "a13", 0x270c, "a14", 0x270d, "a15", 0x270e, "a16", 0x270f, "a105", 0x2710, "a17", 0x2711, "a18", 0x2712, "a19", 0x2713, "a20", 0x2714, "a21", 0x2715, "a22", 0x2716, "a23", 0x2717, "a24", 0x2718, "a25", 0x2719, "a26", 0x271a, "a27", 0x271b, "a28", 0x271c, "a6", 0x271d, "a7", 0x271e, "a8", 0x271f, "a9", 0x2720, "a10", 0x2721, "a29", 0x2722, "a30", 0x2723, "a31", 0x2724, "a32", 0x2725, "a33", 0x2726, "a34", 0x2727, "a35", 0x2605, "a36", 0x2729, "a37", 0x272a, "a38", 0x272b, "a39", 0x272c, "a40", 0x272d, "a41", 0x272e, "a42", 0x272f, "a43", 0x2730, "a44", 0x2731, "a45", 0x2732, "a46", 0x2733, "a47", 0x2734, "a48", 0x2735, "a49", 0x2736, "a50", 0x2737, "a51", 0x2738, "a52", 0x2739, "a53", 0x273a, "a54", 0x273b, "a55", 0x273c, "a56", 0x273d, "a57", 0x273e, "a58", 0x273f, "a59", 0x2740, "a60", 0x2741, "a61", 0x2742, "a62", 0x2743, "a63", 0x2744, "a64", 0x2745, "a65", 0x2746, "a66", 0x2747, "a67", 0x2748, "a68", 0x2749, "a69", 0x274a, "a70", 0x274b, "a71", 0x25cf, "a72", 0x274d, "a73", 0x25a0, "a74", 0x274f, "a203", 0x2750, "a75", 0x2751, "a204", 0x2752, "a76", 0x25b2, "a77", 0x25bc, "a78", 0x25c6, "a79", 0x2756, "a81", 0x25d7, "a82", 0x2758, "a83", 0x2759, "a84", 0x275a, "a97", 0x275b, "a98", 0x275c, "a99", 0x275d, "a100", 0x275e, "a101", 0x2761, "a102", 0x2762, "a103", 0x2763, "a104", 0x2764, "a106", 0x2765, "a107", 0x2766, "a108", 0x2767, "a112", 0x2663, "a111", 0x2666, "a110", 0x2665, "a109", 0x2660, "a120", 0x2460, "a121", 0x2461, "a122", 0x2462, "a123", 0x2463, "a124", 0x2464, "a125", 0x2465, "a126", 0x2466, "a127", 0x2467, "a128", 0x2468, "a129", 0x2469, "a130", 0x2776, "a131", 0x2777, "a132", 0x2778, "a133", 0x2779, "a134", 0x277a, "a135", 0x277b, "a136", 0x277c, "a137", 0x277d, "a138", 0x277e, "a139", 0x277f, "a140", 0x2780, "a141", 0x2781, "a142", 0x2782, "a143", 0x2783, "a144", 0x2784, "a145", 0x2785, "a146", 0x2786, "a147", 0x2787, "a148", 0x2788, "a149", 0x2789, "a150", 0x278a, "a151", 0x278b, "a152", 0x278c, "a153", 0x278d, "a154", 0x278e, "a155", 0x278f, "a156", 0x2790, "a157", 0x2791, "a158", 0x2792, "a159", 0x2793, "a160", 0x2794, "a161", 0x2192, "a163", 0x2194, "a164", 0x2195, "a196", 0x2798, "a165", 0x2799, "a192", 0x279a, "a166", 0x279b, "a167", 0x279c, "a168", 0x279d, "a169", 0x279e, "a170", 0x279f, "a171", 0x27a0, "a172", 0x27a1, "a173", 0x27a2, "a162", 0x27a3, "a174", 0x27a4, "a175", 0x27a5, "a176", 0x27a6, "a177", 0x27a7, "a178", 0x27a8, "a179", 0x27a9, "a193", 0x27aa, "a180", 0x27ab, "a199", 0x27ac, "a181", 0x27ad, "a200", 0x27ae, "a182", 0x27af, "a201", 0x27b1, "a183", 0x27b2, "a184", 0x27b3, "a197", 0x27b4, "a185", 0x27b5, "a194", 0x27b6, "a198", 0x27b7, "a186", 0x27b8, "a195", 0x27b9, "a187", 0x27ba, "a188", 0x27bb, "a189", 0x27bc, "a190", 0x27bd, "a191", 0x27be, "a89", 0x2768, "a90", 0x2769, "a93", 0x276a, "a94", 0x276b, "a91", 0x276c, "a92", 0x276d, "a205", 0x276e, "a85", 0x276f, "a206", 0x2770, "a86", 0x2771, "a87", 0x2772, "a88", 0x2773, "a95", 0x2774, "a96", 0x2775, ".notdef", 0x0000];
-});
-exports.getDingbatsGlyphsUnicode = getDingbatsGlyphsUnicode;
-
-/***/ }),
-/* 40 */
-/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
-
-
-
-Object.defineProperty(exports, "__esModule", ({
-  value: true
-}));
-exports.getUnicodeForGlyph = getUnicodeForGlyph;
-exports.getUnicodeRangeFor = getUnicodeRangeFor;
-exports.mapSpecialUnicodeValues = mapSpecialUnicodeValues;
-exports.reverseIfRtl = reverseIfRtl;
-exports.getNormalizedUnicodes = void 0;
-
-var _core_utils = __w_pdfjs_require__(9);
-
-const getSpecialPUASymbols = (0, _core_utils.getLookupTableFactory)(function (t) {
-  t[63721] = 0x00a9;
-  t[63193] = 0x00a9;
-  t[63720] = 0x00ae;
-  t[63194] = 0x00ae;
-  t[63722] = 0x2122;
-  t[63195] = 0x2122;
-  t[63729] = 0x23a7;
-  t[63730] = 0x23a8;
-  t[63731] = 0x23a9;
-  t[63740] = 0x23ab;
-  t[63741] = 0x23ac;
-  t[63742] = 0x23ad;
-  t[63726] = 0x23a1;
-  t[63727] = 0x23a2;
-  t[63728] = 0x23a3;
-  t[63737] = 0x23a4;
-  t[63738] = 0x23a5;
-  t[63739] = 0x23a6;
-  t[63723] = 0x239b;
-  t[63724] = 0x239c;
-  t[63725] = 0x239d;
-  t[63734] = 0x239e;
-  t[63735] = 0x239f;
-  t[63736] = 0x23a0;
-});
-
-function mapSpecialUnicodeValues(code) {
-  if (code >= 0xfff0 && code <= 0xffff) {
-    return 0;
-  } else if (code >= 0xf600 && code <= 0xf8ff) {
-    return getSpecialPUASymbols()[code] || code;
-  } else if (code === 0x00ad) {
-    return 0x002d;
-  }
-
-  return code;
-}
-
-function getUnicodeForGlyph(name, glyphsUnicodeMap) {
-  let unicode = glyphsUnicodeMap[name];
-
-  if (unicode !== undefined) {
-    return unicode;
-  }
-
-  if (!name) {
-    return -1;
-  }
-
-  if (name[0] === "u") {
-    const nameLen = name.length;
-    let hexStr;
-
-    if (nameLen === 7 && name[1] === "n" && name[2] === "i") {
-      hexStr = name.substring(3);
-    } else if (nameLen >= 5 && nameLen <= 7) {
-      hexStr = name.substring(1);
-    } else {
-      return -1;
-    }
-
-    if (hexStr === hexStr.toUpperCase()) {
-      unicode = parseInt(hexStr, 16);
-
-      if (unicode >= 0) {
-        return unicode;
-      }
-    }
-  }
-
-  return -1;
-}
-
-const UnicodeRanges = [{
-  begin: 0x0000,
-  end: 0x007f
-}, {
-  begin: 0x0080,
-  end: 0x00ff
-}, {
-  begin: 0x0100,
-  end: 0x017f
-}, {
-  begin: 0x0180,
-  end: 0x024f
-}, {
-  begin: 0x0250,
-  end: 0x02af
-}, {
-  begin: 0x02b0,
-  end: 0x02ff
-}, {
-  begin: 0x0300,
-  end: 0x036f
-}, {
-  begin: 0x0370,
-  end: 0x03ff
-}, {
-  begin: 0x2c80,
-  end: 0x2cff
-}, {
-  begin: 0x0400,
-  end: 0x04ff
-}, {
-  begin: 0x0530,
-  end: 0x058f
-}, {
-  begin: 0x0590,
-  end: 0x05ff
-}, {
-  begin: 0xa500,
-  end: 0xa63f
-}, {
-  begin: 0x0600,
-  end: 0x06ff
-}, {
-  begin: 0x07c0,
-  end: 0x07ff
-}, {
-  begin: 0x0900,
-  end: 0x097f
-}, {
-  begin: 0x0980,
-  end: 0x09ff
-}, {
-  begin: 0x0a00,
-  end: 0x0a7f
-}, {
-  begin: 0x0a80,
-  end: 0x0aff
-}, {
-  begin: 0x0b00,
-  end: 0x0b7f
-}, {
-  begin: 0x0b80,
-  end: 0x0bff
-}, {
-  begin: 0x0c00,
-  end: 0x0c7f
-}, {
-  begin: 0x0c80,
-  end: 0x0cff
-}, {
-  begin: 0x0d00,
-  end: 0x0d7f
-}, {
-  begin: 0x0e00,
-  end: 0x0e7f
-}, {
-  begin: 0x0e80,
-  end: 0x0eff
-}, {
-  begin: 0x10a0,
-  end: 0x10ff
-}, {
-  begin: 0x1b00,
-  end: 0x1b7f
-}, {
-  begin: 0x1100,
-  end: 0x11ff
-}, {
-  begin: 0x1e00,
-  end: 0x1eff
-}, {
-  begin: 0x1f00,
-  end: 0x1fff
-}, {
-  begin: 0x2000,
-  end: 0x206f
-}, {
-  begin: 0x2070,
-  end: 0x209f
-}, {
-  begin: 0x20a0,
-  end: 0x20cf
-}, {
-  begin: 0x20d0,
-  end: 0x20ff
-}, {
-  begin: 0x2100,
-  end: 0x214f
-}, {
-  begin: 0x2150,
-  end: 0x218f
-}, {
-  begin: 0x2190,
-  end: 0x21ff
-}, {
-  begin: 0x2200,
-  end: 0x22ff
-}, {
-  begin: 0x2300,
-  end: 0x23ff
-}, {
-  begin: 0x2400,
-  end: 0x243f
-}, {
-  begin: 0x2440,
-  end: 0x245f
-}, {
-  begin: 0x2460,
-  end: 0x24ff
-}, {
-  begin: 0x2500,
-  end: 0x257f
-}, {
-  begin: 0x2580,
-  end: 0x259f
-}, {
-  begin: 0x25a0,
-  end: 0x25ff
-}, {
-  begin: 0x2600,
-  end: 0x26ff
-}, {
-  begin: 0x2700,
-  end: 0x27bf
-}, {
-  begin: 0x3000,
-  end: 0x303f
-}, {
-  begin: 0x3040,
-  end: 0x309f
-}, {
-  begin: 0x30a0,
-  end: 0x30ff
-}, {
-  begin: 0x3100,
-  end: 0x312f
-}, {
-  begin: 0x3130,
-  end: 0x318f
-}, {
-  begin: 0xa840,
-  end: 0xa87f
-}, {
-  begin: 0x3200,
-  end: 0x32ff
-}, {
-  begin: 0x3300,
-  end: 0x33ff
-}, {
-  begin: 0xac00,
-  end: 0xd7af
-}, {
-  begin: 0xd800,
-  end: 0xdfff
-}, {
-  begin: 0x10900,
-  end: 0x1091f
-}, {
-  begin: 0x4e00,
-  end: 0x9fff
-}, {
-  begin: 0xe000,
-  end: 0xf8ff
-}, {
-  begin: 0x31c0,
-  end: 0x31ef
-}, {
-  begin: 0xfb00,
-  end: 0xfb4f
-}, {
-  begin: 0xfb50,
-  end: 0xfdff
-}, {
-  begin: 0xfe20,
-  end: 0xfe2f
-}, {
-  begin: 0xfe10,
-  end: 0xfe1f
-}, {
-  begin: 0xfe50,
-  end: 0xfe6f
-}, {
-  begin: 0xfe70,
-  end: 0xfeff
-}, {
-  begin: 0xff00,
-  end: 0xffef
-}, {
-  begin: 0xfff0,
-  end: 0xffff
-}, {
-  begin: 0x0f00,
-  end: 0x0fff
-}, {
-  begin: 0x0700,
-  end: 0x074f
-}, {
-  begin: 0x0780,
-  end: 0x07bf
-}, {
-  begin: 0x0d80,
-  end: 0x0dff
-}, {
-  begin: 0x1000,
-  end: 0x109f
-}, {
-  begin: 0x1200,
-  end: 0x137f
-}, {
-  begin: 0x13a0,
-  end: 0x13ff
-}, {
-  begin: 0x1400,
-  end: 0x167f
-}, {
-  begin: 0x1680,
-  end: 0x169f
-}, {
-  begin: 0x16a0,
-  end: 0x16ff
-}, {
-  begin: 0x1780,
-  end: 0x17ff
-}, {
-  begin: 0x1800,
-  end: 0x18af
-}, {
-  begin: 0x2800,
-  end: 0x28ff
-}, {
-  begin: 0xa000,
-  end: 0xa48f
-}, {
-  begin: 0x1700,
-  end: 0x171f
-}, {
-  begin: 0x10300,
-  end: 0x1032f
-}, {
-  begin: 0x10330,
-  end: 0x1034f
-}, {
-  begin: 0x10400,
-  end: 0x1044f
-}, {
-  begin: 0x1d000,
-  end: 0x1d0ff
-}, {
-  begin: 0x1d400,
-  end: 0x1d7ff
-}, {
-  begin: 0xff000,
-  end: 0xffffd
-}, {
-  begin: 0xfe00,
-  end: 0xfe0f
-}, {
-  begin: 0xe0000,
-  end: 0xe007f
-}, {
-  begin: 0x1900,
-  end: 0x194f
-}, {
-  begin: 0x1950,
-  end: 0x197f
-}, {
-  begin: 0x1980,
-  end: 0x19df
-}, {
-  begin: 0x1a00,
-  end: 0x1a1f
-}, {
-  begin: 0x2c00,
-  end: 0x2c5f
-}, {
-  begin: 0x2d30,
-  end: 0x2d7f
-}, {
-  begin: 0x4dc0,
-  end: 0x4dff
-}, {
-  begin: 0xa800,
-  end: 0xa82f
-}, {
-  begin: 0x10000,
-  end: 0x1007f
-}, {
-  begin: 0x10140,
-  end: 0x1018f
-}, {
-  begin: 0x10380,
-  end: 0x1039f
-}, {
-  begin: 0x103a0,
-  end: 0x103df
-}, {
-  begin: 0x10450,
-  end: 0x1047f
-}, {
-  begin: 0x10480,
-  end: 0x104af
-}, {
-  begin: 0x10800,
-  end: 0x1083f
-}, {
-  begin: 0x10a00,
-  end: 0x10a5f
-}, {
-  begin: 0x1d300,
-  end: 0x1d35f
-}, {
-  begin: 0x12000,
-  end: 0x123ff
-}, {
-  begin: 0x1d360,
-  end: 0x1d37f
-}, {
-  begin: 0x1b80,
-  end: 0x1bbf
-}, {
-  begin: 0x1c00,
-  end: 0x1c4f
-}, {
-  begin: 0x1c50,
-  end: 0x1c7f
-}, {
-  begin: 0xa880,
-  end: 0xa8df
-}, {
-  begin: 0xa900,
-  end: 0xa92f
-}, {
-  begin: 0xa930,
-  end: 0xa95f
-}, {
-  begin: 0xaa00,
-  end: 0xaa5f
-}, {
-  begin: 0x10190,
-  end: 0x101cf
-}, {
-  begin: 0x101d0,
-  end: 0x101ff
-}, {
-  begin: 0x102a0,
-  end: 0x102df
-}, {
-  begin: 0x1f030,
-  end: 0x1f09f
-}];
-
-function getUnicodeRangeFor(value) {
-  for (let i = 0, ii = UnicodeRanges.length; i < ii; i++) {
-    const range = UnicodeRanges[i];
-
-    if (value >= range.begin && value < range.end) {
-      return i;
-    }
-  }
-
-  return -1;
-}
-
-function isRTLRangeFor(value) {
-  let range = UnicodeRanges[13];
-
-  if (value >= range.begin && value < range.end) {
-    return true;
-  }
-
-  range = UnicodeRanges[11];
-
-  if (value >= range.begin && value < range.end) {
-    return true;
-  }
-
-  return false;
-}
-
-const getNormalizedUnicodes = (0, _core_utils.getArrayLookupTableFactory)(function () {
-  return ["\u00A8", "\u0020\u0308", "\u00AF", "\u0020\u0304", "\u00B4", "\u0020\u0301", "\u00B5", "\u03BC", "\u00B8", "\u0020\u0327", "\u0132", "\u0049\u004A", "\u0133", "\u0069\u006A", "\u013F", "\u004C\u00B7", "\u0140", "\u006C\u00B7", "\u0149", "\u02BC\u006E", "\u017F", "\u0073", "\u01C4", "\u0044\u017D", "\u01C5", "\u0044\u017E", "\u01C6", "\u0064\u017E", "\u01C7", "\u004C\u004A", "\u01C8", "\u004C\u006A", "\u01C9", "\u006C\u006A", "\u01CA", "\u004E\u004A", "\u01CB", "\u004E\u006A", "\u01CC", "\u006E\u006A", "\u01F1", "\u0044\u005A", "\u01F2", "\u0044\u007A", "\u01F3", "\u0064\u007A", "\u02D8", "\u0020\u0306", "\u02D9", "\u0020\u0307", "\u02DA", "\u0020\u030A", "\u02DB", "\u0020\u0328", "\u02DC", "\u0020\u0303", "\u02DD", "\u0020\u030B", "\u037A", "\u0020\u0345", "\u0384", "\u0020\u0301", "\u03D0", "\u03B2", "\u03D1", "\u03B8", "\u03D2", "\u03A5", "\u03D5", "\u03C6", "\u03D6", "\u03C0", "\u03F0", "\u03BA", "\u03F1", "\u03C1", "\u03F2", "\u03C2", "\u03F4", "\u0398", "\u03F5", "\u03B5", "\u03F9", "\u03A3", "\u0587", "\u0565\u0582", "\u0675", "\u0627\u0674", "\u0676", "\u0648\u0674", "\u0677", "\u06C7\u0674", "\u0678", "\u064A\u0674", "\u0E33", "\u0E4D\u0E32", "\u0EB3", "\u0ECD\u0EB2", "\u0EDC", "\u0EAB\u0E99", "\u0EDD", "\u0EAB\u0EA1", "\u0F77", "\u0FB2\u0F81", "\u0F79", "\u0FB3\u0F81", "\u1E9A", "\u0061\u02BE", "\u1FBD", "\u0020\u0313", "\u1FBF", "\u0020\u0313", "\u1FC0", "\u0020\u0342", "\u1FFE", "\u0020\u0314", "\u2002", "\u0020", "\u2003", "\u0020", "\u2004", "\u0020", "\u2005", "\u0020", "\u2006", "\u0020", "\u2008", "\u0020", "\u2009", "\u0020", "\u200A", "\u0020", "\u2017", "\u0020\u0333", "\u2024", "\u002E", "\u2025", "\u002E\u002E", "\u2026", "\u002E\u002E\u002E", "\u2033", "\u2032\u2032", "\u2034", "\u2032\u2032\u2032", "\u2036", "\u2035\u2035", "\u2037", "\u2035\u2035\u2035", "\u203C", "\u0021\u0021", "\u203E", "\u0020\u0305", "\u2047", "\u003F\u003F", "\u2048", "\u003F\u0021", "\u2049", "\u0021\u003F", "\u2057", "\u2032\u2032\u2032\u2032", "\u205F", "\u0020", "\u20A8", "\u0052\u0073", "\u2100", "\u0061\u002F\u0063", "\u2101", "\u0061\u002F\u0073", "\u2103", "\u00B0\u0043", "\u2105", "\u0063\u002F\u006F", "\u2106", "\u0063\u002F\u0075", "\u2107", "\u0190", "\u2109", "\u00B0\u0046", "\u2116", "\u004E\u006F", "\u2121", "\u0054\u0045\u004C", "\u2135", "\u05D0", "\u2136", "\u05D1", "\u2137", "\u05D2", "\u2138", "\u05D3", "\u213B", "\u0046\u0041\u0058", "\u2160", "\u0049", "\u2161", "\u0049\u0049", "\u2162", "\u0049\u0049\u0049", "\u2163", "\u0049\u0056", "\u2164", "\u0056", "\u2165", "\u0056\u0049", "\u2166", "\u0056\u0049\u0049", "\u2167", "\u0056\u0049\u0049\u0049", "\u2168", "\u0049\u0058", "\u2169", "\u0058", "\u216A", "\u0058\u0049", "\u216B", "\u0058\u0049\u0049", "\u216C", "\u004C", "\u216D", "\u0043", "\u216E", "\u0044", "\u216F", "\u004D", "\u2170", "\u0069", "\u2171", "\u0069\u0069", "\u2172", "\u0069\u0069\u0069", "\u2173", "\u0069\u0076", "\u2174", "\u0076", "\u2175", "\u0076\u0069", "\u2176", "\u0076\u0069\u0069", "\u2177", "\u0076\u0069\u0069\u0069", "\u2178", "\u0069\u0078", "\u2179", "\u0078", "\u217A", "\u0078\u0069", "\u217B", "\u0078\u0069\u0069", "\u217C", "\u006C", "\u217D", "\u0063", "\u217E", "\u0064", "\u217F", "\u006D", "\u222C", "\u222B\u222B", "\u222D", "\u222B\u222B\u222B", "\u222F", "\u222E\u222E", "\u2230", "\u222E\u222E\u222E", "\u2474", "\u0028\u0031\u0029", "\u2475", "\u0028\u0032\u0029", "\u2476", "\u0028\u0033\u0029", "\u2477", "\u0028\u0034\u0029", "\u2478", "\u0028\u0035\u0029", "\u2479", "\u0028\u0036\u0029", "\u247A", "\u0028\u0037\u0029", "\u247B", "\u0028\u0038\u0029", "\u247C", "\u0028\u0039\u0029", "\u247D", "\u0028\u0031\u0030\u0029", "\u247E", "\u0028\u0031\u0031\u0029", "\u247F", "\u0028\u0031\u0032\u0029", "\u2480", "\u0028\u0031\u0033\u0029", "\u2481", "\u0028\u0031\u0034\u0029", "\u2482", "\u0028\u0031\u0035\u0029", "\u2483", "\u0028\u0031\u0036\u0029", "\u2484", "\u0028\u0031\u0037\u0029", "\u2485", "\u0028\u0031\u0038\u0029", "\u2486", "\u0028\u0031\u0039\u0029", "\u2487", "\u0028\u0032\u0030\u0029", "\u2488", "\u0031\u002E", "\u2489", "\u0032\u002E", "\u248A", "\u0033\u002E", "\u248B", "\u0034\u002E", "\u248C", "\u0035\u002E", "\u248D", "\u0036\u002E", "\u248E", "\u0037\u002E", "\u248F", "\u0038\u002E", "\u2490", "\u0039\u002E", "\u2491", "\u0031\u0030\u002E", "\u2492", "\u0031\u0031\u002E", "\u2493", "\u0031\u0032\u002E", "\u2494", "\u0031\u0033\u002E", "\u2495", "\u0031\u0034\u002E", "\u2496", "\u0031\u0035\u002E", "\u2497", "\u0031\u0036\u002E", "\u2498", "\u0031\u0037\u002E", "\u2499", "\u0031\u0038\u002E", "\u249A", "\u0031\u0039\u002E", "\u249B", "\u0032\u0030\u002E", "\u249C", "\u0028\u0061\u0029", "\u249D", "\u0028\u0062\u0029", "\u249E", "\u0028\u0063\u0029", "\u249F", "\u0028\u0064\u0029", "\u24A0", "\u0028\u0065\u0029", "\u24A1", "\u0028\u0066\u0029", "\u24A2", "\u0028\u0067\u0029", "\u24A3", "\u0028\u0068\u0029", "\u24A4", "\u0028\u0069\u0029", "\u24A5", "\u0028\u006A\u0029", "\u24A6", "\u0028\u006B\u0029", "\u24A7", "\u0028\u006C\u0029", "\u24A8", "\u0028\u006D\u0029", "\u24A9", "\u0028\u006E\u0029", "\u24AA", "\u0028\u006F\u0029", "\u24AB", "\u0028\u0070\u0029", "\u24AC", "\u0028\u0071\u0029", "\u24AD", "\u0028\u0072\u0029", "\u24AE", "\u0028\u0073\u0029", "\u24AF", "\u0028\u0074\u0029", "\u24B0", "\u0028\u0075\u0029", "\u24B1", "\u0028\u0076\u0029", "\u24B2", "\u0028\u0077\u0029", "\u24B3", "\u0028\u0078\u0029", "\u24B4", "\u0028\u0079\u0029", "\u24B5", "\u0028\u007A\u0029", "\u2A0C", "\u222B\u222B\u222B\u222B", "\u2A74", "\u003A\u003A\u003D", "\u2A75", "\u003D\u003D", "\u2A76", "\u003D\u003D\u003D", "\u2E9F", "\u6BCD", "\u2EF3", "\u9F9F", "\u2F00", "\u4E00", "\u2F01", "\u4E28", "\u2F02", "\u4E36", "\u2F03", "\u4E3F", "\u2F04", "\u4E59", "\u2F05", "\u4E85", "\u2F06", "\u4E8C", "\u2F07", "\u4EA0", "\u2F08", "\u4EBA", "\u2F09", "\u513F", "\u2F0A", "\u5165", "\u2F0B", "\u516B", "\u2F0C", "\u5182", "\u2F0D", "\u5196", "\u2F0E", "\u51AB", "\u2F0F", "\u51E0", "\u2F10", "\u51F5", "\u2F11", "\u5200", "\u2F12", "\u529B", "\u2F13", "\u52F9", "\u2F14", "\u5315", "\u2F15", "\u531A", "\u2F16", "\u5338", "\u2F17", "\u5341", "\u2F18", "\u535C", "\u2F19", "\u5369", "\u2F1A", "\u5382", "\u2F1B", "\u53B6", "\u2F1C", "\u53C8", "\u2F1D", "\u53E3", "\u2F1E", "\u56D7", "\u2F1F", "\u571F", "\u2F20", "\u58EB", "\u2F21", "\u5902", "\u2F22", "\u590A", "\u2F23", "\u5915", "\u2F24", "\u5927", "\u2F25", "\u5973", "\u2F26", "\u5B50", "\u2F27", "\u5B80", "\u2F28", "\u5BF8", "\u2F29", "\u5C0F", "\u2F2A", "\u5C22", "\u2F2B", "\u5C38", "\u2F2C", "\u5C6E", "\u2F2D", "\u5C71", "\u2F2E", "\u5DDB", "\u2F2F", "\u5DE5", "\u2F30", "\u5DF1", "\u2F31", "\u5DFE", "\u2F32", "\u5E72", "\u2F33", "\u5E7A", "\u2F34", "\u5E7F", "\u2F35", "\u5EF4", "\u2F36", "\u5EFE", "\u2F37", "\u5F0B", "\u2F38", "\u5F13", "\u2F39", "\u5F50", "\u2F3A", "\u5F61", "\u2F3B", "\u5F73", "\u2F3C", "\u5FC3", "\u2F3D", "\u6208", "\u2F3E", "\u6236", "\u2F3F", "\u624B", "\u2F40", "\u652F", "\u2F41", "\u6534", "\u2F42", "\u6587", "\u2F43", "\u6597", "\u2F44", "\u65A4", "\u2F45", "\u65B9", "\u2F46", "\u65E0", "\u2F47", "\u65E5", "\u2F48", "\u66F0", "\u2F49", "\u6708", "\u2F4A", "\u6728", "\u2F4B", "\u6B20", "\u2F4C", "\u6B62", "\u2F4D", "\u6B79", "\u2F4E", "\u6BB3", "\u2F4F", "\u6BCB", "\u2F50", "\u6BD4", "\u2F51", "\u6BDB", "\u2F52", "\u6C0F", "\u2F53", "\u6C14", "\u2F54", "\u6C34", "\u2F55", "\u706B", "\u2F56", "\u722A", "\u2F57", "\u7236", "\u2F58", "\u723B", "\u2F59", "\u723F", "\u2F5A", "\u7247", "\u2F5B", "\u7259", "\u2F5C", "\u725B", "\u2F5D", "\u72AC", "\u2F5E", "\u7384", "\u2F5F", "\u7389", "\u2F60", "\u74DC", "\u2F61", "\u74E6", "\u2F62", "\u7518", "\u2F63", "\u751F", "\u2F64", "\u7528", "\u2F65", "\u7530", "\u2F66", "\u758B", "\u2F67", "\u7592", "\u2F68", "\u7676", "\u2F69", "\u767D", "\u2F6A", "\u76AE", "\u2F6B", "\u76BF", "\u2F6C", "\u76EE", "\u2F6D", "\u77DB", "\u2F6E", "\u77E2", "\u2F6F", "\u77F3", "\u2F70", "\u793A", "\u2F71", "\u79B8", "\u2F72", "\u79BE", "\u2F73", "\u7A74", "\u2F74", "\u7ACB", "\u2F75", "\u7AF9", "\u2F76", "\u7C73", "\u2F77", "\u7CF8", "\u2F78", "\u7F36", "\u2F79", "\u7F51", "\u2F7A", "\u7F8A", "\u2F7B", "\u7FBD", "\u2F7C", "\u8001", "\u2F7D", "\u800C", "\u2F7E", "\u8012", "\u2F7F", "\u8033", "\u2F80", "\u807F", "\u2F81", "\u8089", "\u2F82", "\u81E3", "\u2F83", "\u81EA", "\u2F84", "\u81F3", "\u2F85", "\u81FC", "\u2F86", "\u820C", "\u2F87", "\u821B", "\u2F88", "\u821F", "\u2F89", "\u826E", "\u2F8A", "\u8272", "\u2F8B", "\u8278", "\u2F8C", "\u864D", "\u2F8D", "\u866B", "\u2F8E", "\u8840", "\u2F8F", "\u884C", "\u2F90", "\u8863", "\u2F91", "\u897E", "\u2F92", "\u898B", "\u2F93", "\u89D2", "\u2F94", "\u8A00", "\u2F95", "\u8C37", "\u2F96", "\u8C46", "\u2F97", "\u8C55", "\u2F98", "\u8C78", "\u2F99", "\u8C9D", "\u2F9A", "\u8D64", "\u2F9B", "\u8D70", "\u2F9C", "\u8DB3", "\u2F9D", "\u8EAB", "\u2F9E", "\u8ECA", "\u2F9F", "\u8F9B", "\u2FA0", "\u8FB0", "\u2FA1", "\u8FB5", "\u2FA2", "\u9091", "\u2FA3", "\u9149", "\u2FA4", "\u91C6", "\u2FA5", "\u91CC", "\u2FA6", "\u91D1", "\u2FA7", "\u9577", "\u2FA8", "\u9580", "\u2FA9", "\u961C", "\u2FAA", "\u96B6", "\u2FAB", "\u96B9", "\u2FAC", "\u96E8", "\u2FAD", "\u9751", "\u2FAE", "\u975E", "\u2FAF", "\u9762", "\u2FB0", "\u9769", "\u2FB1", "\u97CB", "\u2FB2", "\u97ED", "\u2FB3", "\u97F3", "\u2FB4", "\u9801", "\u2FB5", "\u98A8", "\u2FB6", "\u98DB", "\u2FB7", "\u98DF", "\u2FB8", "\u9996", "\u2FB9", "\u9999", "\u2FBA", "\u99AC", "\u2FBB", "\u9AA8", "\u2FBC", "\u9AD8", "\u2FBD", "\u9ADF", "\u2FBE", "\u9B25", "\u2FBF", "\u9B2F", "\u2FC0", "\u9B32", "\u2FC1", "\u9B3C", "\u2FC2", "\u9B5A", "\u2FC3", "\u9CE5", "\u2FC4", "\u9E75", "\u2FC5", "\u9E7F", "\u2FC6", "\u9EA5", "\u2FC7", "\u9EBB", "\u2FC8", "\u9EC3", "\u2FC9", "\u9ECD", "\u2FCA", "\u9ED1", "\u2FCB", "\u9EF9", "\u2FCC", "\u9EFD", "\u2FCD", "\u9F0E", "\u2FCE", "\u9F13", "\u2FCF", "\u9F20", "\u2FD0", "\u9F3B", "\u2FD1", "\u9F4A", "\u2FD2", "\u9F52", "\u2FD3", "\u9F8D", "\u2FD4", "\u9F9C", "\u2FD5", "\u9FA0", "\u3036", "\u3012", "\u3038", "\u5341", "\u3039", "\u5344", "\u303A", "\u5345", "\u309B", "\u0020\u3099", "\u309C", "\u0020\u309A", "\u3131", "\u1100", "\u3132", "\u1101", "\u3133", "\u11AA", "\u3134", "\u1102", "\u3135", "\u11AC", "\u3136", "\u11AD", "\u3137", "\u1103", "\u3138", "\u1104", "\u3139", "\u1105", "\u313A", "\u11B0", "\u313B", "\u11B1", "\u313C", "\u11B2", "\u313D", "\u11B3", "\u313E", "\u11B4", "\u313F", "\u11B5", "\u3140", "\u111A", "\u3141", "\u1106", "\u3142", "\u1107", "\u3143", "\u1108", "\u3144", "\u1121", "\u3145", "\u1109", "\u3146", "\u110A", "\u3147", "\u110B", "\u3148", "\u110C", "\u3149", "\u110D", "\u314A", "\u110E", "\u314B", "\u110F", "\u314C", "\u1110", "\u314D", "\u1111", "\u314E", "\u1112", "\u314F", "\u1161", "\u3150", "\u1162", "\u3151", "\u1163", "\u3152", "\u1164", "\u3153", "\u1165", "\u3154", "\u1166", "\u3155", "\u1167", "\u3156", "\u1168", "\u3157", "\u1169", "\u3158", "\u116A", "\u3159", "\u116B", "\u315A", "\u116C", "\u315B", "\u116D", "\u315C", "\u116E", "\u315D", "\u116F", "\u315E", "\u1170", "\u315F", "\u1171", "\u3160", "\u1172", "\u3161", "\u1173", "\u3162", "\u1174", "\u3163", "\u1175", "\u3164", "\u1160", "\u3165", "\u1114", "\u3166", "\u1115", "\u3167", "\u11C7", "\u3168", "\u11C8", "\u3169", "\u11CC", "\u316A", "\u11CE", "\u316B", "\u11D3", "\u316C", "\u11D7", "\u316D", "\u11D9", "\u316E", "\u111C", "\u316F", "\u11DD", "\u3170", "\u11DF", "\u3171", "\u111D", "\u3172", "\u111E", "\u3173", "\u1120", "\u3174", "\u1122", "\u3175", "\u1123", "\u3176", "\u1127", "\u3177", "\u1129", "\u3178", "\u112B", "\u3179", "\u112C", "\u317A", "\u112D", "\u317B", "\u112E", "\u317C", "\u112F", "\u317D", "\u1132", "\u317E", "\u1136", "\u317F", "\u1140", "\u3180", "\u1147", "\u3181", "\u114C", "\u3182", "\u11F1", "\u3183", "\u11F2", "\u3184", "\u1157", "\u3185", "\u1158", "\u3186", "\u1159", "\u3187", "\u1184", "\u3188", "\u1185", "\u3189", "\u1188", "\u318A", "\u1191", "\u318B", "\u1192", "\u318C", "\u1194", "\u318D", "\u119E", "\u318E", "\u11A1", "\u3200", "\u0028\u1100\u0029", "\u3201", "\u0028\u1102\u0029", "\u3202", "\u0028\u1103\u0029", "\u3203", "\u0028\u1105\u0029", "\u3204", "\u0028\u1106\u0029", "\u3205", "\u0028\u1107\u0029", "\u3206", "\u0028\u1109\u0029", "\u3207", "\u0028\u110B\u0029", "\u3208", "\u0028\u110C\u0029", "\u3209", "\u0028\u110E\u0029", "\u320A", "\u0028\u110F\u0029", "\u320B", "\u0028\u1110\u0029", "\u320C", "\u0028\u1111\u0029", "\u320D", "\u0028\u1112\u0029", "\u320E", "\u0028\u1100\u1161\u0029", "\u320F", "\u0028\u1102\u1161\u0029", "\u3210", "\u0028\u1103\u1161\u0029", "\u3211", "\u0028\u1105\u1161\u0029", "\u3212", "\u0028\u1106\u1161\u0029", "\u3213", "\u0028\u1107\u1161\u0029", "\u3214", "\u0028\u1109\u1161\u0029", "\u3215", "\u0028\u110B\u1161\u0029", "\u3216", "\u0028\u110C\u1161\u0029", "\u3217", "\u0028\u110E\u1161\u0029", "\u3218", "\u0028\u110F\u1161\u0029", "\u3219", "\u0028\u1110\u1161\u0029", "\u321A", "\u0028\u1111\u1161\u0029", "\u321B", "\u0028\u1112\u1161\u0029", "\u321C", "\u0028\u110C\u116E\u0029", "\u321D", "\u0028\u110B\u1169\u110C\u1165\u11AB\u0029", "\u321E", "\u0028\u110B\u1169\u1112\u116E\u0029", "\u3220", "\u0028\u4E00\u0029", "\u3221", "\u0028\u4E8C\u0029", "\u3222", "\u0028\u4E09\u0029", "\u3223", "\u0028\u56DB\u0029", "\u3224", "\u0028\u4E94\u0029", "\u3225", "\u0028\u516D\u0029", "\u3226", "\u0028\u4E03\u0029", "\u3227", "\u0028\u516B\u0029", "\u3228", "\u0028\u4E5D\u0029", "\u3229", "\u0028\u5341\u0029", "\u322A", "\u0028\u6708\u0029", "\u322B", "\u0028\u706B\u0029", "\u322C", "\u0028\u6C34\u0029", "\u322D", "\u0028\u6728\u0029", "\u322E", "\u0028\u91D1\u0029", "\u322F", "\u0028\u571F\u0029", "\u3230", "\u0028\u65E5\u0029", "\u3231", "\u0028\u682A\u0029", "\u3232", "\u0028\u6709\u0029", "\u3233", "\u0028\u793E\u0029", "\u3234", "\u0028\u540D\u0029", "\u3235", "\u0028\u7279\u0029", "\u3236", "\u0028\u8CA1\u0029", "\u3237", "\u0028\u795D\u0029", "\u3238", "\u0028\u52B4\u0029", "\u3239", "\u0028\u4EE3\u0029", "\u323A", "\u0028\u547C\u0029", "\u323B", "\u0028\u5B66\u0029", "\u323C", "\u0028\u76E3\u0029", "\u323D", "\u0028\u4F01\u0029", "\u323E", "\u0028\u8CC7\u0029", "\u323F", "\u0028\u5354\u0029", "\u3240", "\u0028\u796D\u0029", "\u3241", "\u0028\u4F11\u0029", "\u3242", "\u0028\u81EA\u0029", "\u3243", "\u0028\u81F3\u0029", "\u32C0", "\u0031\u6708", "\u32C1", "\u0032\u6708", "\u32C2", "\u0033\u6708", "\u32C3", "\u0034\u6708", "\u32C4", "\u0035\u6708", "\u32C5", "\u0036\u6708", "\u32C6", "\u0037\u6708", "\u32C7", "\u0038\u6708", "\u32C8", "\u0039\u6708", "\u32C9", "\u0031\u0030\u6708", "\u32CA", "\u0031\u0031\u6708", "\u32CB", "\u0031\u0032\u6708", "\u3358", "\u0030\u70B9", "\u3359", "\u0031\u70B9", "\u335A", "\u0032\u70B9", "\u335B", "\u0033\u70B9", "\u335C", "\u0034\u70B9", "\u335D", "\u0035\u70B9", "\u335E", "\u0036\u70B9", "\u335F", "\u0037\u70B9", "\u3360", "\u0038\u70B9", "\u3361", "\u0039\u70B9", "\u3362", "\u0031\u0030\u70B9", "\u3363", "\u0031\u0031\u70B9", "\u3364", "\u0031\u0032\u70B9", "\u3365", "\u0031\u0033\u70B9", "\u3366", "\u0031\u0034\u70B9", "\u3367", "\u0031\u0035\u70B9", "\u3368", "\u0031\u0036\u70B9", "\u3369", "\u0031\u0037\u70B9", "\u336A", "\u0031\u0038\u70B9", "\u336B", "\u0031\u0039\u70B9", "\u336C", "\u0032\u0030\u70B9", "\u336D", "\u0032\u0031\u70B9", "\u336E", "\u0032\u0032\u70B9", "\u336F", "\u0032\u0033\u70B9", "\u3370", "\u0032\u0034\u70B9", "\u33E0", "\u0031\u65E5", "\u33E1", "\u0032\u65E5", "\u33E2", "\u0033\u65E5", "\u33E3", "\u0034\u65E5", "\u33E4", "\u0035\u65E5", "\u33E5", "\u0036\u65E5", "\u33E6", "\u0037\u65E5", "\u33E7", "\u0038\u65E5", "\u33E8", "\u0039\u65E5", "\u33E9", "\u0031\u0030\u65E5", "\u33EA", "\u0031\u0031\u65E5", "\u33EB", "\u0031\u0032\u65E5", "\u33EC", "\u0031\u0033\u65E5", "\u33ED", "\u0031\u0034\u65E5", "\u33EE", "\u0031\u0035\u65E5", "\u33EF", "\u0031\u0036\u65E5", "\u33F0", "\u0031\u0037\u65E5", "\u33F1", "\u0031\u0038\u65E5", "\u33F2", "\u0031\u0039\u65E5", "\u33F3", "\u0032\u0030\u65E5", "\u33F4", "\u0032\u0031\u65E5", "\u33F5", "\u0032\u0032\u65E5", "\u33F6", "\u0032\u0033\u65E5", "\u33F7", "\u0032\u0034\u65E5", "\u33F8", "\u0032\u0035\u65E5", "\u33F9", "\u0032\u0036\u65E5", "\u33FA", "\u0032\u0037\u65E5", "\u33FB", "\u0032\u0038\u65E5", "\u33FC", "\u0032\u0039\u65E5", "\u33FD", "\u0033\u0030\u65E5", "\u33FE", "\u0033\u0031\u65E5", "\uFB00", "\u0066\u0066", "\uFB01", "\u0066\u0069", "\uFB02", "\u0066\u006C", "\uFB03", "\u0066\u0066\u0069", "\uFB04", "\u0066\u0066\u006C", "\uFB05", "\u017F\u0074", "\uFB06", "\u0073\u0074", "\uFB13", "\u0574\u0576", "\uFB14", "\u0574\u0565", "\uFB15", "\u0574\u056B", "\uFB16", "\u057E\u0576", "\uFB17", "\u0574\u056D", "\uFB4F", "\u05D0\u05DC", "\uFB50", "\u0671", "\uFB51", "\u0671", "\uFB52", "\u067B", "\uFB53", "\u067B", "\uFB54", "\u067B", "\uFB55", "\u067B", "\uFB56", "\u067E", "\uFB57", "\u067E", "\uFB58", "\u067E", "\uFB59", "\u067E", "\uFB5A", "\u0680", "\uFB5B", "\u0680", "\uFB5C", "\u0680", "\uFB5D", "\u0680", "\uFB5E", "\u067A", "\uFB5F", "\u067A", "\uFB60", "\u067A", "\uFB61", "\u067A", "\uFB62", "\u067F", "\uFB63", "\u067F", "\uFB64", "\u067F", "\uFB65", "\u067F", "\uFB66", "\u0679", "\uFB67", "\u0679", "\uFB68", "\u0679", "\uFB69", "\u0679", "\uFB6A", "\u06A4", "\uFB6B", "\u06A4", "\uFB6C", "\u06A4", "\uFB6D", "\u06A4", "\uFB6E", "\u06A6", "\uFB6F", "\u06A6", "\uFB70", "\u06A6", "\uFB71", "\u06A6", "\uFB72", "\u0684", "\uFB73", "\u0684", "\uFB74", "\u0684", "\uFB75", "\u0684", "\uFB76", "\u0683", "\uFB77", "\u0683", "\uFB78", "\u0683", "\uFB79", "\u0683", "\uFB7A", "\u0686", "\uFB7B", "\u0686", "\uFB7C", "\u0686", "\uFB7D", "\u0686", "\uFB7E", "\u0687", "\uFB7F", "\u0687", "\uFB80", "\u0687", "\uFB81", "\u0687", "\uFB82", "\u068D", "\uFB83", "\u068D", "\uFB84", "\u068C", "\uFB85", "\u068C", "\uFB86", "\u068E", "\uFB87", "\u068E", "\uFB88", "\u0688", "\uFB89", "\u0688", "\uFB8A", "\u0698", "\uFB8B", "\u0698", "\uFB8C", "\u0691", "\uFB8D", "\u0691", "\uFB8E", "\u06A9", "\uFB8F", "\u06A9", "\uFB90", "\u06A9", "\uFB91", "\u06A9", "\uFB92", "\u06AF", "\uFB93", "\u06AF", "\uFB94", "\u06AF", "\uFB95", "\u06AF", "\uFB96", "\u06B3", "\uFB97", "\u06B3", "\uFB98", "\u06B3", "\uFB99", "\u06B3", "\uFB9A", "\u06B1", "\uFB9B", "\u06B1", "\uFB9C", "\u06B1", "\uFB9D", "\u06B1", "\uFB9E", "\u06BA", "\uFB9F", "\u06BA", "\uFBA0", "\u06BB", "\uFBA1", "\u06BB", "\uFBA2", "\u06BB", "\uFBA3", "\u06BB", "\uFBA4", "\u06C0", "\uFBA5", "\u06C0", "\uFBA6", "\u06C1", "\uFBA7", "\u06C1", "\uFBA8", "\u06C1", "\uFBA9", "\u06C1", "\uFBAA", "\u06BE", "\uFBAB", "\u06BE", "\uFBAC", "\u06BE", "\uFBAD", "\u06BE", "\uFBAE", "\u06D2", "\uFBAF", "\u06D2", "\uFBB0", "\u06D3", "\uFBB1", "\u06D3", "\uFBD3", "\u06AD", "\uFBD4", "\u06AD", "\uFBD5", "\u06AD", "\uFBD6", "\u06AD", "\uFBD7", "\u06C7", "\uFBD8", "\u06C7", "\uFBD9", "\u06C6", "\uFBDA", "\u06C6", "\uFBDB", "\u06C8", "\uFBDC", "\u06C8", "\uFBDD", "\u0677", "\uFBDE", "\u06CB", "\uFBDF", "\u06CB", "\uFBE0", "\u06C5", "\uFBE1", "\u06C5", "\uFBE2", "\u06C9", "\uFBE3", "\u06C9", "\uFBE4", "\u06D0", "\uFBE5", "\u06D0", "\uFBE6", "\u06D0", "\uFBE7", "\u06D0", "\uFBE8", "\u0649", "\uFBE9", "\u0649", "\uFBEA", "\u0626\u0627", "\uFBEB", "\u0626\u0627", "\uFBEC", "\u0626\u06D5", "\uFBED", "\u0626\u06D5", "\uFBEE", "\u0626\u0648", "\uFBEF", "\u0626\u0648", "\uFBF0", "\u0626\u06C7", "\uFBF1", "\u0626\u06C7", "\uFBF2", "\u0626\u06C6", "\uFBF3", "\u0626\u06C6", "\uFBF4", "\u0626\u06C8", "\uFBF5", "\u0626\u06C8", "\uFBF6", "\u0626\u06D0", "\uFBF7", "\u0626\u06D0", "\uFBF8", "\u0626\u06D0", "\uFBF9", "\u0626\u0649", "\uFBFA", "\u0626\u0649", "\uFBFB", "\u0626\u0649", "\uFBFC", "\u06CC", "\uFBFD", "\u06CC", "\uFBFE", "\u06CC", "\uFBFF", "\u06CC", "\uFC00", "\u0626\u062C", "\uFC01", "\u0626\u062D", "\uFC02", "\u0626\u0645", "\uFC03", "\u0626\u0649", "\uFC04", "\u0626\u064A", "\uFC05", "\u0628\u062C", "\uFC06", "\u0628\u062D", "\uFC07", "\u0628\u062E", "\uFC08", "\u0628\u0645", "\uFC09", "\u0628\u0649", "\uFC0A", "\u0628\u064A", "\uFC0B", "\u062A\u062C", "\uFC0C", "\u062A\u062D", "\uFC0D", "\u062A\u062E", "\uFC0E", "\u062A\u0645", "\uFC0F", "\u062A\u0649", "\uFC10", "\u062A\u064A", "\uFC11", "\u062B\u062C", "\uFC12", "\u062B\u0645", "\uFC13", "\u062B\u0649", "\uFC14", "\u062B\u064A", "\uFC15", "\u062C\u062D", "\uFC16", "\u062C\u0645", "\uFC17", "\u062D\u062C", "\uFC18", "\u062D\u0645", "\uFC19", "\u062E\u062C", "\uFC1A", "\u062E\u062D", "\uFC1B", "\u062E\u0645", "\uFC1C", "\u0633\u062C", "\uFC1D", "\u0633\u062D", "\uFC1E", "\u0633\u062E", "\uFC1F", "\u0633\u0645", "\uFC20", "\u0635\u062D", "\uFC21", "\u0635\u0645", "\uFC22", "\u0636\u062C", "\uFC23", "\u0636\u062D", "\uFC24", "\u0636\u062E", "\uFC25", "\u0636\u0645", "\uFC26", "\u0637\u062D", "\uFC27", "\u0637\u0645", "\uFC28", "\u0638\u0645", "\uFC29", "\u0639\u062C", "\uFC2A", "\u0639\u0645", "\uFC2B", "\u063A\u062C", "\uFC2C", "\u063A\u0645", "\uFC2D", "\u0641\u062C", "\uFC2E", "\u0641\u062D", "\uFC2F", "\u0641\u062E", "\uFC30", "\u0641\u0645", "\uFC31", "\u0641\u0649", "\uFC32", "\u0641\u064A", "\uFC33", "\u0642\u062D", "\uFC34", "\u0642\u0645", "\uFC35", "\u0642\u0649", "\uFC36", "\u0642\u064A", "\uFC37", "\u0643\u0627", "\uFC38", "\u0643\u062C", "\uFC39", "\u0643\u062D", "\uFC3A", "\u0643\u062E", "\uFC3B", "\u0643\u0644", "\uFC3C", "\u0643\u0645", "\uFC3D", "\u0643\u0649", "\uFC3E", "\u0643\u064A", "\uFC3F", "\u0644\u062C", "\uFC40", "\u0644\u062D", "\uFC41", "\u0644\u062E", "\uFC42", "\u0644\u0645", "\uFC43", "\u0644\u0649", "\uFC44", "\u0644\u064A", "\uFC45", "\u0645\u062C", "\uFC46", "\u0645\u062D", "\uFC47", "\u0645\u062E", "\uFC48", "\u0645\u0645", "\uFC49", "\u0645\u0649", "\uFC4A", "\u0645\u064A", "\uFC4B", "\u0646\u062C", "\uFC4C", "\u0646\u062D", "\uFC4D", "\u0646\u062E", "\uFC4E", "\u0646\u0645", "\uFC4F", "\u0646\u0649", "\uFC50", "\u0646\u064A", "\uFC51", "\u0647\u062C", "\uFC52", "\u0647\u0645", "\uFC53", "\u0647\u0649", "\uFC54", "\u0647\u064A", "\uFC55", "\u064A\u062C", "\uFC56", "\u064A\u062D", "\uFC57", "\u064A\u062E", "\uFC58", "\u064A\u0645", "\uFC59", "\u064A\u0649", "\uFC5A", "\u064A\u064A", "\uFC5B", "\u0630\u0670", "\uFC5C", "\u0631\u0670", "\uFC5D", "\u0649\u0670", "\uFC5E", "\u0020\u064C\u0651", "\uFC5F", "\u0020\u064D\u0651", "\uFC60", "\u0020\u064E\u0651", "\uFC61", "\u0020\u064F\u0651", "\uFC62", "\u0020\u0650\u0651", "\uFC63", "\u0020\u0651\u0670", "\uFC64", "\u0626\u0631", "\uFC65", "\u0626\u0632", "\uFC66", "\u0626\u0645", "\uFC67", "\u0626\u0646", "\uFC68", "\u0626\u0649", "\uFC69", "\u0626\u064A", "\uFC6A", "\u0628\u0631", "\uFC6B", "\u0628\u0632", "\uFC6C", "\u0628\u0645", "\uFC6D", "\u0628\u0646", "\uFC6E", "\u0628\u0649", "\uFC6F", "\u0628\u064A", "\uFC70", "\u062A\u0631", "\uFC71", "\u062A\u0632", "\uFC72", "\u062A\u0645", "\uFC73", "\u062A\u0646", "\uFC74", "\u062A\u0649", "\uFC75", "\u062A\u064A", "\uFC76", "\u062B\u0631", "\uFC77", "\u062B\u0632", "\uFC78", "\u062B\u0645", "\uFC79", "\u062B\u0646", "\uFC7A", "\u062B\u0649", "\uFC7B", "\u062B\u064A", "\uFC7C", "\u0641\u0649", "\uFC7D", "\u0641\u064A", "\uFC7E", "\u0642\u0649", "\uFC7F", "\u0642\u064A", "\uFC80", "\u0643\u0627", "\uFC81", "\u0643\u0644", "\uFC82", "\u0643\u0645", "\uFC83", "\u0643\u0649", "\uFC84", "\u0643\u064A", "\uFC85", "\u0644\u0645", "\uFC86", "\u0644\u0649", "\uFC87", "\u0644\u064A", "\uFC88", "\u0645\u0627", "\uFC89", "\u0645\u0645", "\uFC8A", "\u0646\u0631", "\uFC8B", "\u0646\u0632", "\uFC8C", "\u0646\u0645", "\uFC8D", "\u0646\u0646", "\uFC8E", "\u0646\u0649", "\uFC8F", "\u0646\u064A", "\uFC90", "\u0649\u0670", "\uFC91", "\u064A\u0631", "\uFC92", "\u064A\u0632", "\uFC93", "\u064A\u0645", "\uFC94", "\u064A\u0646", "\uFC95", "\u064A\u0649", "\uFC96", "\u064A\u064A", "\uFC97", "\u0626\u062C", "\uFC98", "\u0626\u062D", "\uFC99", "\u0626\u062E", "\uFC9A", "\u0626\u0645", "\uFC9B", "\u0626\u0647", "\uFC9C", "\u0628\u062C", "\uFC9D", "\u0628\u062D", "\uFC9E", "\u0628\u062E", "\uFC9F", "\u0628\u0645", "\uFCA0", "\u0628\u0647", "\uFCA1", "\u062A\u062C", "\uFCA2", "\u062A\u062D", "\uFCA3", "\u062A\u062E", "\uFCA4", "\u062A\u0645", "\uFCA5", "\u062A\u0647", "\uFCA6", "\u062B\u0645", "\uFCA7", "\u062C\u062D", "\uFCA8", "\u062C\u0645", "\uFCA9", "\u062D\u062C", "\uFCAA", "\u062D\u0645", "\uFCAB", "\u062E\u062C", "\uFCAC", "\u062E\u0645", "\uFCAD", "\u0633\u062C", "\uFCAE", "\u0633\u062D", "\uFCAF", "\u0633\u062E", "\uFCB0", "\u0633\u0645", "\uFCB1", "\u0635\u062D", "\uFCB2", "\u0635\u062E", "\uFCB3", "\u0635\u0645", "\uFCB4", "\u0636\u062C", "\uFCB5", "\u0636\u062D", "\uFCB6", "\u0636\u062E", "\uFCB7", "\u0636\u0645", "\uFCB8", "\u0637\u062D", "\uFCB9", "\u0638\u0645", "\uFCBA", "\u0639\u062C", "\uFCBB", "\u0639\u0645", "\uFCBC", "\u063A\u062C", "\uFCBD", "\u063A\u0645", "\uFCBE", "\u0641\u062C", "\uFCBF", "\u0641\u062D", "\uFCC0", "\u0641\u062E", "\uFCC1", "\u0641\u0645", "\uFCC2", "\u0642\u062D", "\uFCC3", "\u0642\u0645", "\uFCC4", "\u0643\u062C", "\uFCC5", "\u0643\u062D", "\uFCC6", "\u0643\u062E", "\uFCC7", "\u0643\u0644", "\uFCC8", "\u0643\u0645", "\uFCC9", "\u0644\u062C", "\uFCCA", "\u0644\u062D", "\uFCCB", "\u0644\u062E", "\uFCCC", "\u0644\u0645", "\uFCCD", "\u0644\u0647", "\uFCCE", "\u0645\u062C", "\uFCCF", "\u0645\u062D", "\uFCD0", "\u0645\u062E", "\uFCD1", "\u0645\u0645", "\uFCD2", "\u0646\u062C", "\uFCD3", "\u0646\u062D", "\uFCD4", "\u0646\u062E", "\uFCD5", "\u0646\u0645", "\uFCD6", "\u0646\u0647", "\uFCD7", "\u0647\u062C", "\uFCD8", "\u0647\u0645", "\uFCD9", "\u0647\u0670", "\uFCDA", "\u064A\u062C", "\uFCDB", "\u064A\u062D", "\uFCDC", "\u064A\u062E", "\uFCDD", "\u064A\u0645", "\uFCDE", "\u064A\u0647", "\uFCDF", "\u0626\u0645", "\uFCE0", "\u0626\u0647", "\uFCE1", "\u0628\u0645", "\uFCE2", "\u0628\u0647", "\uFCE3", "\u062A\u0645", "\uFCE4", "\u062A\u0647", "\uFCE5", "\u062B\u0645", "\uFCE6", "\u062B\u0647", "\uFCE7", "\u0633\u0645", "\uFCE8", "\u0633\u0647", "\uFCE9", "\u0634\u0645", "\uFCEA", "\u0634\u0647", "\uFCEB", "\u0643\u0644", "\uFCEC", "\u0643\u0645", "\uFCED", "\u0644\u0645", "\uFCEE", "\u0646\u0645", "\uFCEF", "\u0646\u0647", "\uFCF0", "\u064A\u0645", "\uFCF1", "\u064A\u0647", "\uFCF2", "\u0640\u064E\u0651", "\uFCF3", "\u0640\u064F\u0651", "\uFCF4", "\u0640\u0650\u0651", "\uFCF5", "\u0637\u0649", "\uFCF6", "\u0637\u064A", "\uFCF7", "\u0639\u0649", "\uFCF8", "\u0639\u064A", "\uFCF9", "\u063A\u0649", "\uFCFA", "\u063A\u064A", "\uFCFB", "\u0633\u0649", "\uFCFC", "\u0633\u064A", "\uFCFD", "\u0634\u0649", "\uFCFE", "\u0634\u064A", "\uFCFF", "\u062D\u0649", "\uFD00", "\u062D\u064A", "\uFD01", "\u062C\u0649", "\uFD02", "\u062C\u064A", "\uFD03", "\u062E\u0649", "\uFD04", "\u062E\u064A", "\uFD05", "\u0635\u0649", "\uFD06", "\u0635\u064A", "\uFD07", "\u0636\u0649", "\uFD08", "\u0636\u064A", "\uFD09", "\u0634\u062C", "\uFD0A", "\u0634\u062D", "\uFD0B", "\u0634\u062E", "\uFD0C", "\u0634\u0645", "\uFD0D", "\u0634\u0631", "\uFD0E", "\u0633\u0631", "\uFD0F", "\u0635\u0631", "\uFD10", "\u0636\u0631", "\uFD11", "\u0637\u0649", "\uFD12", "\u0637\u064A", "\uFD13", "\u0639\u0649", "\uFD14", "\u0639\u064A", "\uFD15", "\u063A\u0649", "\uFD16", "\u063A\u064A", "\uFD17", "\u0633\u0649", "\uFD18", "\u0633\u064A", "\uFD19", "\u0634\u0649", "\uFD1A", "\u0634\u064A", "\uFD1B", "\u062D\u0649", "\uFD1C", "\u062D\u064A", "\uFD1D", "\u062C\u0649", "\uFD1E", "\u062C\u064A", "\uFD1F", "\u062E\u0649", "\uFD20", "\u062E\u064A", "\uFD21", "\u0635\u0649", "\uFD22", "\u0635\u064A", "\uFD23", "\u0636\u0649", "\uFD24", "\u0636\u064A", "\uFD25", "\u0634\u062C", "\uFD26", "\u0634\u062D", "\uFD27", "\u0634\u062E", "\uFD28", "\u0634\u0645", "\uFD29", "\u0634\u0631", "\uFD2A", "\u0633\u0631", "\uFD2B", "\u0635\u0631", "\uFD2C", "\u0636\u0631", "\uFD2D", "\u0634\u062C", "\uFD2E", "\u0634\u062D", "\uFD2F", "\u0634\u062E", "\uFD30", "\u0634\u0645", "\uFD31", "\u0633\u0647", "\uFD32", "\u0634\u0647", "\uFD33", "\u0637\u0645", "\uFD34", "\u0633\u062C", "\uFD35", "\u0633\u062D", "\uFD36", "\u0633\u062E", "\uFD37", "\u0634\u062C", "\uFD38", "\u0634\u062D", "\uFD39", "\u0634\u062E", "\uFD3A", "\u0637\u0645", "\uFD3B", "\u0638\u0645", "\uFD3C", "\u0627\u064B", "\uFD3D", "\u0627\u064B", "\uFD50", "\u062A\u062C\u0645", "\uFD51", "\u062A\u062D\u062C", "\uFD52", "\u062A\u062D\u062C", "\uFD53", "\u062A\u062D\u0645", "\uFD54", "\u062A\u062E\u0645", "\uFD55", "\u062A\u0645\u062C", "\uFD56", "\u062A\u0645\u062D", "\uFD57", "\u062A\u0645\u062E", "\uFD58", "\u062C\u0645\u062D", "\uFD59", "\u062C\u0645\u062D", "\uFD5A", "\u062D\u0645\u064A", "\uFD5B", "\u062D\u0645\u0649", "\uFD5C", "\u0633\u062D\u062C", "\uFD5D", "\u0633\u062C\u062D", "\uFD5E", "\u0633\u062C\u0649", "\uFD5F", "\u0633\u0645\u062D", "\uFD60", "\u0633\u0645\u062D", "\uFD61", "\u0633\u0645\u062C", "\uFD62", "\u0633\u0645\u0645", "\uFD63", "\u0633\u0645\u0645", "\uFD64", "\u0635\u062D\u062D", "\uFD65", "\u0635\u062D\u062D", "\uFD66", "\u0635\u0645\u0645", "\uFD67", "\u0634\u062D\u0645", "\uFD68", "\u0634\u062D\u0645", "\uFD69", "\u0634\u062C\u064A", "\uFD6A", "\u0634\u0645\u062E", "\uFD6B", "\u0634\u0645\u062E", "\uFD6C", "\u0634\u0645\u0645", "\uFD6D", "\u0634\u0645\u0645", "\uFD6E", "\u0636\u062D\u0649", "\uFD6F", "\u0636\u062E\u0645", "\uFD70", "\u0636\u062E\u0645", "\uFD71", "\u0637\u0645\u062D", "\uFD72", "\u0637\u0645\u062D", "\uFD73", "\u0637\u0645\u0645", "\uFD74", "\u0637\u0645\u064A", "\uFD75", "\u0639\u062C\u0645", "\uFD76", "\u0639\u0645\u0645", "\uFD77", "\u0639\u0645\u0645", "\uFD78", "\u0639\u0645\u0649", "\uFD79", "\u063A\u0645\u0645", "\uFD7A", "\u063A\u0645\u064A", "\uFD7B", "\u063A\u0645\u0649", "\uFD7C", "\u0641\u062E\u0645", "\uFD7D", "\u0641\u062E\u0645", "\uFD7E", "\u0642\u0645\u062D", "\uFD7F", "\u0642\u0645\u0645", "\uFD80", "\u0644\u062D\u0645", "\uFD81", "\u0644\u062D\u064A", "\uFD82", "\u0644\u062D\u0649", "\uFD83", "\u0644\u062C\u062C", "\uFD84", "\u0644\u062C\u062C", "\uFD85", "\u0644\u062E\u0645", "\uFD86", "\u0644\u062E\u0645", "\uFD87", "\u0644\u0645\u062D", "\uFD88", "\u0644\u0645\u062D", "\uFD89", "\u0645\u062D\u062C", "\uFD8A", "\u0645\u062D\u0645", "\uFD8B", "\u0645\u062D\u064A", "\uFD8C", "\u0645\u062C\u062D", "\uFD8D", "\u0645\u062C\u0645", "\uFD8E", "\u0645\u062E\u062C", "\uFD8F", "\u0645\u062E\u0645", "\uFD92", "\u0645\u062C\u062E", "\uFD93", "\u0647\u0645\u062C", "\uFD94", "\u0647\u0645\u0645", "\uFD95", "\u0646\u062D\u0645", "\uFD96", "\u0646\u062D\u0649", "\uFD97", "\u0646\u062C\u0645", "\uFD98", "\u0646\u062C\u0645", "\uFD99", "\u0646\u062C\u0649", "\uFD9A", "\u0646\u0645\u064A", "\uFD9B", "\u0646\u0645\u0649", "\uFD9C", "\u064A\u0645\u0645", "\uFD9D", "\u064A\u0645\u0645", "\uFD9E", "\u0628\u062E\u064A", "\uFD9F", "\u062A\u062C\u064A", "\uFDA0", "\u062A\u062C\u0649", "\uFDA1", "\u062A\u062E\u064A", "\uFDA2", "\u062A\u062E\u0649", "\uFDA3", "\u062A\u0645\u064A", "\uFDA4", "\u062A\u0645\u0649", "\uFDA5", "\u062C\u0645\u064A", "\uFDA6", "\u062C\u062D\u0649", "\uFDA7", "\u062C\u0645\u0649", "\uFDA8", "\u0633\u062E\u0649", "\uFDA9", "\u0635\u062D\u064A", "\uFDAA", "\u0634\u062D\u064A", "\uFDAB", "\u0636\u062D\u064A", "\uFDAC", "\u0644\u062C\u064A", "\uFDAD", "\u0644\u0645\u064A", "\uFDAE", "\u064A\u062D\u064A", "\uFDAF", "\u064A\u062C\u064A", "\uFDB0", "\u064A\u0645\u064A", "\uFDB1", "\u0645\u0645\u064A", "\uFDB2", "\u0642\u0645\u064A", "\uFDB3", "\u0646\u062D\u064A", "\uFDB4", "\u0642\u0645\u062D", "\uFDB5", "\u0644\u062D\u0645", "\uFDB6", "\u0639\u0645\u064A", "\uFDB7", "\u0643\u0645\u064A", "\uFDB8", "\u0646\u062C\u062D", "\uFDB9", "\u0645\u062E\u064A", "\uFDBA", "\u0644\u062C\u0645", "\uFDBB", "\u0643\u0645\u0645", "\uFDBC", "\u0644\u062C\u0645", "\uFDBD", "\u0646\u062C\u062D", "\uFDBE", "\u062C\u062D\u064A", "\uFDBF", "\u062D\u062C\u064A", "\uFDC0", "\u0645\u062C\u064A", "\uFDC1", "\u0641\u0645\u064A", "\uFDC2", "\u0628\u062D\u064A", "\uFDC3", "\u0643\u0645\u0645", "\uFDC4", "\u0639\u062C\u0645", "\uFDC5", "\u0635\u0645\u0645", "\uFDC6", "\u0633\u062E\u064A", "\uFDC7", "\u0646\u062C\u064A", "\uFE49", "\u203E", "\uFE4A", "\u203E", "\uFE4B", "\u203E", "\uFE4C", "\u203E", "\uFE4D", "\u005F", "\uFE4E", "\u005F", "\uFE4F", "\u005F", "\uFE80", "\u0621", "\uFE81", "\u0622", "\uFE82", "\u0622", "\uFE83", "\u0623", "\uFE84", "\u0623", "\uFE85", "\u0624", "\uFE86", "\u0624", "\uFE87", "\u0625", "\uFE88", "\u0625", "\uFE89", "\u0626", "\uFE8A", "\u0626", "\uFE8B", "\u0626", "\uFE8C", "\u0626", "\uFE8D", "\u0627", "\uFE8E", "\u0627", "\uFE8F", "\u0628", "\uFE90", "\u0628", "\uFE91", "\u0628", "\uFE92", "\u0628", "\uFE93", "\u0629", "\uFE94", "\u0629", "\uFE95", "\u062A", "\uFE96", "\u062A", "\uFE97", "\u062A", "\uFE98", "\u062A", "\uFE99", "\u062B", "\uFE9A", "\u062B", "\uFE9B", "\u062B", "\uFE9C", "\u062B", "\uFE9D", "\u062C", "\uFE9E", "\u062C", "\uFE9F", "\u062C", "\uFEA0", "\u062C", "\uFEA1", "\u062D", "\uFEA2", "\u062D", "\uFEA3", "\u062D", "\uFEA4", "\u062D", "\uFEA5", "\u062E", "\uFEA6", "\u062E", "\uFEA7", "\u062E", "\uFEA8", "\u062E", "\uFEA9", "\u062F", "\uFEAA", "\u062F", "\uFEAB", "\u0630", "\uFEAC", "\u0630", "\uFEAD", "\u0631", "\uFEAE", "\u0631", "\uFEAF", "\u0632", "\uFEB0", "\u0632", "\uFEB1", "\u0633", "\uFEB2", "\u0633", "\uFEB3", "\u0633", "\uFEB4", "\u0633", "\uFEB5", "\u0634", "\uFEB6", "\u0634", "\uFEB7", "\u0634", "\uFEB8", "\u0634", "\uFEB9", "\u0635", "\uFEBA", "\u0635", "\uFEBB", "\u0635", "\uFEBC", "\u0635", "\uFEBD", "\u0636", "\uFEBE", "\u0636", "\uFEBF", "\u0636", "\uFEC0", "\u0636", "\uFEC1", "\u0637", "\uFEC2", "\u0637", "\uFEC3", "\u0637", "\uFEC4", "\u0637", "\uFEC5", "\u0638", "\uFEC6", "\u0638", "\uFEC7", "\u0638", "\uFEC8", "\u0638", "\uFEC9", "\u0639", "\uFECA", "\u0639", "\uFECB", "\u0639", "\uFECC", "\u0639", "\uFECD", "\u063A", "\uFECE", "\u063A", "\uFECF", "\u063A", "\uFED0", "\u063A", "\uFED1", "\u0641", "\uFED2", "\u0641", "\uFED3", "\u0641", "\uFED4", "\u0641", "\uFED5", "\u0642", "\uFED6", "\u0642", "\uFED7", "\u0642", "\uFED8", "\u0642", "\uFED9", "\u0643", "\uFEDA", "\u0643", "\uFEDB", "\u0643", "\uFEDC", "\u0643", "\uFEDD", "\u0644", "\uFEDE", "\u0644", "\uFEDF", "\u0644", "\uFEE0", "\u0644", "\uFEE1", "\u0645", "\uFEE2", "\u0645", "\uFEE3", "\u0645", "\uFEE4", "\u0645", "\uFEE5", "\u0646", "\uFEE6", "\u0646", "\uFEE7", "\u0646", "\uFEE8", "\u0646", "\uFEE9", "\u0647", "\uFEEA", "\u0647", "\uFEEB", "\u0647", "\uFEEC", "\u0647", "\uFEED", "\u0648", "\uFEEE", "\u0648", "\uFEEF", "\u0649", "\uFEF0", "\u0649", "\uFEF1", "\u064A", "\uFEF2", "\u064A", "\uFEF3", "\u064A", "\uFEF4", "\u064A", "\uFEF5", "\u0644\u0622", "\uFEF6", "\u0644\u0622", "\uFEF7", "\u0644\u0623", "\uFEF8", "\u0644\u0623", "\uFEF9", "\u0644\u0625", "\uFEFA", "\u0644\u0625", "\uFEFB", "\u0644\u0627", "\uFEFC", "\u0644\u0627"];
-});
-exports.getNormalizedUnicodes = getNormalizedUnicodes;
-
-function reverseIfRtl(chars) {
-  const charsLength = chars.length;
-
-  if (charsLength <= 1 || !isRTLRangeFor(chars.charCodeAt(0))) {
-    return chars;
-  }
-
-  const buf = [];
-
-  for (let ii = charsLength - 1; ii >= 0; ii--) {
-    buf.push(chars[ii]);
-  }
-
-  return buf.join("");
-}
-
-/***/ }),
-/* 41 */
-/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
-
-
-
-Object.defineProperty(exports, "__esModule", ({
-  value: true
-}));
-exports.getSymbolsFonts = exports.getSupplementalGlyphMapForCalibri = exports.getSupplementalGlyphMapForArialBlack = exports.getStdFontMap = exports.getSerifFonts = exports.getNonStdFontMap = exports.getGlyphMapForStandardFonts = void 0;
-
-var _core_utils = __w_pdfjs_require__(9);
+var _fonts_utils = __w_pdfjs_require__(18);
 
 const getStdFontMap = (0, _core_utils.getLookupTableFactory)(function (t) {
+  t["Times-Roman"] = "Times-Roman";
+  t.Helvetica = "Helvetica";
+  t.Courier = "Courier";
+  t.Symbol = "Symbol";
+  t["Times-Bold"] = "Times-Bold";
+  t["Helvetica-Bold"] = "Helvetica-Bold";
+  t["Courier-Bold"] = "Courier-Bold";
+  t.ZapfDingbats = "ZapfDingbats";
+  t["Times-Italic"] = "Times-Italic";
+  t["Helvetica-Oblique"] = "Helvetica-Oblique";
+  t["Courier-Oblique"] = "Courier-Oblique";
+  t["Times-BoldItalic"] = "Times-BoldItalic";
+  t["Helvetica-BoldOblique"] = "Helvetica-BoldOblique";
+  t["Courier-BoldOblique"] = "Courier-BoldOblique";
   t.ArialNarrow = "Helvetica";
   t["ArialNarrow-Bold"] = "Helvetica-Bold";
   t["ArialNarrow-BoldItalic"] = "Helvetica-BoldOblique";
@@ -27994,7 +28971,6 @@ const getStdFontMap = (0, _core_utils.getLookupTableFactory)(function (t) {
   t["Arial-BoldMT"] = "Helvetica-Bold";
   t["Arial-ItalicMT"] = "Helvetica-Oblique";
   t.ArialMT = "Helvetica";
-  t["Courier-Bold"] = "Courier-Bold";
   t["Courier-BoldItalic"] = "Courier-BoldOblique";
   t["Courier-Italic"] = "Courier-Oblique";
   t.CourierNew = "Courier";
@@ -28005,12 +28981,8 @@ const getStdFontMap = (0, _core_utils.getLookupTableFactory)(function (t) {
   t["CourierNewPS-BoldMT"] = "Courier-Bold";
   t["CourierNewPS-ItalicMT"] = "Courier-Oblique";
   t.CourierNewPSMT = "Courier";
-  t.Helvetica = "Helvetica";
-  t["Helvetica-Bold"] = "Helvetica-Bold";
   t["Helvetica-BoldItalic"] = "Helvetica-BoldOblique";
-  t["Helvetica-BoldOblique"] = "Helvetica-BoldOblique";
   t["Helvetica-Italic"] = "Helvetica-Oblique";
-  t["Helvetica-Oblique"] = "Helvetica-Oblique";
   t["Symbol-Bold"] = "Symbol";
   t["Symbol-BoldItalic"] = "Symbol";
   t["Symbol-Italic"] = "Symbol";
@@ -28031,6 +29003,27 @@ const getStdFontMap = (0, _core_utils.getLookupTableFactory)(function (t) {
   t["TimesNewRomanPSMT-Italic"] = "Times-Italic";
 });
 exports.getStdFontMap = getStdFontMap;
+const getFontNameToFileMap = (0, _core_utils.getLookupTableFactory)(function (t) {
+  t.Courier = "FoxitFixed.pfb";
+  t["Courier-Bold"] = "FoxitFixedBold.pfb";
+  t["Courier-BoldOblique"] = "FoxitFixedBoldItalic.pfb";
+  t["Courier-Oblique"] = "FoxitFixedItalic.pfb";
+  t.Helvetica = "FoxitSans.pfb";
+  t["Helvetica-Bold"] = "FoxitSansBold.pfb";
+  t["Helvetica-BoldOblique"] = "FoxitSansBoldItalic.pfb";
+  t["Helvetica-Oblique"] = "FoxitSansItalic.pfb";
+  t["Times-Roman"] = "FoxitSerif.pfb";
+  t["Times-Bold"] = "FoxitSerifBold.pfb";
+  t["Times-BoldItalic"] = "FoxitSerifBoldItalic.pfb";
+  t["Times-Italic"] = "FoxitSerifItalic.pfb";
+  t.Symbol = "FoxitSymbol.pfb";
+  t.ZapfDingbats = "FoxitDingbats.pfb";
+  t["LiberationSans-Regular"] = "LiberationSans-Regular.ttf";
+  t["LiberationSans-Bold"] = "LiberationSans-Bold.ttf";
+  t["LiberationSans-Italic"] = "LiberationSans-Italic.ttf";
+  t["LiberationSans-BoldItalic"] = "LiberationSans-BoldItalic.ttf";
+});
+exports.getFontNameToFileMap = getFontNameToFileMap;
 const getNonStdFontMap = (0, _core_utils.getLookupTableFactory)(function (t) {
   t.Calibri = "Helvetica";
   t["Calibri-Bold"] = "Helvetica-Bold";
@@ -28703,8 +29696,14 @@ const getSupplementalGlyphMapForCalibri = (0, _core_utils.getLookupTableFactory)
 });
 exports.getSupplementalGlyphMapForCalibri = getSupplementalGlyphMapForCalibri;
 
+function getStandardFontName(name) {
+  const fontName = (0, _fonts_utils.normalizeFontName)(name);
+  const stdFontMap = getStdFontMap();
+  return stdFontMap[fontName];
+}
+
 /***/ }),
-/* 42 */
+/* 48 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -28806,7 +29805,7 @@ class IdentityToUnicodeMap {
 exports.IdentityToUnicodeMap = IdentityToUnicodeMap;
 
 /***/ }),
-/* 43 */
+/* 49 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -28816,9 +29815,9 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.CFFFont = void 0;
 
-var _cff_parser = __w_pdfjs_require__(35);
+var _cff_parser = __w_pdfjs_require__(45);
 
-var _fonts_utils = __w_pdfjs_require__(38);
+var _fonts_utils = __w_pdfjs_require__(18);
 
 var _util = __w_pdfjs_require__(2);
 
@@ -28876,7 +29875,12 @@ class CFFFont {
       return charCodeToGlyphId;
     }
 
-    const encoding = cff.encoding ? cff.encoding.encoding : null;
+    let encoding = cff.encoding ? cff.encoding.encoding : null;
+
+    if (properties.isInternalFont) {
+      encoding = properties.defaultEncoding;
+    }
+
     charCodeToGlyphId = (0, _fonts_utils.type1FontGlyphMapping)(properties, encoding, charsets);
     return charCodeToGlyphId;
   }
@@ -28921,7 +29925,7 @@ class CFFFont {
 exports.CFFFont = CFFFont;
 
 /***/ }),
-/* 44 */
+/* 50 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -28933,11 +29937,11 @@ exports.FontRendererFactory = void 0;
 
 var _util = __w_pdfjs_require__(2);
 
-var _cff_parser = __w_pdfjs_require__(35);
+var _cff_parser = __w_pdfjs_require__(45);
 
-var _glyphlist = __w_pdfjs_require__(39);
+var _glyphlist = __w_pdfjs_require__(20);
 
-var _encodings = __w_pdfjs_require__(37);
+var _encodings = __w_pdfjs_require__(19);
 
 var _stream = __w_pdfjs_require__(10);
 
@@ -29173,8 +30177,7 @@ function compileGlyf(code, cmds, font) {
       if (subglyph) {
         cmds.push({
           cmd: "save"
-        });
-        cmds.push({
+        }, {
           cmd: "transform",
           args: [scaleX, scale01, scale10, scaleY, x, y]
         });
@@ -29516,8 +30519,7 @@ function compileCharString(charStringCode, cmds, font, glyphId) {
             x = stack.pop();
             cmds.push({
               cmd: "save"
-            });
-            cmds.push({
+            }, {
               cmd: "translate",
               args: [x, y]
             });
@@ -29740,16 +30742,29 @@ class CompiledFont {
   }
 
   getPathJs(unicode) {
-    const cmap = lookupCmap(this.cmap, unicode);
-    let fn = this.compiledGlyphs[cmap.glyphId];
+    const {
+      charCode,
+      glyphId
+    } = lookupCmap(this.cmap, unicode);
+    let fn = this.compiledGlyphs[glyphId];
 
     if (!fn) {
-      fn = this.compileGlyph(this.glyphs[cmap.glyphId], cmap.glyphId);
-      this.compiledGlyphs[cmap.glyphId] = fn;
+      try {
+        fn = this.compileGlyph(this.glyphs[glyphId], glyphId);
+        this.compiledGlyphs[glyphId] = fn;
+      } catch (ex) {
+        this.compiledGlyphs[glyphId] = NOOP;
+
+        if (this.compiledCharCodeToGlyphId[charCode] === undefined) {
+          this.compiledCharCodeToGlyphId[charCode] = glyphId;
+        }
+
+        throw ex;
+      }
     }
 
-    if (this.compiledCharCodeToGlyphId[cmap.charCode] === undefined) {
-      this.compiledCharCodeToGlyphId[cmap.charCode] = cmap.glyphId;
+    if (this.compiledCharCodeToGlyphId[charCode] === undefined) {
+      this.compiledCharCodeToGlyphId[charCode] = glyphId;
     }
 
     return fn;
@@ -29773,18 +30788,15 @@ class CompiledFont {
       }
     }
 
-    const cmds = [];
-    cmds.push({
+    const cmds = [{
       cmd: "save"
-    });
-    cmds.push({
+    }, {
       cmd: "transform",
       args: fontMatrix.slice()
-    });
-    cmds.push({
+    }, {
       cmd: "scale",
       args: ["size", "-size"]
-    });
+    }];
     this.compileGlyphImpl(code, cmds, glyphId);
     cmds.push({
       cmd: "restore"
@@ -29797,8 +30809,11 @@ class CompiledFont {
   }
 
   hasBuiltPath(unicode) {
-    const cmap = lookupCmap(this.cmap, unicode);
-    return this.compiledGlyphs[cmap.glyphId] !== undefined && this.compiledCharCodeToGlyphId[cmap.charCode] !== undefined;
+    const {
+      charCode,
+      glyphId
+    } = lookupCmap(this.cmap, unicode);
+    return this.compiledGlyphs[glyphId] !== undefined && this.compiledCharCodeToGlyphId[charCode] !== undefined;
   }
 
 }
@@ -29885,7 +30900,663 @@ class FontRendererFactory {
 exports.FontRendererFactory = FontRendererFactory;
 
 /***/ }),
-/* 45 */
+/* 51 */
+/***/ ((__unused_webpack_module, exports) => {
+
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports.GlyfTable = void 0;
+const ON_CURVE_POINT = 1 << 0;
+const X_SHORT_VECTOR = 1 << 1;
+const Y_SHORT_VECTOR = 1 << 2;
+const REPEAT_FLAG = 1 << 3;
+const X_IS_SAME_OR_POSITIVE_X_SHORT_VECTOR = 1 << 4;
+const Y_IS_SAME_OR_POSITIVE_Y_SHORT_VECTOR = 1 << 5;
+const OVERLAP_SIMPLE = 1 << 6;
+const ARG_1_AND_2_ARE_WORDS = 1 << 0;
+const ARGS_ARE_XY_VALUES = 1 << 1;
+const WE_HAVE_A_SCALE = 1 << 3;
+const MORE_COMPONENTS = 1 << 5;
+const WE_HAVE_AN_X_AND_Y_SCALE = 1 << 6;
+const WE_HAVE_A_TWO_BY_TWO = 1 << 7;
+const WE_HAVE_INSTRUCTIONS = 1 << 8;
+
+class GlyfTable {
+  constructor({
+    glyfTable,
+    isGlyphLocationsLong,
+    locaTable,
+    numGlyphs
+  }) {
+    this.glyphs = [];
+    const loca = new DataView(locaTable.buffer, locaTable.byteOffset, locaTable.byteLength);
+    const glyf = new DataView(glyfTable.buffer, glyfTable.byteOffset, glyfTable.byteLength);
+    const offsetSize = isGlyphLocationsLong ? 4 : 2;
+    let prev = isGlyphLocationsLong ? loca.getUint32(0) : 2 * loca.getUint16(0);
+    let pos = 0;
+
+    for (let i = 0; i < numGlyphs; i++) {
+      pos += offsetSize;
+      const next = isGlyphLocationsLong ? loca.getUint32(pos) : 2 * loca.getUint16(pos);
+
+      if (next === prev) {
+        this.glyphs.push(new Glyph({}));
+        continue;
+      }
+
+      const glyph = Glyph.parse(prev, glyf);
+      this.glyphs.push(glyph);
+      prev = next;
+    }
+  }
+
+  getSize() {
+    return this.glyphs.reduce((a, g) => {
+      const size = g.getSize();
+      return a + (size + 3 & ~3);
+    }, 0);
+  }
+
+  write() {
+    const totalSize = this.getSize();
+    const glyfTable = new DataView(new ArrayBuffer(totalSize));
+    const isLocationLong = totalSize > 0x1fffe;
+    const offsetSize = isLocationLong ? 4 : 2;
+    const locaTable = new DataView(new ArrayBuffer((this.glyphs.length + 1) * offsetSize));
+
+    if (isLocationLong) {
+      locaTable.setUint32(0, 0);
+    } else {
+      locaTable.setUint16(0, 0);
+    }
+
+    let pos = 0;
+    let locaIndex = 0;
+
+    for (const glyph of this.glyphs) {
+      pos += glyph.write(pos, glyfTable);
+      pos = pos + 3 & ~3;
+      locaIndex += offsetSize;
+
+      if (isLocationLong) {
+        locaTable.setUint32(locaIndex, pos);
+      } else {
+        locaTable.setUint16(locaIndex, pos >> 1);
+      }
+    }
+
+    return {
+      isLocationLong,
+      loca: new Uint8Array(locaTable.buffer),
+      glyf: new Uint8Array(glyfTable.buffer)
+    };
+  }
+
+  scale(factors) {
+    for (let i = 0, ii = this.glyphs.length; i < ii; i++) {
+      this.glyphs[i].scale(factors[i]);
+    }
+  }
+
+}
+
+exports.GlyfTable = GlyfTable;
+
+class Glyph {
+  constructor({
+    header = null,
+    simple = null,
+    composites = null
+  }) {
+    this.header = header;
+    this.simple = simple;
+    this.composites = composites;
+  }
+
+  static parse(pos, glyf) {
+    const [read, header] = GlyphHeader.parse(pos, glyf);
+    pos += read;
+
+    if (header.numberOfContours < 0) {
+      const composites = [];
+
+      while (true) {
+        const [n, composite] = CompositeGlyph.parse(pos, glyf);
+        pos += n;
+        composites.push(composite);
+
+        if (!(composite.flags & MORE_COMPONENTS)) {
+          break;
+        }
+      }
+
+      return new Glyph({
+        header,
+        composites
+      });
+    }
+
+    const simple = SimpleGlyph.parse(pos, glyf, header.numberOfContours);
+    return new Glyph({
+      header,
+      simple
+    });
+  }
+
+  getSize() {
+    if (!this.header) {
+      return 0;
+    }
+
+    const size = this.simple ? this.simple.getSize() : this.composites.reduce((a, c) => a + c.getSize(), 0);
+    return this.header.getSize() + size;
+  }
+
+  write(pos, buf) {
+    if (!this.header) {
+      return 0;
+    }
+
+    const spos = pos;
+    pos += this.header.write(pos, buf);
+
+    if (this.simple) {
+      pos += this.simple.write(pos, buf);
+    } else {
+      for (const composite of this.composites) {
+        pos += composite.write(pos, buf);
+      }
+    }
+
+    return pos - spos;
+  }
+
+  scale(factor) {
+    if (!this.header) {
+      return;
+    }
+
+    const xMiddle = (this.header.xMin + this.header.xMax) / 2;
+    this.header.scale(xMiddle, factor);
+
+    if (this.simple) {
+      this.simple.scale(xMiddle, factor);
+    } else {
+      for (const composite of this.composites) {
+        composite.scale(xMiddle, factor);
+      }
+    }
+  }
+
+}
+
+class GlyphHeader {
+  constructor({
+    numberOfContours,
+    xMin,
+    yMin,
+    xMax,
+    yMax
+  }) {
+    this.numberOfContours = numberOfContours;
+    this.xMin = xMin;
+    this.yMin = yMin;
+    this.xMax = xMax;
+    this.yMax = yMax;
+  }
+
+  static parse(pos, glyf) {
+    return [10, new GlyphHeader({
+      numberOfContours: glyf.getInt16(pos),
+      xMin: glyf.getInt16(pos + 2),
+      yMin: glyf.getInt16(pos + 4),
+      xMax: glyf.getInt16(pos + 6),
+      yMax: glyf.getInt16(pos + 8)
+    })];
+  }
+
+  getSize() {
+    return 10;
+  }
+
+  write(pos, buf) {
+    buf.setInt16(pos, this.numberOfContours);
+    buf.setInt16(pos + 2, this.xMin);
+    buf.setInt16(pos + 4, this.yMin);
+    buf.setInt16(pos + 6, this.xMax);
+    buf.setInt16(pos + 8, this.yMax);
+    return 10;
+  }
+
+  scale(x, factor) {
+    this.xMin = Math.round(x + (this.xMin - x) * factor);
+    this.xMax = Math.round(x + (this.xMax - x) * factor);
+  }
+
+}
+
+class Contour {
+  constructor({
+    flags,
+    xCoordinates,
+    yCoordinates
+  }) {
+    this.xCoordinates = xCoordinates;
+    this.yCoordinates = yCoordinates;
+    this.flags = flags;
+  }
+
+}
+
+class SimpleGlyph {
+  constructor({
+    contours,
+    instructions
+  }) {
+    this.contours = contours;
+    this.instructions = instructions;
+  }
+
+  static parse(pos, glyf, numberOfContours) {
+    const endPtsOfContours = [];
+
+    for (let i = 0; i < numberOfContours; i++) {
+      const endPt = glyf.getUint16(pos);
+      pos += 2;
+      endPtsOfContours.push(endPt);
+    }
+
+    const numberOfPt = endPtsOfContours[numberOfContours - 1] + 1;
+    const instructionLength = glyf.getUint16(pos);
+    pos += 2;
+    const instructions = new Uint8Array(glyf).slice(pos, pos + instructionLength);
+    pos += instructionLength;
+    const flags = [];
+
+    for (let i = 0; i < numberOfPt; pos++, i++) {
+      let flag = glyf.getUint8(pos);
+      flags.push(flag);
+
+      if (flag & REPEAT_FLAG) {
+        const count = glyf.getUint8(++pos);
+        flag ^= REPEAT_FLAG;
+
+        for (let m = 0; m < count; m++) {
+          flags.push(flag);
+        }
+
+        i += count;
+      }
+    }
+
+    const allXCoordinates = [];
+    let xCoordinates = [];
+    let yCoordinates = [];
+    let pointFlags = [];
+    const contours = [];
+    let endPtsOfContoursIndex = 0;
+    let lastCoordinate = 0;
+
+    for (let i = 0; i < numberOfPt; i++) {
+      const flag = flags[i];
+
+      if (flag & X_SHORT_VECTOR) {
+        const x = glyf.getUint8(pos++);
+        lastCoordinate += flag & X_IS_SAME_OR_POSITIVE_X_SHORT_VECTOR ? x : -x;
+        xCoordinates.push(lastCoordinate);
+      } else if (flag & X_IS_SAME_OR_POSITIVE_X_SHORT_VECTOR) {
+        xCoordinates.push(lastCoordinate);
+      } else {
+        lastCoordinate += glyf.getInt16(pos);
+        pos += 2;
+        xCoordinates.push(lastCoordinate);
+      }
+
+      if (endPtsOfContours[endPtsOfContoursIndex] === i) {
+        endPtsOfContoursIndex++;
+        allXCoordinates.push(xCoordinates);
+        xCoordinates = [];
+      }
+    }
+
+    lastCoordinate = 0;
+    endPtsOfContoursIndex = 0;
+
+    for (let i = 0; i < numberOfPt; i++) {
+      const flag = flags[i];
+
+      if (flag & Y_SHORT_VECTOR) {
+        const y = glyf.getUint8(pos++);
+        lastCoordinate += flag & Y_IS_SAME_OR_POSITIVE_Y_SHORT_VECTOR ? y : -y;
+        yCoordinates.push(lastCoordinate);
+      } else if (flag & Y_IS_SAME_OR_POSITIVE_Y_SHORT_VECTOR) {
+        yCoordinates.push(lastCoordinate);
+      } else {
+        lastCoordinate += glyf.getInt16(pos);
+        pos += 2;
+        yCoordinates.push(lastCoordinate);
+      }
+
+      pointFlags.push(flag & ON_CURVE_POINT | flag & OVERLAP_SIMPLE);
+
+      if (endPtsOfContours[endPtsOfContoursIndex] === i) {
+        xCoordinates = allXCoordinates[endPtsOfContoursIndex];
+        endPtsOfContoursIndex++;
+        contours.push(new Contour({
+          flags: pointFlags,
+          xCoordinates,
+          yCoordinates
+        }));
+        yCoordinates = [];
+        pointFlags = [];
+      }
+    }
+
+    return new SimpleGlyph({
+      contours,
+      instructions
+    });
+  }
+
+  getSize() {
+    let size = this.contours.length * 2 + 2 + this.instructions.length;
+    let lastX = 0;
+    let lastY = 0;
+
+    for (const contour of this.contours) {
+      size += contour.flags.length;
+
+      for (let i = 0, ii = contour.xCoordinates.length; i < ii; i++) {
+        const x = contour.xCoordinates[i];
+        const y = contour.yCoordinates[i];
+        let abs = Math.abs(x - lastX);
+
+        if (abs > 255) {
+          size += 2;
+        } else if (abs > 0) {
+          size += 1;
+        }
+
+        lastX = x;
+        abs = Math.abs(y - lastY);
+
+        if (abs > 255) {
+          size += 2;
+        } else if (abs > 0) {
+          size += 1;
+        }
+
+        lastY = y;
+      }
+    }
+
+    return size;
+  }
+
+  write(pos, buf) {
+    const spos = pos;
+    const xCoordinates = [];
+    const yCoordinates = [];
+    const flags = [];
+    let lastX = 0;
+    let lastY = 0;
+
+    for (const contour of this.contours) {
+      for (let i = 0, ii = contour.xCoordinates.length; i < ii; i++) {
+        let flag = contour.flags[i];
+        const x = contour.xCoordinates[i];
+        let delta = x - lastX;
+
+        if (delta === 0) {
+          flag |= X_IS_SAME_OR_POSITIVE_X_SHORT_VECTOR;
+          xCoordinates.push(0);
+        } else {
+          const abs = Math.abs(delta);
+
+          if (abs <= 255) {
+            flag |= delta >= 0 ? X_SHORT_VECTOR | X_IS_SAME_OR_POSITIVE_X_SHORT_VECTOR : X_SHORT_VECTOR;
+            xCoordinates.push(abs);
+          } else {
+            xCoordinates.push(delta);
+          }
+        }
+
+        lastX = x;
+        const y = contour.yCoordinates[i];
+        delta = y - lastY;
+
+        if (delta === 0) {
+          flag |= Y_IS_SAME_OR_POSITIVE_Y_SHORT_VECTOR;
+          yCoordinates.push(0);
+        } else {
+          const abs = Math.abs(delta);
+
+          if (abs <= 255) {
+            flag |= delta >= 0 ? Y_SHORT_VECTOR | Y_IS_SAME_OR_POSITIVE_Y_SHORT_VECTOR : Y_SHORT_VECTOR;
+            yCoordinates.push(abs);
+          } else {
+            yCoordinates.push(delta);
+          }
+        }
+
+        lastY = y;
+        flags.push(flag);
+      }
+
+      buf.setUint16(pos, xCoordinates.length - 1);
+      pos += 2;
+    }
+
+    buf.setUint16(pos, this.instructions.length);
+    pos += 2;
+
+    if (this.instructions.length) {
+      new Uint8Array(buf.buffer, 0, buf.buffer.byteLength).set(this.instructions, pos);
+      pos += this.instructions.length;
+    }
+
+    for (const flag of flags) {
+      buf.setUint8(pos++, flag);
+    }
+
+    for (let i = 0, ii = xCoordinates.length; i < ii; i++) {
+      const x = xCoordinates[i];
+      const flag = flags[i];
+
+      if (flag & X_SHORT_VECTOR) {
+        buf.setUint8(pos++, x);
+      } else if (!(flag & X_IS_SAME_OR_POSITIVE_X_SHORT_VECTOR)) {
+        buf.setInt16(pos, x);
+        pos += 2;
+      }
+    }
+
+    for (let i = 0, ii = yCoordinates.length; i < ii; i++) {
+      const y = yCoordinates[i];
+      const flag = flags[i];
+
+      if (flag & Y_SHORT_VECTOR) {
+        buf.setUint8(pos++, y);
+      } else if (!(flag & Y_IS_SAME_OR_POSITIVE_Y_SHORT_VECTOR)) {
+        buf.setInt16(pos, y);
+        pos += 2;
+      }
+    }
+
+    return pos - spos;
+  }
+
+  scale(x, factor) {
+    for (const contour of this.contours) {
+      if (contour.xCoordinates.length === 0) {
+        continue;
+      }
+
+      for (let i = 0, ii = contour.xCoordinates.length; i < ii; i++) {
+        contour.xCoordinates[i] = Math.round(x + (contour.xCoordinates[i] - x) * factor);
+      }
+    }
+  }
+
+}
+
+class CompositeGlyph {
+  constructor({
+    flags,
+    glyphIndex,
+    argument1,
+    argument2,
+    transf,
+    instructions
+  }) {
+    this.flags = flags;
+    this.glyphIndex = glyphIndex;
+    this.argument1 = argument1;
+    this.argument2 = argument2;
+    this.transf = transf;
+    this.instructions = instructions;
+  }
+
+  static parse(pos, glyf) {
+    const spos = pos;
+    const transf = [];
+    let flags = glyf.getUint16(pos);
+    const glyphIndex = glyf.getUint16(pos + 2);
+    pos += 4;
+    let argument1, argument2;
+
+    if (flags & ARG_1_AND_2_ARE_WORDS) {
+      if (flags & ARGS_ARE_XY_VALUES) {
+        argument1 = glyf.getInt16(pos);
+        argument2 = glyf.getInt16(pos + 2);
+      } else {
+        argument1 = glyf.getUint16(pos);
+        argument2 = glyf.getUint16(pos + 2);
+      }
+
+      pos += 4;
+      flags ^= ARG_1_AND_2_ARE_WORDS;
+    } else {
+      argument1 = glyf.getUint8(pos);
+      argument2 = glyf.getUint8(pos + 1);
+
+      if (flags & ARGS_ARE_XY_VALUES) {
+        const abs1 = argument1 & 0x7f;
+        argument1 = argument1 & 0x80 ? -abs1 : abs1;
+        const abs2 = argument2 & 0x7f;
+        argument2 = argument2 & 0x80 ? -abs2 : abs2;
+      }
+
+      pos += 2;
+    }
+
+    if (flags & WE_HAVE_A_SCALE) {
+      transf.push(glyf.getUint16(pos));
+      pos += 2;
+    } else if (flags & WE_HAVE_AN_X_AND_Y_SCALE) {
+      transf.push(glyf.getUint16(pos), glyf.getUint16(pos + 2));
+      pos += 4;
+    } else if (flags & WE_HAVE_A_TWO_BY_TWO) {
+      transf.push(glyf.getUint16(pos), glyf.getUint16(pos + 2), glyf.getUint16(pos + 4), glyf.getUint16(pos + 6));
+      pos += 8;
+    }
+
+    let instructions = null;
+
+    if (flags & WE_HAVE_INSTRUCTIONS) {
+      const instructionLength = glyf.getUint16(pos);
+      pos += 2;
+      instructions = new Uint8Array(glyf).slice(pos, pos + instructionLength);
+      pos += instructionLength;
+    }
+
+    return [pos - spos, new CompositeGlyph({
+      flags,
+      glyphIndex,
+      argument1,
+      argument2,
+      transf,
+      instructions
+    })];
+  }
+
+  getSize() {
+    let size = 2 + 2 + this.transf.length * 2;
+
+    if (this.flags & WE_HAVE_INSTRUCTIONS) {
+      size += 2 + this.instructions.length;
+    }
+
+    size += 2;
+
+    if (this.flags & 2) {
+      if (!(this.argument1 >= -128 && this.argument1 <= 127 && this.argument2 >= -128 && this.argument2 <= 127)) {
+        size += 2;
+      }
+    } else {
+      if (!(this.argument1 >= 0 && this.argument1 <= 255 && this.argument2 >= 0 && this.argument2 <= 255)) {
+        size += 2;
+      }
+    }
+
+    return size;
+  }
+
+  write(pos, buf) {
+    const spos = pos;
+
+    if (this.flags & ARGS_ARE_XY_VALUES) {
+      if (!(this.argument1 >= -128 && this.argument1 <= 127 && this.argument2 >= -128 && this.argument2 <= 127)) {
+        this.flags |= ARG_1_AND_2_ARE_WORDS;
+      }
+    } else {
+      if (!(this.argument1 >= 0 && this.argument1 <= 255 && this.argument2 >= 0 && this.argument2 <= 255)) {
+        this.flags |= ARG_1_AND_2_ARE_WORDS;
+      }
+    }
+
+    buf.setUint16(pos, this.flags);
+    buf.setUint16(pos + 2, this.glyphIndex);
+    pos += 4;
+
+    if (this.flags & ARG_1_AND_2_ARE_WORDS) {
+      if (this.flags & ARGS_ARE_XY_VALUES) {
+        buf.setInt16(pos, this.argument1);
+        buf.setInt16(pos + 2, this.argument2);
+      } else {
+        buf.setUint16(pos, this.argument1);
+        buf.setUint16(pos + 2, this.argument2);
+      }
+
+      pos += 4;
+    } else {
+      buf.setUint8(pos, this.argument1);
+      buf.setUint8(pos + 1, this.argument2);
+      pos += 2;
+    }
+
+    if (this.flags & WE_HAVE_INSTRUCTIONS) {
+      buf.setUint16(pos, this.instructions.length);
+      pos += 2;
+
+      if (this.instructions.length) {
+        new Uint8Array(buf.buffer, 0, buf.buffer.byteLength).set(this.instructions, pos);
+        pos += this.instructions.length;
+      }
+    }
+
+    return pos - spos;
+  }
+
+  scale(x, factor) {}
+
+}
+
+/***/ }),
+/* 52 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -30025,7 +31696,7 @@ class OpenTypeFileBuilder {
 exports.OpenTypeFileBuilder = OpenTypeFileBuilder;
 
 /***/ }),
-/* 46 */
+/* 53 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -30035,15 +31706,15 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.Type1Font = void 0;
 
-var _cff_parser = __w_pdfjs_require__(35);
+var _cff_parser = __w_pdfjs_require__(45);
 
-var _fonts_utils = __w_pdfjs_require__(38);
+var _fonts_utils = __w_pdfjs_require__(18);
 
 var _core_utils = __w_pdfjs_require__(9);
 
 var _stream = __w_pdfjs_require__(10);
 
-var _type1_parser = __w_pdfjs_require__(47);
+var _type1_parser = __w_pdfjs_require__(54);
 
 var _util = __w_pdfjs_require__(2);
 
@@ -30390,7 +32061,7 @@ class Type1Font {
 exports.Type1Font = Type1Font;
 
 /***/ }),
-/* 47 */
+/* 54 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -30400,7 +32071,7 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.Type1Parser = void 0;
 
-var _encodings = __w_pdfjs_require__(37);
+var _encodings = __w_pdfjs_require__(19);
 
 var _core_utils = __w_pdfjs_require__(9);
 
@@ -30667,7 +32338,7 @@ const Type1CharString = function Type1CharStringClosure() {
 
           continue;
         } else if (value <= 246) {
-          value = value - 139;
+          value -= 139;
         } else if (value <= 250) {
           value = (value - 247) * 256 + encoded[++i] + 108;
         } else if (value <= 254) {
@@ -31113,7 +32784,7 @@ const Type1Parser = function Type1ParserClosure() {
 exports.Type1Parser = Type1Parser;
 
 /***/ }),
-/* 48 */
+/* 55 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -31126,7 +32797,7 @@ exports.Pattern = void 0;
 
 var _util = __w_pdfjs_require__(2);
 
-var _colorspace = __w_pdfjs_require__(14);
+var _colorspace = __w_pdfjs_require__(24);
 
 var _primitives = __w_pdfjs_require__(5);
 
@@ -31142,18 +32813,12 @@ const ShadingType = {
   TENSOR_PATCH_MESH: 7
 };
 
-const Pattern = function PatternClosure() {
-  function Pattern() {
-    (0, _util.unreachable)("should not call Pattern constructor");
+class Pattern {
+  constructor() {
+    (0, _util.unreachable)("Cannot initialize Pattern.");
   }
 
-  Pattern.prototype = {
-    getPattern: function Pattern_getPattern(ctx) {
-      (0, _util.unreachable)(`Should not call Pattern.getStyle: ${ctx}`);
-    }
-  };
-
-  Pattern.parseShading = function (shading, matrix, xref, res, handler, pdfFunctionFactory, localColorSpaceCache) {
+  static parseShading(shading, xref, res, handler, pdfFunctionFactory, localColorSpaceCache) {
     const dict = (0, _primitives.isStream)(shading) ? shading.dict : shading;
     const type = dict.get("ShadingType");
 
@@ -31161,13 +32826,13 @@ const Pattern = function PatternClosure() {
       switch (type) {
         case ShadingType.AXIAL:
         case ShadingType.RADIAL:
-          return new Shadings.RadialAxial(dict, matrix, xref, res, pdfFunctionFactory, localColorSpaceCache);
+          return new RadialAxialShading(dict, xref, res, pdfFunctionFactory, localColorSpaceCache);
 
         case ShadingType.FREE_FORM_MESH:
         case ShadingType.LATTICE_FORM_MESH:
         case ShadingType.COONS_PATCH_MESH:
         case ShadingType.TENSOR_PATCH_MESH:
-          return new Shadings.Mesh(shading, matrix, xref, res, pdfFunctionFactory, localColorSpaceCache);
+          return new MeshShading(shading, xref, res, pdfFunctionFactory, localColorSpaceCache);
 
         default:
           throw new _util.FormatError("Unsupported ShadingType: " + type);
@@ -31181,23 +32846,36 @@ const Pattern = function PatternClosure() {
         featureId: _util.UNSUPPORTED_FEATURES.shadingPattern
       });
       (0, _util.warn)(ex);
-      return new Shadings.Dummy();
+      return new DummyShading();
     }
-  };
+  }
 
-  return Pattern;
-}();
+}
 
 exports.Pattern = Pattern;
-const Shadings = {};
-Shadings.SMALL_NUMBER = 1e-6;
 
-Shadings.RadialAxial = function RadialAxialClosure() {
-  function RadialAxial(dict, matrix, xref, resources, pdfFunctionFactory, localColorSpaceCache) {
-    this.matrix = matrix;
+class BaseShading {
+  static get SMALL_NUMBER() {
+    return (0, _util.shadow)(this, "SMALL_NUMBER", 1e-6);
+  }
+
+  constructor() {
+    if (this.constructor === BaseShading) {
+      (0, _util.unreachable)("Cannot initialize BaseShading.");
+    }
+  }
+
+  getIR() {
+    (0, _util.unreachable)("Abstract method `getIR` called.");
+  }
+
+}
+
+class RadialAxialShading extends BaseShading {
+  constructor(dict, xref, resources, pdfFunctionFactory, localColorSpaceCache) {
+    super();
     this.coordsArr = dict.getArray("Coords");
     this.shadingType = dict.get("ShadingType");
-    this.type = "Pattern";
 
     const cs = _colorspace.ColorSpace.parse({
       cs: dict.getRaw("ColorSpace") || dict.getRaw("CS"),
@@ -31207,7 +32885,6 @@ Shadings.RadialAxial = function RadialAxialClosure() {
       localColorSpaceCache
     });
 
-    this.cs = cs;
     const bbox = dict.getArray("BBox");
 
     if (Array.isArray(bbox) && bbox.length === 4) {
@@ -31279,47 +32956,45 @@ Shadings.RadialAxial = function RadialAxialClosure() {
 
     if (!extendStart) {
       colorStops.unshift([0, background]);
-      colorStops[1][0] += Shadings.SMALL_NUMBER;
+      colorStops[1][0] += BaseShading.SMALL_NUMBER;
     }
 
     if (!extendEnd) {
-      colorStops[colorStops.length - 1][0] -= Shadings.SMALL_NUMBER;
+      colorStops[colorStops.length - 1][0] -= BaseShading.SMALL_NUMBER;
       colorStops.push([1, background]);
     }
 
     this.colorStops = colorStops;
   }
 
-  RadialAxial.prototype = {
-    getIR: function RadialAxial_getIR() {
-      const coordsArr = this.coordsArr;
-      const shadingType = this.shadingType;
-      let type, p0, p1, r0, r1;
+  getIR() {
+    const coordsArr = this.coordsArr;
+    const shadingType = this.shadingType;
+    let type, p0, p1, r0, r1;
 
-      if (shadingType === ShadingType.AXIAL) {
-        p0 = [coordsArr[0], coordsArr[1]];
-        p1 = [coordsArr[2], coordsArr[3]];
-        r0 = null;
-        r1 = null;
-        type = "axial";
-      } else if (shadingType === ShadingType.RADIAL) {
-        p0 = [coordsArr[0], coordsArr[1]];
-        p1 = [coordsArr[3], coordsArr[4]];
-        r0 = coordsArr[2];
-        r1 = coordsArr[5];
-        type = "radial";
-      } else {
-        (0, _util.unreachable)(`getPattern type unknown: ${shadingType}`);
-      }
-
-      return ["RadialAxial", type, this.bbox, this.colorStops, p0, p1, r0, r1, this.matrix];
+    if (shadingType === ShadingType.AXIAL) {
+      p0 = [coordsArr[0], coordsArr[1]];
+      p1 = [coordsArr[2], coordsArr[3]];
+      r0 = null;
+      r1 = null;
+      type = "axial";
+    } else if (shadingType === ShadingType.RADIAL) {
+      p0 = [coordsArr[0], coordsArr[1]];
+      p1 = [coordsArr[3], coordsArr[4]];
+      r0 = coordsArr[2];
+      r1 = coordsArr[5];
+      type = "radial";
+    } else {
+      (0, _util.unreachable)(`getPattern type unknown: ${shadingType}`);
     }
-  };
-  return RadialAxial;
-}();
 
-Shadings.Mesh = function MeshClosure() {
-  function MeshStreamReader(stream, context) {
+    return ["RadialAxial", type, this.bbox, this.colorStops, p0, p1, r0, r1];
+  }
+
+}
+
+class MeshStreamReader {
+  constructor(stream, context) {
     this.stream = stream;
     this.context = context;
     this.buffer = 0;
@@ -31330,96 +33005,226 @@ Shadings.Mesh = function MeshClosure() {
     this.tmpCsCompsBuf = context.colorFn ? new Float32Array(csNumComps) : this.tmpCompsBuf;
   }
 
-  MeshStreamReader.prototype = {
-    get hasData() {
-      if (this.stream.end) {
-        return this.stream.pos < this.stream.end;
-      }
+  get hasData() {
+    if (this.stream.end) {
+      return this.stream.pos < this.stream.end;
+    }
 
-      if (this.bufferLength > 0) {
-        return true;
-      }
-
-      const nextByte = this.stream.getByte();
-
-      if (nextByte < 0) {
-        return false;
-      }
-
-      this.buffer = nextByte;
-      this.bufferLength = 8;
+    if (this.bufferLength > 0) {
       return true;
-    },
+    }
 
-    readBits: function MeshStreamReader_readBits(n) {
-      let buffer = this.buffer;
-      let bufferLength = this.bufferLength;
+    const nextByte = this.stream.getByte();
 
-      if (n === 32) {
-        if (bufferLength === 0) {
-          return (this.stream.getByte() << 24 | this.stream.getByte() << 16 | this.stream.getByte() << 8 | this.stream.getByte()) >>> 0;
+    if (nextByte < 0) {
+      return false;
+    }
+
+    this.buffer = nextByte;
+    this.bufferLength = 8;
+    return true;
+  }
+
+  readBits(n) {
+    let buffer = this.buffer;
+    let bufferLength = this.bufferLength;
+
+    if (n === 32) {
+      if (bufferLength === 0) {
+        return (this.stream.getByte() << 24 | this.stream.getByte() << 16 | this.stream.getByte() << 8 | this.stream.getByte()) >>> 0;
+      }
+
+      buffer = buffer << 24 | this.stream.getByte() << 16 | this.stream.getByte() << 8 | this.stream.getByte();
+      const nextByte = this.stream.getByte();
+      this.buffer = nextByte & (1 << bufferLength) - 1;
+      return (buffer << 8 - bufferLength | (nextByte & 0xff) >> bufferLength) >>> 0;
+    }
+
+    if (n === 8 && bufferLength === 0) {
+      return this.stream.getByte();
+    }
+
+    while (bufferLength < n) {
+      buffer = buffer << 8 | this.stream.getByte();
+      bufferLength += 8;
+    }
+
+    bufferLength -= n;
+    this.bufferLength = bufferLength;
+    this.buffer = buffer & (1 << bufferLength) - 1;
+    return buffer >> bufferLength;
+  }
+
+  align() {
+    this.buffer = 0;
+    this.bufferLength = 0;
+  }
+
+  readFlag() {
+    return this.readBits(this.context.bitsPerFlag);
+  }
+
+  readCoordinate() {
+    const bitsPerCoordinate = this.context.bitsPerCoordinate;
+    const xi = this.readBits(bitsPerCoordinate);
+    const yi = this.readBits(bitsPerCoordinate);
+    const decode = this.context.decode;
+    const scale = bitsPerCoordinate < 32 ? 1 / ((1 << bitsPerCoordinate) - 1) : 2.3283064365386963e-10;
+    return [xi * scale * (decode[1] - decode[0]) + decode[0], yi * scale * (decode[3] - decode[2]) + decode[2]];
+  }
+
+  readComponents() {
+    const numComps = this.context.numComps;
+    const bitsPerComponent = this.context.bitsPerComponent;
+    const scale = bitsPerComponent < 32 ? 1 / ((1 << bitsPerComponent) - 1) : 2.3283064365386963e-10;
+    const decode = this.context.decode;
+    const components = this.tmpCompsBuf;
+
+    for (let i = 0, j = 4; i < numComps; i++, j += 2) {
+      const ci = this.readBits(bitsPerComponent);
+      components[i] = ci * scale * (decode[j + 1] - decode[j]) + decode[j];
+    }
+
+    const color = this.tmpCsCompsBuf;
+
+    if (this.context.colorFn) {
+      this.context.colorFn(components, 0, color, 0);
+    }
+
+    return this.context.colorSpace.getRgb(color, 0);
+  }
+
+}
+
+const getB = function getBClosure() {
+  function buildB(count) {
+    const lut = [];
+
+    for (let i = 0; i <= count; i++) {
+      const t = i / count,
+            t_ = 1 - t;
+      lut.push(new Float32Array([t_ * t_ * t_, 3 * t * t_ * t_, 3 * t * t * t_, t * t * t]));
+    }
+
+    return lut;
+  }
+
+  const cache = [];
+  return function (count) {
+    if (!cache[count]) {
+      cache[count] = buildB(count);
+    }
+
+    return cache[count];
+  };
+}();
+
+class MeshShading extends BaseShading {
+  static get MIN_SPLIT_PATCH_CHUNKS_AMOUNT() {
+    return (0, _util.shadow)(this, "MIN_SPLIT_PATCH_CHUNKS_AMOUNT", 3);
+  }
+
+  static get MAX_SPLIT_PATCH_CHUNKS_AMOUNT() {
+    return (0, _util.shadow)(this, "MAX_SPLIT_PATCH_CHUNKS_AMOUNT", 20);
+  }
+
+  static get TRIANGLE_DENSITY() {
+    return (0, _util.shadow)(this, "TRIANGLE_DENSITY", 20);
+  }
+
+  constructor(stream, xref, resources, pdfFunctionFactory, localColorSpaceCache) {
+    super();
+
+    if (!(0, _primitives.isStream)(stream)) {
+      throw new _util.FormatError("Mesh data is not a stream");
+    }
+
+    const dict = stream.dict;
+    this.shadingType = dict.get("ShadingType");
+    const bbox = dict.getArray("BBox");
+
+    if (Array.isArray(bbox) && bbox.length === 4) {
+      this.bbox = _util.Util.normalizeRect(bbox);
+    } else {
+      this.bbox = null;
+    }
+
+    const cs = _colorspace.ColorSpace.parse({
+      cs: dict.getRaw("ColorSpace") || dict.getRaw("CS"),
+      xref,
+      resources,
+      pdfFunctionFactory,
+      localColorSpaceCache
+    });
+
+    this.background = dict.has("Background") ? cs.getRgb(dict.get("Background"), 0) : null;
+    const fnObj = dict.getRaw("Function");
+    const fn = fnObj ? pdfFunctionFactory.createFromArray(fnObj) : null;
+    this.coords = [];
+    this.colors = [];
+    this.figures = [];
+    const decodeContext = {
+      bitsPerCoordinate: dict.get("BitsPerCoordinate"),
+      bitsPerComponent: dict.get("BitsPerComponent"),
+      bitsPerFlag: dict.get("BitsPerFlag"),
+      decode: dict.getArray("Decode"),
+      colorFn: fn,
+      colorSpace: cs,
+      numComps: fn ? 1 : cs.numComps
+    };
+    const reader = new MeshStreamReader(stream, decodeContext);
+    let patchMesh = false;
+
+    switch (this.shadingType) {
+      case ShadingType.FREE_FORM_MESH:
+        this._decodeType4Shading(reader);
+
+        break;
+
+      case ShadingType.LATTICE_FORM_MESH:
+        const verticesPerRow = dict.get("VerticesPerRow") | 0;
+
+        if (verticesPerRow < 2) {
+          throw new _util.FormatError("Invalid VerticesPerRow");
         }
 
-        buffer = buffer << 24 | this.stream.getByte() << 16 | this.stream.getByte() << 8 | this.stream.getByte();
-        const nextByte = this.stream.getByte();
-        this.buffer = nextByte & (1 << bufferLength) - 1;
-        return (buffer << 8 - bufferLength | (nextByte & 0xff) >> bufferLength) >>> 0;
-      }
+        this._decodeType5Shading(reader, verticesPerRow);
 
-      if (n === 8 && bufferLength === 0) {
-        return this.stream.getByte();
-      }
+        break;
 
-      while (bufferLength < n) {
-        buffer = buffer << 8 | this.stream.getByte();
-        bufferLength += 8;
-      }
+      case ShadingType.COONS_PATCH_MESH:
+        this._decodeType6Shading(reader);
 
-      bufferLength -= n;
-      this.bufferLength = bufferLength;
-      this.buffer = buffer & (1 << bufferLength) - 1;
-      return buffer >> bufferLength;
-    },
-    align: function MeshStreamReader_align() {
-      this.buffer = 0;
-      this.bufferLength = 0;
-    },
-    readFlag: function MeshStreamReader_readFlag() {
-      return this.readBits(this.context.bitsPerFlag);
-    },
-    readCoordinate: function MeshStreamReader_readCoordinate() {
-      const bitsPerCoordinate = this.context.bitsPerCoordinate;
-      const xi = this.readBits(bitsPerCoordinate);
-      const yi = this.readBits(bitsPerCoordinate);
-      const decode = this.context.decode;
-      const scale = bitsPerCoordinate < 32 ? 1 / ((1 << bitsPerCoordinate) - 1) : 2.3283064365386963e-10;
-      return [xi * scale * (decode[1] - decode[0]) + decode[0], yi * scale * (decode[3] - decode[2]) + decode[2]];
-    },
-    readComponents: function MeshStreamReader_readComponents() {
-      const numComps = this.context.numComps;
-      const bitsPerComponent = this.context.bitsPerComponent;
-      const scale = bitsPerComponent < 32 ? 1 / ((1 << bitsPerComponent) - 1) : 2.3283064365386963e-10;
-      const decode = this.context.decode;
-      const components = this.tmpCompsBuf;
+        patchMesh = true;
+        break;
 
-      for (let i = 0, j = 4; i < numComps; i++, j += 2) {
-        const ci = this.readBits(bitsPerComponent);
-        components[i] = ci * scale * (decode[j + 1] - decode[j]) + decode[j];
-      }
+      case ShadingType.TENSOR_PATCH_MESH:
+        this._decodeType7Shading(reader);
 
-      const color = this.tmpCsCompsBuf;
+        patchMesh = true;
+        break;
 
-      if (this.context.colorFn) {
-        this.context.colorFn(components, 0, color, 0);
-      }
-
-      return this.context.colorSpace.getRgb(color, 0);
+      default:
+        (0, _util.unreachable)("Unsupported mesh type.");
+        break;
     }
-  };
 
-  function decodeType4Shading(mesh, reader) {
-    const coords = mesh.coords;
-    const colors = mesh.colors;
+    if (patchMesh) {
+      this._updateBounds();
+
+      for (let i = 0, ii = this.figures.length; i < ii; i++) {
+        this._buildFigureFromPatch(i);
+      }
+    }
+
+    this._updateBounds();
+
+    this._packData();
+  }
+
+  _decodeType4Shading(reader) {
+    const coords = this.coords;
+    const colors = this.colors;
     const operators = [];
     const ps = [];
     let verticesLeft = 0;
@@ -31460,16 +33265,16 @@ Shadings.Mesh = function MeshClosure() {
       reader.align();
     }
 
-    mesh.figures.push({
+    this.figures.push({
       type: "triangles",
       coords: new Int32Array(ps),
       colors: new Int32Array(ps)
     });
   }
 
-  function decodeType5Shading(mesh, reader, verticesPerRow) {
-    const coords = mesh.coords;
-    const colors = mesh.colors;
+  _decodeType5Shading(reader, verticesPerRow) {
+    const coords = this.coords;
+    const colors = this.colors;
     const ps = [];
 
     while (reader.hasData) {
@@ -31480,7 +33285,7 @@ Shadings.Mesh = function MeshClosure() {
       colors.push(color);
     }
 
-    mesh.figures.push({
+    this.figures.push({
       type: "lattice",
       coords: new Int32Array(ps),
       colors: new Int32Array(ps),
@@ -31488,116 +33293,9 @@ Shadings.Mesh = function MeshClosure() {
     });
   }
 
-  const MIN_SPLIT_PATCH_CHUNKS_AMOUNT = 3;
-  const MAX_SPLIT_PATCH_CHUNKS_AMOUNT = 20;
-  const TRIANGLE_DENSITY = 20;
-
-  const getB = function getBClosure() {
-    function buildB(count) {
-      const lut = [];
-
-      for (let i = 0; i <= count; i++) {
-        const t = i / count,
-              t_ = 1 - t;
-        lut.push(new Float32Array([t_ * t_ * t_, 3 * t * t_ * t_, 3 * t * t * t_, t * t * t]));
-      }
-
-      return lut;
-    }
-
-    const cache = [];
-    return function getB(count) {
-      if (!cache[count]) {
-        cache[count] = buildB(count);
-      }
-
-      return cache[count];
-    };
-  }();
-
-  function buildFigureFromPatch(mesh, index) {
-    const figure = mesh.figures[index];
-    (0, _util.assert)(figure.type === "patch", "Unexpected patch mesh figure");
-    const coords = mesh.coords,
-          colors = mesh.colors;
-    const pi = figure.coords;
-    const ci = figure.colors;
-    const figureMinX = Math.min(coords[pi[0]][0], coords[pi[3]][0], coords[pi[12]][0], coords[pi[15]][0]);
-    const figureMinY = Math.min(coords[pi[0]][1], coords[pi[3]][1], coords[pi[12]][1], coords[pi[15]][1]);
-    const figureMaxX = Math.max(coords[pi[0]][0], coords[pi[3]][0], coords[pi[12]][0], coords[pi[15]][0]);
-    const figureMaxY = Math.max(coords[pi[0]][1], coords[pi[3]][1], coords[pi[12]][1], coords[pi[15]][1]);
-    let splitXBy = Math.ceil((figureMaxX - figureMinX) * TRIANGLE_DENSITY / (mesh.bounds[2] - mesh.bounds[0]));
-    splitXBy = Math.max(MIN_SPLIT_PATCH_CHUNKS_AMOUNT, Math.min(MAX_SPLIT_PATCH_CHUNKS_AMOUNT, splitXBy));
-    let splitYBy = Math.ceil((figureMaxY - figureMinY) * TRIANGLE_DENSITY / (mesh.bounds[3] - mesh.bounds[1]));
-    splitYBy = Math.max(MIN_SPLIT_PATCH_CHUNKS_AMOUNT, Math.min(MAX_SPLIT_PATCH_CHUNKS_AMOUNT, splitYBy));
-    const verticesPerRow = splitXBy + 1;
-    const figureCoords = new Int32Array((splitYBy + 1) * verticesPerRow);
-    const figureColors = new Int32Array((splitYBy + 1) * verticesPerRow);
-    let k = 0;
-    const cl = new Uint8Array(3),
-          cr = new Uint8Array(3);
-    const c0 = colors[ci[0]],
-          c1 = colors[ci[1]],
-          c2 = colors[ci[2]],
-          c3 = colors[ci[3]];
-    const bRow = getB(splitYBy),
-          bCol = getB(splitXBy);
-
-    for (let row = 0; row <= splitYBy; row++) {
-      cl[0] = (c0[0] * (splitYBy - row) + c2[0] * row) / splitYBy | 0;
-      cl[1] = (c0[1] * (splitYBy - row) + c2[1] * row) / splitYBy | 0;
-      cl[2] = (c0[2] * (splitYBy - row) + c2[2] * row) / splitYBy | 0;
-      cr[0] = (c1[0] * (splitYBy - row) + c3[0] * row) / splitYBy | 0;
-      cr[1] = (c1[1] * (splitYBy - row) + c3[1] * row) / splitYBy | 0;
-      cr[2] = (c1[2] * (splitYBy - row) + c3[2] * row) / splitYBy | 0;
-
-      for (let col = 0; col <= splitXBy; col++, k++) {
-        if ((row === 0 || row === splitYBy) && (col === 0 || col === splitXBy)) {
-          continue;
-        }
-
-        let x = 0,
-            y = 0;
-        let q = 0;
-
-        for (let i = 0; i <= 3; i++) {
-          for (let j = 0; j <= 3; j++, q++) {
-            const m = bRow[row][i] * bCol[col][j];
-            x += coords[pi[q]][0] * m;
-            y += coords[pi[q]][1] * m;
-          }
-        }
-
-        figureCoords[k] = coords.length;
-        coords.push([x, y]);
-        figureColors[k] = colors.length;
-        const newColor = new Uint8Array(3);
-        newColor[0] = (cl[0] * (splitXBy - col) + cr[0] * col) / splitXBy | 0;
-        newColor[1] = (cl[1] * (splitXBy - col) + cr[1] * col) / splitXBy | 0;
-        newColor[2] = (cl[2] * (splitXBy - col) + cr[2] * col) / splitXBy | 0;
-        colors.push(newColor);
-      }
-    }
-
-    figureCoords[0] = pi[0];
-    figureColors[0] = ci[0];
-    figureCoords[splitXBy] = pi[3];
-    figureColors[splitXBy] = ci[1];
-    figureCoords[verticesPerRow * splitYBy] = pi[12];
-    figureColors[verticesPerRow * splitYBy] = ci[2];
-    figureCoords[verticesPerRow * splitYBy + splitXBy] = pi[15];
-    figureColors[verticesPerRow * splitYBy + splitXBy] = ci[3];
-    mesh.figures[index] = {
-      type: "lattice",
-      coords: figureCoords,
-      colors: figureColors,
-      verticesPerRow
-    };
-  }
-
-  function decodeType6Shading(mesh, reader) {
-    const coords = mesh.coords;
-    const colors = mesh.colors;
+  _decodeType6Shading(reader) {
+    const coords = this.coords;
+    const colors = this.colors;
     const ps = new Int32Array(16);
     const cs = new Int32Array(4);
 
@@ -31717,7 +33415,7 @@ Shadings.Mesh = function MeshClosure() {
       coords.push([(-4 * coords[ps[12]][0] - coords[ps[3]][0] + 6 * (coords[ps[8]][0] + coords[ps[13]][0]) - 2 * (coords[ps[0]][0] + coords[ps[15]][0]) + 3 * (coords[ps[11]][0] + coords[ps[1]][0])) / 9, (-4 * coords[ps[12]][1] - coords[ps[3]][1] + 6 * (coords[ps[8]][1] + coords[ps[13]][1]) - 2 * (coords[ps[0]][1] + coords[ps[15]][1]) + 3 * (coords[ps[11]][1] + coords[ps[1]][1])) / 9]);
       ps[10] = coords.length;
       coords.push([(-4 * coords[ps[15]][0] - coords[ps[0]][0] + 6 * (coords[ps[11]][0] + coords[ps[14]][0]) - 2 * (coords[ps[12]][0] + coords[ps[3]][0]) + 3 * (coords[ps[2]][0] + coords[ps[8]][0])) / 9, (-4 * coords[ps[15]][1] - coords[ps[0]][1] + 6 * (coords[ps[11]][1] + coords[ps[14]][1]) - 2 * (coords[ps[12]][1] + coords[ps[3]][1]) + 3 * (coords[ps[2]][1] + coords[ps[8]][1])) / 9]);
-      mesh.figures.push({
+      this.figures.push({
         type: "patch",
         coords: new Int32Array(ps),
         colors: new Int32Array(cs)
@@ -31725,9 +33423,9 @@ Shadings.Mesh = function MeshClosure() {
     }
   }
 
-  function decodeType7Shading(mesh, reader) {
-    const coords = mesh.coords;
-    const colors = mesh.colors;
+  _decodeType7Shading(reader) {
+    const coords = this.coords;
+    const colors = this.colors;
     const ps = new Int32Array(16);
     const cs = new Int32Array(4);
 
@@ -31855,7 +33553,7 @@ Shadings.Mesh = function MeshClosure() {
           break;
       }
 
-      mesh.figures.push({
+      this.figures.push({
         type: "patch",
         coords: new Int32Array(ps),
         colors: new Int32Array(cs)
@@ -31863,27 +33561,107 @@ Shadings.Mesh = function MeshClosure() {
     }
   }
 
-  function updateBounds(mesh) {
-    let minX = mesh.coords[0][0],
-        minY = mesh.coords[0][1],
+  _buildFigureFromPatch(index) {
+    const figure = this.figures[index];
+    (0, _util.assert)(figure.type === "patch", "Unexpected patch mesh figure");
+    const coords = this.coords,
+          colors = this.colors;
+    const pi = figure.coords;
+    const ci = figure.colors;
+    const figureMinX = Math.min(coords[pi[0]][0], coords[pi[3]][0], coords[pi[12]][0], coords[pi[15]][0]);
+    const figureMinY = Math.min(coords[pi[0]][1], coords[pi[3]][1], coords[pi[12]][1], coords[pi[15]][1]);
+    const figureMaxX = Math.max(coords[pi[0]][0], coords[pi[3]][0], coords[pi[12]][0], coords[pi[15]][0]);
+    const figureMaxY = Math.max(coords[pi[0]][1], coords[pi[3]][1], coords[pi[12]][1], coords[pi[15]][1]);
+    let splitXBy = Math.ceil((figureMaxX - figureMinX) * MeshShading.TRIANGLE_DENSITY / (this.bounds[2] - this.bounds[0]));
+    splitXBy = Math.max(MeshShading.MIN_SPLIT_PATCH_CHUNKS_AMOUNT, Math.min(MeshShading.MAX_SPLIT_PATCH_CHUNKS_AMOUNT, splitXBy));
+    let splitYBy = Math.ceil((figureMaxY - figureMinY) * MeshShading.TRIANGLE_DENSITY / (this.bounds[3] - this.bounds[1]));
+    splitYBy = Math.max(MeshShading.MIN_SPLIT_PATCH_CHUNKS_AMOUNT, Math.min(MeshShading.MAX_SPLIT_PATCH_CHUNKS_AMOUNT, splitYBy));
+    const verticesPerRow = splitXBy + 1;
+    const figureCoords = new Int32Array((splitYBy + 1) * verticesPerRow);
+    const figureColors = new Int32Array((splitYBy + 1) * verticesPerRow);
+    let k = 0;
+    const cl = new Uint8Array(3),
+          cr = new Uint8Array(3);
+    const c0 = colors[ci[0]],
+          c1 = colors[ci[1]],
+          c2 = colors[ci[2]],
+          c3 = colors[ci[3]];
+    const bRow = getB(splitYBy),
+          bCol = getB(splitXBy);
+
+    for (let row = 0; row <= splitYBy; row++) {
+      cl[0] = (c0[0] * (splitYBy - row) + c2[0] * row) / splitYBy | 0;
+      cl[1] = (c0[1] * (splitYBy - row) + c2[1] * row) / splitYBy | 0;
+      cl[2] = (c0[2] * (splitYBy - row) + c2[2] * row) / splitYBy | 0;
+      cr[0] = (c1[0] * (splitYBy - row) + c3[0] * row) / splitYBy | 0;
+      cr[1] = (c1[1] * (splitYBy - row) + c3[1] * row) / splitYBy | 0;
+      cr[2] = (c1[2] * (splitYBy - row) + c3[2] * row) / splitYBy | 0;
+
+      for (let col = 0; col <= splitXBy; col++, k++) {
+        if ((row === 0 || row === splitYBy) && (col === 0 || col === splitXBy)) {
+          continue;
+        }
+
+        let x = 0,
+            y = 0;
+        let q = 0;
+
+        for (let i = 0; i <= 3; i++) {
+          for (let j = 0; j <= 3; j++, q++) {
+            const m = bRow[row][i] * bCol[col][j];
+            x += coords[pi[q]][0] * m;
+            y += coords[pi[q]][1] * m;
+          }
+        }
+
+        figureCoords[k] = coords.length;
+        coords.push([x, y]);
+        figureColors[k] = colors.length;
+        const newColor = new Uint8Array(3);
+        newColor[0] = (cl[0] * (splitXBy - col) + cr[0] * col) / splitXBy | 0;
+        newColor[1] = (cl[1] * (splitXBy - col) + cr[1] * col) / splitXBy | 0;
+        newColor[2] = (cl[2] * (splitXBy - col) + cr[2] * col) / splitXBy | 0;
+        colors.push(newColor);
+      }
+    }
+
+    figureCoords[0] = pi[0];
+    figureColors[0] = ci[0];
+    figureCoords[splitXBy] = pi[3];
+    figureColors[splitXBy] = ci[1];
+    figureCoords[verticesPerRow * splitYBy] = pi[12];
+    figureColors[verticesPerRow * splitYBy] = ci[2];
+    figureCoords[verticesPerRow * splitYBy + splitXBy] = pi[15];
+    figureColors[verticesPerRow * splitYBy + splitXBy] = ci[3];
+    this.figures[index] = {
+      type: "lattice",
+      coords: figureCoords,
+      colors: figureColors,
+      verticesPerRow
+    };
+  }
+
+  _updateBounds() {
+    let minX = this.coords[0][0],
+        minY = this.coords[0][1],
         maxX = minX,
         maxY = minY;
 
-    for (let i = 1, ii = mesh.coords.length; i < ii; i++) {
-      const x = mesh.coords[i][0],
-            y = mesh.coords[i][1];
+    for (let i = 1, ii = this.coords.length; i < ii; i++) {
+      const x = this.coords[i][0],
+            y = this.coords[i][1];
       minX = minX > x ? x : minX;
       minY = minY > y ? y : minY;
       maxX = maxX < x ? x : maxX;
       maxY = maxY < y ? y : maxY;
     }
 
-    mesh.bounds = [minX, minY, maxX, maxY];
+    this.bounds = [minX, minY, maxX, maxY];
   }
 
-  function packData(mesh) {
+  _packData() {
     let i, ii, j, jj;
-    const coords = mesh.coords;
+    const coords = this.coords;
     const coordsPacked = new Float32Array(coords.length * 2);
 
     for (i = 0, j = 0, ii = coords.length; i < ii; i++) {
@@ -31892,8 +33670,8 @@ Shadings.Mesh = function MeshClosure() {
       coordsPacked[j++] = xy[1];
     }
 
-    mesh.coords = coordsPacked;
-    const colors = mesh.colors;
+    this.coords = coordsPacked;
+    const colors = this.colors;
     const colorsPacked = new Uint8Array(colors.length * 3);
 
     for (i = 0, j = 0, ii = colors.length; i < ii; i++) {
@@ -31903,8 +33681,8 @@ Shadings.Mesh = function MeshClosure() {
       colorsPacked[j++] = c[2];
     }
 
-    mesh.colors = colorsPacked;
-    const figures = mesh.figures;
+    this.colors = colorsPacked;
+    const figures = this.figures;
 
     for (i = 0, ii = figures.length; i < ii; i++) {
       const figure = figures[i],
@@ -31918,112 +33696,18 @@ Shadings.Mesh = function MeshClosure() {
     }
   }
 
-  function Mesh(stream, matrix, xref, resources, pdfFunctionFactory, localColorSpaceCache) {
-    if (!(0, _primitives.isStream)(stream)) {
-      throw new _util.FormatError("Mesh data is not a stream");
-    }
-
-    const dict = stream.dict;
-    this.matrix = matrix;
-    this.shadingType = dict.get("ShadingType");
-    this.type = "Pattern";
-    const bbox = dict.getArray("BBox");
-
-    if (Array.isArray(bbox) && bbox.length === 4) {
-      this.bbox = _util.Util.normalizeRect(bbox);
-    } else {
-      this.bbox = null;
-    }
-
-    const cs = _colorspace.ColorSpace.parse({
-      cs: dict.getRaw("ColorSpace") || dict.getRaw("CS"),
-      xref,
-      resources,
-      pdfFunctionFactory,
-      localColorSpaceCache
-    });
-
-    this.cs = cs;
-    this.background = dict.has("Background") ? cs.getRgb(dict.get("Background"), 0) : null;
-    const fnObj = dict.getRaw("Function");
-    const fn = fnObj ? pdfFunctionFactory.createFromArray(fnObj) : null;
-    this.coords = [];
-    this.colors = [];
-    this.figures = [];
-    const decodeContext = {
-      bitsPerCoordinate: dict.get("BitsPerCoordinate"),
-      bitsPerComponent: dict.get("BitsPerComponent"),
-      bitsPerFlag: dict.get("BitsPerFlag"),
-      decode: dict.getArray("Decode"),
-      colorFn: fn,
-      colorSpace: cs,
-      numComps: fn ? 1 : cs.numComps
-    };
-    const reader = new MeshStreamReader(stream, decodeContext);
-    let patchMesh = false;
-
-    switch (this.shadingType) {
-      case ShadingType.FREE_FORM_MESH:
-        decodeType4Shading(this, reader);
-        break;
-
-      case ShadingType.LATTICE_FORM_MESH:
-        const verticesPerRow = dict.get("VerticesPerRow") | 0;
-
-        if (verticesPerRow < 2) {
-          throw new _util.FormatError("Invalid VerticesPerRow");
-        }
-
-        decodeType5Shading(this, reader, verticesPerRow);
-        break;
-
-      case ShadingType.COONS_PATCH_MESH:
-        decodeType6Shading(this, reader);
-        patchMesh = true;
-        break;
-
-      case ShadingType.TENSOR_PATCH_MESH:
-        decodeType7Shading(this, reader);
-        patchMesh = true;
-        break;
-
-      default:
-        (0, _util.unreachable)("Unsupported mesh type.");
-        break;
-    }
-
-    if (patchMesh) {
-      updateBounds(this);
-
-      for (let i = 0, ii = this.figures.length; i < ii; i++) {
-        buildFigureFromPatch(this, i);
-      }
-    }
-
-    updateBounds(this);
-    packData(this);
+  getIR() {
+    return ["Mesh", this.shadingType, this.coords, this.colors, this.figures, this.bounds, this.bbox, this.background];
   }
 
-  Mesh.prototype = {
-    getIR: function Mesh_getIR() {
-      return ["Mesh", this.shadingType, this.coords, this.colors, this.figures, this.bounds, this.matrix, this.bbox, this.background];
-    }
-  };
-  return Mesh;
-}();
+}
 
-Shadings.Dummy = function DummyClosure() {
-  function Dummy() {
-    this.type = "Pattern";
+class DummyShading extends BaseShading {
+  getIR() {
+    return ["Dummy"];
   }
 
-  Dummy.prototype = {
-    getIR: function Dummy_getIR() {
-      return ["Dummy"];
-    }
-  };
-  return Dummy;
-}();
+}
 
 function getTilingPatternIR(operatorList, dict, color) {
   const matrix = dict.getArray("Matrix");
@@ -32043,7 +33727,7 @@ function getTilingPatternIR(operatorList, dict, color) {
 }
 
 /***/ }),
-/* 49 */
+/* 56 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -32058,9 +33742,9 @@ var _primitives = __w_pdfjs_require__(5);
 
 var _util = __w_pdfjs_require__(2);
 
-var _ps_parser = __w_pdfjs_require__(50);
+var _ps_parser = __w_pdfjs_require__(57);
 
-var _image_utils = __w_pdfjs_require__(51);
+var _image_utils = __w_pdfjs_require__(58);
 
 class PDFFunctionFactory {
   constructor({
@@ -32179,506 +33863,410 @@ function toNumberArray(arr) {
   return arr;
 }
 
-const PDFFunction = function PDFFunctionClosure() {
-  const CONSTRUCT_SAMPLED = 0;
-  const CONSTRUCT_INTERPOLATED = 2;
-  const CONSTRUCT_STICHED = 3;
-  const CONSTRUCT_POSTSCRIPT = 4;
-  return {
-    getSampleArray(size, outputSize, bps, stream) {
-      let i, ii;
-      let length = 1;
-
-      for (i = 0, ii = size.length; i < ii; i++) {
-        length *= size[i];
-      }
-
-      length *= outputSize;
-      const array = new Array(length);
-      let codeSize = 0;
-      let codeBuf = 0;
-      const sampleMul = 1.0 / (2.0 ** bps - 1);
-      const strBytes = stream.getBytes((length * bps + 7) / 8);
-      let strIdx = 0;
-
-      for (i = 0; i < length; i++) {
-        while (codeSize < bps) {
-          codeBuf <<= 8;
-          codeBuf |= strBytes[strIdx++];
-          codeSize += 8;
-        }
-
-        codeSize -= bps;
-        array[i] = (codeBuf >> codeSize) * sampleMul;
-        codeBuf &= (1 << codeSize) - 1;
-      }
-
-      return array;
-    },
-
-    getIR({
-      xref,
-      isEvalSupported,
-      fn
-    }) {
-      let dict = fn.dict;
-
-      if (!dict) {
-        dict = fn;
-      }
-
-      const types = [this.constructSampled, null, this.constructInterpolated, this.constructStiched, this.constructPostScript];
-      const typeNum = dict.get("FunctionType");
-      const typeFn = types[typeNum];
-
-      if (!typeFn) {
-        throw new _util.FormatError("Unknown type of function");
-      }
-
-      return typeFn.call(this, {
-        xref,
-        isEvalSupported,
-        fn,
-        dict
-      });
-    },
-
-    fromIR({
-      xref,
-      isEvalSupported,
-      IR
-    }) {
-      const type = IR[0];
-
-      switch (type) {
-        case CONSTRUCT_SAMPLED:
-          return this.constructSampledFromIR({
-            xref,
-            isEvalSupported,
-            IR
-          });
-
-        case CONSTRUCT_INTERPOLATED:
-          return this.constructInterpolatedFromIR({
-            xref,
-            isEvalSupported,
-            IR
-          });
-
-        case CONSTRUCT_STICHED:
-          return this.constructStichedFromIR({
-            xref,
-            isEvalSupported,
-            IR
-          });
-
-        default:
-          return this.constructPostScriptFromIR({
-            xref,
-            isEvalSupported,
-            IR
-          });
-      }
-    },
-
-    parse({
-      xref,
-      isEvalSupported,
-      fn
-    }) {
-      const IR = this.getIR({
-        xref,
-        isEvalSupported,
-        fn
-      });
-      return this.fromIR({
-        xref,
-        isEvalSupported,
-        IR
-      });
-    },
-
-    parseArray({
-      xref,
-      isEvalSupported,
-      fnObj
-    }) {
-      if (!Array.isArray(fnObj)) {
-        return this.parse({
-          xref,
-          isEvalSupported,
-          fn: fnObj
-        });
-      }
-
-      const fnArray = [];
-
-      for (let j = 0, jj = fnObj.length; j < jj; j++) {
-        fnArray.push(this.parse({
-          xref,
-          isEvalSupported,
-          fn: xref.fetchIfRef(fnObj[j])
-        }));
-      }
-
-      return function (src, srcOffset, dest, destOffset) {
-        for (let i = 0, ii = fnArray.length; i < ii; i++) {
-          fnArray[i](src, srcOffset, dest, destOffset + i);
-        }
-      };
-    },
-
-    constructSampled({
-      xref,
-      isEvalSupported,
-      fn,
-      dict
-    }) {
-      function toMultiArray(arr) {
-        const inputLength = arr.length;
-        const out = [];
-        let index = 0;
-
-        for (let i = 0; i < inputLength; i += 2) {
-          out[index] = [arr[i], arr[i + 1]];
-          ++index;
-        }
-
-        return out;
-      }
-
-      let domain = toNumberArray(dict.getArray("Domain"));
-      let range = toNumberArray(dict.getArray("Range"));
-
-      if (!domain || !range) {
-        throw new _util.FormatError("No domain or range");
-      }
-
-      const inputSize = domain.length / 2;
-      const outputSize = range.length / 2;
-      domain = toMultiArray(domain);
-      range = toMultiArray(range);
-      const size = toNumberArray(dict.getArray("Size"));
-      const bps = dict.get("BitsPerSample");
-      const order = dict.get("Order") || 1;
-
-      if (order !== 1) {
-        (0, _util.info)("No support for cubic spline interpolation: " + order);
-      }
-
-      let encode = toNumberArray(dict.getArray("Encode"));
-
-      if (!encode) {
-        encode = [];
-
-        for (let i = 0; i < inputSize; ++i) {
-          encode.push([0, size[i] - 1]);
-        }
-      } else {
-        encode = toMultiArray(encode);
-      }
-
-      let decode = toNumberArray(dict.getArray("Decode"));
-
-      if (!decode) {
-        decode = range;
-      } else {
-        decode = toMultiArray(decode);
-      }
-
-      const samples = this.getSampleArray(size, outputSize, bps, fn);
-      return [CONSTRUCT_SAMPLED, inputSize, domain, encode, decode, samples, size, outputSize, 2 ** bps - 1, range];
-    },
-
-    constructSampledFromIR({
-      xref,
-      isEvalSupported,
-      IR
-    }) {
-      function interpolate(x, xmin, xmax, ymin, ymax) {
-        return ymin + (x - xmin) * ((ymax - ymin) / (xmax - xmin));
-      }
-
-      return function constructSampledFromIRResult(src, srcOffset, dest, destOffset) {
-        const m = IR[1];
-        const domain = IR[2];
-        const encode = IR[3];
-        const decode = IR[4];
-        const samples = IR[5];
-        const size = IR[6];
-        const n = IR[7];
-        const range = IR[9];
-        const cubeVertices = 1 << m;
-        const cubeN = new Float64Array(cubeVertices);
-        const cubeVertex = new Uint32Array(cubeVertices);
-        let i, j;
-
-        for (j = 0; j < cubeVertices; j++) {
-          cubeN[j] = 1;
-        }
-
-        let k = n,
-            pos = 1;
-
-        for (i = 0; i < m; ++i) {
-          const domain_2i = domain[i][0];
-          const domain_2i_1 = domain[i][1];
-          const xi = Math.min(Math.max(src[srcOffset + i], domain_2i), domain_2i_1);
-          let e = interpolate(xi, domain_2i, domain_2i_1, encode[i][0], encode[i][1]);
-          const size_i = size[i];
-          e = Math.min(Math.max(e, 0), size_i - 1);
-          const e0 = e < size_i - 1 ? Math.floor(e) : e - 1;
-          const n0 = e0 + 1 - e;
-          const n1 = e - e0;
-          const offset0 = e0 * k;
-          const offset1 = offset0 + k;
-
-          for (j = 0; j < cubeVertices; j++) {
-            if (j & pos) {
-              cubeN[j] *= n1;
-              cubeVertex[j] += offset1;
-            } else {
-              cubeN[j] *= n0;
-              cubeVertex[j] += offset0;
-            }
-          }
-
-          k *= size_i;
-          pos <<= 1;
-        }
-
-        for (j = 0; j < n; ++j) {
-          let rj = 0;
-
-          for (i = 0; i < cubeVertices; i++) {
-            rj += samples[cubeVertex[i] + j] * cubeN[i];
-          }
-
-          rj = interpolate(rj, 0, 1, decode[j][0], decode[j][1]);
-          dest[destOffset + j] = Math.min(Math.max(rj, range[j][0]), range[j][1]);
-        }
-      };
-    },
-
-    constructInterpolated({
-      xref,
-      isEvalSupported,
-      fn,
-      dict
-    }) {
-      const c0 = toNumberArray(dict.getArray("C0")) || [0];
-      const c1 = toNumberArray(dict.getArray("C1")) || [1];
-      const n = dict.get("N");
-      const length = c0.length;
-      const diff = [];
-
-      for (let i = 0; i < length; ++i) {
-        diff.push(c1[i] - c0[i]);
-      }
-
-      return [CONSTRUCT_INTERPOLATED, c0, diff, n];
-    },
-
-    constructInterpolatedFromIR({
-      xref,
-      isEvalSupported,
-      IR
-    }) {
-      const c0 = IR[1];
-      const diff = IR[2];
-      const n = IR[3];
-      const length = diff.length;
-      return function constructInterpolatedFromIRResult(src, srcOffset, dest, destOffset) {
-        const x = n === 1 ? src[srcOffset] : src[srcOffset] ** n;
-
-        for (let j = 0; j < length; ++j) {
-          dest[destOffset + j] = c0[j] + x * diff[j];
-        }
-      };
-    },
-
-    constructStiched({
-      xref,
-      isEvalSupported,
-      fn,
-      dict
-    }) {
-      const domain = toNumberArray(dict.getArray("Domain"));
-
-      if (!domain) {
-        throw new _util.FormatError("No domain");
-      }
-
-      const inputSize = domain.length / 2;
-
-      if (inputSize !== 1) {
-        throw new _util.FormatError("Bad domain for stiched function");
-      }
-
-      const fnRefs = dict.get("Functions");
-      const fns = [];
-
-      for (let i = 0, ii = fnRefs.length; i < ii; ++i) {
-        fns.push(this.parse({
-          xref,
-          isEvalSupported,
-          fn: xref.fetchIfRef(fnRefs[i])
-        }));
-      }
-
-      const bounds = toNumberArray(dict.getArray("Bounds"));
-      const encode = toNumberArray(dict.getArray("Encode"));
-      return [CONSTRUCT_STICHED, domain, bounds, encode, fns];
-    },
-
-    constructStichedFromIR({
-      xref,
-      isEvalSupported,
-      IR
-    }) {
-      const domain = IR[1];
-      const bounds = IR[2];
-      const encode = IR[3];
-      const fns = IR[4];
-      const tmpBuf = new Float32Array(1);
-      return function constructStichedFromIRResult(src, srcOffset, dest, destOffset) {
-        const clip = function constructStichedFromIRClip(v, min, max) {
-          if (v > max) {
-            v = max;
-          } else if (v < min) {
-            v = min;
-          }
-
-          return v;
-        };
-
-        const v = clip(src[srcOffset], domain[0], domain[1]);
-        const length = bounds.length;
-        let i;
-
-        for (i = 0; i < length; ++i) {
-          if (v < bounds[i]) {
-            break;
-          }
-        }
-
-        let dmin = domain[0];
-
-        if (i > 0) {
-          dmin = bounds[i - 1];
-        }
-
-        let dmax = domain[1];
-
-        if (i < bounds.length) {
-          dmax = bounds[i];
-        }
-
-        const rmin = encode[2 * i];
-        const rmax = encode[2 * i + 1];
-        tmpBuf[0] = dmin === dmax ? rmin : rmin + (v - dmin) * (rmax - rmin) / (dmax - dmin);
-        fns[i](tmpBuf, 0, dest, destOffset);
-      };
-    },
-
-    constructPostScript({
-      xref,
-      isEvalSupported,
-      fn,
-      dict
-    }) {
-      const domain = toNumberArray(dict.getArray("Domain"));
-      const range = toNumberArray(dict.getArray("Range"));
-
-      if (!domain) {
-        throw new _util.FormatError("No domain.");
-      }
-
-      if (!range) {
-        throw new _util.FormatError("No range.");
-      }
-
-      const lexer = new _ps_parser.PostScriptLexer(fn);
-      const parser = new _ps_parser.PostScriptParser(lexer);
-      const code = parser.parse();
-      return [CONSTRUCT_POSTSCRIPT, domain, range, code];
-    },
-
-    constructPostScriptFromIR({
-      xref,
-      isEvalSupported,
-      IR
-    }) {
-      const domain = IR[1];
-      const range = IR[2];
-      const code = IR[3];
-
-      if (isEvalSupported && _util.IsEvalSupportedCached.value) {
-        const compiled = new PostScriptCompiler().compile(code, domain, range);
-
-        if (compiled) {
-          return new Function("src", "srcOffset", "dest", "destOffset", compiled);
-        }
-      }
-
-      (0, _util.info)("Unable to compile PS function");
-      const numOutputs = range.length >> 1;
-      const numInputs = domain.length >> 1;
-      const evaluator = new PostScriptEvaluator(code);
-      const cache = Object.create(null);
-      const MAX_CACHE_SIZE = 2048 * 4;
-      let cache_available = MAX_CACHE_SIZE;
-      const tmpBuf = new Float32Array(numInputs);
-      return function constructPostScriptFromIRResult(src, srcOffset, dest, destOffset) {
-        let i, value;
-        let key = "";
-        const input = tmpBuf;
-
-        for (i = 0; i < numInputs; i++) {
-          value = src[srcOffset + i];
-          input[i] = value;
-          key += value + "_";
-        }
-
-        const cachedValue = cache[key];
-
-        if (cachedValue !== undefined) {
-          dest.set(cachedValue, destOffset);
-          return;
-        }
-
-        const output = new Float32Array(numOutputs);
-        const stack = evaluator.execute(input);
-        const stackIndex = stack.length - numOutputs;
-
-        for (i = 0; i < numOutputs; i++) {
-          value = stack[stackIndex + i];
-          let bound = range[i * 2];
-
-          if (value < bound) {
-            value = bound;
-          } else {
-            bound = range[i * 2 + 1];
-
-            if (value > bound) {
-              value = bound;
-            }
-          }
-
-          output[i] = value;
-        }
-
-        if (cache_available > 0) {
-          cache_available--;
-          cache[key] = output;
-        }
-
-        dest.set(output, destOffset);
-      };
+class PDFFunction {
+  static getSampleArray(size, outputSize, bps, stream) {
+    let i, ii;
+    let length = 1;
+
+    for (i = 0, ii = size.length; i < ii; i++) {
+      length *= size[i];
     }
 
-  };
-}();
+    length *= outputSize;
+    const array = new Array(length);
+    let codeSize = 0;
+    let codeBuf = 0;
+    const sampleMul = 1.0 / (2.0 ** bps - 1);
+    const strBytes = stream.getBytes((length * bps + 7) / 8);
+    let strIdx = 0;
+
+    for (i = 0; i < length; i++) {
+      while (codeSize < bps) {
+        codeBuf <<= 8;
+        codeBuf |= strBytes[strIdx++];
+        codeSize += 8;
+      }
+
+      codeSize -= bps;
+      array[i] = (codeBuf >> codeSize) * sampleMul;
+      codeBuf &= (1 << codeSize) - 1;
+    }
+
+    return array;
+  }
+
+  static parse({
+    xref,
+    isEvalSupported,
+    fn
+  }) {
+    const dict = fn.dict || fn;
+    const typeNum = dict.get("FunctionType");
+
+    switch (typeNum) {
+      case 0:
+        return this.constructSampled({
+          xref,
+          isEvalSupported,
+          fn,
+          dict
+        });
+
+      case 1:
+        break;
+
+      case 2:
+        return this.constructInterpolated({
+          xref,
+          isEvalSupported,
+          dict
+        });
+
+      case 3:
+        return this.constructStiched({
+          xref,
+          isEvalSupported,
+          dict
+        });
+
+      case 4:
+        return this.constructPostScript({
+          xref,
+          isEvalSupported,
+          fn,
+          dict
+        });
+    }
+
+    throw new _util.FormatError("Unknown type of function");
+  }
+
+  static parseArray({
+    xref,
+    isEvalSupported,
+    fnObj
+  }) {
+    if (!Array.isArray(fnObj)) {
+      return this.parse({
+        xref,
+        isEvalSupported,
+        fn: fnObj
+      });
+    }
+
+    const fnArray = [];
+
+    for (let j = 0, jj = fnObj.length; j < jj; j++) {
+      fnArray.push(this.parse({
+        xref,
+        isEvalSupported,
+        fn: xref.fetchIfRef(fnObj[j])
+      }));
+    }
+
+    return function (src, srcOffset, dest, destOffset) {
+      for (let i = 0, ii = fnArray.length; i < ii; i++) {
+        fnArray[i](src, srcOffset, dest, destOffset + i);
+      }
+    };
+  }
+
+  static constructSampled({
+    xref,
+    isEvalSupported,
+    fn,
+    dict
+  }) {
+    function toMultiArray(arr) {
+      const inputLength = arr.length;
+      const out = [];
+      let index = 0;
+
+      for (let i = 0; i < inputLength; i += 2) {
+        out[index++] = [arr[i], arr[i + 1]];
+      }
+
+      return out;
+    }
+
+    function interpolate(x, xmin, xmax, ymin, ymax) {
+      return ymin + (x - xmin) * ((ymax - ymin) / (xmax - xmin));
+    }
+
+    let domain = toNumberArray(dict.getArray("Domain"));
+    let range = toNumberArray(dict.getArray("Range"));
+
+    if (!domain || !range) {
+      throw new _util.FormatError("No domain or range");
+    }
+
+    const inputSize = domain.length / 2;
+    const outputSize = range.length / 2;
+    domain = toMultiArray(domain);
+    range = toMultiArray(range);
+    const size = toNumberArray(dict.getArray("Size"));
+    const bps = dict.get("BitsPerSample");
+    const order = dict.get("Order") || 1;
+
+    if (order !== 1) {
+      (0, _util.info)("No support for cubic spline interpolation: " + order);
+    }
+
+    let encode = toNumberArray(dict.getArray("Encode"));
+
+    if (!encode) {
+      encode = [];
+
+      for (let i = 0; i < inputSize; ++i) {
+        encode.push([0, size[i] - 1]);
+      }
+    } else {
+      encode = toMultiArray(encode);
+    }
+
+    let decode = toNumberArray(dict.getArray("Decode"));
+
+    if (!decode) {
+      decode = range;
+    } else {
+      decode = toMultiArray(decode);
+    }
+
+    const samples = this.getSampleArray(size, outputSize, bps, fn);
+    return function constructSampledFn(src, srcOffset, dest, destOffset) {
+      const cubeVertices = 1 << inputSize;
+      const cubeN = new Float64Array(cubeVertices);
+      const cubeVertex = new Uint32Array(cubeVertices);
+      let i, j;
+
+      for (j = 0; j < cubeVertices; j++) {
+        cubeN[j] = 1;
+      }
+
+      let k = outputSize,
+          pos = 1;
+
+      for (i = 0; i < inputSize; ++i) {
+        const domain_2i = domain[i][0];
+        const domain_2i_1 = domain[i][1];
+        const xi = Math.min(Math.max(src[srcOffset + i], domain_2i), domain_2i_1);
+        let e = interpolate(xi, domain_2i, domain_2i_1, encode[i][0], encode[i][1]);
+        const size_i = size[i];
+        e = Math.min(Math.max(e, 0), size_i - 1);
+        const e0 = e < size_i - 1 ? Math.floor(e) : e - 1;
+        const n0 = e0 + 1 - e;
+        const n1 = e - e0;
+        const offset0 = e0 * k;
+        const offset1 = offset0 + k;
+
+        for (j = 0; j < cubeVertices; j++) {
+          if (j & pos) {
+            cubeN[j] *= n1;
+            cubeVertex[j] += offset1;
+          } else {
+            cubeN[j] *= n0;
+            cubeVertex[j] += offset0;
+          }
+        }
+
+        k *= size_i;
+        pos <<= 1;
+      }
+
+      for (j = 0; j < outputSize; ++j) {
+        let rj = 0;
+
+        for (i = 0; i < cubeVertices; i++) {
+          rj += samples[cubeVertex[i] + j] * cubeN[i];
+        }
+
+        rj = interpolate(rj, 0, 1, decode[j][0], decode[j][1]);
+        dest[destOffset + j] = Math.min(Math.max(rj, range[j][0]), range[j][1]);
+      }
+    };
+  }
+
+  static constructInterpolated({
+    xref,
+    isEvalSupported,
+    dict
+  }) {
+    const c0 = toNumberArray(dict.getArray("C0")) || [0];
+    const c1 = toNumberArray(dict.getArray("C1")) || [1];
+    const n = dict.get("N");
+    const diff = [];
+
+    for (let i = 0, ii = c0.length; i < ii; ++i) {
+      diff.push(c1[i] - c0[i]);
+    }
+
+    const length = diff.length;
+    return function constructInterpolatedFn(src, srcOffset, dest, destOffset) {
+      const x = n === 1 ? src[srcOffset] : src[srcOffset] ** n;
+
+      for (let j = 0; j < length; ++j) {
+        dest[destOffset + j] = c0[j] + x * diff[j];
+      }
+    };
+  }
+
+  static constructStiched({
+    xref,
+    isEvalSupported,
+    dict
+  }) {
+    const domain = toNumberArray(dict.getArray("Domain"));
+
+    if (!domain) {
+      throw new _util.FormatError("No domain");
+    }
+
+    const inputSize = domain.length / 2;
+
+    if (inputSize !== 1) {
+      throw new _util.FormatError("Bad domain for stiched function");
+    }
+
+    const fnRefs = dict.get("Functions");
+    const fns = [];
+
+    for (let i = 0, ii = fnRefs.length; i < ii; ++i) {
+      fns.push(this.parse({
+        xref,
+        isEvalSupported,
+        fn: xref.fetchIfRef(fnRefs[i])
+      }));
+    }
+
+    const bounds = toNumberArray(dict.getArray("Bounds"));
+    const encode = toNumberArray(dict.getArray("Encode"));
+    const tmpBuf = new Float32Array(1);
+    return function constructStichedFn(src, srcOffset, dest, destOffset) {
+      const clip = function constructStichedFromIRClip(v, min, max) {
+        if (v > max) {
+          v = max;
+        } else if (v < min) {
+          v = min;
+        }
+
+        return v;
+      };
+
+      const v = clip(src[srcOffset], domain[0], domain[1]);
+      const length = bounds.length;
+      let i;
+
+      for (i = 0; i < length; ++i) {
+        if (v < bounds[i]) {
+          break;
+        }
+      }
+
+      let dmin = domain[0];
+
+      if (i > 0) {
+        dmin = bounds[i - 1];
+      }
+
+      let dmax = domain[1];
+
+      if (i < bounds.length) {
+        dmax = bounds[i];
+      }
+
+      const rmin = encode[2 * i];
+      const rmax = encode[2 * i + 1];
+      tmpBuf[0] = dmin === dmax ? rmin : rmin + (v - dmin) * (rmax - rmin) / (dmax - dmin);
+      fns[i](tmpBuf, 0, dest, destOffset);
+    };
+  }
+
+  static constructPostScript({
+    xref,
+    isEvalSupported,
+    fn,
+    dict
+  }) {
+    const domain = toNumberArray(dict.getArray("Domain"));
+    const range = toNumberArray(dict.getArray("Range"));
+
+    if (!domain) {
+      throw new _util.FormatError("No domain.");
+    }
+
+    if (!range) {
+      throw new _util.FormatError("No range.");
+    }
+
+    const lexer = new _ps_parser.PostScriptLexer(fn);
+    const parser = new _ps_parser.PostScriptParser(lexer);
+    const code = parser.parse();
+
+    if (isEvalSupported && _util.IsEvalSupportedCached.value) {
+      const compiled = new PostScriptCompiler().compile(code, domain, range);
+
+      if (compiled) {
+        return new Function("src", "srcOffset", "dest", "destOffset", compiled);
+      }
+    }
+
+    (0, _util.info)("Unable to compile PS function");
+    const numOutputs = range.length >> 1;
+    const numInputs = domain.length >> 1;
+    const evaluator = new PostScriptEvaluator(code);
+    const cache = Object.create(null);
+    const MAX_CACHE_SIZE = 2048 * 4;
+    let cache_available = MAX_CACHE_SIZE;
+    const tmpBuf = new Float32Array(numInputs);
+    return function constructPostScriptFn(src, srcOffset, dest, destOffset) {
+      let i, value;
+      let key = "";
+      const input = tmpBuf;
+
+      for (i = 0; i < numInputs; i++) {
+        value = src[srcOffset + i];
+        input[i] = value;
+        key += value + "_";
+      }
+
+      const cachedValue = cache[key];
+
+      if (cachedValue !== undefined) {
+        dest.set(cachedValue, destOffset);
+        return;
+      }
+
+      const output = new Float32Array(numOutputs);
+      const stack = evaluator.execute(input);
+      const stackIndex = stack.length - numOutputs;
+
+      for (i = 0; i < numOutputs; i++) {
+        value = stack[stackIndex + i];
+        let bound = range[i * 2];
+
+        if (value < bound) {
+          value = bound;
+        } else {
+          bound = range[i * 2 + 1];
+
+          if (value > bound) {
+            value = bound;
+          }
+        }
+
+        output[i] = value;
+      }
+
+      if (cache_available > 0) {
+        cache_available--;
+        cache[key] = output;
+      }
+
+      dest.set(output, destOffset);
+    };
+  }
+
+}
 
 function isPDFFunction(v) {
   let fnDict;
@@ -32696,75 +34284,73 @@ function isPDFFunction(v) {
   return fnDict.has("FunctionType");
 }
 
-const PostScriptStack = function PostScriptStackClosure() {
-  const MAX_STACK_SIZE = 100;
-
-  class PostScriptStack {
-    constructor(initialStack) {
-      this.stack = !initialStack ? [] : Array.prototype.slice.call(initialStack, 0);
-    }
-
-    push(value) {
-      if (this.stack.length >= MAX_STACK_SIZE) {
-        throw new Error("PostScript function stack overflow.");
-      }
-
-      this.stack.push(value);
-    }
-
-    pop() {
-      if (this.stack.length <= 0) {
-        throw new Error("PostScript function stack underflow.");
-      }
-
-      return this.stack.pop();
-    }
-
-    copy(n) {
-      if (this.stack.length + n >= MAX_STACK_SIZE) {
-        throw new Error("PostScript function stack overflow.");
-      }
-
-      const stack = this.stack;
-
-      for (let i = stack.length - n, j = n - 1; j >= 0; j--, i++) {
-        stack.push(stack[i]);
-      }
-    }
-
-    index(n) {
-      this.push(this.stack[this.stack.length - n - 1]);
-    }
-
-    roll(n, p) {
-      const stack = this.stack;
-      const l = stack.length - n;
-      const r = stack.length - 1;
-      const c = l + (p - Math.floor(p / n) * n);
-
-      for (let i = l, j = r; i < j; i++, j--) {
-        const t = stack[i];
-        stack[i] = stack[j];
-        stack[j] = t;
-      }
-
-      for (let i = l, j = c - 1; i < j; i++, j--) {
-        const t = stack[i];
-        stack[i] = stack[j];
-        stack[j] = t;
-      }
-
-      for (let i = c, j = r; i < j; i++, j--) {
-        const t = stack[i];
-        stack[i] = stack[j];
-        stack[j] = t;
-      }
-    }
-
+class PostScriptStack {
+  static get MAX_STACK_SIZE() {
+    return (0, _util.shadow)(this, "MAX_STACK_SIZE", 100);
   }
 
-  return PostScriptStack;
-}();
+  constructor(initialStack) {
+    this.stack = !initialStack ? [] : Array.prototype.slice.call(initialStack, 0);
+  }
+
+  push(value) {
+    if (this.stack.length >= PostScriptStack.MAX_STACK_SIZE) {
+      throw new Error("PostScript function stack overflow.");
+    }
+
+    this.stack.push(value);
+  }
+
+  pop() {
+    if (this.stack.length <= 0) {
+      throw new Error("PostScript function stack underflow.");
+    }
+
+    return this.stack.pop();
+  }
+
+  copy(n) {
+    if (this.stack.length + n >= PostScriptStack.MAX_STACK_SIZE) {
+      throw new Error("PostScript function stack overflow.");
+    }
+
+    const stack = this.stack;
+
+    for (let i = stack.length - n, j = n - 1; j >= 0; j--, i++) {
+      stack.push(stack[i]);
+    }
+  }
+
+  index(n) {
+    this.push(this.stack[this.stack.length - n - 1]);
+  }
+
+  roll(n, p) {
+    const stack = this.stack;
+    const l = stack.length - n;
+    const r = stack.length - 1;
+    const c = l + (p - Math.floor(p / n) * n);
+
+    for (let i = l, j = r; i < j; i++, j--) {
+      const t = stack[i];
+      stack[i] = stack[j];
+      stack[j] = t;
+    }
+
+    for (let i = l, j = c - 1; i < j; i++, j--) {
+      const t = stack[i];
+      stack[i] = stack[j];
+      stack[j] = t;
+    }
+
+    for (let i = c, j = r; i < j; i++, j--) {
+      const t = stack[i];
+      stack[i] = stack[j];
+      stack[j] = t;
+    }
+  }
+
+}
 
 class PostScriptEvaluator {
   constructor(operators) {
@@ -33476,7 +35062,7 @@ const PostScriptCompiler = function PostScriptCompilerClosure() {
 exports.PostScriptCompiler = PostScriptCompiler;
 
 /***/ }),
-/* 50 */
+/* 57 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -33581,45 +35167,43 @@ const PostScriptTokenTypes = {
   IFELSE: 5
 };
 
-const PostScriptToken = function PostScriptTokenClosure() {
-  const opCache = Object.create(null);
-
-  class PostScriptToken {
-    constructor(type, value) {
-      this.type = type;
-      this.value = value;
-    }
-
-    static getOperator(op) {
-      const opValue = opCache[op];
-
-      if (opValue) {
-        return opValue;
-      }
-
-      return opCache[op] = new PostScriptToken(PostScriptTokenTypes.OPERATOR, op);
-    }
-
-    static get LBRACE() {
-      return (0, _util.shadow)(this, "LBRACE", new PostScriptToken(PostScriptTokenTypes.LBRACE, "{"));
-    }
-
-    static get RBRACE() {
-      return (0, _util.shadow)(this, "RBRACE", new PostScriptToken(PostScriptTokenTypes.RBRACE, "}"));
-    }
-
-    static get IF() {
-      return (0, _util.shadow)(this, "IF", new PostScriptToken(PostScriptTokenTypes.IF, "IF"));
-    }
-
-    static get IFELSE() {
-      return (0, _util.shadow)(this, "IFELSE", new PostScriptToken(PostScriptTokenTypes.IFELSE, "IFELSE"));
-    }
-
+class PostScriptToken {
+  static get opCache() {
+    return (0, _util.shadow)(this, "opCache", Object.create(null));
   }
 
-  return PostScriptToken;
-}();
+  constructor(type, value) {
+    this.type = type;
+    this.value = value;
+  }
+
+  static getOperator(op) {
+    const opValue = PostScriptToken.opCache[op];
+
+    if (opValue) {
+      return opValue;
+    }
+
+    return PostScriptToken.opCache[op] = new PostScriptToken(PostScriptTokenTypes.OPERATOR, op);
+  }
+
+  static get LBRACE() {
+    return (0, _util.shadow)(this, "LBRACE", new PostScriptToken(PostScriptTokenTypes.LBRACE, "{"));
+  }
+
+  static get RBRACE() {
+    return (0, _util.shadow)(this, "RBRACE", new PostScriptToken(PostScriptTokenTypes.RBRACE, "}"));
+  }
+
+  static get IF() {
+    return (0, _util.shadow)(this, "IF", new PostScriptToken(PostScriptTokenTypes.IF, "IF"));
+  }
+
+  static get IFELSE() {
+    return (0, _util.shadow)(this, "IFELSE", new PostScriptToken(PostScriptTokenTypes.IFELSE, "IFELSE"));
+  }
+
+}
 
 class PostScriptLexer {
   constructor(stream) {
@@ -33729,7 +35313,7 @@ class PostScriptLexer {
 exports.PostScriptLexer = PostScriptLexer;
 
 /***/ }),
-/* 51 */
+/* 58 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -33779,7 +35363,7 @@ class BaseLocalCache {
 
 class LocalImageCache extends BaseLocalCache {
   set(name, ref = null, data) {
-    if (!name) {
+    if (typeof name !== "string") {
       throw new Error('LocalImageCache.set - expected "name" argument.');
     }
 
@@ -33808,7 +35392,7 @@ exports.LocalImageCache = LocalImageCache;
 
 class LocalColorSpaceCache extends BaseLocalCache {
   set(name = null, ref = null, data) {
-    if (!name && !ref) {
+    if (typeof name !== "string" && !ref) {
       throw new Error('LocalColorSpaceCache.set - expected "name" and/or "ref" argument.');
     }
 
@@ -33817,7 +35401,7 @@ class LocalColorSpaceCache extends BaseLocalCache {
         return;
       }
 
-      if (name) {
+      if (name !== null) {
         this._nameRefMap.set(name, ref);
       }
 
@@ -33866,7 +35450,7 @@ exports.LocalFunctionCache = LocalFunctionCache;
 
 class LocalGStateCache extends BaseLocalCache {
   set(name, ref = null, data) {
-    if (!name) {
+    if (typeof name !== "string") {
       throw new Error('LocalGStateCache.set - expected "name" argument.');
     }
 
@@ -33895,7 +35479,7 @@ exports.LocalGStateCache = LocalGStateCache;
 
 class LocalTilingPatternCache extends BaseLocalCache {
   set(name, ref = null, data) {
-    if (!name) {
+    if (typeof name !== "string") {
       throw new Error('LocalTilingPatternCache.set - expected "name" argument.');
     }
 
@@ -34055,7 +35639,7 @@ class GlobalImageCache {
 exports.GlobalImageCache = GlobalImageCache;
 
 /***/ }),
-/* 52 */
+/* 59 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -34067,8 +35651,8 @@ exports.bidi = bidi;
 
 var _util = __w_pdfjs_require__(2);
 
-var baseTypes = ["BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "S", "B", "S", "WS", "B", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "B", "B", "B", "S", "WS", "ON", "ON", "ET", "ET", "ET", "ON", "ON", "ON", "ON", "ON", "ES", "CS", "ES", "CS", "CS", "EN", "EN", "EN", "EN", "EN", "EN", "EN", "EN", "EN", "EN", "CS", "ON", "ON", "ON", "ON", "ON", "ON", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "ON", "ON", "ON", "ON", "ON", "ON", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "ON", "ON", "ON", "ON", "BN", "BN", "BN", "BN", "BN", "BN", "B", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "CS", "ON", "ET", "ET", "ET", "ET", "ON", "ON", "ON", "ON", "L", "ON", "ON", "BN", "ON", "ON", "ET", "ET", "EN", "EN", "ON", "L", "ON", "ON", "ON", "EN", "L", "ON", "ON", "ON", "ON", "ON", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "ON", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "ON", "L", "L", "L", "L", "L", "L", "L", "L"];
-var arabicTypes = ["AN", "AN", "AN", "AN", "AN", "AN", "ON", "ON", "AL", "ET", "ET", "AL", "CS", "AL", "ON", "ON", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "AL", "AL", "", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "AN", "AN", "AN", "AN", "AN", "AN", "AN", "AN", "AN", "AN", "ET", "AN", "AN", "AL", "AL", "AL", "NSM", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "AN", "ON", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "AL", "AL", "NSM", "NSM", "ON", "NSM", "NSM", "NSM", "NSM", "AL", "AL", "EN", "EN", "EN", "EN", "EN", "EN", "EN", "EN", "EN", "EN", "AL", "AL", "AL", "AL", "AL", "AL"];
+const baseTypes = ["BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "S", "B", "S", "WS", "B", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "B", "B", "B", "S", "WS", "ON", "ON", "ET", "ET", "ET", "ON", "ON", "ON", "ON", "ON", "ES", "CS", "ES", "CS", "CS", "EN", "EN", "EN", "EN", "EN", "EN", "EN", "EN", "EN", "EN", "CS", "ON", "ON", "ON", "ON", "ON", "ON", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "ON", "ON", "ON", "ON", "ON", "ON", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "ON", "ON", "ON", "ON", "BN", "BN", "BN", "BN", "BN", "BN", "B", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "BN", "CS", "ON", "ET", "ET", "ET", "ET", "ON", "ON", "ON", "ON", "L", "ON", "ON", "BN", "ON", "ON", "ET", "ET", "EN", "EN", "ON", "L", "ON", "ON", "ON", "EN", "L", "ON", "ON", "ON", "ON", "ON", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "ON", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "L", "ON", "L", "L", "L", "L", "L", "L", "L", "L"];
+const arabicTypes = ["AN", "AN", "AN", "AN", "AN", "AN", "ON", "ON", "AL", "ET", "ET", "AL", "CS", "AL", "ON", "ON", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "AL", "AL", "", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "AN", "AN", "AN", "AN", "AN", "AN", "AN", "AN", "AN", "AN", "ET", "AN", "AN", "AL", "AL", "AL", "NSM", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "AL", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "AN", "ON", "NSM", "NSM", "NSM", "NSM", "NSM", "NSM", "AL", "AL", "NSM", "NSM", "ON", "NSM", "NSM", "NSM", "NSM", "AL", "AL", "EN", "EN", "EN", "EN", "EN", "EN", "EN", "EN", "EN", "EN", "AL", "AL", "AL", "AL", "AL", "AL"];
 
 function isOdd(i) {
   return (i & 1) !== 0;
@@ -34079,7 +35663,9 @@ function isEven(i) {
 }
 
 function findUnequal(arr, start, value) {
-  for (var j = start, jj = arr.length; j < jj; ++j) {
+  let j, jj;
+
+  for (j = start, jj = arr.length; j < jj; ++j) {
     if (arr[j] !== value) {
       return j;
     }
@@ -34089,14 +35675,14 @@ function findUnequal(arr, start, value) {
 }
 
 function setValues(arr, start, end, value) {
-  for (var j = start; j < end; ++j) {
+  for (let j = start; j < end; ++j) {
     arr[j] = value;
   }
 }
 
 function reverseValues(arr, start, end) {
-  for (var i = start, j = end - 1; i < j; ++i, --j) {
-    var temp = arr[i];
+  for (let i = start, j = end - 1; i < j; ++i, --j) {
+    const temp = arr[i];
     arr[i] = arr[j];
     arr[j] = temp;
   }
@@ -34117,12 +35703,12 @@ function createBidiText(str, isLTR, vertical = false) {
   };
 }
 
-var chars = [];
-var types = [];
+const chars = [];
+const types = [];
 
 function bidi(str, startLevel, vertical) {
-  var isLTR = true;
-  var strLength = str.length;
+  let isLTR = true;
+  const strLength = str.length;
 
   if (strLength === 0 || vertical) {
     return createBidiText(str, isLTR, vertical);
@@ -34130,13 +35716,13 @@ function bidi(str, startLevel, vertical) {
 
   chars.length = strLength;
   types.length = strLength;
-  var numBidi = 0;
-  var i, ii;
+  let numBidi = 0;
+  let i, ii;
 
   for (i = 0; i < strLength; ++i) {
     chars[i] = str.charAt(i);
-    var charCode = str.charCodeAt(i);
-    var charType = "L";
+    const charCode = str.charCodeAt(i);
+    let charType = "L";
 
     if (charCode <= 0x00ff) {
       charType = baseTypes[charCode];
@@ -34174,16 +35760,16 @@ function bidi(str, startLevel, vertical) {
     }
   }
 
-  var levels = [];
+  const levels = [];
 
   for (i = 0; i < strLength; ++i) {
     levels[i] = startLevel;
   }
 
-  var e = isOdd(startLevel) ? "R" : "L";
-  var sor = e;
-  var eor = sor;
-  var lastType = sor;
+  const e = isOdd(startLevel) ? "R" : "L";
+  const sor = e;
+  const eor = sor;
+  let lastType = sor;
 
   for (i = 0; i < strLength; ++i) {
     if (types[i] === "NSM") {
@@ -34194,7 +35780,7 @@ function bidi(str, startLevel, vertical) {
   }
 
   lastType = sor;
-  var t;
+  let t;
 
   for (i = 0; i < strLength; ++i) {
     t = types[i];
@@ -34226,9 +35812,7 @@ function bidi(str, startLevel, vertical) {
 
   for (i = 0; i < strLength; ++i) {
     if (types[i] === "EN") {
-      var j;
-
-      for (j = i - 1; j >= 0; --j) {
+      for (let j = i - 1; j >= 0; --j) {
         if (types[j] !== "ET") {
           break;
         }
@@ -34236,7 +35820,7 @@ function bidi(str, startLevel, vertical) {
         types[j] = "EN";
       }
 
-      for (j = i + 1; j < strLength; ++j) {
+      for (let j = i + 1; j < strLength; ++j) {
         if (types[j] !== "ET") {
           break;
         }
@@ -34268,14 +35852,14 @@ function bidi(str, startLevel, vertical) {
 
   for (i = 0; i < strLength; ++i) {
     if (types[i] === "ON") {
-      var end = findUnequal(types, i + 1, "ON");
-      var before = sor;
+      const end = findUnequal(types, i + 1, "ON");
+      let before = sor;
 
       if (i > 0) {
         before = types[i - 1];
       }
 
-      var after = eor;
+      let after = eor;
 
       if (end + 1 < strLength) {
         after = types[end + 1];
@@ -34319,9 +35903,9 @@ function bidi(str, startLevel, vertical) {
     }
   }
 
-  var highestLevel = -1;
-  var lowestOddLevel = 99;
-  var level;
+  let highestLevel = -1;
+  let lowestOddLevel = 99;
+  let level;
 
   for (i = 0, ii = levels.length; i < ii; ++i) {
     level = levels[i];
@@ -34336,7 +35920,7 @@ function bidi(str, startLevel, vertical) {
   }
 
   for (level = highestLevel; level >= lowestOddLevel; --level) {
-    var start = -1;
+    let start = -1;
 
     for (i = 0, ii = levels.length; i < ii; ++i) {
       if (levels[i] < level) {
@@ -34355,7 +35939,7 @@ function bidi(str, startLevel, vertical) {
   }
 
   for (i = 0, ii = chars.length; i < ii; ++i) {
-    var ch = chars[i];
+    const ch = chars[i];
 
     if (ch === "<" || ch === ">") {
       chars[i] = "";
@@ -34366,7 +35950,7 @@ function bidi(str, startLevel, vertical) {
 }
 
 /***/ }),
-/* 53 */
+/* 60 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -37319,7 +38903,7 @@ const getMetrics = (0, _core_utils.getLookupTableFactory)(function (t) {
 exports.getMetrics = getMetrics;
 
 /***/ }),
-/* 54 */
+/* 61 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -37444,7 +39028,7 @@ class MurmurHash3_64 {
 exports.MurmurHash3_64 = MurmurHash3_64;
 
 /***/ }),
-/* 55 */
+/* 62 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -37456,403 +39040,423 @@ exports.OperatorList = void 0;
 
 var _util = __w_pdfjs_require__(2);
 
-const QueueOptimizer = function QueueOptimizerClosure() {
-  function addState(parentState, pattern, checkFn, iterateFn, processFn) {
-    let state = parentState;
+function addState(parentState, pattern, checkFn, iterateFn, processFn) {
+  let state = parentState;
 
-    for (let i = 0, ii = pattern.length - 1; i < ii; i++) {
-      const item = pattern[i];
-      state = state[item] || (state[item] = []);
-    }
-
-    state[pattern[pattern.length - 1]] = {
-      checkFn,
-      iterateFn,
-      processFn
-    };
+  for (let i = 0, ii = pattern.length - 1; i < ii; i++) {
+    const item = pattern[i];
+    state = state[item] || (state[item] = []);
   }
 
-  function handlePaintSolidColorImageMask(iFirstSave, count, fnArray, argsArray) {
-    const iFirstPIMXO = iFirstSave + 2;
-    let i;
+  state[pattern[pattern.length - 1]] = {
+    checkFn,
+    iterateFn,
+    processFn
+  };
+}
 
-    for (i = 0; i < count; i++) {
-      const arg = argsArray[iFirstPIMXO + 4 * i];
-      const imageMask = arg.length === 1 && arg[0];
+function handlePaintSolidColorImageMask(iFirstSave, count, fnArray, argsArray) {
+  const iFirstPIMXO = iFirstSave + 2;
+  let i;
 
-      if (imageMask && imageMask.width === 1 && imageMask.height === 1 && (!imageMask.data.length || imageMask.data.length === 1 && imageMask.data[0] === 0)) {
-        fnArray[iFirstPIMXO + 4 * i] = _util.OPS.paintSolidColorImageMask;
-        continue;
-      }
+  for (i = 0; i < count; i++) {
+    const arg = argsArray[iFirstPIMXO + 4 * i];
+    const imageMask = arg.length === 1 && arg[0];
 
-      break;
+    if (imageMask && imageMask.width === 1 && imageMask.height === 1 && (!imageMask.data.length || imageMask.data.length === 1 && imageMask.data[0] === 0)) {
+      fnArray[iFirstPIMXO + 4 * i] = _util.OPS.paintSolidColorImageMask;
+      continue;
     }
 
-    return count - i;
+    break;
   }
 
-  const InitialState = [];
-  addState(InitialState, [_util.OPS.save, _util.OPS.transform, _util.OPS.paintInlineImageXObject, _util.OPS.restore], null, function iterateInlineImageGroup(context, i) {
-    const fnArray = context.fnArray;
-    const iFirstSave = context.iCurr - 3;
-    const pos = (i - iFirstSave) % 4;
+  return count - i;
+}
 
-    switch (pos) {
-      case 0:
-        return fnArray[i] === _util.OPS.save;
+const InitialState = [];
+addState(InitialState, [_util.OPS.save, _util.OPS.transform, _util.OPS.paintInlineImageXObject, _util.OPS.restore], null, function iterateInlineImageGroup(context, i) {
+  const fnArray = context.fnArray;
+  const iFirstSave = context.iCurr - 3;
+  const pos = (i - iFirstSave) % 4;
 
-      case 1:
-        return fnArray[i] === _util.OPS.transform;
+  switch (pos) {
+    case 0:
+      return fnArray[i] === _util.OPS.save;
 
-      case 2:
-        return fnArray[i] === _util.OPS.paintInlineImageXObject;
+    case 1:
+      return fnArray[i] === _util.OPS.transform;
 
-      case 3:
-        return fnArray[i] === _util.OPS.restore;
+    case 2:
+      return fnArray[i] === _util.OPS.paintInlineImageXObject;
+
+    case 3:
+      return fnArray[i] === _util.OPS.restore;
+  }
+
+  throw new Error(`iterateInlineImageGroup - invalid pos: ${pos}`);
+}, function foundInlineImageGroup(context, i) {
+  const MIN_IMAGES_IN_INLINE_IMAGES_BLOCK = 10;
+  const MAX_IMAGES_IN_INLINE_IMAGES_BLOCK = 200;
+  const MAX_WIDTH = 1000;
+  const IMAGE_PADDING = 1;
+  const fnArray = context.fnArray,
+        argsArray = context.argsArray;
+  const curr = context.iCurr;
+  const iFirstSave = curr - 3;
+  const iFirstTransform = curr - 2;
+  const iFirstPIIXO = curr - 1;
+  const count = Math.min(Math.floor((i - iFirstSave) / 4), MAX_IMAGES_IN_INLINE_IMAGES_BLOCK);
+
+  if (count < MIN_IMAGES_IN_INLINE_IMAGES_BLOCK) {
+    return i - (i - iFirstSave) % 4;
+  }
+
+  let maxX = 0;
+  const map = [];
+  let maxLineHeight = 0;
+  let currentX = IMAGE_PADDING,
+      currentY = IMAGE_PADDING;
+
+  for (let q = 0; q < count; q++) {
+    const transform = argsArray[iFirstTransform + (q << 2)];
+    const img = argsArray[iFirstPIIXO + (q << 2)][0];
+
+    if (currentX + img.width > MAX_WIDTH) {
+      maxX = Math.max(maxX, currentX);
+      currentY += maxLineHeight + 2 * IMAGE_PADDING;
+      currentX = 0;
+      maxLineHeight = 0;
     }
 
-    throw new Error(`iterateInlineImageGroup - invalid pos: ${pos}`);
-  }, function foundInlineImageGroup(context, i) {
-    const MIN_IMAGES_IN_INLINE_IMAGES_BLOCK = 10;
-    const MAX_IMAGES_IN_INLINE_IMAGES_BLOCK = 200;
-    const MAX_WIDTH = 1000;
-    const IMAGE_PADDING = 1;
-    const fnArray = context.fnArray,
-          argsArray = context.argsArray;
-    const curr = context.iCurr;
-    const iFirstSave = curr - 3;
-    const iFirstTransform = curr - 2;
-    const iFirstPIIXO = curr - 1;
-    const count = Math.min(Math.floor((i - iFirstSave) / 4), MAX_IMAGES_IN_INLINE_IMAGES_BLOCK);
+    map.push({
+      transform,
+      x: currentX,
+      y: currentY,
+      w: img.width,
+      h: img.height
+    });
+    currentX += img.width + 2 * IMAGE_PADDING;
+    maxLineHeight = Math.max(maxLineHeight, img.height);
+  }
 
-    if (count < MIN_IMAGES_IN_INLINE_IMAGES_BLOCK) {
-      return i - (i - iFirstSave) % 4;
+  const imgWidth = Math.max(maxX, currentX) + IMAGE_PADDING;
+  const imgHeight = currentY + maxLineHeight + IMAGE_PADDING;
+  const imgData = new Uint8ClampedArray(imgWidth * imgHeight * 4);
+  const imgRowSize = imgWidth << 2;
+
+  for (let q = 0; q < count; q++) {
+    const data = argsArray[iFirstPIIXO + (q << 2)][0].data;
+    const rowSize = map[q].w << 2;
+    let dataOffset = 0;
+    let offset = map[q].x + map[q].y * imgWidth << 2;
+    imgData.set(data.subarray(0, rowSize), offset - imgRowSize);
+
+    for (let k = 0, kk = map[q].h; k < kk; k++) {
+      imgData.set(data.subarray(dataOffset, dataOffset + rowSize), offset);
+      dataOffset += rowSize;
+      offset += imgRowSize;
     }
 
-    let maxX = 0;
-    const map = [];
-    let maxLineHeight = 0;
-    let currentX = IMAGE_PADDING,
-        currentY = IMAGE_PADDING;
+    imgData.set(data.subarray(dataOffset - rowSize, dataOffset), offset);
 
-    for (let q = 0; q < count; q++) {
-      const transform = argsArray[iFirstTransform + (q << 2)];
-      const img = argsArray[iFirstPIIXO + (q << 2)][0];
-
-      if (currentX + img.width > MAX_WIDTH) {
-        maxX = Math.max(maxX, currentX);
-        currentY += maxLineHeight + 2 * IMAGE_PADDING;
-        currentX = 0;
-        maxLineHeight = 0;
-      }
-
-      map.push({
-        transform,
-        x: currentX,
-        y: currentY,
-        w: img.width,
-        h: img.height
-      });
-      currentX += img.width + 2 * IMAGE_PADDING;
-      maxLineHeight = Math.max(maxLineHeight, img.height);
+    while (offset >= 0) {
+      data[offset - 4] = data[offset];
+      data[offset - 3] = data[offset + 1];
+      data[offset - 2] = data[offset + 2];
+      data[offset - 1] = data[offset + 3];
+      data[offset + rowSize] = data[offset + rowSize - 4];
+      data[offset + rowSize + 1] = data[offset + rowSize - 3];
+      data[offset + rowSize + 2] = data[offset + rowSize - 2];
+      data[offset + rowSize + 3] = data[offset + rowSize - 1];
+      offset -= imgRowSize;
     }
+  }
 
-    const imgWidth = Math.max(maxX, currentX) + IMAGE_PADDING;
-    const imgHeight = currentY + maxLineHeight + IMAGE_PADDING;
-    const imgData = new Uint8ClampedArray(imgWidth * imgHeight * 4);
-    const imgRowSize = imgWidth << 2;
+  fnArray.splice(iFirstSave, count * 4, _util.OPS.paintInlineImageXObjectGroup);
+  argsArray.splice(iFirstSave, count * 4, [{
+    width: imgWidth,
+    height: imgHeight,
+    kind: _util.ImageKind.RGBA_32BPP,
+    data: imgData
+  }, map]);
+  return iFirstSave + 1;
+});
+addState(InitialState, [_util.OPS.save, _util.OPS.transform, _util.OPS.paintImageMaskXObject, _util.OPS.restore], null, function iterateImageMaskGroup(context, i) {
+  const fnArray = context.fnArray;
+  const iFirstSave = context.iCurr - 3;
+  const pos = (i - iFirstSave) % 4;
 
-    for (let q = 0; q < count; q++) {
-      const data = argsArray[iFirstPIIXO + (q << 2)][0].data;
-      const rowSize = map[q].w << 2;
-      let dataOffset = 0;
-      let offset = map[q].x + map[q].y * imgWidth << 2;
-      imgData.set(data.subarray(0, rowSize), offset - imgRowSize);
+  switch (pos) {
+    case 0:
+      return fnArray[i] === _util.OPS.save;
 
-      for (let k = 0, kk = map[q].h; k < kk; k++) {
-        imgData.set(data.subarray(dataOffset, dataOffset + rowSize), offset);
-        dataOffset += rowSize;
-        offset += imgRowSize;
-      }
+    case 1:
+      return fnArray[i] === _util.OPS.transform;
 
-      imgData.set(data.subarray(dataOffset - rowSize, dataOffset), offset);
+    case 2:
+      return fnArray[i] === _util.OPS.paintImageMaskXObject;
 
-      while (offset >= 0) {
-        data[offset - 4] = data[offset];
-        data[offset - 3] = data[offset + 1];
-        data[offset - 2] = data[offset + 2];
-        data[offset - 1] = data[offset + 3];
-        data[offset + rowSize] = data[offset + rowSize - 4];
-        data[offset + rowSize + 1] = data[offset + rowSize - 3];
-        data[offset + rowSize + 2] = data[offset + rowSize - 2];
-        data[offset + rowSize + 3] = data[offset + rowSize - 1];
-        offset -= imgRowSize;
-      }
-    }
+    case 3:
+      return fnArray[i] === _util.OPS.restore;
+  }
 
-    fnArray.splice(iFirstSave, count * 4, _util.OPS.paintInlineImageXObjectGroup);
-    argsArray.splice(iFirstSave, count * 4, [{
-      width: imgWidth,
-      height: imgHeight,
-      kind: _util.ImageKind.RGBA_32BPP,
-      data: imgData
-    }, map]);
-    return iFirstSave + 1;
-  });
-  addState(InitialState, [_util.OPS.save, _util.OPS.transform, _util.OPS.paintImageMaskXObject, _util.OPS.restore], null, function iterateImageMaskGroup(context, i) {
-    const fnArray = context.fnArray;
-    const iFirstSave = context.iCurr - 3;
-    const pos = (i - iFirstSave) % 4;
+  throw new Error(`iterateImageMaskGroup - invalid pos: ${pos}`);
+}, function foundImageMaskGroup(context, i) {
+  const MIN_IMAGES_IN_MASKS_BLOCK = 10;
+  const MAX_IMAGES_IN_MASKS_BLOCK = 100;
+  const MAX_SAME_IMAGES_IN_MASKS_BLOCK = 1000;
+  const fnArray = context.fnArray,
+        argsArray = context.argsArray;
+  const curr = context.iCurr;
+  const iFirstSave = curr - 3;
+  const iFirstTransform = curr - 2;
+  const iFirstPIMXO = curr - 1;
+  let count = Math.floor((i - iFirstSave) / 4);
+  count = handlePaintSolidColorImageMask(iFirstSave, count, fnArray, argsArray);
 
-    switch (pos) {
-      case 0:
-        return fnArray[i] === _util.OPS.save;
+  if (count < MIN_IMAGES_IN_MASKS_BLOCK) {
+    return i - (i - iFirstSave) % 4;
+  }
 
-      case 1:
-        return fnArray[i] === _util.OPS.transform;
+  let isSameImage = false;
+  let iTransform, transformArgs;
+  const firstPIMXOArg0 = argsArray[iFirstPIMXO][0];
+  const firstTransformArg0 = argsArray[iFirstTransform][0],
+        firstTransformArg1 = argsArray[iFirstTransform][1],
+        firstTransformArg2 = argsArray[iFirstTransform][2],
+        firstTransformArg3 = argsArray[iFirstTransform][3];
 
-      case 2:
-        return fnArray[i] === _util.OPS.paintImageMaskXObject;
+  if (firstTransformArg1 === firstTransformArg2) {
+    isSameImage = true;
+    iTransform = iFirstTransform + 4;
+    let iPIMXO = iFirstPIMXO + 4;
 
-      case 3:
-        return fnArray[i] === _util.OPS.restore;
-    }
+    for (let q = 1; q < count; q++, iTransform += 4, iPIMXO += 4) {
+      transformArgs = argsArray[iTransform];
 
-    throw new Error(`iterateImageMaskGroup - invalid pos: ${pos}`);
-  }, function foundImageMaskGroup(context, i) {
-    const MIN_IMAGES_IN_MASKS_BLOCK = 10;
-    const MAX_IMAGES_IN_MASKS_BLOCK = 100;
-    const MAX_SAME_IMAGES_IN_MASKS_BLOCK = 1000;
-    const fnArray = context.fnArray,
-          argsArray = context.argsArray;
-    const curr = context.iCurr;
-    const iFirstSave = curr - 3;
-    const iFirstTransform = curr - 2;
-    const iFirstPIMXO = curr - 1;
-    let count = Math.floor((i - iFirstSave) / 4);
-    count = handlePaintSolidColorImageMask(iFirstSave, count, fnArray, argsArray);
-
-    if (count < MIN_IMAGES_IN_MASKS_BLOCK) {
-      return i - (i - iFirstSave) % 4;
-    }
-
-    let isSameImage = false;
-    let iTransform, transformArgs;
-    const firstPIMXOArg0 = argsArray[iFirstPIMXO][0];
-    const firstTransformArg0 = argsArray[iFirstTransform][0],
-          firstTransformArg1 = argsArray[iFirstTransform][1],
-          firstTransformArg2 = argsArray[iFirstTransform][2],
-          firstTransformArg3 = argsArray[iFirstTransform][3];
-
-    if (firstTransformArg1 === firstTransformArg2) {
-      isSameImage = true;
-      iTransform = iFirstTransform + 4;
-      let iPIMXO = iFirstPIMXO + 4;
-
-      for (let q = 1; q < count; q++, iTransform += 4, iPIMXO += 4) {
-        transformArgs = argsArray[iTransform];
-
-        if (argsArray[iPIMXO][0] !== firstPIMXOArg0 || transformArgs[0] !== firstTransformArg0 || transformArgs[1] !== firstTransformArg1 || transformArgs[2] !== firstTransformArg2 || transformArgs[3] !== firstTransformArg3) {
-          if (q < MIN_IMAGES_IN_MASKS_BLOCK) {
-            isSameImage = false;
-          } else {
-            count = q;
-          }
-
-          break;
-        }
-      }
-    }
-
-    if (isSameImage) {
-      count = Math.min(count, MAX_SAME_IMAGES_IN_MASKS_BLOCK);
-      const positions = new Float32Array(count * 2);
-      iTransform = iFirstTransform;
-
-      for (let q = 0; q < count; q++, iTransform += 4) {
-        transformArgs = argsArray[iTransform];
-        positions[q << 1] = transformArgs[4];
-        positions[(q << 1) + 1] = transformArgs[5];
-      }
-
-      fnArray.splice(iFirstSave, count * 4, _util.OPS.paintImageMaskXObjectRepeat);
-      argsArray.splice(iFirstSave, count * 4, [firstPIMXOArg0, firstTransformArg0, firstTransformArg1, firstTransformArg2, firstTransformArg3, positions]);
-    } else {
-      count = Math.min(count, MAX_IMAGES_IN_MASKS_BLOCK);
-      const images = [];
-
-      for (let q = 0; q < count; q++) {
-        transformArgs = argsArray[iFirstTransform + (q << 2)];
-        const maskParams = argsArray[iFirstPIMXO + (q << 2)][0];
-        images.push({
-          data: maskParams.data,
-          width: maskParams.width,
-          height: maskParams.height,
-          transform: transformArgs
-        });
-      }
-
-      fnArray.splice(iFirstSave, count * 4, _util.OPS.paintImageMaskXObjectGroup);
-      argsArray.splice(iFirstSave, count * 4, [images]);
-    }
-
-    return iFirstSave + 1;
-  });
-  addState(InitialState, [_util.OPS.save, _util.OPS.transform, _util.OPS.paintImageXObject, _util.OPS.restore], function (context) {
-    const argsArray = context.argsArray;
-    const iFirstTransform = context.iCurr - 2;
-    return argsArray[iFirstTransform][1] === 0 && argsArray[iFirstTransform][2] === 0;
-  }, function iterateImageGroup(context, i) {
-    const fnArray = context.fnArray,
-          argsArray = context.argsArray;
-    const iFirstSave = context.iCurr - 3;
-    const pos = (i - iFirstSave) % 4;
-
-    switch (pos) {
-      case 0:
-        return fnArray[i] === _util.OPS.save;
-
-      case 1:
-        if (fnArray[i] !== _util.OPS.transform) {
-          return false;
+      if (argsArray[iPIMXO][0] !== firstPIMXOArg0 || transformArgs[0] !== firstTransformArg0 || transformArgs[1] !== firstTransformArg1 || transformArgs[2] !== firstTransformArg2 || transformArgs[3] !== firstTransformArg3) {
+        if (q < MIN_IMAGES_IN_MASKS_BLOCK) {
+          isSameImage = false;
+        } else {
+          count = q;
         }
 
-        const iFirstTransform = context.iCurr - 2;
-        const firstTransformArg0 = argsArray[iFirstTransform][0];
-        const firstTransformArg3 = argsArray[iFirstTransform][3];
-
-        if (argsArray[i][0] !== firstTransformArg0 || argsArray[i][1] !== 0 || argsArray[i][2] !== 0 || argsArray[i][3] !== firstTransformArg3) {
-          return false;
-        }
-
-        return true;
-
-      case 2:
-        if (fnArray[i] !== _util.OPS.paintImageXObject) {
-          return false;
-        }
-
-        const iFirstPIXO = context.iCurr - 1;
-        const firstPIXOArg0 = argsArray[iFirstPIXO][0];
-
-        if (argsArray[i][0] !== firstPIXOArg0) {
-          return false;
-        }
-
-        return true;
-
-      case 3:
-        return fnArray[i] === _util.OPS.restore;
+        break;
+      }
     }
+  }
 
-    throw new Error(`iterateImageGroup - invalid pos: ${pos}`);
-  }, function (context, i) {
-    const MIN_IMAGES_IN_BLOCK = 3;
-    const MAX_IMAGES_IN_BLOCK = 1000;
-    const fnArray = context.fnArray,
-          argsArray = context.argsArray;
-    const curr = context.iCurr;
-    const iFirstSave = curr - 3;
-    const iFirstTransform = curr - 2;
-    const iFirstPIXO = curr - 1;
-    const firstPIXOArg0 = argsArray[iFirstPIXO][0];
-    const firstTransformArg0 = argsArray[iFirstTransform][0];
-    const firstTransformArg3 = argsArray[iFirstTransform][3];
-    const count = Math.min(Math.floor((i - iFirstSave) / 4), MAX_IMAGES_IN_BLOCK);
-
-    if (count < MIN_IMAGES_IN_BLOCK) {
-      return i - (i - iFirstSave) % 4;
-    }
-
+  if (isSameImage) {
+    count = Math.min(count, MAX_SAME_IMAGES_IN_MASKS_BLOCK);
     const positions = new Float32Array(count * 2);
-    let iTransform = iFirstTransform;
+    iTransform = iFirstTransform;
 
     for (let q = 0; q < count; q++, iTransform += 4) {
-      const transformArgs = argsArray[iTransform];
+      transformArgs = argsArray[iTransform];
       positions[q << 1] = transformArgs[4];
       positions[(q << 1) + 1] = transformArgs[5];
     }
 
-    const args = [firstPIXOArg0, firstTransformArg0, firstTransformArg3, positions];
-    fnArray.splice(iFirstSave, count * 4, _util.OPS.paintImageXObjectRepeat);
-    argsArray.splice(iFirstSave, count * 4, args);
-    return iFirstSave + 1;
-  });
-  addState(InitialState, [_util.OPS.beginText, _util.OPS.setFont, _util.OPS.setTextMatrix, _util.OPS.showText, _util.OPS.endText], null, function iterateShowTextGroup(context, i) {
-    const fnArray = context.fnArray,
-          argsArray = context.argsArray;
-    const iFirstSave = context.iCurr - 4;
-    const pos = (i - iFirstSave) % 5;
+    fnArray.splice(iFirstSave, count * 4, _util.OPS.paintImageMaskXObjectRepeat);
+    argsArray.splice(iFirstSave, count * 4, [firstPIMXOArg0, firstTransformArg0, firstTransformArg1, firstTransformArg2, firstTransformArg3, positions]);
+  } else {
+    count = Math.min(count, MAX_IMAGES_IN_MASKS_BLOCK);
+    const images = [];
 
-    switch (pos) {
-      case 0:
-        return fnArray[i] === _util.OPS.beginText;
-
-      case 1:
-        return fnArray[i] === _util.OPS.setFont;
-
-      case 2:
-        return fnArray[i] === _util.OPS.setTextMatrix;
-
-      case 3:
-        if (fnArray[i] !== _util.OPS.showText) {
-          return false;
-        }
-
-        const iFirstSetFont = context.iCurr - 3;
-        const firstSetFontArg0 = argsArray[iFirstSetFont][0];
-        const firstSetFontArg1 = argsArray[iFirstSetFont][1];
-
-        if (argsArray[i][0] !== firstSetFontArg0 || argsArray[i][1] !== firstSetFontArg1) {
-          return false;
-        }
-
-        return true;
-
-      case 4:
-        return fnArray[i] === _util.OPS.endText;
+    for (let q = 0; q < count; q++) {
+      transformArgs = argsArray[iFirstTransform + (q << 2)];
+      const maskParams = argsArray[iFirstPIMXO + (q << 2)][0];
+      images.push({
+        data: maskParams.data,
+        width: maskParams.width,
+        height: maskParams.height,
+        transform: transformArgs
+      });
     }
 
-    throw new Error(`iterateShowTextGroup - invalid pos: ${pos}`);
-  }, function (context, i) {
-    const MIN_CHARS_IN_BLOCK = 3;
-    const MAX_CHARS_IN_BLOCK = 1000;
-    const fnArray = context.fnArray,
-          argsArray = context.argsArray;
-    const curr = context.iCurr;
-    const iFirstBeginText = curr - 4;
-    const iFirstSetFont = curr - 3;
-    const iFirstSetTextMatrix = curr - 2;
-    const iFirstShowText = curr - 1;
-    const iFirstEndText = curr;
-    const firstSetFontArg0 = argsArray[iFirstSetFont][0];
-    const firstSetFontArg1 = argsArray[iFirstSetFont][1];
-    let count = Math.min(Math.floor((i - iFirstBeginText) / 5), MAX_CHARS_IN_BLOCK);
+    fnArray.splice(iFirstSave, count * 4, _util.OPS.paintImageMaskXObjectGroup);
+    argsArray.splice(iFirstSave, count * 4, [images]);
+  }
 
-    if (count < MIN_CHARS_IN_BLOCK) {
-      return i - (i - iFirstBeginText) % 5;
-    }
+  return iFirstSave + 1;
+});
+addState(InitialState, [_util.OPS.save, _util.OPS.transform, _util.OPS.paintImageXObject, _util.OPS.restore], function (context) {
+  const argsArray = context.argsArray;
+  const iFirstTransform = context.iCurr - 2;
+  return argsArray[iFirstTransform][1] === 0 && argsArray[iFirstTransform][2] === 0;
+}, function iterateImageGroup(context, i) {
+  const fnArray = context.fnArray,
+        argsArray = context.argsArray;
+  const iFirstSave = context.iCurr - 3;
+  const pos = (i - iFirstSave) % 4;
 
-    let iFirst = iFirstBeginText;
+  switch (pos) {
+    case 0:
+      return fnArray[i] === _util.OPS.save;
 
-    if (iFirstBeginText >= 4 && fnArray[iFirstBeginText - 4] === fnArray[iFirstSetFont] && fnArray[iFirstBeginText - 3] === fnArray[iFirstSetTextMatrix] && fnArray[iFirstBeginText - 2] === fnArray[iFirstShowText] && fnArray[iFirstBeginText - 1] === fnArray[iFirstEndText] && argsArray[iFirstBeginText - 4][0] === firstSetFontArg0 && argsArray[iFirstBeginText - 4][1] === firstSetFontArg1) {
-      count++;
-      iFirst -= 5;
-    }
+    case 1:
+      if (fnArray[i] !== _util.OPS.transform) {
+        return false;
+      }
 
-    let iEndText = iFirst + 4;
+      const iFirstTransform = context.iCurr - 2;
+      const firstTransformArg0 = argsArray[iFirstTransform][0];
+      const firstTransformArg3 = argsArray[iFirstTransform][3];
 
-    for (let q = 1; q < count; q++) {
-      fnArray.splice(iEndText, 3);
-      argsArray.splice(iEndText, 3);
-      iEndText += 2;
-    }
+      if (argsArray[i][0] !== firstTransformArg0 || argsArray[i][1] !== 0 || argsArray[i][2] !== 0 || argsArray[i][3] !== firstTransformArg3) {
+        return false;
+      }
 
-    return iEndText + 1;
-  });
+      return true;
 
-  function QueueOptimizer(queue) {
+    case 2:
+      if (fnArray[i] !== _util.OPS.paintImageXObject) {
+        return false;
+      }
+
+      const iFirstPIXO = context.iCurr - 1;
+      const firstPIXOArg0 = argsArray[iFirstPIXO][0];
+
+      if (argsArray[i][0] !== firstPIXOArg0) {
+        return false;
+      }
+
+      return true;
+
+    case 3:
+      return fnArray[i] === _util.OPS.restore;
+  }
+
+  throw new Error(`iterateImageGroup - invalid pos: ${pos}`);
+}, function (context, i) {
+  const MIN_IMAGES_IN_BLOCK = 3;
+  const MAX_IMAGES_IN_BLOCK = 1000;
+  const fnArray = context.fnArray,
+        argsArray = context.argsArray;
+  const curr = context.iCurr;
+  const iFirstSave = curr - 3;
+  const iFirstTransform = curr - 2;
+  const iFirstPIXO = curr - 1;
+  const firstPIXOArg0 = argsArray[iFirstPIXO][0];
+  const firstTransformArg0 = argsArray[iFirstTransform][0];
+  const firstTransformArg3 = argsArray[iFirstTransform][3];
+  const count = Math.min(Math.floor((i - iFirstSave) / 4), MAX_IMAGES_IN_BLOCK);
+
+  if (count < MIN_IMAGES_IN_BLOCK) {
+    return i - (i - iFirstSave) % 4;
+  }
+
+  const positions = new Float32Array(count * 2);
+  let iTransform = iFirstTransform;
+
+  for (let q = 0; q < count; q++, iTransform += 4) {
+    const transformArgs = argsArray[iTransform];
+    positions[q << 1] = transformArgs[4];
+    positions[(q << 1) + 1] = transformArgs[5];
+  }
+
+  const args = [firstPIXOArg0, firstTransformArg0, firstTransformArg3, positions];
+  fnArray.splice(iFirstSave, count * 4, _util.OPS.paintImageXObjectRepeat);
+  argsArray.splice(iFirstSave, count * 4, args);
+  return iFirstSave + 1;
+});
+addState(InitialState, [_util.OPS.beginText, _util.OPS.setFont, _util.OPS.setTextMatrix, _util.OPS.showText, _util.OPS.endText], null, function iterateShowTextGroup(context, i) {
+  const fnArray = context.fnArray,
+        argsArray = context.argsArray;
+  const iFirstSave = context.iCurr - 4;
+  const pos = (i - iFirstSave) % 5;
+
+  switch (pos) {
+    case 0:
+      return fnArray[i] === _util.OPS.beginText;
+
+    case 1:
+      return fnArray[i] === _util.OPS.setFont;
+
+    case 2:
+      return fnArray[i] === _util.OPS.setTextMatrix;
+
+    case 3:
+      if (fnArray[i] !== _util.OPS.showText) {
+        return false;
+      }
+
+      const iFirstSetFont = context.iCurr - 3;
+      const firstSetFontArg0 = argsArray[iFirstSetFont][0];
+      const firstSetFontArg1 = argsArray[iFirstSetFont][1];
+
+      if (argsArray[i][0] !== firstSetFontArg0 || argsArray[i][1] !== firstSetFontArg1) {
+        return false;
+      }
+
+      return true;
+
+    case 4:
+      return fnArray[i] === _util.OPS.endText;
+  }
+
+  throw new Error(`iterateShowTextGroup - invalid pos: ${pos}`);
+}, function (context, i) {
+  const MIN_CHARS_IN_BLOCK = 3;
+  const MAX_CHARS_IN_BLOCK = 1000;
+  const fnArray = context.fnArray,
+        argsArray = context.argsArray;
+  const curr = context.iCurr;
+  const iFirstBeginText = curr - 4;
+  const iFirstSetFont = curr - 3;
+  const iFirstSetTextMatrix = curr - 2;
+  const iFirstShowText = curr - 1;
+  const iFirstEndText = curr;
+  const firstSetFontArg0 = argsArray[iFirstSetFont][0];
+  const firstSetFontArg1 = argsArray[iFirstSetFont][1];
+  let count = Math.min(Math.floor((i - iFirstBeginText) / 5), MAX_CHARS_IN_BLOCK);
+
+  if (count < MIN_CHARS_IN_BLOCK) {
+    return i - (i - iFirstBeginText) % 5;
+  }
+
+  let iFirst = iFirstBeginText;
+
+  if (iFirstBeginText >= 4 && fnArray[iFirstBeginText - 4] === fnArray[iFirstSetFont] && fnArray[iFirstBeginText - 3] === fnArray[iFirstSetTextMatrix] && fnArray[iFirstBeginText - 2] === fnArray[iFirstShowText] && fnArray[iFirstBeginText - 1] === fnArray[iFirstEndText] && argsArray[iFirstBeginText - 4][0] === firstSetFontArg0 && argsArray[iFirstBeginText - 4][1] === firstSetFontArg1) {
+    count++;
+    iFirst -= 5;
+  }
+
+  let iEndText = iFirst + 4;
+
+  for (let q = 1; q < count; q++) {
+    fnArray.splice(iEndText, 3);
+    argsArray.splice(iEndText, 3);
+    iEndText += 2;
+  }
+
+  return iEndText + 1;
+});
+
+class NullOptimizer {
+  constructor(queue) {
     this.queue = queue;
+  }
+
+  _optimize() {}
+
+  push(fn, args) {
+    this.queue.fnArray.push(fn);
+    this.queue.argsArray.push(args);
+
+    this._optimize();
+  }
+
+  flush() {}
+
+  reset() {}
+
+}
+
+class QueueOptimizer extends NullOptimizer {
+  constructor(queue) {
+    super(queue);
     this.state = null;
     this.context = {
       iCurr: 0,
@@ -37863,121 +39467,97 @@ const QueueOptimizer = function QueueOptimizerClosure() {
     this.lastProcessed = 0;
   }
 
-  QueueOptimizer.prototype = {
-    _optimize() {
-      const fnArray = this.queue.fnArray;
-      let i = this.lastProcessed,
-          ii = fnArray.length;
-      let state = this.state;
-      let match = this.match;
+  _optimize() {
+    const fnArray = this.queue.fnArray;
+    let i = this.lastProcessed,
+        ii = fnArray.length;
+    let state = this.state;
+    let match = this.match;
 
-      if (!state && !match && i + 1 === ii && !InitialState[fnArray[i]]) {
-        this.lastProcessed = ii;
-        return;
-      }
+    if (!state && !match && i + 1 === ii && !InitialState[fnArray[i]]) {
+      this.lastProcessed = ii;
+      return;
+    }
 
-      const context = this.context;
+    const context = this.context;
 
-      while (i < ii) {
-        if (match) {
-          const iterate = (0, match.iterateFn)(context, i);
+    while (i < ii) {
+      if (match) {
+        const iterate = (0, match.iterateFn)(context, i);
 
-          if (iterate) {
-            i++;
-            continue;
-          }
-
-          i = (0, match.processFn)(context, i + 1);
-          ii = fnArray.length;
-          match = null;
-          state = null;
-
-          if (i >= ii) {
-            break;
-          }
-        }
-
-        state = (state || InitialState)[fnArray[i]];
-
-        if (!state || Array.isArray(state)) {
+        if (iterate) {
           i++;
           continue;
         }
 
-        context.iCurr = i;
-        i++;
-
-        if (state.checkFn && !(0, state.checkFn)(context)) {
-          state = null;
-          continue;
-        }
-
-        match = state;
+        i = (0, match.processFn)(context, i + 1);
+        ii = fnArray.length;
+        match = null;
         state = null;
+
+        if (i >= ii) {
+          break;
+        }
       }
 
-      this.state = state;
-      this.match = match;
-      this.lastProcessed = i;
-    },
+      state = (state || InitialState)[fnArray[i]];
 
-    push(fn, args) {
-      this.queue.fnArray.push(fn);
-      this.queue.argsArray.push(args);
-
-      this._optimize();
-    },
-
-    flush() {
-      while (this.match) {
-        const length = this.queue.fnArray.length;
-        this.lastProcessed = (0, this.match.processFn)(this.context, length);
-        this.match = null;
-        this.state = null;
-
-        this._optimize();
+      if (!state || Array.isArray(state)) {
+        i++;
+        continue;
       }
-    },
 
-    reset() {
-      this.state = null;
-      this.match = null;
-      this.lastProcessed = 0;
+      context.iCurr = i;
+      i++;
+
+      if (state.checkFn && !(0, state.checkFn)(context)) {
+        state = null;
+        continue;
+      }
+
+      match = state;
+      state = null;
     }
 
-  };
-  return QueueOptimizer;
-}();
-
-const NullOptimizer = function NullOptimizerClosure() {
-  function NullOptimizer(queue) {
-    this.queue = queue;
+    this.state = state;
+    this.match = match;
+    this.lastProcessed = i;
   }
 
-  NullOptimizer.prototype = {
-    push(fn, args) {
-      this.queue.fnArray.push(fn);
-      this.queue.argsArray.push(args);
-    },
+  flush() {
+    while (this.match) {
+      const length = this.queue.fnArray.length;
+      this.lastProcessed = (0, this.match.processFn)(this.context, length);
+      this.match = null;
+      this.state = null;
 
-    flush() {},
+      this._optimize();
+    }
+  }
 
-    reset() {}
+  reset() {
+    this.state = null;
+    this.match = null;
+    this.lastProcessed = 0;
+  }
 
-  };
-  return NullOptimizer;
-}();
+}
 
-const OperatorList = function OperatorListClosure() {
-  const CHUNK_SIZE = 1000;
-  const CHUNK_SIZE_ABOUT = CHUNK_SIZE - 5;
+class OperatorList {
+  static get CHUNK_SIZE() {
+    return (0, _util.shadow)(this, "CHUNK_SIZE", 1000);
+  }
 
-  function OperatorList(intent, streamSink) {
+  static get CHUNK_SIZE_ABOUT() {
+    return (0, _util.shadow)(this, "CHUNK_SIZE_ABOUT", this.CHUNK_SIZE - 5);
+  }
+
+  constructor(intent, streamSink) {
     this._streamSink = streamSink;
     this.fnArray = [];
     this.argsArray = [];
 
-    if (streamSink && intent !== "oplist") {
+    if (streamSink && !(intent && intent.startsWith("oplist-"))) {
       this.optimizer = new QueueOptimizer(this);
     } else {
       this.optimizer = new NullOptimizer(this);
@@ -37989,124 +39569,121 @@ const OperatorList = function OperatorListClosure() {
     this._resolved = streamSink ? null : Promise.resolve();
   }
 
-  OperatorList.prototype = {
-    get length() {
-      return this.argsArray.length;
-    },
+  get length() {
+    return this.argsArray.length;
+  }
 
-    get ready() {
-      return this._resolved || this._streamSink.ready;
-    },
+  get ready() {
+    return this._resolved || this._streamSink.ready;
+  }
 
-    get totalLength() {
-      return this._totalLength + this.length;
-    },
+  get totalLength() {
+    return this._totalLength + this.length;
+  }
 
-    addOp(fn, args) {
-      this.optimizer.push(fn, args);
-      this.weight++;
+  addOp(fn, args) {
+    this.optimizer.push(fn, args);
+    this.weight++;
 
-      if (this._streamSink) {
-        if (this.weight >= CHUNK_SIZE) {
-          this.flush();
-        } else if (this.weight >= CHUNK_SIZE_ABOUT && (fn === _util.OPS.restore || fn === _util.OPS.endText)) {
-          this.flush();
-        }
+    if (this._streamSink) {
+      if (this.weight >= OperatorList.CHUNK_SIZE) {
+        this.flush();
+      } else if (this.weight >= OperatorList.CHUNK_SIZE_ABOUT && (fn === _util.OPS.restore || fn === _util.OPS.endText)) {
+        this.flush();
       }
-    },
+    }
+  }
 
-    addDependency(dependency) {
-      if (this.dependencies.has(dependency)) {
-        return;
-      }
-
-      this.dependencies.add(dependency);
-      this.addOp(_util.OPS.dependency, [dependency]);
-    },
-
-    addDependencies(dependencies) {
-      for (const dependency of dependencies) {
-        this.addDependency(dependency);
-      }
-    },
-
-    addOpList(opList) {
-      if (!(opList instanceof OperatorList)) {
-        (0, _util.warn)('addOpList - ignoring invalid "opList" parameter.');
-        return;
-      }
-
-      for (const dependency of opList.dependencies) {
-        this.dependencies.add(dependency);
-      }
-
-      for (let i = 0, ii = opList.length; i < ii; i++) {
-        this.addOp(opList.fnArray[i], opList.argsArray[i]);
-      }
-    },
-
-    getIR() {
-      return {
-        fnArray: this.fnArray,
-        argsArray: this.argsArray,
-        length: this.length
-      };
-    },
-
-    get _transfers() {
-      const transfers = [];
-      const {
-        fnArray,
-        argsArray,
-        length
-      } = this;
-
-      for (let i = 0; i < length; i++) {
-        switch (fnArray[i]) {
-          case _util.OPS.paintInlineImageXObject:
-          case _util.OPS.paintInlineImageXObjectGroup:
-          case _util.OPS.paintImageMaskXObject:
-            const arg = argsArray[i][0];
-            ;
-
-            if (!arg.cached) {
-              transfers.push(arg.data.buffer);
-            }
-
-            break;
-        }
-      }
-
-      return transfers;
-    },
-
-    flush(lastChunk = false) {
-      this.optimizer.flush();
-      const length = this.length;
-      this._totalLength += length;
-
-      this._streamSink.enqueue({
-        fnArray: this.fnArray,
-        argsArray: this.argsArray,
-        lastChunk,
-        length
-      }, 1, this._transfers);
-
-      this.dependencies.clear();
-      this.fnArray.length = 0;
-      this.argsArray.length = 0;
-      this.weight = 0;
-      this.optimizer.reset();
+  addDependency(dependency) {
+    if (this.dependencies.has(dependency)) {
+      return;
     }
 
-  };
-  return OperatorList;
-}();
+    this.dependencies.add(dependency);
+    this.addOp(_util.OPS.dependency, [dependency]);
+  }
+
+  addDependencies(dependencies) {
+    for (const dependency of dependencies) {
+      this.addDependency(dependency);
+    }
+  }
+
+  addOpList(opList) {
+    if (!(opList instanceof OperatorList)) {
+      (0, _util.warn)('addOpList - ignoring invalid "opList" parameter.');
+      return;
+    }
+
+    for (const dependency of opList.dependencies) {
+      this.dependencies.add(dependency);
+    }
+
+    for (let i = 0, ii = opList.length; i < ii; i++) {
+      this.addOp(opList.fnArray[i], opList.argsArray[i]);
+    }
+  }
+
+  getIR() {
+    return {
+      fnArray: this.fnArray,
+      argsArray: this.argsArray,
+      length: this.length
+    };
+  }
+
+  get _transfers() {
+    const transfers = [];
+    const {
+      fnArray,
+      argsArray,
+      length
+    } = this;
+
+    for (let i = 0; i < length; i++) {
+      switch (fnArray[i]) {
+        case _util.OPS.paintInlineImageXObject:
+        case _util.OPS.paintInlineImageXObjectGroup:
+        case _util.OPS.paintImageMaskXObject:
+          const arg = argsArray[i][0];
+          ;
+
+          if (!arg.cached) {
+            transfers.push(arg.data.buffer);
+          }
+
+          break;
+      }
+    }
+
+    return transfers;
+  }
+
+  flush(lastChunk = false) {
+    this.optimizer.flush();
+    const length = this.length;
+    this._totalLength += length;
+
+    this._streamSink.enqueue({
+      fnArray: this.fnArray,
+      argsArray: this.argsArray,
+      lastChunk,
+      length
+    }, 1, this._transfers);
+
+    this.dependencies.clear();
+    this.fnArray.length = 0;
+    this.argsArray.length = 0;
+    this.weight = 0;
+    this.optimizer.reset();
+  }
+
+}
 
 exports.OperatorList = OperatorList;
 
 /***/ }),
-/* 56 */
+/* 63 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -38120,13 +39697,13 @@ var _util = __w_pdfjs_require__(2);
 
 var _primitives = __w_pdfjs_require__(5);
 
-var _colorspace = __w_pdfjs_require__(14);
+var _colorspace = __w_pdfjs_require__(24);
 
-var _decode_stream = __w_pdfjs_require__(19);
+var _decode_stream = __w_pdfjs_require__(29);
 
-var _jpeg_stream = __w_pdfjs_require__(27);
+var _jpeg_stream = __w_pdfjs_require__(37);
 
-var _jpx = __w_pdfjs_require__(30);
+var _jpx = __w_pdfjs_require__(40);
 
 function decodeAndClamp(value, addend, coefficient, max) {
   value = addend + value * coefficient;
@@ -38524,7 +40101,7 @@ class PDFImage {
         }
 
         output[i] = value;
-        buf = buf & (1 << remainingBits) - 1;
+        buf &= (1 << remainingBits) - 1;
         bits = remainingBits;
       }
     }
@@ -38779,7 +40356,7 @@ class PDFImage {
 exports.PDFImage = PDFImage;
 
 /***/ }),
-/* 57 */
+/* 64 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -38795,20 +40372,24 @@ var _core_utils = __w_pdfjs_require__(9);
 
 var _util = __w_pdfjs_require__(2);
 
-var _name_number_tree = __w_pdfjs_require__(58);
+var _name_number_tree = __w_pdfjs_require__(65);
 
-var _colorspace = __w_pdfjs_require__(14);
+var _colorspace = __w_pdfjs_require__(24);
 
-var _file_spec = __w_pdfjs_require__(59);
+var _file_spec = __w_pdfjs_require__(66);
 
-var _image_utils = __w_pdfjs_require__(51);
+var _image_utils = __w_pdfjs_require__(58);
 
-var _metadata_parser = __w_pdfjs_require__(60);
+var _metadata_parser = __w_pdfjs_require__(67);
 
-var _struct_tree = __w_pdfjs_require__(62);
+var _struct_tree = __w_pdfjs_require__(69);
 
 function fetchDestination(dest) {
-  return (0, _primitives.isDict)(dest) ? dest.get("D") : dest;
+  if (dest instanceof _primitives.Dict) {
+    dest = dest.get("D");
+  }
+
+  return Array.isArray(dest) ? dest : null;
 }
 
 class Catalog {
@@ -38823,6 +40404,7 @@ class Catalog {
 
     this.fontCache = new _primitives.RefSetCache();
     this.builtInCMapCache = new Map();
+    this.standardFontDataCache = new Map();
     this.globalImageCache = new _image_utils.GlobalImageCache();
     this.pageKidsCountCache = new _primitives.RefSetCache();
     this.pageIndexCache = new _primitives.RefSetCache();
@@ -39326,12 +40908,18 @@ class Catalog {
 
     if (obj instanceof _name_number_tree.NameTree) {
       for (const [key, value] of obj.getAll()) {
-        dests[key] = fetchDestination(value);
+        const dest = fetchDestination(value);
+
+        if (dest) {
+          dests[key] = dest;
+        }
       }
     } else if (obj instanceof _primitives.Dict) {
       obj.forEach(function (key, value) {
-        if (value) {
-          dests[key] = fetchDestination(value);
+        const dest = fetchDestination(value);
+
+        if (dest) {
+          dests[key] = dest;
         }
       });
     }
@@ -39339,11 +40927,28 @@ class Catalog {
     return (0, _util.shadow)(this, "destinations", dests);
   }
 
-  getDestination(destinationId) {
+  getDestination(id) {
     const obj = this._readDests();
 
-    if (obj instanceof _name_number_tree.NameTree || obj instanceof _primitives.Dict) {
-      return fetchDestination(obj.get(destinationId) || null);
+    if (obj instanceof _name_number_tree.NameTree) {
+      const dest = fetchDestination(obj.get(id));
+
+      if (dest) {
+        return dest;
+      }
+
+      const allDest = this.destinations[id];
+
+      if (allDest) {
+        (0, _util.warn)(`Found "${id}" at an incorrect position in the NameTree.`);
+        return allDest;
+      }
+    } else if (obj instanceof _primitives.Dict) {
+      const dest = fetchDestination(obj.get(id));
+
+      if (dest) {
+        return dest;
+      }
     }
 
     return null;
@@ -39737,6 +41342,26 @@ class Catalog {
     return (0, _util.shadow)(this, "attachments", attachments);
   }
 
+  get xfaImages() {
+    const obj = this._catDict.get("Names");
+
+    let xfaImages = null;
+
+    if (obj instanceof _primitives.Dict && obj.has("XFAImages")) {
+      const nameTree = new _name_number_tree.NameTree(obj.getRaw("XFAImages"), this.xref);
+
+      for (const [key, value] of nameTree.getAll()) {
+        if (!xfaImages) {
+          xfaImages = new _primitives.Dict(this.xref);
+        }
+
+        xfaImages.set(key, value);
+      }
+    }
+
+    return (0, _util.shadow)(this, "xfaImages", xfaImages);
+  }
+
   _collectJavaScript() {
     const obj = this._catDict.get("Names");
 
@@ -39845,6 +41470,7 @@ class Catalog {
 
       this.fontCache.clear();
       this.builtInCMapCache.clear();
+      this.standardFontDataCache.clear();
     });
   }
 
@@ -40226,7 +41852,7 @@ class Catalog {
 exports.Catalog = Catalog;
 
 /***/ }),
-/* 58 */
+/* 65 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -40365,17 +41991,6 @@ class NameOrNumberTree {
           return xref.fetchIfRef(entries[m + 1]);
         }
       }
-
-      (0, _util.info)(`Falling back to an exhaustive search, for key "${key}", ` + `in "${this._type}" tree.`);
-
-      for (let m = 0, mm = entries.length; m < mm; m += 2) {
-        const currentKey = xref.fetchIfRef(entries[m]);
-
-        if (currentKey === key) {
-          (0, _util.warn)(`The "${key}" key was found at an incorrect, ` + `i.e. out-of-order, position in "${this._type}" tree.`);
-          return xref.fetchIfRef(entries[m + 1]);
-        }
-      }
     }
 
     return null;
@@ -40402,7 +42017,7 @@ class NumberTree extends NameOrNumberTree {
 exports.NumberTree = NumberTree;
 
 /***/ }),
-/* 59 */
+/* 66 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -40506,7 +42121,7 @@ class FileSpec {
 exports.FileSpec = FileSpec;
 
 /***/ }),
-/* 60 */
+/* 67 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -40516,7 +42131,7 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.MetadataParser = void 0;
 
-var _xml_parser = __w_pdfjs_require__(61);
+var _xml_parser = __w_pdfjs_require__(68);
 
 class MetadataParser {
   constructor(data) {
@@ -40645,7 +42260,7 @@ class MetadataParser {
 exports.MetadataParser = MetadataParser;
 
 /***/ }),
-/* 61 */
+/* 68 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -40789,7 +42404,7 @@ class XMLParserBase {
       }
     }
 
-    while (pos < s.length && !isWhitespace(s, pos) && s[pos] !== ">" && s[pos] !== "/") {
+    while (pos < s.length && !isWhitespace(s, pos) && s[pos] !== ">" && s[pos] !== "?" && s[pos] !== "/") {
       ++pos;
     }
 
@@ -41192,7 +42807,7 @@ class SimpleXMLParser extends XMLParserBase {
 exports.SimpleXMLParser = SimpleXMLParser;
 
 /***/ }),
-/* 62 */
+/* 69 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -41206,7 +42821,7 @@ var _primitives = __w_pdfjs_require__(5);
 
 var _util = __w_pdfjs_require__(2);
 
-var _name_number_tree = __w_pdfjs_require__(58);
+var _name_number_tree = __w_pdfjs_require__(65);
 
 const MAX_DEPTH = 40;
 const StructElementType = {
@@ -41555,7 +43170,7 @@ class StructTreePage {
 exports.StructTreePage = StructTreePage;
 
 /***/ }),
-/* 63 */
+/* 70 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -41703,7 +43318,7 @@ class ObjectLoader {
 exports.ObjectLoader = ObjectLoader;
 
 /***/ }),
-/* 64 */
+/* 71 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -41720,9 +43335,9 @@ var _primitives = __w_pdfjs_require__(5);
 
 var _core_utils = __w_pdfjs_require__(9);
 
-var _xml_parser = __w_pdfjs_require__(61);
+var _xml_parser = __w_pdfjs_require__(68);
 
-var _crypto = __w_pdfjs_require__(65);
+var _crypto = __w_pdfjs_require__(72);
 
 function writeDict(dict, buffer, transform) {
   buffer.push("<<");
@@ -41744,8 +43359,7 @@ function writeStream(stream, buffer, transform) {
     string = transform.encryptString(string);
   }
 
-  buffer.push(string);
-  buffer.push("\nendstream\n");
+  buffer.push(string, "\nendstream\n");
 }
 
 function writeArray(array, buffer, transform) {
@@ -41842,13 +43456,7 @@ function computeMD5(filesize, xrefInfo) {
   return (0, _util.bytesToString)((0, _crypto.calculateMD5)(array));
 }
 
-function updateXFA(datasetsRef, newRefs, xref) {
-  if (datasetsRef === null || xref === null) {
-    return;
-  }
-
-  const datasets = xref.fetchIfRef(datasetsRef);
-  const str = datasets.getString();
+function writeXFADataForAcroform(str, newRefs) {
   const xml = new _xml_parser.SimpleXMLParser({
     hasAttributes: true
   }).parseFromString(str);
@@ -41880,15 +43488,27 @@ function updateXFA(datasetsRef, newRefs, xref) {
 
   const buffer = [];
   xml.documentElement.dump(buffer);
-  let updatedXml = buffer.join("");
+  return buffer.join("");
+}
+
+function updateXFA(xfaData, datasetsRef, newRefs, xref) {
+  if (datasetsRef === null || xref === null) {
+    return;
+  }
+
+  if (xfaData === null) {
+    const datasets = xref.fetchIfRef(datasetsRef);
+    xfaData = writeXFADataForAcroform(datasets.getString(), newRefs);
+  }
+
   const encrypt = xref.encrypt;
 
   if (encrypt) {
     const transform = encrypt.createCipherTransform(datasetsRef.num, datasetsRef.gen);
-    updatedXml = transform.encryptString(updatedXml);
+    xfaData = transform.encryptString(xfaData);
   }
 
-  const data = `${datasetsRef.num} ${datasetsRef.gen} obj\n` + `<< /Type /EmbeddedFile /Length ${updatedXml.length}>>\nstream\n` + updatedXml + "\nendstream\nendobj\n";
+  const data = `${datasetsRef.num} ${datasetsRef.gen} obj\n` + `<< /Type /EmbeddedFile /Length ${xfaData.length}>>\nstream\n` + xfaData + "\nendstream\nendobj\n";
   newRefs.push({
     ref: datasetsRef,
     data
@@ -41900,9 +43520,10 @@ function incrementalUpdate({
   xrefInfo,
   newRefs,
   xref = null,
-  datasetsRef = null
+  datasetsRef = null,
+  xfaData = null
 }) {
-  updateXFA(datasetsRef, newRefs, xref);
+  updateXFA(xfaData, datasetsRef, newRefs, xref);
   const newXref = new _primitives.Dict(null);
   const refForXrefTable = xrefInfo.newRef;
   let buffer, baseOffset;
@@ -41950,8 +43571,7 @@ function incrementalUpdate({
     maxOffset = Math.max(maxOffset, baseOffset);
     xrefTableData.push([1, baseOffset, Math.min(ref.gen, 0xffff)]);
     baseOffset += data.length;
-    indexes.push(ref.num);
-    indexes.push(1);
+    indexes.push(ref.num, 1);
     buffer.push(data);
   }
 
@@ -41993,7 +43613,7 @@ function incrementalUpdate({
 }
 
 /***/ }),
-/* 65 */
+/* 72 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -42008,7 +43628,7 @@ var _util = __w_pdfjs_require__(2);
 
 var _primitives = __w_pdfjs_require__(5);
 
-var _decrypt_stream = __w_pdfjs_require__(66);
+var _decrypt_stream = __w_pdfjs_require__(73);
 
 class ARCFourCipher {
   constructor(key) {
@@ -42186,7 +43806,7 @@ class Word64 {
       this.low = 0;
     } else {
       this.high = this.high << places | this.low >>> 32 - places;
-      this.low = this.low << places;
+      this.low <<= places;
     }
   }
 
@@ -42954,7 +44574,7 @@ class AES128Cipher extends AESBaseCipher {
       t2 = s[t2];
       t3 = s[t3];
       t4 = s[t4];
-      t1 = t1 ^ rcon[i];
+      t1 ^= rcon[i];
 
       for (let n = 0; n < 4; ++n) {
         result[j] = t1 ^= result[j - 16];
@@ -43006,7 +44626,7 @@ class AES256Cipher extends AESBaseCipher {
         t2 = s[t2];
         t3 = s[t3];
         t4 = s[t4];
-        t1 = t1 ^ r;
+        t1 ^= r;
 
         if ((r <<= 1) >= 256) {
           r = (r ^ 0x1b) & 0xff;
@@ -43224,7 +44844,7 @@ class CipherTransform {
 }
 
 const CipherTransformFactory = function CipherTransformFactoryClosure() {
-  const defaultPasswordBytes = new Uint8Array([0x28, 0xBF, 0x4E, 0x5E, 0x4E, 0x75, 0x8A, 0x41, 0x64, 0x00, 0x4E, 0x56, 0xFF, 0xFA, 0x01, 0x08, 0x2E, 0x2E, 0x00, 0xB6, 0xD0, 0x68, 0x3E, 0x80, 0x2F, 0x0C, 0xA9, 0xFE, 0x64, 0x53, 0x69, 0x7A]);
+  const defaultPasswordBytes = new Uint8Array([0x28, 0xbf, 0x4e, 0x5e, 0x4e, 0x75, 0x8a, 0x41, 0x64, 0x00, 0x4e, 0x56, 0xff, 0xfa, 0x01, 0x08, 0x2e, 0x2e, 0x00, 0xb6, 0xd0, 0x68, 0x3e, 0x80, 0x2f, 0x0c, 0xa9, 0xfe, 0x64, 0x53, 0x69, 0x7a]);
 
   function createEncryptionKey20(revision, password, ownerPassword, ownerValidationSalt, ownerKeySalt, uBytes, userPassword, userValidationSalt, userKeySalt, ownerEncryption, userEncryption, perms) {
     if (password) {
@@ -43586,7 +45206,7 @@ const CipherTransformFactory = function CipherTransformFactoryClosure() {
 exports.CipherTransformFactory = CipherTransformFactory;
 
 /***/ }),
-/* 66 */
+/* 73 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -43596,7 +45216,7 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.DecryptStream = void 0;
 
-var _decode_stream = __w_pdfjs_require__(19);
+var _decode_stream = __w_pdfjs_require__(29);
 
 const chunkSize = 512;
 
@@ -43645,7 +45265,7 @@ class DecryptStream extends _decode_stream.DecodeStream {
 exports.DecryptStream = DecryptStream;
 
 /***/ }),
-/* 67 */
+/* 74 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -43655,29 +45275,105 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.XFAFactory = void 0;
 
-var _xfa_object = __w_pdfjs_require__(68);
+var _xfa_object = __w_pdfjs_require__(75);
 
-var _bind = __w_pdfjs_require__(71);
+var _bind = __w_pdfjs_require__(79);
 
-var _parser = __w_pdfjs_require__(75);
+var _data = __w_pdfjs_require__(85);
+
+var _fonts = __w_pdfjs_require__(83);
+
+var _utils = __w_pdfjs_require__(76);
+
+var _util = __w_pdfjs_require__(2);
+
+var _parser = __w_pdfjs_require__(86);
 
 class XFAFactory {
   constructor(data) {
     try {
       this.root = new _parser.XFAParser().parse(XFAFactory._createDocument(data));
-      this.form = new _bind.Binder(this.root).bind();
-      this.pages = this.form[_xfa_object.$toHTML]();
+      const binder = new _bind.Binder(this.root);
+      this.form = binder.bind();
+      this.dataHandler = new _data.DataHandler(this.root, binder.getData());
+      this.form[_xfa_object.$globalData].template = this.form;
     } catch (e) {
-      console.log(e);
+      (0, _util.warn)(`XFA - an error occurred during parsing and binding: ${e}`);
     }
   }
 
-  getPage(pageIndex) {
-    return this.pages.children[pageIndex];
+  isValid() {
+    return this.root && this.form;
+  }
+
+  _createPages() {
+    try {
+      this.pages = this.form[_xfa_object.$toHTML]();
+      this.dims = this.pages.children.map(c => {
+        const {
+          width,
+          height
+        } = c.attributes.style;
+        return [0, 0, parseInt(width), parseInt(height)];
+      });
+    } catch (e) {
+      (0, _util.warn)(`XFA - an error occurred during layout: ${e}`);
+    }
+  }
+
+  getBoundingBox(pageIndex) {
+    return this.dims[pageIndex];
   }
 
   get numberPages() {
-    return this.pages.children.length;
+    if (!this.pages) {
+      this._createPages();
+    }
+
+    return this.dims.length;
+  }
+
+  setImages(images) {
+    this.form[_xfa_object.$globalData].images = images;
+  }
+
+  setFonts(fonts) {
+    this.form[_xfa_object.$globalData].fontFinder = new _fonts.FontFinder(fonts);
+    const missingFonts = [];
+
+    for (let typeface of this.form[_xfa_object.$globalData].usedTypefaces) {
+      typeface = (0, _utils.stripQuotes)(typeface);
+
+      const font = this.form[_xfa_object.$globalData].fontFinder.find(typeface);
+
+      if (!font) {
+        missingFonts.push(typeface);
+      }
+    }
+
+    if (missingFonts.length > 0) {
+      return missingFonts;
+    }
+
+    return null;
+  }
+
+  appendFonts(fonts, reallyMissingFonts) {
+    this.form[_xfa_object.$globalData].fontFinder.add(fonts, reallyMissingFonts);
+  }
+
+  getPages() {
+    if (!this.pages) {
+      this._createPages();
+    }
+
+    const pages = this.pages;
+    this.pages = null;
+    return pages;
+  }
+
+  serializeData(storage) {
+    return this.dataHandler.serialize(storage);
   }
 
   static _createDocument(data) {
@@ -43693,7 +45389,7 @@ class XFAFactory {
 exports.XFAFactory = XFAFactory;
 
 /***/ }),
-/* 68 */
+/* 75 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -43701,22 +45397,30 @@ exports.XFAFactory = XFAFactory;
 Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
-exports.XmlObject = exports.XFAObjectArray = exports.XFAObject = exports.XFAAttribute = exports.StringObject = exports.OptionObject = exports.Option10 = exports.Option01 = exports.IntegerObject = exports.ContentObject = exports.$uid = exports.$toStyle = exports.$toHTML = exports.$text = exports.$setValue = exports.$setSetAttributes = exports.$setId = exports.$resolvePrototypes = exports.$removeChild = exports.$onText = exports.$onChildCheck = exports.$onChild = exports.$nsAttributes = exports.$nodeName = exports.$namespaceId = exports.$isTransparent = exports.$isDescendent = exports.$isDataValue = exports.$insertAt = exports.$indexOf = exports.$hasSettableValue = exports.$hasItem = exports.$global = exports.$getRealChildrenByNameIt = exports.$getParent = exports.$getChildrenByNameIt = exports.$getChildrenByName = exports.$getChildrenByClass = exports.$getChildren = exports.$getAttributeIt = exports.$finalize = exports.$extra = exports.$dump = exports.$data = exports.$content = exports.$consumed = exports.$clone = exports.$cleanup = exports.$clean = exports.$childrenToHTML = exports.$appendChild = exports.$acceptWhitespace = void 0;
+exports.XmlObject = exports.XFAObjectArray = exports.XFAObject = exports.XFAAttribute = exports.StringObject = exports.OptionObject = exports.Option10 = exports.Option01 = exports.IntegerObject = exports.ContentObject = exports.$uid = exports.$toStyle = exports.$toString = exports.$toHTML = exports.$text = exports.$tabIndex = exports.$setValue = exports.$setSetAttributes = exports.$setId = exports.$searchNode = exports.$root = exports.$resolvePrototypes = exports.$removeChild = exports.$pushPara = exports.$pushGlyphs = exports.$popPara = exports.$onText = exports.$onChildCheck = exports.$onChild = exports.$nsAttributes = exports.$nodeName = exports.$namespaceId = exports.$isUsable = exports.$isTransparent = exports.$isThereMoreWidth = exports.$isSplittable = exports.$isNsAgnostic = exports.$isDescendent = exports.$isDataValue = exports.$isCDATAXml = exports.$isBindable = exports.$insertAt = exports.$indexOf = exports.$ids = exports.$hasSettableValue = exports.$globalData = exports.$getTemplateRoot = exports.$getSubformParent = exports.$getRealChildrenByNameIt = exports.$getParent = exports.$getNextPage = exports.$getExtra = exports.$getDataValue = exports.$getContainedChildren = exports.$getChildrenByNameIt = exports.$getChildrenByName = exports.$getChildrenByClass = exports.$getChildren = exports.$getAvailableSpace = exports.$getAttributes = exports.$getAttributeIt = exports.$flushHTML = exports.$finalize = exports.$extra = exports.$dump = exports.$data = exports.$content = exports.$consumed = exports.$clone = exports.$cleanup = exports.$cleanPage = exports.$clean = exports.$childrenToHTML = exports.$appendChild = exports.$addHTML = exports.$acceptWhitespace = void 0;
 
-var _utils = __w_pdfjs_require__(69);
+var _utils = __w_pdfjs_require__(76);
 
 var _util = __w_pdfjs_require__(2);
 
-var _namespaces = __w_pdfjs_require__(70);
+var _core_utils = __w_pdfjs_require__(9);
+
+var _namespaces = __w_pdfjs_require__(77);
+
+var _som = __w_pdfjs_require__(78);
 
 const $acceptWhitespace = Symbol();
 exports.$acceptWhitespace = $acceptWhitespace;
+const $addHTML = Symbol();
+exports.$addHTML = $addHTML;
 const $appendChild = Symbol();
 exports.$appendChild = $appendChild;
 const $childrenToHTML = Symbol();
 exports.$childrenToHTML = $childrenToHTML;
 const $clean = Symbol();
 exports.$clean = $clean;
+const $cleanPage = Symbol();
+exports.$cleanPage = $cleanPage;
 const $cleanup = Symbol();
 exports.$cleanup = $cleanup;
 const $clone = Symbol();
@@ -43733,36 +45437,66 @@ const $extra = Symbol("extra");
 exports.$extra = $extra;
 const $finalize = Symbol();
 exports.$finalize = $finalize;
+const $flushHTML = Symbol();
+exports.$flushHTML = $flushHTML;
 const $getAttributeIt = Symbol();
 exports.$getAttributeIt = $getAttributeIt;
+const $getAttributes = Symbol();
+exports.$getAttributes = $getAttributes;
+const $getAvailableSpace = Symbol();
+exports.$getAvailableSpace = $getAvailableSpace;
 const $getChildrenByClass = Symbol();
 exports.$getChildrenByClass = $getChildrenByClass;
 const $getChildrenByName = Symbol();
 exports.$getChildrenByName = $getChildrenByName;
 const $getChildrenByNameIt = Symbol();
 exports.$getChildrenByNameIt = $getChildrenByNameIt;
+const $getDataValue = Symbol();
+exports.$getDataValue = $getDataValue;
+const $getExtra = Symbol();
+exports.$getExtra = $getExtra;
 const $getRealChildrenByNameIt = Symbol();
 exports.$getRealChildrenByNameIt = $getRealChildrenByNameIt;
 const $getChildren = Symbol();
 exports.$getChildren = $getChildren;
+const $getContainedChildren = Symbol();
+exports.$getContainedChildren = $getContainedChildren;
+const $getNextPage = Symbol();
+exports.$getNextPage = $getNextPage;
+const $getSubformParent = Symbol();
+exports.$getSubformParent = $getSubformParent;
 const $getParent = Symbol();
 exports.$getParent = $getParent;
-const $global = Symbol();
-exports.$global = $global;
-const $hasItem = Symbol();
-exports.$hasItem = $hasItem;
+const $getTemplateRoot = Symbol();
+exports.$getTemplateRoot = $getTemplateRoot;
+const $globalData = Symbol();
+exports.$globalData = $globalData;
 const $hasSettableValue = Symbol();
 exports.$hasSettableValue = $hasSettableValue;
+const $ids = Symbol();
+exports.$ids = $ids;
 const $indexOf = Symbol();
 exports.$indexOf = $indexOf;
 const $insertAt = Symbol();
 exports.$insertAt = $insertAt;
+const $isCDATAXml = Symbol();
+exports.$isCDATAXml = $isCDATAXml;
+const $isBindable = Symbol();
+exports.$isBindable = $isBindable;
 const $isDataValue = Symbol();
 exports.$isDataValue = $isDataValue;
 const $isDescendent = Symbol();
 exports.$isDescendent = $isDescendent;
+const $isNsAgnostic = Symbol();
+exports.$isNsAgnostic = $isNsAgnostic;
+const $isSplittable = Symbol();
+exports.$isSplittable = $isSplittable;
+const $isThereMoreWidth = Symbol();
+exports.$isThereMoreWidth = $isThereMoreWidth;
 const $isTransparent = Symbol();
 exports.$isTransparent = $isTransparent;
+const $isUsable = Symbol();
+exports.$isUsable = $isUsable;
 const $lastAttribute = Symbol();
 const $namespaceId = Symbol("namespaceId");
 exports.$namespaceId = $namespaceId;
@@ -43776,20 +45510,34 @@ const $onChildCheck = Symbol();
 exports.$onChildCheck = $onChildCheck;
 const $onText = Symbol();
 exports.$onText = $onText;
+const $pushGlyphs = Symbol();
+exports.$pushGlyphs = $pushGlyphs;
+const $popPara = Symbol();
+exports.$popPara = $popPara;
+const $pushPara = Symbol();
+exports.$pushPara = $pushPara;
 const $removeChild = Symbol();
 exports.$removeChild = $removeChild;
+const $root = Symbol("root");
+exports.$root = $root;
 const $resolvePrototypes = Symbol();
 exports.$resolvePrototypes = $resolvePrototypes;
+const $searchNode = Symbol();
+exports.$searchNode = $searchNode;
 const $setId = Symbol();
 exports.$setId = $setId;
 const $setSetAttributes = Symbol();
 exports.$setSetAttributes = $setSetAttributes;
 const $setValue = Symbol();
 exports.$setValue = $setValue;
+const $tabIndex = Symbol();
+exports.$tabIndex = $tabIndex;
 const $text = Symbol();
 exports.$text = $text;
 const $toHTML = Symbol();
 exports.$toHTML = $toHTML;
+const $toString = Symbol();
+exports.$toString = $toString;
 const $toStyle = Symbol();
 exports.$toStyle = $toStyle;
 const $uid = Symbol("uid");
@@ -43809,6 +45557,8 @@ const _dataValue = Symbol();
 
 const _defaultValue = Symbol();
 
+const _filteredChildrenGenerator = Symbol();
+
 const _getPrototype = Symbol();
 
 const _getUnsetAttributes = Symbol();
@@ -43821,11 +45571,14 @@ const _options = Symbol();
 
 const _parent = Symbol("parent");
 
+const _resolvePrototypesHelper = Symbol();
+
 const _setAttributes = Symbol();
 
 const _validator = Symbol();
 
 let uid = 0;
+const NS_DATASETS = _namespaces.NamespaceIds.datasets.id;
 
 class XFAObject {
   constructor(nsId, name, hasChildren = false) {
@@ -43835,6 +45588,7 @@ class XFAObject {
     this[_parent] = null;
     this[_children] = [];
     this[$uid] = `${name}${uid++}`;
+    this[$globalData] = null;
   }
 
   [$onChild](child) {
@@ -43876,8 +45630,30 @@ class XFAObject {
     return this.hasOwnProperty(child[$nodeName]) && child[$namespaceId] === this[$namespaceId];
   }
 
+  [$isNsAgnostic]() {
+    return false;
+  }
+
   [$acceptWhitespace]() {
     return false;
+  }
+
+  [$isCDATAXml]() {
+    return false;
+  }
+
+  [$isBindable]() {
+    return false;
+  }
+
+  [$popPara]() {
+    if (this.para) {
+      this[$getTemplateRoot]()[$extra].paraStack.pop();
+    }
+  }
+
+  [$pushPara]() {
+    this[$getTemplateRoot]()[$extra].paraStack.push(this.para);
   }
 
   [$setId](ids) {
@@ -43886,10 +45662,26 @@ class XFAObject {
     }
   }
 
+  [$getTemplateRoot]() {
+    return this[$globalData].template;
+  }
+
+  [$isSplittable]() {
+    return false;
+  }
+
+  [$isThereMoreWidth]() {
+    return false;
+  }
+
   [$appendChild](child) {
     child[_parent] = this;
 
     this[_children].push(child);
+
+    if (!child[$globalData] && this[$globalData]) {
+      child[$globalData] = this[$globalData];
+    }
   }
 
   [$removeChild](child) {
@@ -43917,10 +45709,6 @@ class XFAObject {
     }
   }
 
-  [$hasItem]() {
-    return false;
-  }
-
   [$indexOf](child) {
     return this[_children].indexOf(child);
   }
@@ -43929,10 +45717,14 @@ class XFAObject {
     child[_parent] = this;
 
     this[_children].splice(i, 0, child);
+
+    if (!child[$globalData] && this[$globalData]) {
+      child[$globalData] = this[$globalData];
+    }
   }
 
   [$isTransparent]() {
-    return this.name === "";
+    return !this.name;
   }
 
   [$lastAttribute]() {
@@ -43983,6 +45775,10 @@ class XFAObject {
     return this[_parent];
   }
 
+  [$getSubformParent]() {
+    return this[$getParent]();
+  }
+
   [$getChildren](name = null) {
     if (!name) {
       return this[_children];
@@ -44024,30 +45820,85 @@ class XFAObject {
   }
 
   [$toHTML]() {
+    return _utils.HTMLResult.EMPTY;
+  }
+
+  *[$getContainedChildren]() {
+    for (const node of this[$getChildren]()) {
+      yield node;
+    }
+  }
+
+  *[_filteredChildrenGenerator](filter, include) {
+    for (const node of this[$getContainedChildren]()) {
+      if (!filter || include === filter.has(node[$nodeName])) {
+        const availableSpace = this[$getAvailableSpace]();
+        const res = node[$toHTML](availableSpace);
+
+        if (!res.success) {
+          this[$extra].failingNode = node;
+        }
+
+        yield res;
+      }
+    }
+  }
+
+  [$flushHTML]() {
     return null;
   }
+
+  [$addHTML](html, bbox) {
+    this[$extra].children.push(html);
+  }
+
+  [$getAvailableSpace]() {}
 
   [$childrenToHTML]({
     filter = null,
     include = true
   }) {
-    const res = [];
-    this[$getChildren]().forEach(node => {
-      if (!filter || include === filter.has(node[$nodeName])) {
-        const html = node[$toHTML]();
+    if (!this[$extra].generator) {
+      this[$extra].generator = this[_filteredChildrenGenerator](filter, include);
+    } else {
+      const availableSpace = this[$getAvailableSpace]();
+      const res = this[$extra].failingNode[$toHTML](availableSpace);
 
-        if (html) {
-          res.push(html);
-        }
+      if (!res.success) {
+        return res;
       }
-    });
-    return res;
+
+      if (res.html) {
+        this[$addHTML](res.html, res.bbox);
+      }
+
+      delete this[$extra].failingNode;
+    }
+
+    while (true) {
+      const gen = this[$extra].generator.next();
+
+      if (gen.done) {
+        break;
+      }
+
+      const res = gen.value;
+
+      if (!res.success) {
+        return res;
+      }
+
+      if (res.html) {
+        this[$addHTML](res.html, res.bbox);
+      }
+    }
+
+    this[$extra].generator = null;
+    return _utils.HTMLResult.EMPTY;
   }
 
   [$setSetAttributes](attributes) {
-    if (attributes.use || attributes.id) {
-      this[_setAttributes] = new Set(Object.keys(attributes));
-    }
+    this[_setAttributes] = new Set(Object.keys(attributes));
   }
 
   [_getUnsetAttributes](protoAttributes) {
@@ -44058,57 +45909,91 @@ class XFAObject {
 
   [$resolvePrototypes](ids, ancestors = new Set()) {
     for (const child of this[_children]) {
-      const proto = child[_getPrototype](ids, ancestors);
+      child[_resolvePrototypesHelper](ids, ancestors);
+    }
+  }
 
-      if (proto) {
-        child[_applyPrototype](proto, ids, ancestors);
-      } else {
-        child[$resolvePrototypes](ids, ancestors);
-      }
+  [_resolvePrototypesHelper](ids, ancestors) {
+    const proto = this[_getPrototype](ids, ancestors);
+
+    if (proto) {
+      this[_applyPrototype](proto, ids, ancestors);
+    } else {
+      this[$resolvePrototypes](ids, ancestors);
     }
   }
 
   [_getPrototype](ids, ancestors) {
     const {
-      use
+      use,
+      usehref
     } = this;
 
-    if (use && use.startsWith("#")) {
-      const id = use.slice(1);
-      const proto = ids.get(id);
-      this.use = "";
-
-      if (!proto) {
-        (0, _util.warn)(`XFA - Invalid prototype id: ${id}.`);
-        return null;
-      }
-
-      if (proto[$nodeName] !== this[$nodeName]) {
-        (0, _util.warn)(`XFA - Incompatible prototype: ${proto[$nodeName]} !== ${this[$nodeName]}.`);
-        return null;
-      }
-
-      if (ancestors.has(proto)) {
-        (0, _util.warn)(`XFA - Cycle detected in prototypes use.`);
-        return null;
-      }
-
-      ancestors.add(proto);
-
-      const protoProto = proto[_getPrototype](ids, ancestors);
-
-      if (!protoProto) {
-        ancestors.delete(proto);
-        return proto;
-      }
-
-      proto[_applyPrototype](protoProto, ids, ancestors);
-
-      ancestors.delete(proto);
-      return proto;
+    if (!use && !usehref) {
+      return null;
     }
 
-    return null;
+    let proto = null;
+    let somExpression = null;
+    let id = null;
+    let ref = use;
+
+    if (usehref) {
+      ref = usehref;
+
+      if (usehref.startsWith("#som(") && usehref.endsWith(")")) {
+        somExpression = usehref.slice("#som(".length, usehref.length - 1);
+      } else if (usehref.startsWith(".#som(") && usehref.endsWith(")")) {
+        somExpression = usehref.slice(".#som(".length, usehref.length - 1);
+      } else if (usehref.startsWith("#")) {
+        id = usehref.slice(1);
+      } else if (usehref.startsWith(".#")) {
+        id = usehref.slice(2);
+      }
+    } else if (use.startsWith("#")) {
+      id = use.slice(1);
+    } else {
+      somExpression = use;
+    }
+
+    this.use = this.usehref = "";
+
+    if (id) {
+      proto = ids.get(id);
+    } else {
+      proto = (0, _som.searchNode)(ids.get($root), this, somExpression, true, false);
+
+      if (proto) {
+        proto = proto[0];
+      }
+    }
+
+    if (!proto) {
+      (0, _util.warn)(`XFA - Invalid prototype reference: ${ref}.`);
+      return null;
+    }
+
+    if (proto[$nodeName] !== this[$nodeName]) {
+      (0, _util.warn)(`XFA - Incompatible prototype: ${proto[$nodeName]} !== ${this[$nodeName]}.`);
+      return null;
+    }
+
+    if (ancestors.has(proto)) {
+      (0, _util.warn)(`XFA - Cycle detected in prototypes use.`);
+      return null;
+    }
+
+    ancestors.add(proto);
+
+    const protoProto = proto[_getPrototype](ids, ancestors);
+
+    if (protoProto) {
+      proto[_applyPrototype](protoProto, ids, ancestors);
+    }
+
+    proto[$resolvePrototypes](ids, ancestors);
+    ancestors.delete(proto);
+    return proto;
   }
 
   [_applyPrototype](proto, ids, ancestors) {
@@ -44142,7 +46027,7 @@ class XFAObject {
 
       if (value instanceof XFAObjectArray) {
         for (const child of value[_children]) {
-          child[$resolvePrototypes](ids, ancestors);
+          child[_resolvePrototypesHelper](ids, ancestors);
         }
 
         for (let i = value[_children].length, ii = protoValue[_children].length; i < ii; i++) {
@@ -44153,7 +46038,7 @@ class XFAObject {
 
             this[_children].push(child);
 
-            child[$resolvePrototypes](ids, newAncestors);
+            child[_resolvePrototypesHelper](ids, ancestors);
           } else {
             break;
           }
@@ -44164,6 +46049,11 @@ class XFAObject {
 
       if (value !== null) {
         value[$resolvePrototypes](ids, ancestors);
+
+        if (protoValue) {
+          value[_applyPrototype](protoValue, ids, ancestors);
+        }
+
         continue;
       }
 
@@ -44174,7 +46064,7 @@ class XFAObject {
 
         this[_children].push(child);
 
-        child[$resolvePrototypes](ids, newAncestors);
+        child[_resolvePrototypesHelper](ids, ancestors);
       }
     }
   }
@@ -44184,7 +46074,7 @@ class XFAObject {
       return obj.map(x => XFAObject[_cloneAttribute](x));
     }
 
-    if (obj instanceof Object) {
+    if (typeof obj === "object" && obj !== null) {
       return Object.assign({}, obj);
     }
 
@@ -44202,6 +46092,7 @@ class XFAObject {
       }
     }
 
+    clone[$uid] = `${clone[$nodeName]}${uid++}`;
     clone[_children] = [];
 
     for (const name of Object.getOwnPropertyNames(this)) {
@@ -44333,6 +46224,7 @@ class XFAAttribute {
     this[$nodeName] = name;
     this[$content] = value;
     this[$consumed] = false;
+    this[$uid] = `attribute${uid++}`;
   }
 
   [$getParent]() {
@@ -44341,6 +46233,15 @@ class XFAAttribute {
 
   [$isDataValue]() {
     return true;
+  }
+
+  [$getDataValue]() {
+    return this[$content].trim();
+  }
+
+  [$setValue](value) {
+    value = value.value || "";
+    this[$content] = value.toString();
   }
 
   [$text]() {
@@ -44385,6 +46286,51 @@ class XmlObject extends XFAObject {
     this[$consumed] = false;
   }
 
+  [$toString](buf) {
+    const tagName = this[$nodeName];
+
+    if (tagName === "#text") {
+      buf.push((0, _core_utils.encodeToXmlString)(this[$content]));
+      return;
+    }
+
+    const prefix = this[$namespaceId] === NS_DATASETS ? "xfa:" : "";
+    buf.push(`<${prefix}${tagName}`);
+
+    for (const [name, value] of this[_attributes].entries()) {
+      buf.push(` ${name}="${(0, _core_utils.encodeToXmlString)(value[$content])}"`);
+    }
+
+    if (this[_dataValue] !== null) {
+      if (this[_dataValue]) {
+        buf.push(` xfa:dataNode="dataValue"`);
+      } else {
+        buf.push(` xfa:dataNode="dataGroup"`);
+      }
+    }
+
+    if (!this[$content] && this[_children].length === 0) {
+      buf.push("/>");
+      return;
+    }
+
+    buf.push(">");
+
+    if (this[$content]) {
+      if (typeof this[$content] === "string") {
+        buf.push((0, _core_utils.encodeToXmlString)(this[$content]));
+      } else {
+        this[$content][$toString](buf);
+      }
+    } else {
+      for (const child of this[_children]) {
+        child[$toString](buf);
+      }
+    }
+
+    buf.push(`</${prefix}${tagName}>`);
+  }
+
   [$onChild](child) {
     if (this[$content]) {
       const node = new XmlObject(this[$namespaceId], "#text");
@@ -44412,13 +46358,13 @@ class XmlObject extends XFAObject {
 
   [$toHTML]() {
     if (this[$nodeName] === "#text") {
-      return {
+      return _utils.HTMLResult.success({
         name: "#text",
         value: this[$content]
-      };
+      });
     }
 
-    return null;
+    return _utils.HTMLResult.EMPTY;
   }
 
   [$getChildren](name = null) {
@@ -44427,6 +46373,10 @@ class XmlObject extends XFAObject {
     }
 
     return this[_children].filter(c => c[$nodeName] === name);
+  }
+
+  [$getAttributes]() {
+    return this[_attributes];
   }
 
   [$getChildrenByClass](name) {
@@ -44483,10 +46433,31 @@ class XmlObject extends XFAObject {
 
   [$isDataValue]() {
     if (this[_dataValue] === null) {
-      return this[_children].length === 0;
+      return this[_children].length === 0 || this[_children][0][$namespaceId] === _namespaces.NamespaceIds.xhtml.id;
     }
 
     return this[_dataValue];
+  }
+
+  [$getDataValue]() {
+    if (this[_dataValue] === null) {
+      if (this[_children].length === 0) {
+        return this[$content].trim();
+      }
+
+      if (this[_children][0][$namespaceId] === _namespaces.NamespaceIds.xhtml.id) {
+        return this[_children][0][$text]().trim();
+      }
+
+      return null;
+    }
+
+    return this[$content].trim();
+  }
+
+  [$setValue](value) {
+    value = value.value || "";
+    this[$content] = value.toString();
   }
 
   [$dump]() {
@@ -44608,8 +46579,8 @@ class Option10 extends IntegerObject {
 exports.Option10 = Option10;
 
 /***/ }),
-/* 69 */
-/***/ ((__unused_webpack_module, exports) => {
+/* 76 */
+/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
 
@@ -44625,13 +46596,27 @@ exports.getMeasurement = getMeasurement;
 exports.getRatio = getRatio;
 exports.getRelevant = getRelevant;
 exports.getStringOption = getStringOption;
+exports.stripQuotes = stripQuotes;
+exports.HTMLResult = void 0;
+
+var _util = __w_pdfjs_require__(2);
+
 const dimConverters = {
   pt: x => x,
   cm: x => x / 2.54 * 72,
   mm: x => x / (10 * 2.54) * 72,
-  in: x => x * 72
+  in: x => x * 72,
+  px: x => x
 };
 const measurementPattern = /([+-]?[0-9]+\.?[0-9]*)(.*)/;
+
+function stripQuotes(str) {
+  if (str.startsWith("'") || str.startsWith('"')) {
+    return str.slice(1, str.length - 1);
+  }
+
+  return str;
+}
 
 function getInteger({
   data,
@@ -44832,8 +46817,40 @@ function getBBox(data) {
   };
 }
 
+class HTMLResult {
+  static get FAILURE() {
+    return (0, _util.shadow)(this, "FAILURE", new HTMLResult(false, null, null, null));
+  }
+
+  static get EMPTY() {
+    return (0, _util.shadow)(this, "EMPTY", new HTMLResult(true, null, null, null));
+  }
+
+  constructor(success, html, bbox, breakNode) {
+    this.success = success;
+    this.html = html;
+    this.bbox = bbox;
+    this.breakNode = breakNode;
+  }
+
+  isBreak() {
+    return !!this.breakNode;
+  }
+
+  static breakNode(node) {
+    return new HTMLResult(false, null, null, node);
+  }
+
+  static success(html, bbox = null) {
+    return new HTMLResult(true, html, bbox, null);
+  }
+
+}
+
+exports.HTMLResult = HTMLResult;
+
 /***/ }),
-/* 70 */
+/* 77 */
 /***/ ((__unused_webpack_module, exports) => {
 
 
@@ -44909,7 +46926,351 @@ const NamespaceIds = {
 exports.NamespaceIds = NamespaceIds;
 
 /***/ }),
-/* 71 */
+/* 78 */
+/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
+
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports.createDataNode = createDataNode;
+exports.searchNode = searchNode;
+
+var _xfa_object = __w_pdfjs_require__(75);
+
+var _util = __w_pdfjs_require__(2);
+
+const namePattern = /^[^.[]+/;
+const indexPattern = /^[^\]]+/;
+const operators = {
+  dot: 0,
+  dotDot: 1,
+  dotHash: 2,
+  dotBracket: 3,
+  dotParen: 4
+};
+const shortcuts = new Map([["$data", (root, current) => root.datasets.data], ["$template", (root, current) => root.template], ["$connectionSet", (root, current) => root.connectionSet], ["$form", (root, current) => root.form], ["$layout", (root, current) => root.layout], ["$host", (root, current) => root.host], ["$dataWindow", (root, current) => root.dataWindow], ["$event", (root, current) => root.event], ["!", (root, current) => root.datasets], ["$xfa", (root, current) => root], ["xfa", (root, current) => root], ["$", (root, current) => current]]);
+const somCache = new WeakMap();
+
+function parseIndex(index) {
+  index = index.trim();
+
+  if (index === "*") {
+    return Infinity;
+  }
+
+  return parseInt(index, 10) || 0;
+}
+
+function parseExpression(expr, dotDotAllowed, noExpr = true) {
+  let match = expr.match(namePattern);
+
+  if (!match) {
+    return null;
+  }
+
+  let [name] = match;
+  const parsed = [{
+    name,
+    cacheName: "." + name,
+    index: 0,
+    js: null,
+    formCalc: null,
+    operator: operators.dot
+  }];
+  let pos = name.length;
+
+  while (pos < expr.length) {
+    const spos = pos;
+    const char = expr.charAt(pos++);
+
+    if (char === "[") {
+      match = expr.slice(pos).match(indexPattern);
+
+      if (!match) {
+        (0, _util.warn)("XFA - Invalid index in SOM expression");
+        return null;
+      }
+
+      parsed[parsed.length - 1].index = parseIndex(match[0]);
+      pos += match[0].length + 1;
+      continue;
+    }
+
+    let operator;
+
+    switch (expr.charAt(pos)) {
+      case ".":
+        if (!dotDotAllowed) {
+          return null;
+        }
+
+        pos++;
+        operator = operators.dotDot;
+        break;
+
+      case "#":
+        pos++;
+        operator = operators.dotHash;
+        break;
+
+      case "[":
+        if (noExpr) {
+          (0, _util.warn)("XFA - SOM expression contains a FormCalc subexpression which is not supported for now.");
+          return null;
+        }
+
+        operator = operators.dotBracket;
+        break;
+
+      case "(":
+        if (noExpr) {
+          (0, _util.warn)("XFA - SOM expression contains a JavaScript subexpression which is not supported for now.");
+          return null;
+        }
+
+        operator = operators.dotParen;
+        break;
+
+      default:
+        operator = operators.dot;
+        break;
+    }
+
+    match = expr.slice(pos).match(namePattern);
+
+    if (!match) {
+      break;
+    }
+
+    [name] = match;
+    pos += name.length;
+    parsed.push({
+      name,
+      cacheName: expr.slice(spos, pos),
+      operator,
+      index: 0,
+      js: null,
+      formCalc: null
+    });
+  }
+
+  return parsed;
+}
+
+function searchNode(root, container, expr, dotDotAllowed = true, useCache = true) {
+  const parsed = parseExpression(expr, dotDotAllowed);
+
+  if (!parsed) {
+    return null;
+  }
+
+  const fn = shortcuts.get(parsed[0].name);
+  let i = 0;
+  let isQualified;
+
+  if (fn) {
+    isQualified = true;
+    root = [fn(root, container)];
+    i = 1;
+  } else {
+    isQualified = container === null;
+    root = [container || root];
+  }
+
+  for (let ii = parsed.length; i < ii; i++) {
+    const {
+      name,
+      cacheName,
+      operator,
+      index
+    } = parsed[i];
+    const nodes = [];
+
+    for (const node of root) {
+      if (!(node instanceof _xfa_object.XFAObject)) {
+        continue;
+      }
+
+      let children, cached;
+
+      if (useCache) {
+        cached = somCache.get(node);
+
+        if (!cached) {
+          cached = new Map();
+          somCache.set(node, cached);
+        }
+
+        children = cached.get(cacheName);
+      }
+
+      if (!children) {
+        switch (operator) {
+          case operators.dot:
+            children = node[_xfa_object.$getChildrenByName](name, false);
+            break;
+
+          case operators.dotDot:
+            children = node[_xfa_object.$getChildrenByName](name, true);
+            break;
+
+          case operators.dotHash:
+            children = node[_xfa_object.$getChildrenByClass](name);
+
+            if (children instanceof _xfa_object.XFAObjectArray) {
+              children = children.children;
+            } else {
+              children = [children];
+            }
+
+            break;
+
+          default:
+            break;
+        }
+
+        if (useCache) {
+          cached.set(cacheName, children);
+        }
+      }
+
+      if (children.length > 0) {
+        nodes.push(children);
+      }
+    }
+
+    if (nodes.length === 0 && !isQualified && i === 0) {
+      const parent = container[_xfa_object.$getParent]();
+
+      container = parent;
+
+      if (!container) {
+        return null;
+      }
+
+      i = -1;
+      root = [container];
+      continue;
+    }
+
+    if (isFinite(index)) {
+      root = nodes.filter(node => index < node.length).map(node => node[index]);
+    } else {
+      root = nodes.reduce((acc, node) => acc.concat(node), []);
+    }
+  }
+
+  if (root.length === 0) {
+    return null;
+  }
+
+  return root;
+}
+
+function createNodes(root, path) {
+  let node = null;
+
+  for (const {
+    name,
+    index
+  } of path) {
+    for (let i = 0, ii = !isFinite(index) ? 0 : index; i <= ii; i++) {
+      node = new _xfa_object.XmlObject(root[_xfa_object.$namespaceId], name);
+
+      root[_xfa_object.$appendChild](node);
+    }
+
+    root = node;
+  }
+
+  return node;
+}
+
+function createDataNode(root, container, expr) {
+  const parsed = parseExpression(expr);
+
+  if (!parsed) {
+    return null;
+  }
+
+  if (parsed.some(x => x.operator === operators.dotDot)) {
+    return null;
+  }
+
+  const fn = shortcuts.get(parsed[0].name);
+  let i = 0;
+
+  if (fn) {
+    root = fn(root, container);
+    i = 1;
+  } else {
+    root = container || root;
+  }
+
+  for (let ii = parsed.length; i < ii; i++) {
+    const {
+      name,
+      operator,
+      index
+    } = parsed[i];
+
+    if (!isFinite(index)) {
+      parsed[i].index = 0;
+      return createNodes(root, parsed.slice(i));
+    }
+
+    let children;
+
+    switch (operator) {
+      case operators.dot:
+        children = root[_xfa_object.$getChildrenByName](name, false);
+        break;
+
+      case operators.dotDot:
+        children = root[_xfa_object.$getChildrenByName](name, true);
+        break;
+
+      case operators.dotHash:
+        children = root[_xfa_object.$getChildrenByClass](name);
+
+        if (children instanceof _xfa_object.XFAObjectArray) {
+          children = children.children;
+        } else {
+          children = [children];
+        }
+
+        break;
+
+      default:
+        break;
+    }
+
+    if (children.length === 0) {
+      return createNodes(root, parsed.slice(i));
+    }
+
+    if (index < children.length) {
+      const child = children[index];
+
+      if (!(child instanceof _xfa_object.XFAObject)) {
+        (0, _util.warn)(`XFA - Cannot create a node.`);
+        return null;
+      }
+
+      root = child;
+    } else {
+      parsed[i].index = index - children.length;
+      return createNodes(root, parsed.slice(i));
+    }
+  }
+
+  return null;
+}
+
+/***/ }),
+/* 79 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -44919,13 +47280,13 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.Binder = void 0;
 
-var _xfa_object = __w_pdfjs_require__(68);
+var _xfa_object = __w_pdfjs_require__(75);
 
-var _template = __w_pdfjs_require__(72);
+var _template = __w_pdfjs_require__(80);
 
-var _som = __w_pdfjs_require__(74);
+var _som = __w_pdfjs_require__(78);
 
-var _namespaces = __w_pdfjs_require__(70);
+var _namespaces = __w_pdfjs_require__(77);
 
 var _util = __w_pdfjs_require__(2);
 
@@ -44941,13 +47302,12 @@ class Binder {
     this.datasets = root.datasets;
 
     if (root.datasets && root.datasets.data) {
-      this.emptyMerge = false;
       this.data = root.datasets.data;
     } else {
-      this.emptyMerge = true;
       this.data = new _xfa_object.XmlObject(_namespaces.NamespaceIds.datasets.id, "data");
     }
 
+    this.emptyMerge = this.data[_xfa_object.$getChildren]().length === 0;
     this.root.form = this.form = root.template[_xfa_object.$clone]();
   }
 
@@ -44970,32 +47330,28 @@ class Binder {
   }
 
   _bindValue(formNode, data, picture) {
+    formNode[_xfa_object.$data] = data;
+
     if (formNode[_xfa_object.$hasSettableValue]()) {
       if (data[_xfa_object.$isDataValue]()) {
-        const value = data[_xfa_object.$content].trim();
+        const value = data[_xfa_object.$getDataValue]();
 
         formNode[_xfa_object.$setValue](createText(value));
-
-        formNode[_xfa_object.$data] = data;
       } else if (formNode instanceof _template.Field && formNode.ui && formNode.ui.choiceList && formNode.ui.choiceList.open === "multiSelect") {
         const value = data[_xfa_object.$getChildren]().map(child => child[_xfa_object.$content].trim()).join("\n");
 
         formNode[_xfa_object.$setValue](createText(value));
-
-        formNode[_xfa_object.$data] = data;
       } else if (this._isConsumeData()) {
         (0, _util.warn)(`XFA - Nodes haven't the same type.`);
       }
     } else if (!data[_xfa_object.$isDataValue]() || this._isMatchTemplate()) {
       this._bindElement(formNode, data);
-
-      formNode[_xfa_object.$data] = data;
     } else {
       (0, _util.warn)(`XFA - Nodes haven't the same type.`);
     }
   }
 
-  _findDataByNameToConsume(name, dataNode, global) {
+  _findDataByNameToConsume(name, isValue, dataNode, global) {
     if (!name) {
       return null;
     }
@@ -45004,10 +47360,17 @@ class Binder {
 
     for (let i = 0; i < 3; i++) {
       generator = dataNode[_xfa_object.$getRealChildrenByNameIt](name, false, true);
-      match = generator.next().value;
 
-      if (match) {
-        return match;
+      while (true) {
+        match = generator.next().value;
+
+        if (!match) {
+          break;
+        }
+
+        if (isValue === match[_xfa_object.$isDataValue]()) {
+          return match;
+        }
       }
 
       if (dataNode[_xfa_object.$namespaceId] === _namespaces.NamespaceIds.datasets.id && dataNode[_xfa_object.$nodeName] === "data") {
@@ -45021,18 +47384,11 @@ class Binder {
       return null;
     }
 
-    generator = this.datasets[_xfa_object.$getRealChildrenByNameIt](name, false, false);
+    generator = this.data[_xfa_object.$getRealChildrenByNameIt](name, true, false);
+    match = generator.next().value;
 
-    while (true) {
-      match = generator.next().value;
-
-      if (!match) {
-        break;
-      }
-
-      if (match[_xfa_object.$global]) {
-        return match;
-      }
+    if (match) {
+      return match;
     }
 
     generator = this.data[_xfa_object.$getAttributeIt](name, true);
@@ -45063,24 +47419,28 @@ class Binder {
         continue;
       }
 
-      const [node] = (0, _som.searchNode)(this.root, dataNode, ref, false, false);
+      const nodes = (0, _som.searchNode)(this.root, dataNode, ref, false, false);
 
-      if (!node) {
+      if (!nodes) {
         (0, _util.warn)(`XFA - Invalid reference: ${ref}.`);
         continue;
       }
+
+      const [node] = nodes;
 
       if (!node[_xfa_object.$isDescendent](this.data)) {
         (0, _util.warn)(`XFA - Invalid node: must be a data node.`);
         continue;
       }
 
-      const [targetNode] = (0, _som.searchNode)(this.root, formNode, target, false, false);
+      const targetNodes = (0, _som.searchNode)(this.root, formNode, target, false, false);
 
-      if (!targetNode) {
+      if (!targetNodes) {
         (0, _util.warn)(`XFA - Invalid target: ${target}.`);
         continue;
       }
+
+      const [targetNode] = targetNodes;
 
       if (!targetNode[_xfa_object.$isDescendent](formNode)) {
         (0, _util.warn)(`XFA - Invalid target: must be a property or subproperty.`);
@@ -45171,24 +47531,28 @@ class Binder {
           continue;
         }
 
-        const [labelNode] = (0, _som.searchNode)(this.root, node, labelRef, true, false);
+        const labelNodes = (0, _som.searchNode)(this.root, node, labelRef, true, false);
 
-        if (!labelNode) {
+        if (!labelNodes) {
           (0, _util.warn)(`XFA - Invalid label: ${labelRef}.`);
           continue;
         }
+
+        const [labelNode] = labelNodes;
 
         if (!labelNode[_xfa_object.$isDescendent](this.datasets)) {
           (0, _util.warn)(`XFA - Invalid label: must be a datasets child.`);
           continue;
         }
 
-        const [valueNode] = (0, _som.searchNode)(this.root, node, valueRef, true, false);
+        const valueNodes = (0, _som.searchNode)(this.root, node, valueRef, true, false);
 
-        if (!valueNode) {
+        if (!valueNodes) {
           (0, _util.warn)(`XFA - Invalid value: ${valueRef}.`);
           continue;
         }
+
+        const [valueNode] = valueNodes;
 
         if (!valueNode[_xfa_object.$isDescendent](this.datasets)) {
           (0, _util.warn)(`XFA - Invalid value: must be a datasets child.`);
@@ -45214,6 +47578,10 @@ class Binder {
 
     if (matches.length > 1) {
       baseClone = formNode[_xfa_object.$clone]();
+
+      baseClone[_xfa_object.$removeChild](baseClone.occur);
+
+      baseClone.occur = null;
     }
 
     this._bindValue(formNode, matches[0], picture);
@@ -45237,9 +47605,6 @@ class Binder {
 
       const clone = baseClone[_xfa_object.$clone]();
 
-      clone.occur.min = 1;
-      clone.occur.max = 1;
-      clone.occur.initial = 1;
       parent[name].push(clone);
 
       parent[_xfa_object.$insertAt](pos + i, clone);
@@ -45269,25 +47634,48 @@ class Binder {
 
     const name = formNode[_xfa_object.$nodeName];
 
-    for (let i = 0, ii = occur.initial; i < ii; i++) {
-      const clone = formNode[_xfa_object.$clone]();
+    if (!(parent[name] instanceof _xfa_object.XFAObjectArray)) {
+      return;
+    }
 
-      clone.occur.min = 1;
-      clone.occur.max = 1;
-      clone.occur.initial = 1;
-      parent[name].push(clone);
+    let currentNumber;
 
-      parent[_xfa_object.$appendChild](clone);
+    if (formNode.name) {
+      currentNumber = parent[name].children.filter(e => e.name === formNode.name).length;
+    } else {
+      currentNumber = parent[name].children.length;
+    }
+
+    const pos = parent[_xfa_object.$indexOf](formNode) + 1;
+    const ii = occur.initial - currentNumber;
+
+    if (ii) {
+      const nodeClone = formNode[_xfa_object.$clone]();
+
+      nodeClone[_xfa_object.$removeChild](nodeClone.occur);
+
+      nodeClone.occur = null;
+      parent[name].push(nodeClone);
+
+      parent[_xfa_object.$insertAt](pos, nodeClone);
+
+      for (let i = 1; i < ii; i++) {
+        const clone = nodeClone[_xfa_object.$clone]();
+
+        parent[name].push(clone);
+
+        parent[_xfa_object.$insertAt](pos + i, clone);
+      }
     }
   }
 
   _getOccurInfo(formNode) {
     const {
+      name,
       occur
     } = formNode;
-    const dataName = formNode.name;
 
-    if (!occur || !dataName) {
+    if (!occur || !name) {
       return [1, 1];
     }
 
@@ -45307,6 +47695,24 @@ class Binder {
 
       if (this._mergeMode === undefined && child[_xfa_object.$nodeName] === "subform") {
         this._mergeMode = child.mergeMode === "consumeData";
+
+        const dataChildren = dataNode[_xfa_object.$getChildren]();
+
+        if (dataChildren.length > 0) {
+          this._bindOccurrences(child, [dataChildren[0]], null);
+        } else if (this.emptyMerge) {
+          const dataChild = child[_xfa_object.$data] = new _xfa_object.XmlObject(dataNode[_xfa_object.$namespaceId], child.name || "root");
+
+          dataNode[_xfa_object.$appendChild](dataChild);
+
+          this._bindElement(child, dataChild);
+        }
+
+        continue;
+      }
+
+      if (!child[_xfa_object.$isBindable]()) {
+        continue;
       }
 
       let global = false;
@@ -45317,6 +47723,8 @@ class Binder {
       if (child.bind) {
         switch (child.bind.match) {
           case "none":
+            this._bindElement(child, dataNode);
+
             continue;
 
           case "global":
@@ -45326,6 +47734,9 @@ class Binder {
           case "dataRef":
             if (!child.bind.ref) {
               (0, _util.warn)(`XFA - ref is empty in node ${child[_xfa_object.$nodeName]}.`);
+
+              this._bindElement(child, dataNode);
+
               continue;
             }
 
@@ -45349,11 +47760,17 @@ class Binder {
         if (match === null) {
           match = (0, _som.createDataNode)(this.data, dataNode, ref);
 
+          if (!match) {
+            continue;
+          }
+
           if (this._isConsumeData()) {
             match[_xfa_object.$consumed] = true;
           }
 
-          match = [match];
+          this._bindElement(child, match);
+
+          continue;
         } else {
           if (this._isConsumeData()) {
             match = match.filter(node => !node[_xfa_object.$consumed]);
@@ -45382,7 +47799,7 @@ class Binder {
           const matches = [];
 
           while (matches.length < max) {
-            const found = this._findDataByNameToConsume(child.name, dataNode, global);
+            const found = this._findDataByNameToConsume(child.name, child[_xfa_object.$hasSettableValue](), dataNode, global);
 
             if (!found) {
               break;
@@ -45394,12 +47811,28 @@ class Binder {
 
           match = matches.length > 0 ? matches : null;
         } else {
-          match = dataNode[_xfa_object.$getRealChildrenByNameIt](child.name, false, false).next().value;
+          match = dataNode[_xfa_object.$getRealChildrenByNameIt](child.name, false, this.emptyMerge).next().value;
 
           if (!match) {
-            match = new _xfa_object.XmlObject(dataNode[_xfa_object.$namespaceId], child.name);
+            match = child[_xfa_object.$data] = new _xfa_object.XmlObject(dataNode[_xfa_object.$namespaceId], child.name);
+
+            if (this.emptyMerge) {
+              match[_xfa_object.$consumed] = true;
+            }
 
             dataNode[_xfa_object.$appendChild](match);
+
+            this._setProperties(child, match);
+
+            this._bindItems(child, match);
+
+            this._bindElement(child, match);
+
+            continue;
+          }
+
+          if (this.emptyMerge) {
+            match[_xfa_object.$consumed] = true;
           }
 
           match = [match];
@@ -45407,13 +47840,12 @@ class Binder {
       }
 
       if (match) {
-        if (match.length < min) {
-          (0, _util.warn)(`XFA - Must have at least ${min} occurrences: ${formNode[_xfa_object.$nodeName]}.`);
-          continue;
-        }
-
         this._bindOccurrences(child, match, picture);
       } else if (min > 0) {
+        this._setProperties(child, dataNode);
+
+        this._bindItems(child, dataNode);
+
         this._bindElement(child, dataNode);
       } else {
         uselessNodes.push(child);
@@ -45428,7 +47860,7 @@ class Binder {
 exports.Binder = Binder;
 
 /***/ }),
-/* 72 */
+/* 80 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -45438,17 +47870,53 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.Value = exports.Text = exports.TemplateNamespace = exports.Template = exports.SetProperty = exports.Items = exports.Field = exports.BindItems = void 0;
 
-var _xfa_object = __w_pdfjs_require__(68);
+var _xfa_object = __w_pdfjs_require__(75);
 
-var _namespaces = __w_pdfjs_require__(70);
+var _namespaces = __w_pdfjs_require__(77);
 
-var _html_utils = __w_pdfjs_require__(73);
+var _layout = __w_pdfjs_require__(81);
 
-var _utils = __w_pdfjs_require__(69);
+var _html_utils = __w_pdfjs_require__(82);
+
+var _utils = __w_pdfjs_require__(76);
 
 var _util = __w_pdfjs_require__(2);
 
+var _fonts = __w_pdfjs_require__(83);
+
+var _som = __w_pdfjs_require__(78);
+
 const TEMPLATE_NS_ID = _namespaces.NamespaceIds.template.id;
+const SVG_NS = "http://www.w3.org/2000/svg";
+const MAX_ATTEMPTS_FOR_LRTB_LAYOUT = 2;
+const MAX_EMPTY_PAGES = 3;
+
+function getBorderDims(node) {
+  if (!node || !node.border) {
+    return {
+      w: 0,
+      h: 0
+    };
+  }
+
+  const borderExtra = node.border[_xfa_object.$getExtra]();
+
+  if (!borderExtra) {
+    return {
+      w: 0,
+      h: 0
+    };
+  }
+
+  return {
+    w: borderExtra.widths[0] + borderExtra.widths[2] + borderExtra.insets[0] + borderExtra.insets[2],
+    h: borderExtra.widths[1] + borderExtra.widths[3] + borderExtra.insets[1] + borderExtra.insets[3]
+  };
+}
+
+function hasMargin(node) {
+  return node.margin && (node.margin.topInset || node.margin.rightInset || node.margin.bottomInset || node.margin.leftInset);
+}
 
 function _setValue(templateNode, value) {
   if (!templateNode.value) {
@@ -45460,6 +47928,175 @@ function _setValue(templateNode, value) {
   }
 
   templateNode.value[_xfa_object.$setValue](value);
+}
+
+function* getContainedChildren(node) {
+  for (const child of node[_xfa_object.$getChildren]()) {
+    if (child instanceof SubformSet) {
+      yield* child[_xfa_object.$getContainedChildren]();
+      continue;
+    }
+
+    yield child;
+  }
+}
+
+function setTabIndex(node) {
+  while (node) {
+    if (!node.traversal || node[_xfa_object.$tabIndex]) {
+      return;
+    }
+
+    let next = null;
+
+    for (const child of node.traversal[_xfa_object.$getChildren]()) {
+      if (child.operation === "next") {
+        next = child;
+        break;
+      }
+    }
+
+    if (!next || !next.ref) {
+      return;
+    }
+
+    const root = node[_xfa_object.$getTemplateRoot]();
+
+    node[_xfa_object.$tabIndex] = ++root[_xfa_object.$tabIndex];
+
+    const ref = root[_xfa_object.$searchNode](next.ref, node);
+
+    if (!ref) {
+      return;
+    }
+
+    node = ref[0];
+  }
+}
+
+function valueToHtml(value) {
+  return _utils.HTMLResult.success({
+    name: "div",
+    attributes: {
+      class: ["xfaRich"],
+      style: Object.create(null)
+    },
+    children: [{
+      name: "span",
+      attributes: {
+        style: Object.create(null)
+      },
+      value
+    }]
+  });
+}
+
+function setFirstUnsplittable(node) {
+  const root = node[_xfa_object.$getTemplateRoot]();
+
+  if (root[_xfa_object.$extra].firstUnsplittable === null) {
+    root[_xfa_object.$extra].firstUnsplittable = node;
+    root[_xfa_object.$extra].noLayoutFailure = true;
+  }
+}
+
+function unsetFirstUnsplittable(node) {
+  const root = node[_xfa_object.$getTemplateRoot]();
+
+  if (root[_xfa_object.$extra].firstUnsplittable === node) {
+    root[_xfa_object.$extra].noLayoutFailure = false;
+  }
+}
+
+function handleBreak(node) {
+  if (node[_xfa_object.$extra]) {
+    return false;
+  }
+
+  node[_xfa_object.$extra] = Object.create(null);
+
+  if (node.targetType === "auto") {
+    return false;
+  }
+
+  const root = node[_xfa_object.$getTemplateRoot]();
+
+  let target = null;
+
+  if (node.target) {
+    target = root[_xfa_object.$searchNode](node.target, node[_xfa_object.$getParent]());
+
+    if (!target) {
+      return false;
+    }
+
+    target = target[0];
+  }
+
+  const {
+    currentPageArea,
+    currentContentArea
+  } = root[_xfa_object.$extra];
+
+  if (node.targetType === "pageArea") {
+    if (!(target instanceof PageArea)) {
+      target = null;
+    }
+
+    if (node.startNew) {
+      node[_xfa_object.$extra].target = target || currentPageArea;
+      return true;
+    } else if (target && target !== currentPageArea) {
+      node[_xfa_object.$extra].target = target;
+      return true;
+    }
+
+    return false;
+  }
+
+  if (!(target instanceof ContentArea)) {
+    target = null;
+  }
+
+  const pageArea = target && target[_xfa_object.$getParent]();
+
+  let index;
+
+  if (node.startNew) {
+    if (target) {
+      const contentAreas = pageArea.contentArea.children;
+      index = contentAreas.findIndex(e => e === target) - 1;
+    } else {
+      index = currentPageArea.contentArea.children.findIndex(e => e === currentContentArea);
+    }
+  } else if (target && target !== currentContentArea) {
+    const contentAreas = pageArea.contentArea.children;
+    index = contentAreas.findIndex(e => e === target) - 1;
+  } else {
+    return false;
+  }
+
+  node[_xfa_object.$extra].target = pageArea === currentPageArea ? null : pageArea;
+  node[_xfa_object.$extra].index = index;
+  return true;
+}
+
+function handleOverflow(node, extraNode, space) {
+  const root = node[_xfa_object.$getTemplateRoot]();
+
+  const saved = root[_xfa_object.$extra].noLayoutFailure;
+  const savedMethod = extraNode[_xfa_object.$getSubformParent];
+
+  extraNode[_xfa_object.$getSubformParent] = () => node;
+
+  root[_xfa_object.$extra].noLayoutFailure = true;
+
+  const res = extraNode[_xfa_object.$toHTML](space);
+
+  node[_xfa_object.$addHTML](res.html, res.bbox);
+
+  root[_xfa_object.$extra].noLayoutFailure = saved;
+  extraNode[_xfa_object.$getSubformParent] = savedMethod;
 }
 
 class AppearanceFilter extends _xfa_object.StringObject {
@@ -45499,6 +48136,89 @@ class Arc extends _xfa_object.XFAObject {
     this.fill = null;
   }
 
+  [_xfa_object.$toHTML]() {
+    const edge = this.edge ? this.edge : new Edge({});
+
+    const edgeStyle = edge[_xfa_object.$toStyle]();
+
+    const style = Object.create(null);
+
+    if (this.fill && this.fill.presence === "visible") {
+      Object.assign(style, this.fill[_xfa_object.$toStyle]());
+    } else {
+      style.fill = "transparent";
+    }
+
+    style.strokeWidth = (0, _html_utils.measureToString)(edge.presence === "visible" ? edge.thickness : 0);
+    style.stroke = edgeStyle.color;
+    let arc;
+    const attributes = {
+      xmlns: SVG_NS,
+      style: {
+        width: "100%",
+        height: "100%",
+        overflow: "visible"
+      }
+    };
+
+    if (this.startAngle === 0 && this.sweepAngle === 360) {
+      arc = {
+        name: "ellipse",
+        attributes: {
+          xmlns: SVG_NS,
+          cx: "50%",
+          cy: "50%",
+          rx: "50%",
+          ry: "50%",
+          style
+        }
+      };
+    } else {
+      const startAngle = this.startAngle * Math.PI / 180;
+      const sweepAngle = this.sweepAngle * Math.PI / 180;
+      const largeArc = this.sweepAngle - this.startAngle > 180 ? 1 : 0;
+      const [x1, y1, x2, y2] = [50 * (1 + Math.cos(startAngle)), 50 * (1 - Math.sin(startAngle)), 50 * (1 + Math.cos(sweepAngle)), 50 * (1 - Math.sin(sweepAngle))];
+      arc = {
+        name: "path",
+        attributes: {
+          xmlns: SVG_NS,
+          d: `M ${x1} ${y1} A 50 50 0 ${largeArc} 0 ${x2} ${y2}`,
+          vectorEffect: "non-scaling-stroke",
+          style
+        }
+      };
+      Object.assign(attributes, {
+        viewBox: "0 0 100 100",
+        preserveAspectRatio: "none"
+      });
+    }
+
+    const svg = {
+      name: "svg",
+      children: [arc],
+      attributes
+    };
+
+    const parent = this[_xfa_object.$getParent]()[_xfa_object.$getParent]();
+
+    if (hasMargin(parent)) {
+      return _utils.HTMLResult.success({
+        name: "div",
+        attributes: {
+          style: {
+            display: "inline",
+            width: "100%",
+            height: "100%"
+          }
+        },
+        children: [svg]
+      });
+    }
+
+    svg.attributes.style.position = "absolute";
+    return _utils.HTMLResult.success(svg);
+  }
+
 }
 
 class Area extends _xfa_object.XFAObject {
@@ -45507,7 +48227,7 @@ class Area extends _xfa_object.XFAObject {
     this.colSpan = (0, _utils.getInteger)({
       data: attributes.colSpan,
       defaultValue: 1,
-      validate: n => n >= 1
+      validate: n => n >= 1 || n === -1
     });
     this.id = attributes.id || "";
     this.name = attributes.name || "";
@@ -45527,34 +48247,74 @@ class Area extends _xfa_object.XFAObject {
     this.subformSet = new _xfa_object.XFAObjectArray();
   }
 
+  *[_xfa_object.$getContainedChildren]() {
+    yield* getContainedChildren(this);
+  }
+
   [_xfa_object.$isTransparent]() {
     return true;
   }
 
-  [_xfa_object.$toHTML]() {
-    this[_xfa_object.$extra] = Object.create(null);
+  [_xfa_object.$addHTML](html, bbox) {
+    const [x, y, w, h] = bbox;
+    this[_xfa_object.$extra].width = Math.max(this[_xfa_object.$extra].width, x + w);
+    this[_xfa_object.$extra].height = Math.max(this[_xfa_object.$extra].height, y + h);
+
+    this[_xfa_object.$extra].children.push(html);
+  }
+
+  [_xfa_object.$getAvailableSpace]() {
+    return this[_xfa_object.$extra].availableSpace;
+  }
+
+  [_xfa_object.$toHTML](availableSpace) {
     const style = (0, _html_utils.toStyle)(this, "position");
     const attributes = {
       style,
       id: this[_xfa_object.$uid],
-      class: "xfaArea"
+      class: ["xfaArea"]
     };
+
+    if ((0, _html_utils.isPrintOnly)(this)) {
+      attributes.class.push("xfaPrintOnly");
+    }
 
     if (this.name) {
       attributes.xfaName = this.name;
     }
 
-    const children = this[_xfa_object.$childrenToHTML]({
-      filter: new Set(["area", "draw", "field", "subform", "subformSet"]),
+    const children = [];
+    this[_xfa_object.$extra] = {
+      children,
+      width: 0,
+      height: 0,
+      availableSpace
+    };
+
+    const result = this[_xfa_object.$childrenToHTML]({
+      filter: new Set(["area", "draw", "field", "exclGroup", "subform", "subformSet"]),
       include: true
     });
 
+    if (!result.success) {
+      if (result.isBreak()) {
+        return result;
+      }
+
+      delete this[_xfa_object.$extra];
+      return _utils.HTMLResult.FAILURE;
+    }
+
+    style.width = (0, _html_utils.measureToString)(this[_xfa_object.$extra].width);
+    style.height = (0, _html_utils.measureToString)(this[_xfa_object.$extra].height);
     const html = {
       name: "div",
       attributes,
       children
     };
-    return html;
+    const bbox = [this.x, this.y, this[_xfa_object.$extra].width, this[_xfa_object.$extra].height];
+    delete this[_xfa_object.$extra];
+    return _utils.HTMLResult.success(html, bbox);
   }
 
 }
@@ -45568,6 +48328,10 @@ class Assist extends _xfa_object.XFAObject {
     this.usehref = attributes.usehref || "";
     this.speak = null;
     this.toolTip = null;
+  }
+
+  [_xfa_object.$toHTML]() {
+    return this.toolTip && this.toolTip[_xfa_object.$content] ? this.toolTip[_xfa_object.$content] : null;
   }
 
 }
@@ -45674,8 +48438,8 @@ class BooleanElement extends _xfa_object.Option01 {
     this.usehref = attributes.usehref || "";
   }
 
-  [_xfa_object.$toHTML]() {
-    return this[_xfa_object.$content] === 1;
+  [_xfa_object.$toHTML](availableSpace) {
+    return valueToHtml(this[_xfa_object.$content] === 1 ? "1" : "0");
   }
 
 }
@@ -45697,49 +48461,62 @@ class Border extends _xfa_object.XFAObject {
     this.margin = null;
   }
 
-  [_xfa_object.$toStyle](widths, margins) {
-    const edges = this.edge.children.slice();
+  [_xfa_object.$getExtra]() {
+    if (!this[_xfa_object.$extra]) {
+      const edges = this.edge.children.slice();
 
-    if (edges.length < 4) {
-      const defaultEdge = edges[edges.length - 1] || new Edge({});
+      if (edges.length < 4) {
+        const defaultEdge = edges[edges.length - 1] || new Edge({});
 
-      for (let i = edges.length; i < 4; i++) {
-        edges.push(defaultEdge);
+        for (let i = edges.length; i < 4; i++) {
+          edges.push(defaultEdge);
+        }
       }
+
+      const widths = edges.map(edge => edge.thickness);
+      const insets = [0, 0, 0, 0];
+
+      if (this.margin) {
+        insets[0] = this.margin.topInset;
+        insets[1] = this.margin.rightInset;
+        insets[2] = this.margin.bottomInset;
+        insets[3] = this.margin.leftInset;
+      }
+
+      this[_xfa_object.$extra] = {
+        widths,
+        insets,
+        edges
+      };
     }
 
-    if (widths) {
-      for (let i = 0; i < 4; i++) {
-        widths[i] = edges[i].thickness;
-      }
-    }
+    return this[_xfa_object.$extra];
+  }
 
-    const edgeStyles = edges.map(node => node[_xfa_object.$toStyle]());
-    const cornerStyles = this.corner.children.map(node => node[_xfa_object.$toStyle]());
-    let style;
+  [_xfa_object.$toStyle]() {
+    const {
+      edges
+    } = this[_xfa_object.$getExtra]();
+
+    const edgeStyles = edges.map(node => {
+      const style = node[_xfa_object.$toStyle]();
+
+      style.color = style.color || "#000000";
+      return style;
+    });
+    const style = Object.create(null);
 
     if (this.margin) {
-      style = this.margin[_xfa_object.$toStyle]();
-
-      if (margins) {
-        margins[0] = this.margin.topInset;
-        margins[1] = this.margin.rightInset;
-        margins[2] = this.margin.bottomInset;
-        margins[3] = this.margin.leftInset;
-      }
-    } else {
-      style = Object.create(null);
+      Object.assign(style, this.margin[_xfa_object.$toStyle]());
     }
 
-    if (this.fill) {
+    if (this.fill && this.fill.presence === "visible") {
       Object.assign(style, this.fill[_xfa_object.$toStyle]());
     }
 
-    style.borderWidth = edgeStyles.map(s => s.width).join(" ");
-    style.borderColor = edgeStyles.map(s => s.color).join(" ");
-    style.borderStyle = edgeStyles.map(s => s.style).join(" ");
+    if (this.corner.children.some(node => node.radius !== 0)) {
+      const cornerStyles = this.corner.children.map(node => node[_xfa_object.$toStyle]());
 
-    if (cornerStyles.length > 0) {
       if (cornerStyles.length === 2 || cornerStyles.length === 3) {
         const last = cornerStyles[cornerStyles.length - 1];
 
@@ -45760,8 +48537,14 @@ class Border extends _xfa_object.XFAObject {
       case "inactive":
         style.borderStyle = "none";
         break;
+
+      default:
+        style.borderStyle = edgeStyles.map(s => s.style).join(" ");
+        break;
     }
 
+    style.borderWidth = edgeStyles.map(s => s.width).join(" ");
+    style.borderColor = edgeStyles.map(s => s.color).join(" ");
     return style;
   }
 
@@ -45803,7 +48586,7 @@ class BreakAfter extends _xfa_object.XFAObject {
       validate: x => x === 1
     });
     this.target = attributes.target || "";
-    this.targetType = (0, _utils.getStringOption)(attributes.targetType, ["auto", "contentArea", "pageArea", "pageEven", "pageOdd"]);
+    this.targetType = (0, _utils.getStringOption)(attributes.targetType, ["auto", "contentArea", "pageArea"]);
     this.trailer = attributes.trailer || "";
     this.use = attributes.use || "";
     this.usehref = attributes.usehref || "";
@@ -45823,11 +48606,16 @@ class BreakBefore extends _xfa_object.XFAObject {
       validate: x => x === 1
     });
     this.target = attributes.target || "";
-    this.targetType = (0, _utils.getStringOption)(attributes.targetType, ["auto", "contentArea", "pageArea", "pageEven", "pageOdd"]);
+    this.targetType = (0, _utils.getStringOption)(attributes.targetType, ["auto", "contentArea", "pageArea"]);
     this.trailer = attributes.trailer || "";
     this.use = attributes.use || "";
     this.usehref = attributes.usehref || "";
     this.script = null;
+  }
+
+  [_xfa_object.$toHTML](availableSpace) {
+    this[_xfa_object.$extra] = {};
+    return _utils.HTMLResult.FAILURE;
   }
 
 }
@@ -45842,14 +48630,16 @@ class Button extends _xfa_object.XFAObject {
     this.extras = null;
   }
 
-  [_xfa_object.$toHTML]() {
-    return {
+  [_xfa_object.$toHTML](availableSpace) {
+    return _utils.HTMLResult.success({
       name: "button",
       attributes: {
-        class: "xfaButton",
+        id: this[_xfa_object.$uid],
+        class: ["xfaButton"],
         style: {}
-      }
-    };
+      },
+      children: []
+    });
   }
 
 }
@@ -45874,7 +48664,7 @@ class Caption extends _xfa_object.XFAObject {
     this.id = attributes.id || "";
     this.placement = (0, _utils.getStringOption)(attributes.placement, ["left", "bottom", "inline", "right", "top"]);
     this.presence = (0, _utils.getStringOption)(attributes.presence, ["visible", "hidden", "inactive", "invisible"]);
-    this.reserve = (0, _utils.getMeasurement)(attributes.reserve);
+    this.reserve = Math.ceil((0, _utils.getMeasurement)(attributes.reserve));
     this.use = attributes.use || "";
     this.usehref = attributes.usehref || "";
     this.extras = null;
@@ -45888,15 +48678,70 @@ class Caption extends _xfa_object.XFAObject {
     _setValue(this, value);
   }
 
-  [_xfa_object.$toHTML]() {
-    if (!this.value) {
-      return null;
+  [_xfa_object.$getExtra](availableSpace) {
+    if (!this[_xfa_object.$extra]) {
+      let {
+        width,
+        height
+      } = availableSpace;
+
+      switch (this.placement) {
+        case "left":
+        case "right":
+        case "inline":
+          width = this.reserve <= 0 ? width : this.reserve;
+          break;
+
+        case "top":
+        case "bottom":
+          height = this.reserve <= 0 ? height : this.reserve;
+          break;
+      }
+
+      this[_xfa_object.$extra] = (0, _html_utils.layoutNode)(this, {
+        width,
+        height
+      });
     }
 
-    const value = this.value[_xfa_object.$toHTML]();
+    return this[_xfa_object.$extra];
+  }
+
+  [_xfa_object.$toHTML](availableSpace) {
+    if (!this.value) {
+      return _utils.HTMLResult.EMPTY;
+    }
+
+    this[_xfa_object.$pushPara]();
+
+    const value = this.value[_xfa_object.$toHTML](availableSpace).html;
 
     if (!value) {
-      return null;
+      this[_xfa_object.$popPara]();
+
+      return _utils.HTMLResult.EMPTY;
+    }
+
+    const savedReserve = this.reserve;
+
+    if (this.reserve <= 0) {
+      const {
+        w,
+        h
+      } = this[_xfa_object.$getExtra](availableSpace);
+
+      switch (this.placement) {
+        case "left":
+        case "right":
+        case "inline":
+          this.reserve = w;
+          break;
+
+        case "top":
+        case "bottom":
+          this.reserve = h;
+          break;
+      }
     }
 
     const children = [];
@@ -45910,27 +48755,39 @@ class Caption extends _xfa_object.XFAObject {
       children.push(value);
     }
 
-    const style = (0, _html_utils.toStyle)(this, "font", "margin", "para", "visibility");
+    const style = (0, _html_utils.toStyle)(this, "font", "margin", "visibility");
 
     switch (this.placement) {
       case "left":
       case "right":
-        style.minWidth = (0, _html_utils.measureToString)(this.reserve);
+        if (this.reserve > 0) {
+          style.width = (0, _html_utils.measureToString)(this.reserve);
+        }
+
         break;
 
       case "top":
       case "bottom":
-        style.minHeight = (0, _html_utils.measureToString)(this.reserve);
+        if (this.reserve > 0) {
+          style.height = (0, _html_utils.measureToString)(this.reserve);
+        }
+
         break;
     }
 
-    return {
+    (0, _html_utils.setPara)(this, null, value);
+
+    this[_xfa_object.$popPara]();
+
+    this.reserve = savedReserve;
+    return _utils.HTMLResult.success({
       name: "div",
       attributes: {
-        style
+        style,
+        class: ["xfaCaption"]
       },
       children
-    };
+    });
   }
 
 }
@@ -45979,79 +48836,64 @@ class CheckButton extends _xfa_object.XFAObject {
     this.margin = null;
   }
 
-  [_xfa_object.$toHTML]() {
-    const style = (0, _html_utils.toStyle)(this, "border", "margin");
+  [_xfa_object.$toHTML](availableSpace) {
+    const style = (0, _html_utils.toStyle)("margin");
     const size = (0, _html_utils.measureToString)(this.size);
     style.width = style.height = size;
-    let mark, radius;
+    let type;
+    let className;
+    let groupId;
 
-    if (this.shape === "square") {
-      mark = "▪";
-      radius = "10%";
+    const field = this[_xfa_object.$getParent]()[_xfa_object.$getParent]();
+
+    const items = field.items.children.length && field.items.children[0][_xfa_object.$toHTML]().html || [];
+    const exportedValue = {
+      on: (items[0] || "on").toString(),
+      off: (items[1] || "off").toString()
+    };
+    const value = field.value && field.value[_xfa_object.$text]() || "off";
+    const checked = value === exportedValue.on || undefined;
+
+    const container = field[_xfa_object.$getSubformParent]();
+
+    const fieldId = field[_xfa_object.$uid];
+    let dataId;
+
+    if (container instanceof ExclGroup) {
+      groupId = container[_xfa_object.$uid];
+      type = "radio";
+      className = "xfaRadio";
+      dataId = container[_xfa_object.$data] && container[_xfa_object.$data][_xfa_object.$uid] || container[_xfa_object.$uid];
     } else {
-      mark = "●";
-      radius = "50%";
+      type = "checkbox";
+      className = "xfaCheckbox";
+      dataId = field[_xfa_object.$data] && field[_xfa_object.$data][_xfa_object.$uid] || field[_xfa_object.$uid];
     }
 
-    if (!style.borderRadius) {
-      style.borderRadius = radius;
-    }
-
-    if (this.mark !== "default") {
-      switch (this.mark) {
-        case "check":
-          mark = "✓";
-          break;
-
-        case "circle":
-          mark = "●";
-          break;
-
-        case "cross":
-          mark = "✕";
-          break;
-
-        case "diamond":
-          mark = "♦";
-          break;
-
-        case "square":
-          mark = "▪";
-          break;
-
-        case "star":
-          mark = "★";
-          break;
+    const input = {
+      name: "input",
+      attributes: {
+        class: [className],
+        style,
+        fieldId,
+        dataId,
+        type,
+        checked,
+        xfaOn: exportedValue.on
       }
+    };
+
+    if (groupId) {
+      input.attributes.name = groupId;
     }
 
-    if (size !== "10px") {
-      style.fontSize = size;
-      style.lineHeight = size;
-      style.width = size;
-      style.height = size;
-    }
-
-    return {
+    return _utils.HTMLResult.success({
       name: "label",
       attributes: {
-        class: "xfaLabel"
+        class: ["xfaLabel"]
       },
-      children: [{
-        name: "input",
-        attributes: {
-          class: "xfaCheckbox",
-          type: "checkbox"
-        }
-      }, {
-        name: "span",
-        attributes: {
-          class: "xfaCheckboxMark",
-          mark,
-          style
-        }
-      }]
-    };
+      children: [input]
+    });
   }
 
 }
@@ -46074,22 +48916,82 @@ class ChoiceList extends _xfa_object.XFAObject {
     this.margin = null;
   }
 
-  [_xfa_object.$toHTML]() {
+  [_xfa_object.$toHTML](availableSpace) {
     const style = (0, _html_utils.toStyle)(this, "border", "margin");
-    return {
+
+    const ui = this[_xfa_object.$getParent]();
+
+    const field = ui[_xfa_object.$getParent]();
+
+    const children = [];
+
+    if (field.items.children.length > 0) {
+      const items = field.items;
+      let displayedIndex = 0;
+      let saveIndex = 0;
+
+      if (items.children.length === 2) {
+        displayedIndex = items.children[0].save;
+        saveIndex = 1 - displayedIndex;
+      }
+
+      const displayed = items.children[displayedIndex][_xfa_object.$toHTML]().html;
+
+      const values = items.children[saveIndex][_xfa_object.$toHTML]().html;
+
+      let selected = false;
+      const value = field.value && field.value[_xfa_object.$text]() || "";
+
+      for (let i = 0, ii = displayed.length; i < ii; i++) {
+        const option = {
+          name: "option",
+          attributes: {
+            value: values[i] || displayed[i]
+          },
+          value: displayed[i]
+        };
+
+        if (values[i] === value) {
+          option.attributes.selected = selected = true;
+        }
+
+        children.push(option);
+      }
+
+      if (!selected) {
+        children.splice(0, 0, {
+          name: "option",
+          attributes: {
+            hidden: true,
+            selected: true
+          },
+          value: " "
+        });
+      }
+    }
+
+    const selectAttributes = {
+      class: ["xfaSelect"],
+      fieldId: field[_xfa_object.$uid],
+      dataId: field[_xfa_object.$data] && field[_xfa_object.$data][_xfa_object.$uid] || field[_xfa_object.$uid],
+      style
+    };
+
+    if (this.open === "multiSelect") {
+      selectAttributes.multiple = true;
+    }
+
+    return _utils.HTMLResult.success({
       name: "label",
       attributes: {
-        class: "xfaLabel"
+        class: ["xfaLabel"]
       },
       children: [{
         name: "select",
-        attributes: {
-          class: "xfaSelect",
-          multiple: this.open === "multiSelect",
-          style
-        }
+        children,
+        attributes: selectAttributes
       }]
-    };
+    });
   }
 
 }
@@ -46101,7 +49003,7 @@ class Color extends _xfa_object.XFAObject {
     this.id = attributes.id || "";
     this.use = attributes.use || "";
     this.usehref = attributes.usehref || "";
-    this.value = (0, _utils.getColor)(attributes.value);
+    this.value = attributes.value ? (0, _utils.getColor)(attributes.value) : "";
     this.extras = null;
   }
 
@@ -46110,7 +49012,7 @@ class Color extends _xfa_object.XFAObject {
   }
 
   [_xfa_object.$toStyle]() {
-    return _util.Util.makeHexColor(this.value.r, this.value.g, this.value.b);
+    return this.value ? _util.Util.makeHexColor(this.value.r, this.value.g, this.value.b) : null;
   }
 
 }
@@ -46160,25 +49062,30 @@ class ContentArea extends _xfa_object.XFAObject {
     this.extras = null;
   }
 
-  [_xfa_object.$toHTML]() {
+  [_xfa_object.$toHTML](availableSpace) {
     const left = (0, _html_utils.measureToString)(this.x);
     const top = (0, _html_utils.measureToString)(this.y);
     const style = {
-      position: "absolute",
       left,
       top,
       width: (0, _html_utils.measureToString)(this.w),
       height: (0, _html_utils.measureToString)(this.h)
     };
-    return {
+    const classNames = ["xfaContentarea"];
+
+    if ((0, _html_utils.isPrintOnly)(this)) {
+      classNames.push("xfaPrintOnly");
+    }
+
+    return _utils.HTMLResult.success({
       name: "div",
       children: [],
       attributes: {
         style,
-        class: "xfaContentarea",
+        class: classNames,
         id: this[_xfa_object.$uid]
       }
-    };
+    });
   }
 
 }
@@ -46205,7 +49112,7 @@ class Corner extends _xfa_object.XFAObject {
 
   [_xfa_object.$toStyle]() {
     const style = (0, _html_utils.toStyle)(this, "visibility");
-    style.radius = (0, _html_utils.measureToString)(this.radius);
+    style.radius = (0, _html_utils.measureToString)(this.join === "square" ? 0 : this.radius);
     return style;
   }
 
@@ -46221,11 +49128,13 @@ class DateElement extends _xfa_object.ContentObject {
   }
 
   [_xfa_object.$finalize]() {
-    this[_xfa_object.$content] = new Date(this[_xfa_object.$content].trim());
+    const date = this[_xfa_object.$content].trim();
+
+    this[_xfa_object.$content] = date ? new Date(date) : null;
   }
 
-  [_xfa_object.$toHTML]() {
-    return this[_xfa_object.$content].toString();
+  [_xfa_object.$toHTML](availableSpace) {
+    return valueToHtml(this[_xfa_object.$content] ? this[_xfa_object.$content].toString() : "");
   }
 
 }
@@ -46240,11 +49149,13 @@ class DateTime extends _xfa_object.ContentObject {
   }
 
   [_xfa_object.$finalize]() {
-    this[_xfa_object.$content] = new Date(this[_xfa_object.$content].trim());
+    const date = this[_xfa_object.$content].trim();
+
+    this[_xfa_object.$content] = date ? new Date(date) : null;
   }
 
-  [_xfa_object.$toHTML]() {
-    return this[_xfa_object.$content].toString();
+  [_xfa_object.$toHTML](availableSpace) {
+    return valueToHtml(this[_xfa_object.$content] ? this[_xfa_object.$content].toString() : "");
   }
 
 }
@@ -46263,23 +49174,28 @@ class DateTimeEdit extends _xfa_object.XFAObject {
     this.margin = null;
   }
 
-  [_xfa_object.$toHTML]() {
+  [_xfa_object.$toHTML](availableSpace) {
     const style = (0, _html_utils.toStyle)(this, "border", "font", "margin");
+
+    const field = this[_xfa_object.$getParent]()[_xfa_object.$getParent]();
+
     const html = {
       name: "input",
       attributes: {
         type: "text",
-        class: "xfaTextfield",
+        fieldId: field[_xfa_object.$uid],
+        dataId: field[_xfa_object.$data] && field[_xfa_object.$data][_xfa_object.$uid] || field[_xfa_object.$uid],
+        class: ["xfaTextfield"],
         style
       }
     };
-    return {
+    return _utils.HTMLResult.success({
       name: "label",
       attributes: {
-        class: "xfaLabel"
+        class: ["xfaLabel"]
       },
       children: [html]
-    };
+    });
   }
 
 }
@@ -46308,8 +49224,8 @@ class Decimal extends _xfa_object.ContentObject {
     this[_xfa_object.$content] = isNaN(number) ? null : number;
   }
 
-  [_xfa_object.$toHTML]() {
-    return this[_xfa_object.$content] !== null ? this[_xfa_object.$content].toString() : "";
+  [_xfa_object.$toHTML](availableSpace) {
+    return valueToHtml(this[_xfa_object.$content] !== null ? this[_xfa_object.$content].toString() : "");
   }
 
 }
@@ -46374,7 +49290,7 @@ class Draw extends _xfa_object.XFAObject {
     this.colSpan = (0, _utils.getInteger)({
       data: attributes.colSpan,
       defaultValue: 1,
-      validate: x => x >= 1
+      validate: n => n >= 1 || n === -1
     });
     this.h = attributes.h ? (0, _utils.getMeasurement)(attributes.h) : "";
     this.hAlign = (0, _utils.getStringOption)(attributes.hAlign, ["left", "center", "justify", "justifyAll", "radix", "right"]);
@@ -46416,57 +49332,108 @@ class Draw extends _xfa_object.XFAObject {
     _setValue(this, value);
   }
 
-  [_xfa_object.$toHTML]() {
-    if (!this.value) {
-      return null;
+  [_xfa_object.$toHTML](availableSpace) {
+    if (this.presence === "hidden" || this.presence === "inactive") {
+      return _utils.HTMLResult.EMPTY;
     }
 
-    const style = (0, _html_utils.toStyle)(this, "font", "hAlign", "dimensions", "position", "presence", "rotate", "anchorType", "borderMarginPadding");
-    const clazz = ["xfaDraw"];
+    (0, _html_utils.fixDimensions)(this);
+
+    this[_xfa_object.$pushPara]();
+
+    const savedW = this.w;
+    const savedH = this.h;
+    const {
+      w,
+      h,
+      isBroken
+    } = (0, _html_utils.layoutNode)(this, availableSpace);
+
+    if (w && this.w === "") {
+      if (isBroken && this[_xfa_object.$getSubformParent]()[_xfa_object.$isThereMoreWidth]()) {
+        this[_xfa_object.$popPara]();
+
+        return _utils.HTMLResult.FAILURE;
+      }
+
+      this.w = w;
+    }
+
+    if (h && this.h === "") {
+      this.h = h;
+    }
+
+    setFirstUnsplittable(this);
+
+    if (!(0, _layout.checkDimensions)(this, availableSpace)) {
+      this.w = savedW;
+      this.h = savedH;
+
+      this[_xfa_object.$popPara]();
+
+      return _utils.HTMLResult.FAILURE;
+    }
+
+    unsetFirstUnsplittable(this);
+    const style = (0, _html_utils.toStyle)(this, "font", "hAlign", "dimensions", "position", "presence", "rotate", "anchorType", "border", "margin");
+    (0, _html_utils.setMinMaxDimensions)(this, style);
+
+    if (style.margin) {
+      style.padding = style.margin;
+      delete style.margin;
+    }
+
+    const classNames = ["xfaDraw"];
 
     if (this.font) {
-      clazz.push("xfaFont");
+      classNames.push("xfaFont");
+    }
+
+    if ((0, _html_utils.isPrintOnly)(this)) {
+      classNames.push("xfaPrintOnly");
     }
 
     const attributes = {
       style,
       id: this[_xfa_object.$uid],
-      class: clazz.join(" ")
+      class: classNames
     };
 
     if (this.name) {
       attributes.xfaName = this.name;
     }
 
-    let html = {
+    const html = {
       name: "div",
       attributes,
       children: []
     };
-    const value = this.value ? this.value[_xfa_object.$toHTML]() : null;
+    const assist = this.assist ? this.assist[_xfa_object.$toHTML]() : null;
+
+    if (assist) {
+      html.attributes.title = assist;
+    }
+
+    const bbox = (0, _html_utils.computeBbox)(this, html, availableSpace);
+    const value = this.value ? this.value[_xfa_object.$toHTML](availableSpace).html : null;
 
     if (value === null) {
-      return html;
+      this.w = savedW;
+      this.h = savedH;
+
+      this[_xfa_object.$popPara]();
+
+      return _utils.HTMLResult.success((0, _html_utils.createWrapper)(this, html), bbox);
     }
 
     html.children.push(value);
+    (0, _html_utils.setPara)(this, style, value);
+    this.w = savedW;
+    this.h = savedH;
 
-    if (this.para && value.attributes.class === "xfaRich") {
-      const paraStyle = this.para[_xfa_object.$toStyle]();
+    this[_xfa_object.$popPara]();
 
-      if (!value.attributes.style) {
-        value.attributes.style = paraStyle;
-      } else {
-        for (const [key, val] of Object.entries(paraStyle)) {
-          if (!(key in value.attributes.style)) {
-            value.attributes.style[key] = val;
-          }
-        }
-      }
-    }
-
-    html = (0, _html_utils.addExtraDivForMargin)(html);
-    return html;
+    return _utils.HTMLResult.success((0, _html_utils.createWrapper)(this, html), bbox);
   }
 
 }
@@ -46490,7 +49457,7 @@ class Edge extends _xfa_object.XFAObject {
     Object.assign(style, {
       linecap: this.cap,
       width: (0, _html_utils.measureToString)(this.thickness),
-      color: this.color ? this.color[_xfa_object.$toHTML]() : "#000000",
+      color: this.color ? this.color[_xfa_object.$toStyle]() : "#000000",
       style: ""
     });
 
@@ -46660,6 +49627,10 @@ class ExData extends _xfa_object.ContentObject {
     this.usehref = attributes.usehref || "";
   }
 
+  [_xfa_object.$isCDATAXml]() {
+    return this.contentType === "text/html";
+  }
+
   [_xfa_object.$onChild](child) {
     if (this.contentType === "text/html" && child[_xfa_object.$namespaceId] === _namespaces.NamespaceIds.xhtml.id) {
       this[_xfa_object.$content] = child;
@@ -46674,12 +49645,12 @@ class ExData extends _xfa_object.ContentObject {
     return false;
   }
 
-  [_xfa_object.$toHTML]() {
+  [_xfa_object.$toHTML](availableSpace) {
     if (this.contentType !== "text/html" || !this[_xfa_object.$content]) {
-      return null;
+      return _utils.HTMLResult.EMPTY;
     }
 
-    return this[_xfa_object.$content][_xfa_object.$toHTML]();
+    return this[_xfa_object.$content][_xfa_object.$toHTML](availableSpace);
   }
 
 }
@@ -46720,7 +49691,7 @@ class ExclGroup extends _xfa_object.XFAObject {
     this.colSpan = (0, _utils.getInteger)({
       data: attributes.colSpan,
       defaultValue: 1,
-      validate: x => x >= 1
+      validate: n => n >= 1 || n === -1
     });
     this.h = attributes.h ? (0, _utils.getMeasurement)(attributes.h) : "";
     this.hAlign = (0, _utils.getStringOption)(attributes.hAlign, ["left", "center", "justify", "justifyAll", "radix", "right"]);
@@ -46755,6 +49726,10 @@ class ExclGroup extends _xfa_object.XFAObject {
     this.setProperty = new _xfa_object.XFAObjectArray();
   }
 
+  [_xfa_object.$isBindable]() {
+    return true;
+  }
+
   [_xfa_object.$hasSettableValue]() {
     return true;
   }
@@ -46769,42 +49744,205 @@ class ExclGroup extends _xfa_object.XFAObject {
         field.value = nodeValue;
       }
 
-      const nodeBoolean = new BooleanElement({});
-      nodeBoolean[_xfa_object.$content] = 0;
-
-      for (const item of field.items.children) {
-        if (item[_xfa_object.$hasItem](value)) {
-          nodeBoolean[_xfa_object.$content] = 1;
-          break;
-        }
-      }
-
-      field.value[_xfa_object.$setValue](nodeBoolean);
+      field.value[_xfa_object.$setValue](value);
     }
   }
 
-  [_xfa_object.$toHTML]() {
-    if (!this.value) {
-      return null;
+  [_xfa_object.$isThereMoreWidth]() {
+    return this.layout.endsWith("-tb") && this[_xfa_object.$extra].attempt === 0 && this[_xfa_object.$extra].numberInLine > 0 || this[_xfa_object.$getParent]()[_xfa_object.$isThereMoreWidth]();
+  }
+
+  [_xfa_object.$isSplittable]() {
+    const parent = this[_xfa_object.$getSubformParent]();
+
+    if (!parent[_xfa_object.$isSplittable]()) {
+      return false;
     }
 
-    const style = (0, _html_utils.toStyle)(this, "dimensions", "position", "anchorType");
-    const attributes = {
-      style,
-      id: this[_xfa_object.$uid],
-      class: "xfaExclgroup"
-    };
+    if (this[_xfa_object.$extra]._isSplittable !== undefined) {
+      return this[_xfa_object.$extra]._isSplittable;
+    }
 
-    const children = this[_xfa_object.$childrenToHTML]({
-      filter: new Set(["field"]),
-      include: true
+    if (this.layout === "position" || this.layout.includes("row")) {
+      this[_xfa_object.$extra]._isSplittable = false;
+      return false;
+    }
+
+    if (parent.layout && parent.layout.endsWith("-tb") && parent[_xfa_object.$extra].numberInLine !== 0) {
+      return false;
+    }
+
+    this[_xfa_object.$extra]._isSplittable = true;
+    return true;
+  }
+
+  [_xfa_object.$flushHTML]() {
+    return (0, _layout.flushHTML)(this);
+  }
+
+  [_xfa_object.$addHTML](html, bbox) {
+    (0, _layout.addHTML)(this, html, bbox);
+  }
+
+  [_xfa_object.$getAvailableSpace]() {
+    return (0, _layout.getAvailableSpace)(this);
+  }
+
+  [_xfa_object.$toHTML](availableSpace) {
+    if (this.presence === "hidden" || this.presence === "inactive" || this.h === 0 || this.w === 0) {
+      return _utils.HTMLResult.EMPTY;
+    }
+
+    (0, _html_utils.fixDimensions)(this);
+    const children = [];
+    const attributes = {
+      id: this[_xfa_object.$uid],
+      class: []
+    };
+    (0, _html_utils.setAccess)(this, attributes.class);
+
+    if (!this[_xfa_object.$extra]) {
+      this[_xfa_object.$extra] = Object.create(null);
+    }
+
+    Object.assign(this[_xfa_object.$extra], {
+      children,
+      attributes,
+      attempt: 0,
+      line: null,
+      numberInLine: 0,
+      availableSpace: {
+        width: Math.min(this.w || Infinity, availableSpace.width),
+        height: Math.min(this.h || Infinity, availableSpace.height)
+      },
+      width: 0,
+      height: 0,
+      prevHeight: 0,
+      currentWidth: 0
     });
 
-    return {
+    const isSplittable = this[_xfa_object.$isSplittable]();
+
+    if (!isSplittable) {
+      setFirstUnsplittable(this);
+    }
+
+    if (!(0, _layout.checkDimensions)(this, availableSpace)) {
+      return _utils.HTMLResult.FAILURE;
+    }
+
+    availableSpace = {
+      width: this.w === "" ? availableSpace.width : this.w,
+      height: this.h === "" ? availableSpace.height : this.h
+    };
+    const filter = new Set(["field"]);
+
+    if (this.layout.includes("row")) {
+      const columnWidths = this[_xfa_object.$getSubformParent]().columnWidths;
+
+      if (Array.isArray(columnWidths) && columnWidths.length > 0) {
+        this[_xfa_object.$extra].columnWidths = columnWidths;
+        this[_xfa_object.$extra].currentColumn = 0;
+      }
+    }
+
+    const style = (0, _html_utils.toStyle)(this, "anchorType", "dimensions", "position", "presence", "border", "margin", "hAlign");
+    const classNames = ["xfaExclgroup"];
+    const cl = (0, _html_utils.layoutClass)(this);
+
+    if (cl) {
+      classNames.push(cl);
+    }
+
+    if ((0, _html_utils.isPrintOnly)(this)) {
+      classNames.push("xfaPrintOnly");
+    }
+
+    attributes.style = style;
+    attributes.class = classNames;
+
+    if (this.name) {
+      attributes.xfaName = this.name;
+    }
+
+    this[_xfa_object.$pushPara]();
+
+    const isLrTb = this.layout === "lr-tb" || this.layout === "rl-tb";
+    const maxRun = isLrTb ? MAX_ATTEMPTS_FOR_LRTB_LAYOUT : 1;
+
+    for (; this[_xfa_object.$extra].attempt < maxRun; this[_xfa_object.$extra].attempt++) {
+      if (isLrTb && this[_xfa_object.$extra].attempt === MAX_ATTEMPTS_FOR_LRTB_LAYOUT - 1) {
+        this[_xfa_object.$extra].numberInLine = 0;
+      }
+
+      const result = this[_xfa_object.$childrenToHTML]({
+        filter,
+        include: true
+      });
+
+      if (result.success) {
+        break;
+      }
+
+      if (result.isBreak()) {
+        this[_xfa_object.$popPara]();
+
+        return result;
+      }
+
+      if (isLrTb && this[_xfa_object.$extra].attempt === 0 && this[_xfa_object.$extra].numberInLine === 0 && !this[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].noLayoutFailure) {
+        this[_xfa_object.$extra].attempt = maxRun;
+        break;
+      }
+    }
+
+    this[_xfa_object.$popPara]();
+
+    if (!isSplittable) {
+      unsetFirstUnsplittable(this);
+    }
+
+    if (this[_xfa_object.$extra].attempt === maxRun) {
+      if (!isSplittable) {
+        delete this[_xfa_object.$extra];
+      }
+
+      return _utils.HTMLResult.FAILURE;
+    }
+
+    let marginH = 0;
+    let marginV = 0;
+
+    if (this.margin) {
+      marginH = this.margin.leftInset + this.margin.rightInset;
+      marginV = this.margin.topInset + this.margin.bottomInset;
+    }
+
+    const width = Math.max(this[_xfa_object.$extra].width + marginH, this.w || 0);
+    const height = Math.max(this[_xfa_object.$extra].height + marginV, this.h || 0);
+    const bbox = [this.x, this.y, width, height];
+
+    if (this.w === "") {
+      style.width = (0, _html_utils.measureToString)(width);
+    }
+
+    if (this.h === "") {
+      style.height = (0, _html_utils.measureToString)(height);
+    }
+
+    const html = {
       name: "div",
       attributes,
       children
     };
+    const assist = this.assist ? this.assist[_xfa_object.$toHTML]() : null;
+
+    if (assist) {
+      html.attributes.title = assist;
+    }
+
+    delete this[_xfa_object.$extra];
+    return _utils.HTMLResult.success((0, _html_utils.createWrapper)(this, html), bbox);
   }
 
 }
@@ -46853,7 +49991,7 @@ class Field extends _xfa_object.XFAObject {
     this.colSpan = (0, _utils.getInteger)({
       data: attributes.colSpan,
       defaultValue: 1,
-      validate: x => x >= 1
+      validate: n => n >= 1 || n === -1
     });
     this.h = attributes.h ? (0, _utils.getMeasurement)(attributes.h) : "";
     this.hAlign = (0, _utils.getStringOption)(attributes.hAlign, ["left", "center", "justify", "justifyAll", "radix", "right"]);
@@ -46899,99 +50037,330 @@ class Field extends _xfa_object.XFAObject {
     this.setProperty = new _xfa_object.XFAObjectArray();
   }
 
+  [_xfa_object.$isBindable]() {
+    return true;
+  }
+
   [_xfa_object.$setValue](value) {
     _setValue(this, value);
   }
 
-  [_xfa_object.$toHTML]() {
+  [_xfa_object.$toHTML](availableSpace) {
     if (!this.ui) {
-      return null;
+      this.ui = new Ui({});
+      this.ui[_xfa_object.$globalData] = this[_xfa_object.$globalData];
+
+      this[_xfa_object.$appendChild](this.ui);
+
+      let node;
+
+      switch (this.items.children.length) {
+        case 0:
+          node = new TextEdit({});
+          this.ui.textEdit = node;
+          break;
+
+        case 1:
+          node = new CheckButton({});
+          this.ui.checkButton = node;
+          break;
+
+        case 2:
+          node = new ChoiceList({});
+          this.ui.choiceList = node;
+          break;
+      }
+
+      this.ui[_xfa_object.$appendChild](node);
     }
 
-    const style = (0, _html_utils.toStyle)(this, "font", "dimensions", "position", "rotate", "anchorType", "presence", "borderMarginPadding");
-    const clazz = ["xfaField"];
+    setTabIndex(this);
+
+    if (!this.ui || this.presence === "hidden" || this.presence === "inactive" || this.h === 0 || this.w === 0) {
+      return _utils.HTMLResult.EMPTY;
+    }
+
+    if (this.caption) {
+      delete this.caption[_xfa_object.$extra];
+    }
+
+    this[_xfa_object.$pushPara]();
+
+    const caption = this.caption ? this.caption[_xfa_object.$toHTML](availableSpace).html : null;
+    const savedW = this.w;
+    const savedH = this.h;
+    let marginH = 0;
+    let marginV = 0;
+
+    if (this.margin) {
+      marginH = this.margin.leftInset + this.margin.rightInset;
+      marginV = this.margin.topInset + this.margin.bottomInset;
+    }
+
+    let borderDims = null;
+
+    if (this.w === "" || this.h === "") {
+      let width = null;
+      let height = null;
+      let uiW = 0;
+      let uiH = 0;
+
+      if (this.ui.checkButton) {
+        uiW = uiH = this.ui.checkButton.size;
+      } else {
+        const {
+          w,
+          h
+        } = (0, _html_utils.layoutNode)(this, availableSpace);
+
+        if (w !== null) {
+          uiW = w;
+          uiH = h;
+        } else {
+          uiH = (0, _fonts.getMetrics)(this.font, true).lineNoGap;
+        }
+      }
+
+      borderDims = getBorderDims(this.ui[_xfa_object.$getExtra]());
+      uiW += borderDims.w;
+      uiH += borderDims.h;
+
+      if (this.caption) {
+        const {
+          w,
+          h,
+          isBroken
+        } = this.caption[_xfa_object.$getExtra](availableSpace);
+
+        if (isBroken && this[_xfa_object.$getSubformParent]()[_xfa_object.$isThereMoreWidth]()) {
+          this[_xfa_object.$popPara]();
+
+          return _utils.HTMLResult.FAILURE;
+        }
+
+        width = w;
+        height = h;
+
+        switch (this.caption.placement) {
+          case "left":
+          case "right":
+          case "inline":
+            width += uiW;
+            break;
+
+          case "top":
+          case "bottom":
+            height += uiH;
+            break;
+        }
+      } else {
+        width = uiW;
+        height = uiH;
+      }
+
+      if (width && this.w === "") {
+        width += marginH;
+        this.w = Math.min(this.maxW <= 0 ? Infinity : this.maxW, this.minW + 1 < width ? width : this.minW);
+      }
+
+      if (height && this.h === "") {
+        height += marginV;
+        this.h = Math.min(this.maxH <= 0 ? Infinity : this.maxH, this.minH + 1 < height ? height : this.minH);
+      }
+    }
+
+    this[_xfa_object.$popPara]();
+
+    (0, _html_utils.fixDimensions)(this);
+    setFirstUnsplittable(this);
+
+    if (!(0, _layout.checkDimensions)(this, availableSpace)) {
+      this.w = savedW;
+      this.h = savedH;
+
+      this[_xfa_object.$popPara]();
+
+      return _utils.HTMLResult.FAILURE;
+    }
+
+    unsetFirstUnsplittable(this);
+    const style = (0, _html_utils.toStyle)(this, "font", "dimensions", "position", "rotate", "anchorType", "presence", "margin", "hAlign");
+    (0, _html_utils.setMinMaxDimensions)(this, style);
+    const classNames = ["xfaField"];
 
     if (this.font) {
-      clazz.push("xfaFont");
+      classNames.push("xfaFont");
+    }
+
+    if ((0, _html_utils.isPrintOnly)(this)) {
+      classNames.push("xfaPrintOnly");
     }
 
     const attributes = {
       style,
       id: this[_xfa_object.$uid],
-      class: clazz.join(" ")
+      class: classNames
     };
+
+    if (style.margin) {
+      style.padding = style.margin;
+      delete style.margin;
+    }
+
+    (0, _html_utils.setAccess)(this, classNames);
 
     if (this.name) {
       attributes.xfaName = this.name;
     }
 
     const children = [];
-    let html = {
+    const html = {
       name: "div",
       attributes,
       children
     };
-    const ui = this.ui ? this.ui[_xfa_object.$toHTML]() : null;
+    const assist = this.assist ? this.assist[_xfa_object.$toHTML]() : null;
+
+    if (assist) {
+      html.attributes.title = assist;
+    }
+
+    const borderStyle = this.border ? this.border[_xfa_object.$toStyle]() : null;
+    const bbox = (0, _html_utils.computeBbox)(this, html, availableSpace);
+
+    const ui = this.ui[_xfa_object.$toHTML]().html;
 
     if (!ui) {
-      return html;
+      Object.assign(style, borderStyle);
+      return _utils.HTMLResult.success((0, _html_utils.createWrapper)(this, html), bbox);
+    }
+
+    if (this[_xfa_object.$tabIndex]) {
+      if (ui.children && ui.children[0]) {
+        ui.children[0].attributes.tabindex = this[_xfa_object.$tabIndex];
+      } else {
+        ui.attributes.tabindex = this[_xfa_object.$tabIndex];
+      }
     }
 
     if (!ui.attributes.style) {
       ui.attributes.style = Object.create(null);
     }
 
+    if (this.ui.button) {
+      Object.assign(ui.attributes.style, borderStyle);
+    } else {
+      Object.assign(style, borderStyle);
+    }
+
     children.push(ui);
 
-    if (this.value && ui.name !== "button") {
-      ui.children[0].attributes.value = this.value[_xfa_object.$toHTML]().value;
+    if (this.value) {
+      if (this.ui.imageEdit) {
+        ui.children.push(this.value[_xfa_object.$toHTML]().html);
+      } else if (!this.ui.button) {
+        let value = "";
+
+        if (this.value.exData) {
+          value = this.value.exData[_xfa_object.$text]();
+        } else if (this.value.text) {
+          value = this.value.text[_xfa_object.$getExtra]();
+        } else {
+          const htmlValue = this.value[_xfa_object.$toHTML]().html;
+
+          if (htmlValue !== null) {
+            value = htmlValue.children[0].value;
+          }
+        }
+
+        if (this.ui.textEdit && this.value.text && this.value.text.maxChars) {
+          ui.children[0].attributes.maxLength = this.value.text.maxChars;
+        }
+
+        if (value) {
+          if (ui.children[0].name === "textarea") {
+            ui.children[0].attributes.textContent = value;
+          } else {
+            ui.children[0].attributes.value = value;
+          }
+        }
+      }
     }
 
-    const caption = this.caption ? this.caption[_xfa_object.$toHTML]() : null;
+    if (!this.ui.imageEdit && ui.children && ui.children[0] && this.h) {
+      borderDims = borderDims || getBorderDims(this.ui[_xfa_object.$getExtra]());
+      let captionHeight = 0;
+
+      if (this.caption && ["top", "bottom"].includes(this.caption.placement)) {
+        captionHeight = this.caption.reserve;
+
+        if (captionHeight <= 0) {
+          captionHeight = this.caption[_xfa_object.$getExtra](availableSpace).h;
+        }
+
+        const inputHeight = this.h - captionHeight - marginV - borderDims.h;
+        ui.children[0].attributes.style.height = (0, _html_utils.measureToString)(inputHeight);
+      } else {
+        ui.children[0].attributes.style.height = "100%";
+      }
+    }
 
     if (!caption) {
-      return html;
+      if (ui.attributes.class) {
+        ui.attributes.class.push("xfaLeft");
+      }
+
+      this.w = savedW;
+      this.h = savedH;
+      return _utils.HTMLResult.success((0, _html_utils.createWrapper)(this, html), bbox);
     }
 
-    if (ui.name === "button") {
-      ui.attributes.style.background = style.background;
-      delete style.background;
+    if (this.ui.button) {
+      if (style.padding) {
+        delete style.padding;
+      }
 
       if (caption.name === "div") {
         caption.name = "span";
       }
 
-      ui.children = [caption];
-      return html;
+      ui.children.push(caption);
+      return _utils.HTMLResult.success(html, bbox);
+    } else if (this.ui.checkButton) {
+      caption.attributes.class[0] = "xfaCaptionForCheckButton";
+    }
+
+    if (!ui.attributes.class) {
+      ui.attributes.class = [];
     }
 
     ui.children.splice(0, 0, caption);
 
     switch (this.caption.placement) {
       case "left":
-        ui.attributes.style.flexDirection = "row";
+        ui.attributes.class.push("xfaLeft");
         break;
 
       case "right":
-        ui.attributes.style.flexDirection = "row-reverse";
+        ui.attributes.class.push("xfaRight");
         break;
 
       case "top":
-        ui.attributes.style.flexDirection = "column";
+        ui.attributes.class.push("xfaTop");
         break;
 
       case "bottom":
-        ui.attributes.style.flexDirection = "column-reverse";
+        ui.attributes.class.push("xfaBottom");
         break;
 
       case "inline":
-        delete ui.attributes.class;
-        caption.attributes.style.float = "left";
+        ui.attributes.class.push("xfaLeft");
         break;
     }
 
-    html = (0, _html_utils.addExtraDivForMargin)(html);
-    return html;
+    this.w = savedW;
+    this.h = savedH;
+    return _utils.HTMLResult.success((0, _html_utils.createWrapper)(this, html), bbox);
   }
 
 }
@@ -47015,6 +50384,30 @@ class Fill extends _xfa_object.XFAObject {
   }
 
   [_xfa_object.$toStyle]() {
+    const parent = this[_xfa_object.$getParent]();
+
+    const grandpa = parent[_xfa_object.$getParent]();
+
+    const ggrandpa = grandpa[_xfa_object.$getParent]();
+
+    const style = Object.create(null);
+    let propName = "color";
+    let altPropName = propName;
+
+    if (parent instanceof Border) {
+      propName = "background-color";
+      altPropName = "background";
+
+      if (ggrandpa instanceof Ui) {
+        style.backgroundColor = "white";
+      }
+    }
+
+    if (parent instanceof Rectangle || parent instanceof Arc) {
+      propName = altPropName = "fill";
+      style.fill = "white";
+    }
+
     for (const name of Object.getOwnPropertyNames(this)) {
       if (name === "extras" || name === "color") {
         continue;
@@ -47026,18 +50419,22 @@ class Fill extends _xfa_object.XFAObject {
         continue;
       }
 
-      return {
-        color: obj[_xfa_object.$toStyle](this.color)
-      };
+      const color = obj[_xfa_object.$toStyle](this.color);
+
+      if (color) {
+        style[color.startsWith("#") ? propName : altPropName] = color;
+      }
+
+      return style;
     }
 
-    if (this.color) {
-      return {
-        background: this.color[_xfa_object.$toStyle]()
-      };
+    if (this.color && this.color.value) {
+      const color = this.color[_xfa_object.$toStyle]();
+
+      style[color.startsWith("#") ? propName : altPropName] = color;
     }
 
-    return {};
+    return style;
   }
 
 }
@@ -47083,8 +50480,8 @@ class Float extends _xfa_object.ContentObject {
     this[_xfa_object.$content] = isNaN(number) ? null : number;
   }
 
-  [_xfa_object.$toHTML]() {
-    return this[_xfa_object.$content] !== null ? this[_xfa_object.$content].toString() : "";
+  [_xfa_object.$toHTML](availableSpace) {
+    return valueToHtml(this[_xfa_object.$content] !== null ? this[_xfa_object.$content].toString() : "");
   }
 
 }
@@ -47120,7 +50517,7 @@ class Font extends _xfa_object.XFAObject {
     this.overlinePeriod = (0, _utils.getStringOption)(attributes.overlinePeriod, ["all", "word"]);
     this.posture = (0, _utils.getStringOption)(attributes.posture, ["normal", "italic"]);
     this.size = (0, _utils.getMeasurement)(attributes.size, "10pt");
-    this.typeface = attributes.typeface || "";
+    this.typeface = attributes.typeface || "Courier";
     this.underline = (0, _utils.getInteger)({
       data: attributes.underline,
       defaultValue: 0,
@@ -47134,19 +50531,23 @@ class Font extends _xfa_object.XFAObject {
     this.fill = null;
   }
 
+  [_xfa_object.$clean](builder) {
+    super[_xfa_object.$clean](builder);
+
+    this[_xfa_object.$globalData].usedTypefaces.add(this.typeface);
+  }
+
   [_xfa_object.$toStyle]() {
     const style = (0, _html_utils.toStyle)(this, "fill");
-    const color = style.background;
+    const color = style.color;
 
     if (color) {
       if (color === "#000000") {
-        delete style.background;
+        delete style.color;
       } else if (!color.startsWith("#")) {
+        style.background = color;
         style.backgroundClip = "text";
         style.color = "transparent";
-      } else {
-        style.color = color;
-        delete style.background;
       }
     }
 
@@ -47154,13 +50555,8 @@ class Font extends _xfa_object.XFAObject {
       style.verticalAlign = (0, _html_utils.measureToString)(this.baselineShift);
     }
 
-    if (this.kerningMode !== "none") {
-      style.fontKerning = "normal";
-    }
-
-    if (this.letterSpacing) {
-      style.letterSpacing = (0, _html_utils.measureToString)(this.letterSpacing);
-    }
+    style.fontKerning = this.kerningMode === "none" ? "none" : "normal";
+    style.letterSpacing = (0, _html_utils.measureToString)(this.letterSpacing);
 
     if (this.lineThrough !== 0) {
       style.textDecoration = "line-through";
@@ -47178,17 +50574,9 @@ class Font extends _xfa_object.XFAObject {
       }
     }
 
-    if (this.posture !== "normal") {
-      style.fontStyle = this.posture;
-    }
-
-    const fontSize = (0, _html_utils.measureToString)(this.size);
-
-    if (fontSize !== "10px") {
-      style.fontSize = fontSize;
-    }
-
-    style.fontFamily = this.typeface;
+    style.fontStyle = this.posture;
+    style.fontSize = (0, _html_utils.measureToString)(0.99 * this.size);
+    (0, _html_utils.setFontFamily)(this, this, this[_xfa_object.$globalData].fontFinder, style);
 
     if (this.underline !== 0) {
       style.textDecoration = "underline";
@@ -47198,10 +50586,7 @@ class Font extends _xfa_object.XFAObject {
       }
     }
 
-    if (this.weight !== "normal") {
-      style.fontWeight = this.weight;
-    }
-
+    style.fontWeight = this.weight;
     return style;
   }
 
@@ -47284,29 +50669,61 @@ class Image extends _xfa_object.StringObject {
   }
 
   [_xfa_object.$toHTML]() {
-    const html = {
+    let buffer = this[_xfa_object.$globalData].images && this[_xfa_object.$globalData].images.get(this.href);
+
+    if (!buffer && (this.href || !this[_xfa_object.$content])) {
+      return _utils.HTMLResult.EMPTY;
+    }
+
+    if (!buffer && this.transferEncoding === "base64") {
+      buffer = (0, _util.stringToBytes)(atob(this[_xfa_object.$content]));
+    }
+
+    if (!buffer) {
+      return _utils.HTMLResult.EMPTY;
+    }
+
+    const blob = new Blob([buffer], {
+      type: this.contentType
+    });
+    let style;
+
+    switch (this.aspect) {
+      case "fit":
+      case "actual":
+        break;
+
+      case "height":
+        style = {
+          height: "100%",
+          objectFit: "fill"
+        };
+        break;
+
+      case "none":
+        style = {
+          width: "100%",
+          height: "100%",
+          objectFit: "fill"
+        };
+        break;
+
+      case "width":
+        style = {
+          width: "100%",
+          objectFit: "fill"
+        };
+        break;
+    }
+
+    return _utils.HTMLResult.success({
       name: "img",
       attributes: {
-        class: "xfaImage",
-        style: {}
+        class: ["xfaImage"],
+        style,
+        src: URL.createObjectURL(blob)
       }
-    };
-
-    if (this.href) {
-      html.attributes.src = new URL(this.href);
-      return html;
-    }
-
-    if (this.transferEncoding === "base64") {
-      const buffer = Uint8Array.from(atob(this[_xfa_object.$content]), c => c.charCodeAt(0));
-      const blob = new Blob([buffer], {
-        type: this.contentType
-      });
-      html.attributes.src = URL.createObjectURL(blob);
-      return html;
-    }
-
-    return null;
+    });
   }
 
 }
@@ -47321,6 +50738,18 @@ class ImageEdit extends _xfa_object.XFAObject {
     this.border = null;
     this.extras = null;
     this.margin = null;
+  }
+
+  [_xfa_object.$toHTML](availableSpace) {
+    if (this.data === "embed") {
+      return _utils.HTMLResult.success({
+        name: "div",
+        children: [],
+        attributes: {}
+      });
+    }
+
+    return _utils.HTMLResult.EMPTY;
   }
 
 }
@@ -47339,8 +50768,8 @@ class Integer extends _xfa_object.ContentObject {
     this[_xfa_object.$content] = isNaN(number) ? null : number;
   }
 
-  [_xfa_object.$toHTML]() {
-    return this[_xfa_object.$content] !== null ? this[_xfa_object.$content].toString() : "";
+  [_xfa_object.$toHTML](availableSpace) {
+    return valueToHtml(this[_xfa_object.$content] !== null ? this[_xfa_object.$content].toString() : "");
   }
 
 }
@@ -47383,8 +50812,14 @@ class Items extends _xfa_object.XFAObject {
     this.time = new _xfa_object.XFAObjectArray();
   }
 
-  [_xfa_object.$hasItem](value) {
-    return this.hasOwnProperty(value[_xfa_object.$nodeName]) && this[value[_xfa_object.$nodeName]].children.some(node => node[_xfa_object.$content] === value[_xfa_object.$content]);
+  [_xfa_object.$toHTML]() {
+    const output = [];
+
+    for (const child of this[_xfa_object.$getChildren]()) {
+      output.push(child[_xfa_object.$text]());
+    }
+
+    return _utils.HTMLResult.success(output);
   }
 
 }
@@ -47436,6 +50871,77 @@ class Line extends _xfa_object.XFAObject {
     this.use = attributes.use || "";
     this.usehref = attributes.usehref || "";
     this.edge = null;
+  }
+
+  [_xfa_object.$toHTML]() {
+    const parent = this[_xfa_object.$getParent]()[_xfa_object.$getParent]();
+
+    const edge = this.edge ? this.edge : new Edge({});
+
+    const edgeStyle = edge[_xfa_object.$toStyle]();
+
+    const style = Object.create(null);
+    const thickness = edge.presence === "visible" ? edge.thickness : 0;
+    style.strokeWidth = (0, _html_utils.measureToString)(thickness);
+    style.stroke = edgeStyle.color;
+    let x1, y1, x2, y2;
+    let width = "100%";
+    let height = "100%";
+
+    if (parent.w <= thickness) {
+      [x1, y1, x2, y2] = ["50%", 0, "50%", "100%"];
+      width = style.strokeWidth;
+    } else if (parent.h <= thickness) {
+      [x1, y1, x2, y2] = [0, "50%", "100%", "50%"];
+      height = style.strokeWidth;
+    } else {
+      if (this.slope === "\\") {
+        [x1, y1, x2, y2] = [0, 0, "100%", "100%"];
+      } else {
+        [x1, y1, x2, y2] = [0, "100%", "100%", 0];
+      }
+    }
+
+    const line = {
+      name: "line",
+      attributes: {
+        xmlns: SVG_NS,
+        x1,
+        y1,
+        x2,
+        y2,
+        style
+      }
+    };
+    const svg = {
+      name: "svg",
+      children: [line],
+      attributes: {
+        xmlns: SVG_NS,
+        width,
+        height,
+        style: {
+          overflow: "visible"
+        }
+      }
+    };
+
+    if (hasMargin(parent)) {
+      return _utils.HTMLResult.success({
+        name: "div",
+        attributes: {
+          style: {
+            display: "inline",
+            width: "100%",
+            height: "100%"
+          }
+        },
+        children: [svg]
+      });
+    }
+
+    svg.attributes.style.position = "absolute";
+    return _utils.HTMLResult.success(svg);
   }
 
 }
@@ -47567,23 +51073,28 @@ class NumericEdit extends _xfa_object.XFAObject {
     this.margin = null;
   }
 
-  [_xfa_object.$toHTML]() {
+  [_xfa_object.$toHTML](availableSpace) {
     const style = (0, _html_utils.toStyle)(this, "border", "font", "margin");
+
+    const field = this[_xfa_object.$getParent]()[_xfa_object.$getParent]();
+
     const html = {
       name: "input",
       attributes: {
         type: "text",
-        class: "xfaTextfield",
+        fieldId: field[_xfa_object.$uid],
+        dataId: field[_xfa_object.$data] && field[_xfa_object.$data][_xfa_object.$uid] || field[_xfa_object.$uid],
+        class: ["xfaTextfield"],
         style
       }
     };
-    return {
+    return _utils.HTMLResult.success({
       name: "label",
       attributes: {
-        class: "xfaLabel"
+        class: ["xfaLabel"]
       },
       children: [html]
-    };
+    });
   }
 
 }
@@ -47592,24 +51103,50 @@ class Occur extends _xfa_object.XFAObject {
   constructor(attributes) {
     super(TEMPLATE_NS_ID, "occur", true);
     this.id = attributes.id || "";
-    this.initial = (0, _utils.getInteger)({
+    this.initial = attributes.initial !== "" ? (0, _utils.getInteger)({
       data: attributes.initial,
-      defaultValue: 1,
+      defaultValue: "",
       validate: x => true
-    });
-    this.max = (0, _utils.getInteger)({
+    }) : "";
+    this.max = attributes.max !== "" ? (0, _utils.getInteger)({
       data: attributes.max,
       defaultValue: 1,
       validate: x => true
-    });
-    this.min = (0, _utils.getInteger)({
+    }) : "";
+    this.min = attributes.min !== "" ? (0, _utils.getInteger)({
       data: attributes.min,
       defaultValue: 1,
       validate: x => true
-    });
+    }) : "";
     this.use = attributes.use || "";
     this.usehref = attributes.usehref || "";
     this.extras = null;
+  }
+
+  [_xfa_object.$clean]() {
+    const parent = this[_xfa_object.$getParent]();
+
+    const originalMin = this.min;
+
+    if (this.min === "") {
+      this.min = parent instanceof PageArea || parent instanceof PageSet ? 0 : 1;
+    }
+
+    if (this.max === "") {
+      if (originalMin === "") {
+        this.max = parent instanceof PageArea || parent instanceof PageSet ? -1 : 1;
+      } else {
+        this.max = this.min;
+      }
+    }
+
+    if (this.max !== -1 && this.max < this.min) {
+      this.max = this.min;
+    }
+
+    if (this.initial === "") {
+      this.initial = parent instanceof Template ? 1 : this.min;
+    }
   }
 
 }
@@ -47648,6 +51185,30 @@ class Overflow extends _xfa_object.XFAObject {
     this.usehref = attributes.usehref || "";
   }
 
+  [_xfa_object.$getExtra]() {
+    if (!this[_xfa_object.$extra]) {
+      const parent = this[_xfa_object.$getParent]();
+
+      const root = this[_xfa_object.$getTemplateRoot]();
+
+      const target = root[_xfa_object.$searchNode](this.target, parent);
+
+      const leader = root[_xfa_object.$searchNode](this.leader, parent);
+
+      const trailer = root[_xfa_object.$searchNode](this.trailer, parent);
+
+      this[_xfa_object.$extra] = {
+        target: target && target[0] || null,
+        leader: leader && leader[0] || null,
+        trailer: trailer && trailer[0] || null,
+        addLeader: false,
+        addTrailer: false
+      };
+    }
+
+    return this[_xfa_object.$extra];
+  }
+
 }
 
 class PageArea extends _xfa_object.XFAObject {
@@ -47683,33 +51244,99 @@ class PageArea extends _xfa_object.XFAObject {
     this.subform = new _xfa_object.XFAObjectArray();
   }
 
-  [_xfa_object.$toHTML]() {
-    if (this.contentArea.children.length === 0) {
-      return null;
+  [_xfa_object.$isUsable]() {
+    if (!this[_xfa_object.$extra]) {
+      this[_xfa_object.$extra] = {
+        numberOfUse: 0
+      };
+      return true;
     }
 
-    const children = this[_xfa_object.$childrenToHTML]({
-      filter: new Set(["area", "draw", "field", "subform", "contentArea"]),
-      include: true
-    });
+    return !this.occur || this.occur.max === -1 || this[_xfa_object.$extra].numberOfUse < this.occur.max;
+  }
 
-    const contentArea = children.find(node => node.attributes.class === "xfaContentarea");
+  [_xfa_object.$cleanPage]() {
+    delete this[_xfa_object.$extra];
+  }
+
+  [_xfa_object.$getNextPage]() {
+    if (!this[_xfa_object.$extra]) {
+      this[_xfa_object.$extra] = {
+        numberOfUse: 0
+      };
+    }
+
+    const parent = this[_xfa_object.$getParent]();
+
+    if (parent.relation === "orderedOccurrence") {
+      if (this[_xfa_object.$isUsable]()) {
+        this[_xfa_object.$extra].numberOfUse += 1;
+        return this;
+      }
+    }
+
+    return parent[_xfa_object.$getNextPage]();
+  }
+
+  [_xfa_object.$getAvailableSpace]() {
+    return this[_xfa_object.$extra].space || {
+      width: 0,
+      height: 0
+    };
+  }
+
+  [_xfa_object.$toHTML]() {
+    if (!this[_xfa_object.$extra]) {
+      this[_xfa_object.$extra] = {
+        numberOfUse: 1
+      };
+    }
+
+    const children = [];
+    this[_xfa_object.$extra].children = children;
     const style = Object.create(null);
 
     if (this.medium && this.medium.short && this.medium.long) {
       style.width = (0, _html_utils.measureToString)(this.medium.short);
       style.height = (0, _html_utils.measureToString)(this.medium.long);
-    } else {}
+      this[_xfa_object.$extra].space = {
+        width: this.medium.short,
+        height: this.medium.long
+      };
 
-    return {
+      if (this.medium.orientation === "landscape") {
+        const x = style.width;
+        style.width = style.height;
+        style.height = x;
+        this[_xfa_object.$extra].space = {
+          width: this.medium.long,
+          height: this.medium.short
+        };
+      }
+    } else {
+      (0, _util.warn)("XFA - No medium specified in pageArea: please file a bug.");
+    }
+
+    this[_xfa_object.$childrenToHTML]({
+      filter: new Set(["area", "draw", "field", "subform"]),
+      include: true
+    });
+
+    this[_xfa_object.$childrenToHTML]({
+      filter: new Set(["contentArea"]),
+      include: true
+    });
+
+    return _utils.HTMLResult.success({
       name: "div",
       children,
       attributes: {
+        class: ["xfaPage"],
         id: this[_xfa_object.$uid],
-        style
-      },
-      contentArea
-    };
+        style,
+        xfaName: this.name
+      }
+    });
   }
 
 }
@@ -47730,17 +51357,82 @@ class PageSet extends _xfa_object.XFAObject {
     this.pageSet = new _xfa_object.XFAObjectArray();
   }
 
-  [_xfa_object.$toHTML]() {
-    return {
-      name: "div",
-      children: this[_xfa_object.$childrenToHTML]({
-        filter: new Set(["pageArea", "pageSet"]),
-        include: true
-      }),
-      attributes: {
-        id: this[_xfa_object.$uid]
+  [_xfa_object.$cleanPage]() {
+    for (const page of this.pageArea.children) {
+      page[_xfa_object.$cleanPage]();
+    }
+
+    for (const page of this.pageSet.children) {
+      page[_xfa_object.$cleanPage]();
+    }
+  }
+
+  [_xfa_object.$isUsable]() {
+    return !this.occur || this.occur.max === -1 || this[_xfa_object.$extra].numberOfUse < this.occur.max;
+  }
+
+  [_xfa_object.$getNextPage]() {
+    if (!this[_xfa_object.$extra]) {
+      this[_xfa_object.$extra] = {
+        numberOfUse: 1,
+        pageIndex: -1,
+        pageSetIndex: -1
+      };
+    }
+
+    if (this.relation === "orderedOccurrence") {
+      if (this[_xfa_object.$extra].pageIndex + 1 < this.pageArea.children.length) {
+        this[_xfa_object.$extra].pageIndex += 1;
+        const pageArea = this.pageArea.children[this[_xfa_object.$extra].pageIndex];
+        return pageArea[_xfa_object.$getNextPage]();
       }
-    };
+
+      if (this[_xfa_object.$extra].pageSetIndex + 1 < this.pageSet.children.length) {
+        this[_xfa_object.$extra].pageSetIndex += 1;
+        return this.pageSet.children[this[_xfa_object.$extra].pageSetIndex][_xfa_object.$getNextPage]();
+      }
+
+      if (this[_xfa_object.$isUsable]()) {
+        this[_xfa_object.$extra].numberOfUse += 1;
+        this[_xfa_object.$extra].pageIndex = -1;
+        this[_xfa_object.$extra].pageSetIndex = -1;
+        return this[_xfa_object.$getNextPage]();
+      }
+
+      const parent = this[_xfa_object.$getParent]();
+
+      if (parent instanceof PageSet) {
+        return parent[_xfa_object.$getNextPage]();
+      }
+
+      this[_xfa_object.$cleanPage]();
+
+      return this[_xfa_object.$getNextPage]();
+    }
+
+    const pageNumber = this[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].pageNumber;
+
+    const parity = pageNumber % 2 === 0 ? "even" : "odd";
+    const position = pageNumber === 0 ? "first" : "rest";
+    let page = this.pageArea.children.find(p => p.oddOrEven === parity && p.pagePosition === position);
+
+    if (page) {
+      return page;
+    }
+
+    page = this.pageArea.children.find(p => p.oddOrEven === "any" && p.pagePosition === position);
+
+    if (page) {
+      return page;
+    }
+
+    page = this.pageArea.children.find(p => p.oddOrEven === "any" && p.pagePosition === "any");
+
+    if (page) {
+      return page;
+    }
+
+    return this.pageArea.children[0];
   }
 
 }
@@ -47780,26 +51472,27 @@ class Para extends _xfa_object.XFAObject {
     const style = (0, _html_utils.toStyle)(this, "hAlign");
 
     if (this.marginLeft !== "") {
-      style.marginLeft = (0, _html_utils.measureToString)(this.marginLeft);
+      style.paddingLeft = (0, _html_utils.measureToString)(this.marginLeft);
     }
 
     if (this.marginRight !== "") {
-      style.marginRight = (0, _html_utils.measureToString)(this.marginRight);
+      style.paddingight = (0, _html_utils.measureToString)(this.marginRight);
     }
 
     if (this.spaceAbove !== "") {
-      style.marginTop = (0, _html_utils.measureToString)(this.spaceAbove);
+      style.paddingTop = (0, _html_utils.measureToString)(this.spaceAbove);
     }
 
     if (this.spaceBelow !== "") {
-      style.marginBottom = (0, _html_utils.measureToString)(this.spaceBelow);
+      style.paddingBottom = (0, _html_utils.measureToString)(this.spaceBelow);
     }
 
     if (this.textIndent !== "") {
       style.textIndent = (0, _html_utils.measureToString)(this.textIndent);
+      (0, _html_utils.fixTextIndent)(style);
     }
 
-    if (this.lineHeight !== "") {
+    if (this.lineHeight > 0) {
       style.lineHeight = (0, _html_utils.measureToString)(this.lineHeight);
     }
 
@@ -48018,7 +51711,7 @@ class Radial extends _xfa_object.XFAObject {
     startColor = startColor ? startColor[_xfa_object.$toStyle]() : "#FFFFFF";
     const endColor = this.color ? this.color[_xfa_object.$toStyle]() : "#000000";
     const colors = this.type === "toEdge" ? `${startColor},${endColor}` : `${endColor},${startColor}`;
-    return `radial-gradient(circle to center, ${colors})`;
+    return `radial-gradient(circle at center, ${colors})`;
   }
 
 }
@@ -48056,6 +51749,71 @@ class Rectangle extends _xfa_object.XFAObject {
     this.corner = new _xfa_object.XFAObjectArray(4);
     this.edge = new _xfa_object.XFAObjectArray(4);
     this.fill = null;
+  }
+
+  [_xfa_object.$toHTML]() {
+    const edge = this.edge.children.length ? this.edge.children[0] : new Edge({});
+
+    const edgeStyle = edge[_xfa_object.$toStyle]();
+
+    const style = Object.create(null);
+
+    if (this.fill && this.fill.presence === "visible") {
+      Object.assign(style, this.fill[_xfa_object.$toStyle]());
+    } else {
+      style.fill = "transparent";
+    }
+
+    style.strokeWidth = (0, _html_utils.measureToString)(edge.presence === "visible" ? edge.thickness : 0);
+    style.stroke = edgeStyle.color;
+    const corner = this.corner.children.length ? this.corner.children[0] : new Corner({});
+
+    const cornerStyle = corner[_xfa_object.$toStyle]();
+
+    const rect = {
+      name: "rect",
+      attributes: {
+        xmlns: SVG_NS,
+        width: "100%",
+        height: "100%",
+        x: 0,
+        y: 0,
+        rx: cornerStyle.radius,
+        ry: cornerStyle.radius,
+        style
+      }
+    };
+    const svg = {
+      name: "svg",
+      children: [rect],
+      attributes: {
+        xmlns: SVG_NS,
+        style: {
+          overflow: "visible"
+        },
+        width: "100%",
+        height: "100%"
+      }
+    };
+
+    const parent = this[_xfa_object.$getParent]()[_xfa_object.$getParent]();
+
+    if (hasMargin(parent)) {
+      return _utils.HTMLResult.success({
+        name: "div",
+        attributes: {
+          style: {
+            display: "inline",
+            width: "100%",
+            height: "100%"
+          }
+        },
+        children: [svg]
+      });
+    }
+
+    svg.attributes.style.position = "absolute";
+    return _utils.HTMLResult.success(svg);
   }
 
 }
@@ -48206,7 +51964,7 @@ class Subform extends _xfa_object.XFAObject {
     this.colSpan = (0, _utils.getInteger)({
       data: attributes.colSpan,
       defaultValue: 1,
-      validate: x => x >= 1
+      validate: n => n >= 1 || n === -1
     });
     this.columnWidths = (attributes.columnWidths || "").trim().split(/\s+/).map(x => x === "-1" ? -1 : (0, _utils.getMeasurement)(x));
     this.h = attributes.h ? (0, _utils.getMeasurement)(attributes.h) : "";
@@ -48261,11 +52019,192 @@ class Subform extends _xfa_object.XFAObject {
     this.subformSet = new _xfa_object.XFAObjectArray();
   }
 
-  [_xfa_object.$toHTML]() {
-    this[_xfa_object.$extra] = Object.create(null);
+  [_xfa_object.$getSubformParent]() {
+    const parent = this[_xfa_object.$getParent]();
 
-    if (this.layout === "row") {
-      const columnWidths = this[_xfa_object.$getParent]().columnWidths;
+    if (parent instanceof SubformSet) {
+      return parent[_xfa_object.$getSubformParent]();
+    }
+
+    return parent;
+  }
+
+  [_xfa_object.$isBindable]() {
+    return true;
+  }
+
+  [_xfa_object.$isThereMoreWidth]() {
+    return this.layout.endsWith("-tb") && this[_xfa_object.$extra].attempt === 0 && this[_xfa_object.$extra].numberInLine > 0 || this[_xfa_object.$getParent]()[_xfa_object.$isThereMoreWidth]();
+  }
+
+  *[_xfa_object.$getContainedChildren]() {
+    yield* getContainedChildren(this);
+  }
+
+  [_xfa_object.$flushHTML]() {
+    return (0, _layout.flushHTML)(this);
+  }
+
+  [_xfa_object.$addHTML](html, bbox) {
+    (0, _layout.addHTML)(this, html, bbox);
+  }
+
+  [_xfa_object.$getAvailableSpace]() {
+    return (0, _layout.getAvailableSpace)(this);
+  }
+
+  [_xfa_object.$isSplittable]() {
+    const parent = this[_xfa_object.$getSubformParent]();
+
+    if (!parent[_xfa_object.$isSplittable]()) {
+      return false;
+    }
+
+    const contentArea = this[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].currentContentArea;
+
+    if (this.overflow && this.overflow[_xfa_object.$getExtra]().target === contentArea) {
+      return false;
+    }
+
+    if (this[_xfa_object.$extra]._isSplittable !== undefined) {
+      return this[_xfa_object.$extra]._isSplittable;
+    }
+
+    if (this.layout === "position" || this.layout.includes("row")) {
+      this[_xfa_object.$extra]._isSplittable = false;
+      return false;
+    }
+
+    if (this.keep && this.keep.intact !== "none") {
+      this[_xfa_object.$extra]._isSplittable = false;
+      return false;
+    }
+
+    if (parent.layout && parent.layout.endsWith("-tb") && parent[_xfa_object.$extra].numberInLine !== 0) {
+      return false;
+    }
+
+    this[_xfa_object.$extra]._isSplittable = true;
+    return true;
+  }
+
+  [_xfa_object.$toHTML](availableSpace) {
+    if (this.break) {
+      if (this.break.after !== "auto" || this.break.afterTarget !== "") {
+        const node = new BreakAfter({
+          targetType: this.break.after,
+          target: this.break.afterTarget,
+          startNew: this.break.startNew.toString()
+        });
+        node[_xfa_object.$globalData] = this[_xfa_object.$globalData];
+
+        this[_xfa_object.$appendChild](node);
+
+        this.breakAfter.push(node);
+      }
+
+      if (this.break.before !== "auto" || this.break.beforeTarget !== "") {
+        const node = new BreakBefore({
+          targetType: this.break.before,
+          target: this.break.beforeTarget,
+          startNew: this.break.startNew.toString()
+        });
+        node[_xfa_object.$globalData] = this[_xfa_object.$globalData];
+
+        this[_xfa_object.$appendChild](node);
+
+        this.breakBefore.push(node);
+      }
+
+      if (this.break.overflowTarget !== "") {
+        const node = new Overflow({
+          target: this.break.overflowTarget,
+          leader: this.break.overflowLeader,
+          trailer: this.break.overflowTrailer
+        });
+        node[_xfa_object.$globalData] = this[_xfa_object.$globalData];
+
+        this[_xfa_object.$appendChild](node);
+
+        this.overflow.push(node);
+      }
+
+      this[_xfa_object.$removeChild](this.break);
+
+      this.break = null;
+    }
+
+    if (this.presence === "hidden" || this.presence === "inactive") {
+      return _utils.HTMLResult.EMPTY;
+    }
+
+    if (this.breakBefore.children.length > 1 || this.breakAfter.children.length > 1) {
+      (0, _util.warn)("XFA - Several breakBefore or breakAfter in subforms: please file a bug.");
+    }
+
+    if (this.breakBefore.children.length >= 1) {
+      const breakBefore = this.breakBefore.children[0];
+
+      if (handleBreak(breakBefore)) {
+        return _utils.HTMLResult.breakNode(breakBefore);
+      }
+    }
+
+    if (this[_xfa_object.$extra] && this[_xfa_object.$extra].afterBreakAfter) {
+      return _utils.HTMLResult.EMPTY;
+    }
+
+    (0, _html_utils.fixDimensions)(this);
+    const children = [];
+    const attributes = {
+      id: this[_xfa_object.$uid],
+      class: []
+    };
+    (0, _html_utils.setAccess)(this, attributes.class);
+
+    if (!this[_xfa_object.$extra]) {
+      this[_xfa_object.$extra] = Object.create(null);
+    }
+
+    Object.assign(this[_xfa_object.$extra], {
+      children,
+      line: null,
+      attributes,
+      attempt: 0,
+      numberInLine: 0,
+      availableSpace: {
+        width: Math.min(this.w || Infinity, availableSpace.width),
+        height: Math.min(this.h || Infinity, availableSpace.height)
+      },
+      width: 0,
+      height: 0,
+      prevHeight: 0,
+      currentWidth: 0
+    });
+
+    const root = this[_xfa_object.$getTemplateRoot]();
+
+    const currentContentArea = root[_xfa_object.$extra].currentContentArea;
+    const savedNoLayoutFailure = root[_xfa_object.$extra].noLayoutFailure;
+
+    if (this.overflow) {
+      root[_xfa_object.$extra].noLayoutFailure = root[_xfa_object.$extra].noLayoutFailure || this.overflow[_xfa_object.$getExtra]().target === currentContentArea;
+    }
+
+    const isSplittable = this[_xfa_object.$isSplittable]();
+
+    if (!isSplittable) {
+      setFirstUnsplittable(this);
+    }
+
+    if (!(0, _layout.checkDimensions)(this, availableSpace)) {
+      return _utils.HTMLResult.FAILURE;
+    }
+
+    const filter = new Set(["area", "draw", "exclGroup", "field", "subform", "subformSet"]);
+
+    if (this.layout.includes("row")) {
+      const columnWidths = this[_xfa_object.$getSubformParent]().columnWidths;
 
       if (Array.isArray(columnWidths) && columnWidths.length > 0) {
         this[_xfa_object.$extra].columnWidths = columnWidths;
@@ -48273,59 +52212,134 @@ class Subform extends _xfa_object.XFAObject {
       }
     }
 
-    const parent = this[_xfa_object.$getParent]();
-
-    let page = null;
-
-    if (parent[_xfa_object.$nodeName] === "template") {
-      if (this.pageSet !== null) {
-        this[_xfa_object.$extra].pageNumber = 0;
-      } else {
-        (0, _util.warn)("XFA - No pageSet in root subform");
-      }
-    } else if (parent[_xfa_object.$extra] && parent[_xfa_object.$extra].pageNumber !== undefined) {
-      const pageNumber = parent[_xfa_object.$extra].pageNumber;
-      const pageAreas = parent.pageSet.pageArea.children;
-      parent[_xfa_object.$extra].pageNumber = (parent[_xfa_object.$extra].pageNumber + 1) % pageAreas.length;
-      page = pageAreas[pageNumber][_xfa_object.$toHTML]();
-    }
-
-    const style = (0, _html_utils.toStyle)(this, "dimensions", "position", "presence");
-    const clazz = ["xfaSubform"];
+    const style = (0, _html_utils.toStyle)(this, "anchorType", "dimensions", "position", "presence", "border", "margin", "hAlign");
+    const classNames = ["xfaSubform"];
     const cl = (0, _html_utils.layoutClass)(this);
 
     if (cl) {
-      clazz.push(cl);
+      classNames.push(cl);
     }
 
-    const attributes = {
-      style,
-      id: this[_xfa_object.$uid],
-      class: clazz.join(" ")
-    };
+    attributes.style = style;
+    attributes.class = classNames;
 
     if (this.name) {
       attributes.xfaName = this.name;
     }
 
-    const children = this[_xfa_object.$childrenToHTML]({
-      filter: new Set(["area", "draw", "field", "subform", "subformSet"]),
-      include: true
-    });
+    if (this.overflow) {
+      const overflowExtra = this.overflow[_xfa_object.$getExtra]();
+
+      if (overflowExtra.addLeader) {
+        overflowExtra.addLeader = false;
+        handleOverflow(this, overflowExtra.leader, availableSpace);
+      }
+    }
+
+    this[_xfa_object.$pushPara]();
+
+    const isLrTb = this.layout === "lr-tb" || this.layout === "rl-tb";
+    const maxRun = isLrTb ? MAX_ATTEMPTS_FOR_LRTB_LAYOUT : 1;
+
+    for (; this[_xfa_object.$extra].attempt < maxRun; this[_xfa_object.$extra].attempt++) {
+      if (isLrTb && this[_xfa_object.$extra].attempt === MAX_ATTEMPTS_FOR_LRTB_LAYOUT - 1) {
+        this[_xfa_object.$extra].numberInLine = 0;
+      }
+
+      const result = this[_xfa_object.$childrenToHTML]({
+        filter,
+        include: true
+      });
+
+      if (result.success) {
+        break;
+      }
+
+      if (result.isBreak()) {
+        this[_xfa_object.$popPara]();
+
+        return result;
+      }
+
+      if (isLrTb && this[_xfa_object.$extra].attempt === 0 && this[_xfa_object.$extra].numberInLine === 0 && !root[_xfa_object.$extra].noLayoutFailure) {
+        this[_xfa_object.$extra].attempt = maxRun;
+        break;
+      }
+    }
+
+    this[_xfa_object.$popPara]();
+
+    if (!isSplittable) {
+      unsetFirstUnsplittable(this);
+    }
+
+    root[_xfa_object.$extra].noLayoutFailure = savedNoLayoutFailure;
+
+    if (this[_xfa_object.$extra].attempt === maxRun) {
+      if (this.overflow) {
+        this[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].overflowNode = this.overflow;
+      }
+
+      if (!isSplittable) {
+        delete this[_xfa_object.$extra];
+      }
+
+      return _utils.HTMLResult.FAILURE;
+    }
+
+    if (this.overflow) {
+      const overflowExtra = this.overflow[_xfa_object.$getExtra]();
+
+      if (overflowExtra.addTrailer) {
+        overflowExtra.addTrailer = false;
+        handleOverflow(this, overflowExtra.trailer, availableSpace);
+      }
+    }
+
+    let marginH = 0;
+    let marginV = 0;
+
+    if (this.margin) {
+      marginH = this.margin.leftInset + this.margin.rightInset;
+      marginV = this.margin.topInset + this.margin.bottomInset;
+    }
+
+    const width = Math.max(this[_xfa_object.$extra].width + marginH, this.w || 0);
+    const height = Math.max(this[_xfa_object.$extra].height + marginV, this.h || 0);
+    const bbox = [this.x, this.y, width, height];
+
+    if (this.w === "") {
+      style.width = (0, _html_utils.measureToString)(width);
+    }
+
+    if (this.h === "") {
+      style.height = (0, _html_utils.measureToString)(height);
+    }
 
     const html = {
       name: "div",
       attributes,
       children
     };
+    const assist = this.assist ? this.assist[_xfa_object.$toHTML]() : null;
 
-    if (page) {
-      page.contentArea.children.push(html);
-      delete page.contentArea;
-      return page;
+    if (assist) {
+      html.attributes.title = assist;
     }
 
-    return html;
+    const result = _utils.HTMLResult.success((0, _html_utils.createWrapper)(this, html), bbox);
+
+    if (this.breakAfter.children.length >= 1) {
+      const breakAfter = this.breakAfter.children[0];
+
+      if (handleBreak(breakAfter)) {
+        this[_xfa_object.$extra].afterBreakAfter = result;
+        return _utils.HTMLResult.breakNode(breakAfter);
+      }
+    }
+
+    delete this[_xfa_object.$extra];
+    return result;
   }
 
 }
@@ -48349,6 +52363,20 @@ class SubformSet extends _xfa_object.XFAObject {
     this.breakBefore = new _xfa_object.XFAObjectArray();
     this.subform = new _xfa_object.XFAObjectArray();
     this.subformSet = new _xfa_object.XFAObjectArray();
+  }
+
+  *[_xfa_object.$getContainedChildren]() {
+    yield* getContainedChildren(this);
+  }
+
+  [_xfa_object.$getSubformParent]() {
+    let parent = this[_xfa_object.$getParent]();
+
+    while (!(parent instanceof Subform)) {
+      parent = parent[_xfa_object.$getParent]();
+    }
+
+    return parent;
   }
 
 }
@@ -48427,17 +52455,252 @@ class Template extends _xfa_object.XFAObject {
     if (this.subform.children.length >= 2) {
       (0, _util.warn)("XFA - Several subforms in template node: please file a bug.");
     }
+
+    this[_xfa_object.$tabIndex] = 1000;
+  }
+
+  [_xfa_object.$isSplittable]() {
+    return true;
+  }
+
+  [_xfa_object.$searchNode](expr, container) {
+    if (expr.startsWith("#")) {
+      return [this[_xfa_object.$ids].get(expr.slice(1))];
+    }
+
+    return (0, _som.searchNode)(this, container, expr, true, true);
   }
 
   [_xfa_object.$toHTML]() {
-    if (this.subform.children.length > 0) {
-      return this.subform.children[0][_xfa_object.$toHTML]();
+    if (!this.subform.children.length) {
+      return _utils.HTMLResult.success({
+        name: "div",
+        children: []
+      });
     }
 
-    return {
+    this[_xfa_object.$extra] = {
+      overflowNode: null,
+      firstUnsplittable: null,
+      currentContentArea: null,
+      currentPageArea: null,
+      noLayoutFailure: false,
+      pageNumber: 1,
+      pagePosition: "first",
+      oddOrEven: "odd",
+      blankOrNotBlank: "nonBlank",
+      paraStack: []
+    };
+    const root = this.subform.children[0];
+
+    root.pageSet[_xfa_object.$cleanPage]();
+
+    const pageAreas = root.pageSet.pageArea.children;
+    const mainHtml = {
       name: "div",
       children: []
     };
+    let pageArea = null;
+    let breakBefore = null;
+    let breakBeforeTarget = null;
+
+    if (root.breakBefore.children.length >= 1) {
+      breakBefore = root.breakBefore.children[0];
+      breakBeforeTarget = breakBefore.target;
+    } else if (root.subform.children.length >= 1 && root.subform.children[0].breakBefore.children.length >= 1) {
+      breakBefore = root.subform.children[0].breakBefore.children[0];
+      breakBeforeTarget = breakBefore.target;
+    } else if (root.break && root.break.beforeTarget) {
+      breakBefore = root.break;
+      breakBeforeTarget = breakBefore.beforeTarget;
+    } else if (root.subform.children.length >= 1 && root.subform.children[0].break && root.subform.children[0].break.beforeTarget) {
+      breakBefore = root.subform.children[0].break;
+      breakBeforeTarget = breakBefore.beforeTarget;
+    }
+
+    if (breakBefore) {
+      const target = this[_xfa_object.$searchNode](breakBeforeTarget, breakBefore[_xfa_object.$getParent]());
+
+      if (target instanceof PageArea) {
+        pageArea = target;
+        breakBefore[_xfa_object.$extra] = {};
+      }
+    }
+
+    if (!pageArea) {
+      pageArea = pageAreas[0];
+    }
+
+    pageArea[_xfa_object.$extra] = {
+      numberOfUse: 1
+    };
+
+    const pageAreaParent = pageArea[_xfa_object.$getParent]();
+
+    pageAreaParent[_xfa_object.$extra] = {
+      numberOfUse: 1,
+      pageIndex: pageAreaParent.pageArea.children.indexOf(pageArea),
+      pageSetIndex: 0
+    };
+    let targetPageArea;
+    let leader = null;
+    let trailer = null;
+    let hasSomething = true;
+    let hasSomethingCounter = 0;
+    let startIndex = 0;
+
+    while (true) {
+      if (!hasSomething) {
+        mainHtml.children.pop();
+
+        if (++hasSomethingCounter === MAX_EMPTY_PAGES) {
+          (0, _util.warn)("XFA - Something goes wrong: please file a bug.");
+          return mainHtml;
+        }
+      } else {
+        hasSomethingCounter = 0;
+      }
+
+      targetPageArea = null;
+      this[_xfa_object.$extra].currentPageArea = pageArea;
+
+      const page = pageArea[_xfa_object.$toHTML]().html;
+
+      mainHtml.children.push(page);
+
+      if (leader) {
+        this[_xfa_object.$extra].noLayoutFailure = true;
+        page.children.push(leader[_xfa_object.$toHTML](pageArea[_xfa_object.$extra].space).html);
+        leader = null;
+      }
+
+      if (trailer) {
+        this[_xfa_object.$extra].noLayoutFailure = true;
+        page.children.push(trailer[_xfa_object.$toHTML](pageArea[_xfa_object.$extra].space).html);
+        trailer = null;
+      }
+
+      const contentAreas = pageArea.contentArea.children;
+      const htmlContentAreas = page.children.filter(node => node.attributes.class.includes("xfaContentarea"));
+      hasSomething = false;
+      this[_xfa_object.$extra].firstUnsplittable = null;
+      this[_xfa_object.$extra].noLayoutFailure = false;
+
+      const flush = index => {
+        const html = root[_xfa_object.$flushHTML]();
+
+        if (html) {
+          hasSomething = hasSomething || html.children && html.children.length !== 0;
+          htmlContentAreas[index].children.push(html);
+        }
+      };
+
+      for (let i = startIndex, ii = contentAreas.length; i < ii; i++) {
+        const contentArea = this[_xfa_object.$extra].currentContentArea = contentAreas[i];
+        const space = {
+          width: contentArea.w,
+          height: contentArea.h
+        };
+        startIndex = 0;
+
+        if (leader) {
+          htmlContentAreas[i].children.push(leader[_xfa_object.$toHTML](space).html);
+          leader = null;
+        }
+
+        if (trailer) {
+          htmlContentAreas[i].children.push(trailer[_xfa_object.$toHTML](space).html);
+          trailer = null;
+        }
+
+        const html = root[_xfa_object.$toHTML](space);
+
+        if (html.success) {
+          if (html.html) {
+            hasSomething = hasSomething || html.html.children && html.html.children.length !== 0;
+            htmlContentAreas[i].children.push(html.html);
+          } else if (!hasSomething) {
+            mainHtml.children.pop();
+          }
+
+          return mainHtml;
+        }
+
+        if (html.isBreak()) {
+          const node = html.breakNode;
+          flush(i);
+
+          if (node.targetType === "auto") {
+            continue;
+          }
+
+          if (node.leader) {
+            leader = this[_xfa_object.$searchNode](node.leader, node[_xfa_object.$getParent]());
+            leader = leader ? leader[0] : null;
+          }
+
+          if (node.trailer) {
+            trailer = this[_xfa_object.$searchNode](node.trailer, node[_xfa_object.$getParent]());
+            trailer = trailer ? trailer[0] : null;
+          }
+
+          if (node.targetType === "pageArea") {
+            targetPageArea = node[_xfa_object.$extra].target;
+            i = Infinity;
+          } else if (!node[_xfa_object.$extra].target) {
+            i = node[_xfa_object.$extra].index;
+          } else {
+            targetPageArea = node[_xfa_object.$extra].target;
+            startIndex = node[_xfa_object.$extra].index + 1;
+            i = Infinity;
+          }
+
+          continue;
+        }
+
+        if (this[_xfa_object.$extra].overflowNode) {
+          const node = this[_xfa_object.$extra].overflowNode;
+          this[_xfa_object.$extra].overflowNode = null;
+
+          const overflowExtra = node[_xfa_object.$getExtra]();
+
+          const target = overflowExtra.target;
+          overflowExtra.addLeader = overflowExtra.leader !== null;
+          overflowExtra.addTrailer = overflowExtra.trailer !== null;
+          flush(i);
+          i = Infinity;
+
+          if (target instanceof PageArea) {
+            targetPageArea = target;
+          } else if (target instanceof ContentArea) {
+            const index = contentAreas.findIndex(e => e === target);
+
+            if (index !== -1) {
+              i = index - 1;
+            } else {
+              targetPageArea = target[_xfa_object.$getParent]();
+              startIndex = targetPageArea.contentArea.children.findIndex(e => e === target);
+            }
+          }
+
+          continue;
+        }
+
+        flush(i);
+      }
+
+      this[_xfa_object.$extra].pageNumber += 1;
+
+      if (targetPageArea) {
+        if (targetPageArea[_xfa_object.$isUsable]()) {
+          targetPageArea[_xfa_object.$extra].numberOfUse += 1;
+        } else {
+          targetPageArea = null;
+        }
+      }
+
+      pageArea = targetPageArea || pageArea[_xfa_object.$getNextPage]();
+    }
   }
 
 }
@@ -48459,6 +52722,10 @@ class Text extends _xfa_object.ContentObject {
     this.usehref = attributes.usehref || "";
   }
 
+  [_xfa_object.$acceptWhitespace]() {
+    return true;
+  }
+
   [_xfa_object.$onChild](child) {
     if (child[_xfa_object.$namespaceId] === _namespaces.NamespaceIds.xhtml.id) {
       this[_xfa_object.$content] = child;
@@ -48469,16 +52736,37 @@ class Text extends _xfa_object.ContentObject {
     return false;
   }
 
-  [_xfa_object.$toHTML]() {
+  [_xfa_object.$onText](str) {
+    if (this[_xfa_object.$content] instanceof _xfa_object.XFAObject) {
+      return;
+    }
+
+    super[_xfa_object.$onText](str);
+  }
+
+  [_xfa_object.$finalize]() {
     if (typeof this[_xfa_object.$content] === "string") {
-      const html = {
-        name: "span",
-        attributes: {
-          class: "xfaRich",
-          style: {}
-        },
-        value: this[_xfa_object.$content]
-      };
+      this[_xfa_object.$content] = this[_xfa_object.$content].replace(/\r\n/g, "\n");
+    }
+  }
+
+  [_xfa_object.$getExtra]() {
+    if (typeof this[_xfa_object.$content] === "string") {
+      return this[_xfa_object.$content].split(/[\u2029\u2028\n]/).reduce((acc, line) => {
+        if (line) {
+          acc.push(line);
+        }
+
+        return acc;
+      }, []).join("\n");
+    }
+
+    return this[_xfa_object.$content][_xfa_object.$text]();
+  }
+
+  [_xfa_object.$toHTML](availableSpace) {
+    if (typeof this[_xfa_object.$content] === "string") {
+      const html = valueToHtml(this[_xfa_object.$content]).html;
 
       if (this[_xfa_object.$content].includes("\u2029")) {
         html.name = "div";
@@ -48512,10 +52800,10 @@ class Text extends _xfa_object.ContentObject {
         });
       }
 
-      return html;
+      return _utils.HTMLResult.success(html);
     }
 
-    return this[_xfa_object.$content][_xfa_object.$toHTML]();
+    return this[_xfa_object.$content][_xfa_object.$toHTML](availableSpace);
   }
 
 }
@@ -48534,8 +52822,8 @@ class TextEdit extends _xfa_object.XFAObject {
     this.id = attributes.id || "";
     this.multiLine = (0, _utils.getInteger)({
       data: attributes.multiLine,
-      defaultValue: 1,
-      validate: x => x === 0
+      defaultValue: "",
+      validate: x => x === 0 || x === 1
     });
     this.use = attributes.use || "";
     this.usehref = attributes.usehref || "";
@@ -48546,15 +52834,23 @@ class TextEdit extends _xfa_object.XFAObject {
     this.margin = null;
   }
 
-  [_xfa_object.$toHTML]() {
+  [_xfa_object.$toHTML](availableSpace) {
     const style = (0, _html_utils.toStyle)(this, "border", "font", "margin");
     let html;
+
+    const field = this[_xfa_object.$getParent]()[_xfa_object.$getParent]();
+
+    if (this.multiLine === "") {
+      this.multiLine = field instanceof Draw ? 1 : 0;
+    }
 
     if (this.multiLine === 1) {
       html = {
         name: "textarea",
         attributes: {
-          class: "xfaTextfield",
+          dataId: field[_xfa_object.$data] && field[_xfa_object.$data][_xfa_object.$uid] || field[_xfa_object.$uid],
+          fieldId: field[_xfa_object.$uid],
+          class: ["xfaTextfield"],
           style
         }
       };
@@ -48563,19 +52859,21 @@ class TextEdit extends _xfa_object.XFAObject {
         name: "input",
         attributes: {
           type: "text",
-          class: "xfaTextfield",
+          dataId: field[_xfa_object.$data] && field[_xfa_object.$data][_xfa_object.$uid] || field[_xfa_object.$uid],
+          fieldId: field[_xfa_object.$uid],
+          class: ["xfaTextfield"],
           style
         }
       };
     }
 
-    return {
+    return _utils.HTMLResult.success({
       name: "label",
       attributes: {
-        class: "xfaLabel"
+        class: ["xfaLabel"]
       },
       children: [html]
-    };
+    });
   }
 
 }
@@ -48590,11 +52888,13 @@ class Time extends _xfa_object.StringObject {
   }
 
   [_xfa_object.$finalize]() {
-    this[_xfa_object.$content] = new Date(this[_xfa_object.$content]);
+    const date = this[_xfa_object.$content].trim();
+
+    this[_xfa_object.$content] = date ? new Date(date) : null;
   }
 
-  [_xfa_object.$toHTML]() {
-    return this[_xfa_object.$content].toString();
+  [_xfa_object.$toHTML](availableSpace) {
+    return valueToHtml(this[_xfa_object.$content] ? this[_xfa_object.$content].toString() : "");
   }
 
 }
@@ -48677,22 +52977,37 @@ class Ui extends _xfa_object.XFAObject {
     this.textEdit = null;
   }
 
-  [_xfa_object.$toHTML]() {
-    for (const name of Object.getOwnPropertyNames(this)) {
-      if (name === "extras" || name === "picture") {
-        continue;
+  [_xfa_object.$getExtra]() {
+    if (this[_xfa_object.$extra] === undefined) {
+      for (const name of Object.getOwnPropertyNames(this)) {
+        if (name === "extras" || name === "picture") {
+          continue;
+        }
+
+        const obj = this[name];
+
+        if (!(obj instanceof _xfa_object.XFAObject)) {
+          continue;
+        }
+
+        this[_xfa_object.$extra] = obj;
+        return obj;
       }
 
-      const obj = this[name];
-
-      if (!(obj instanceof _xfa_object.XFAObject)) {
-        continue;
-      }
-
-      return obj[_xfa_object.$toHTML]();
+      this[_xfa_object.$extra] = null;
     }
 
-    return null;
+    return this[_xfa_object.$extra];
+  }
+
+  [_xfa_object.$toHTML](availableSpace) {
+    const obj = this[_xfa_object.$getExtra]();
+
+    if (obj) {
+      return obj[_xfa_object.$toHTML](availableSpace);
+    }
+
+    return _utils.HTMLResult.EMPTY;
   }
 
 }
@@ -48742,6 +53057,21 @@ class Value extends _xfa_object.XFAObject {
   }
 
   [_xfa_object.$setValue](value) {
+    const parent = this[_xfa_object.$getParent]();
+
+    if (parent instanceof Field) {
+      if (parent.ui && parent.ui.imageEdit) {
+        if (!this.image) {
+          this.image = new Image({});
+
+          this[_xfa_object.$appendChild](this.image);
+        }
+
+        this.image[_xfa_object.$content] = value[_xfa_object.$content];
+        return;
+      }
+    }
+
     const valueName = value[_xfa_object.$nodeName];
 
     if (this[valueName] !== null) {
@@ -48764,7 +53094,27 @@ class Value extends _xfa_object.XFAObject {
     this[_xfa_object.$appendChild](value);
   }
 
-  [_xfa_object.$toHTML]() {
+  [_xfa_object.$text]() {
+    if (this.exData) {
+      return this.exData[_xfa_object.$content][_xfa_object.$text]().trim();
+    }
+
+    for (const name of Object.getOwnPropertyNames(this)) {
+      if (name === "image") {
+        continue;
+      }
+
+      const obj = this[name];
+
+      if (obj instanceof _xfa_object.XFAObject) {
+        return (obj[_xfa_object.$content] || "").toString().trim();
+      }
+    }
+
+    return null;
+  }
+
+  [_xfa_object.$toHTML](availableSpace) {
     for (const name of Object.getOwnPropertyNames(this)) {
       const obj = this[name];
 
@@ -48772,10 +53122,10 @@ class Value extends _xfa_object.XFAObject {
         continue;
       }
 
-      return obj[_xfa_object.$toHTML]();
+      return obj[_xfa_object.$toHTML](availableSpace);
     }
 
-    return null;
+    return _utils.HTMLResult.EMPTY;
   }
 
 }
@@ -49278,7 +53628,7 @@ class TemplateNamespace {
 exports.TemplateNamespace = TemplateNamespace;
 
 /***/ }),
-/* 73 */
+/* 81 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -49286,12 +53636,379 @@ exports.TemplateNamespace = TemplateNamespace;
 Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
-exports.addExtraDivForMargin = addExtraDivForMargin;
+exports.addHTML = addHTML;
+exports.checkDimensions = checkDimensions;
+exports.flushHTML = flushHTML;
+exports.getAvailableSpace = getAvailableSpace;
+
+var _xfa_object = __w_pdfjs_require__(75);
+
+var _html_utils = __w_pdfjs_require__(82);
+
+function createLine(node, children) {
+  return {
+    name: "div",
+    attributes: {
+      class: [node.layout === "lr-tb" ? "xfaLr" : "xfaRl"]
+    },
+    children
+  };
+}
+
+function flushHTML(node) {
+  if (!node[_xfa_object.$extra]) {
+    return null;
+  }
+
+  const attributes = node[_xfa_object.$extra].attributes;
+  const html = {
+    name: "div",
+    attributes,
+    children: node[_xfa_object.$extra].children
+  };
+
+  if (node[_xfa_object.$extra].failingNode) {
+    const htmlFromFailing = node[_xfa_object.$extra].failingNode[_xfa_object.$flushHTML]();
+
+    if (htmlFromFailing) {
+      if (node.layout.endsWith("-tb")) {
+        html.children.push(createLine(node, [htmlFromFailing]));
+      } else {
+        html.children.push(htmlFromFailing);
+      }
+    }
+  }
+
+  if (html.children.length === 0) {
+    return null;
+  }
+
+  return html;
+}
+
+function addHTML(node, html, bbox) {
+  const extra = node[_xfa_object.$extra];
+  const availableSpace = extra.availableSpace;
+  const [x, y, w, h] = bbox;
+
+  switch (node.layout) {
+    case "position":
+      {
+        extra.width = Math.max(extra.width, x + w);
+        extra.height = Math.max(extra.height, y + h);
+        extra.children.push(html);
+        break;
+      }
+
+    case "lr-tb":
+    case "rl-tb":
+      if (!extra.line || extra.attempt === 1) {
+        extra.line = createLine(node, []);
+        extra.children.push(extra.line);
+        extra.numberInLine = 0;
+      }
+
+      extra.numberInLine += 1;
+      extra.line.children.push(html);
+
+      if (extra.attempt === 0) {
+        extra.currentWidth += w;
+        extra.height = Math.max(extra.height, extra.prevHeight + h);
+      } else {
+        extra.currentWidth = w;
+        extra.prevHeight = extra.height;
+        extra.height += h;
+        extra.attempt = 0;
+      }
+
+      extra.width = Math.max(extra.width, extra.currentWidth);
+      break;
+
+    case "rl-row":
+    case "row":
+      {
+        extra.children.push(html);
+        extra.width += w;
+        extra.height = Math.max(extra.height, h);
+        const height = (0, _html_utils.measureToString)(extra.height);
+
+        for (const child of extra.children) {
+          child.attributes.style.height = height;
+        }
+
+        break;
+      }
+
+    case "table":
+      {
+        extra.width = Math.min(availableSpace.width, Math.max(extra.width, w));
+        extra.height += h;
+        extra.children.push(html);
+        break;
+      }
+
+    case "tb":
+      {
+        extra.width = availableSpace.width;
+        extra.height += h;
+        extra.children.push(html);
+        break;
+      }
+  }
+}
+
+function getAvailableSpace(node) {
+  const availableSpace = node[_xfa_object.$extra].availableSpace;
+  const marginV = node.margin ? node.margin.topInset + node.margin.bottomInset : 0;
+  const marginH = node.margin ? node.margin.leftInset + node.margin.rightInset : 0;
+
+  switch (node.layout) {
+    case "lr-tb":
+    case "rl-tb":
+      if (node[_xfa_object.$extra].attempt === 0) {
+        return {
+          width: availableSpace.width - marginH - node[_xfa_object.$extra].currentWidth,
+          height: availableSpace.height - marginV - node[_xfa_object.$extra].prevHeight
+        };
+      }
+
+      return {
+        width: availableSpace.width - marginH,
+        height: availableSpace.height - marginV - node[_xfa_object.$extra].height
+      };
+
+    case "rl-row":
+    case "row":
+      const width = node[_xfa_object.$extra].columnWidths.slice(node[_xfa_object.$extra].currentColumn).reduce((a, x) => a + x);
+
+      return {
+        width,
+        height: availableSpace.height - marginH
+      };
+
+    case "table":
+    case "tb":
+      return {
+        width: availableSpace.width - marginH,
+        height: availableSpace.height - marginV - node[_xfa_object.$extra].height
+      };
+
+    case "position":
+    default:
+      return availableSpace;
+  }
+}
+
+function getTransformedBBox(node) {
+  let w = node.w === "" ? NaN : node.w;
+  let h = node.h === "" ? NaN : node.h;
+  let [centerX, centerY] = [0, 0];
+
+  switch (node.anchorType || "") {
+    case "bottomCenter":
+      [centerX, centerY] = [w / 2, h];
+      break;
+
+    case "bottomLeft":
+      [centerX, centerY] = [0, h];
+      break;
+
+    case "bottomRight":
+      [centerX, centerY] = [w, h];
+      break;
+
+    case "middleCenter":
+      [centerX, centerY] = [w / 2, h / 2];
+      break;
+
+    case "middleLeft":
+      [centerX, centerY] = [0, h / 2];
+      break;
+
+    case "middleRight":
+      [centerX, centerY] = [w, h / 2];
+      break;
+
+    case "topCenter":
+      [centerX, centerY] = [w / 2, 0];
+      break;
+
+    case "topRight":
+      [centerX, centerY] = [w, 0];
+      break;
+  }
+
+  let x, y;
+
+  switch (node.rotate || 0) {
+    case 0:
+      [x, y] = [-centerX, -centerY];
+      break;
+
+    case 90:
+      [x, y] = [-centerY, centerX];
+      [w, h] = [h, -w];
+      break;
+
+    case 180:
+      [x, y] = [centerX, centerY];
+      [w, h] = [-w, -h];
+      break;
+
+    case 270:
+      [x, y] = [centerY, -centerX];
+      [w, h] = [-h, w];
+      break;
+  }
+
+  return [node.x + x + Math.min(0, w), node.y + y + Math.min(0, h), Math.abs(w), Math.abs(h)];
+}
+
+function checkDimensions(node, space) {
+  if (node[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].firstUnsplittable === null) {
+    return true;
+  }
+
+  if (node.w === 0 || node.h === 0) {
+    return true;
+  }
+
+  const ERROR = 2;
+
+  const parent = node[_xfa_object.$getSubformParent]();
+
+  const attempt = parent[_xfa_object.$extra] && parent[_xfa_object.$extra].attempt || 0;
+  const [, y, w, h] = getTransformedBBox(node);
+
+  switch (parent.layout) {
+    case "lr-tb":
+    case "rl-tb":
+      if (attempt === 0) {
+        if (!node[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].noLayoutFailure) {
+          if (node.h !== "" && Math.round(h - space.height) > ERROR) {
+            return false;
+          }
+
+          if (node.w !== "") {
+            if (Math.round(w - space.width) <= ERROR) {
+              return true;
+            }
+
+            if (parent[_xfa_object.$extra].numberInLine === 0) {
+              return space.height > 0;
+            }
+
+            return false;
+          }
+
+          return space.width > 0;
+        }
+
+        if (node.w !== "") {
+          return Math.round(w - space.width) <= ERROR;
+        }
+
+        return space.width > 0;
+      }
+
+      if (node[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].noLayoutFailure) {
+        return true;
+      }
+
+      if (node.h !== "" && Math.round(h - space.height) > ERROR) {
+        return false;
+      }
+
+      if (node.w === "" || Math.round(w - space.width) <= ERROR) {
+        return space.height > 0;
+      }
+
+      if (parent[_xfa_object.$isThereMoreWidth]()) {
+        return false;
+      }
+
+      return space.height > 0;
+
+    case "table":
+    case "tb":
+      if (node[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].noLayoutFailure) {
+        return true;
+      }
+
+      if (node.h !== "" && !node[_xfa_object.$isSplittable]()) {
+        return Math.round(h - space.height) <= ERROR;
+      }
+
+      if (node.w === "" || Math.round(w - space.width) <= ERROR) {
+        return space.height > 0;
+      }
+
+      if (parent[_xfa_object.$isThereMoreWidth]()) {
+        return false;
+      }
+
+      return space.height > 0;
+
+    case "position":
+      if (node[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].noLayoutFailure) {
+        return true;
+      }
+
+      if (node.h === "" || Math.round(h + y - space.height) <= ERROR) {
+        return true;
+      }
+
+      const area = node[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].currentContentArea;
+
+      return h + y > area.h;
+
+    case "rl-row":
+    case "row":
+      if (node[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].noLayoutFailure) {
+        return true;
+      }
+
+      if (node.h !== "") {
+        return Math.round(h - space.height) <= ERROR;
+      }
+
+      return true;
+
+    default:
+      return true;
+  }
+}
+
+/***/ }),
+/* 82 */
+/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
+
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports.computeBbox = computeBbox;
+exports.createWrapper = createWrapper;
+exports.fixDimensions = fixDimensions;
+exports.fixTextIndent = fixTextIndent;
+exports.isPrintOnly = isPrintOnly;
 exports.layoutClass = layoutClass;
+exports.layoutNode = layoutNode;
 exports.measureToString = measureToString;
+exports.setAccess = setAccess;
+exports.setFontFamily = setFontFamily;
+exports.setMinMaxDimensions = setMinMaxDimensions;
+exports.setPara = setPara;
 exports.toStyle = toStyle;
 
-var _xfa_object = __w_pdfjs_require__(68);
+var _xfa_object = __w_pdfjs_require__(75);
+
+var _utils = __w_pdfjs_require__(76);
+
+var _fonts = __w_pdfjs_require__(83);
+
+var _text = __w_pdfjs_require__(84);
 
 var _util = __w_pdfjs_require__(2);
 
@@ -49305,6 +54022,12 @@ function measureToString(m) {
 
 const converters = {
   anchorType(node, style) {
+    const parent = node[_xfa_object.$getSubformParent]();
+
+    if (!parent || parent.layout && parent.layout !== "position") {
+      return;
+    }
+
     if (!("transform" in style)) {
       style.transform = "";
     }
@@ -49345,43 +54068,44 @@ const converters = {
   },
 
   dimensions(node, style) {
-    const parent = node[_xfa_object.$getParent]();
+    const parent = node[_xfa_object.$getSubformParent]();
 
-    const extra = parent[_xfa_object.$extra];
     let width = node.w;
+    const height = node.h;
 
-    if (extra && extra.columnWidths) {
-      width = extra.columnWidths[extra.currentColumn];
-      extra.currentColumn = (extra.currentColumn + 1) % extra.columnWidths.length;
+    if (parent.layout && parent.layout.includes("row")) {
+      const extra = parent[_xfa_object.$extra];
+      const colSpan = node.colSpan;
+      let w;
+
+      if (colSpan === -1) {
+        w = extra.columnWidths.slice(extra.currentColumn).reduce((a, x) => a + x, 0);
+        extra.currentColumn = 0;
+      } else {
+        w = extra.columnWidths.slice(extra.currentColumn, extra.currentColumn + colSpan).reduce((a, x) => a + x, 0);
+        extra.currentColumn = (extra.currentColumn + node.colSpan) % extra.columnWidths.length;
+      }
+
+      if (!isNaN(w)) {
+        width = node.w = w;
+      }
     }
 
     if (width !== "") {
       style.width = measureToString(width);
     } else {
       style.width = "auto";
-
-      if (node.maxW > 0) {
-        style.maxWidth = measureToString(node.maxW);
-      }
-
-      style.minWidth = measureToString(node.minW);
     }
 
-    if (node.h !== "") {
-      style.height = measureToString(node.h);
+    if (height !== "") {
+      style.height = measureToString(height);
     } else {
       style.height = "auto";
-
-      if (node.maxH > 0) {
-        style.maxHeight = measureToString(node.maxH);
-      }
-
-      style.minHeight = measureToString(node.minH);
     }
   },
 
   position(node, style) {
-    const parent = node[_xfa_object.$getParent]();
+    const parent = node[_xfa_object.$getSubformParent]();
 
     if (parent && parent.layout && parent.layout !== "position") {
       return;
@@ -49417,42 +54141,237 @@ const converters = {
   },
 
   hAlign(node, style) {
-    switch (node.hAlign) {
-      case "justifyAll":
-        style.textAlign = "justify-all";
-        break;
+    if (node[_xfa_object.$nodeName] === "para") {
+      switch (node.hAlign) {
+        case "justifyAll":
+          style.textAlign = "justify-all";
+          break;
 
-      case "radix":
-        style.textAlign = "left";
-        break;
+        case "radix":
+          style.textAlign = "left";
+          break;
 
-      default:
-        style.textAlign = node.hAlign;
+        default:
+          style.textAlign = node.hAlign;
+      }
+    } else {
+      switch (node.hAlign) {
+        case "left":
+          style.alignSelf = "start";
+          break;
+
+        case "center":
+          style.alignSelf = "center";
+          break;
+
+        case "right":
+          style.alignSelf = "end";
+          break;
+      }
     }
   },
 
-  borderMarginPadding(node, style) {
-    const borderWidths = [0, 0, 0, 0];
-    const marginWidths = [0, 0, 0, 0];
-    const marginNode = node.margin ? [node.margin.topInset, node.margin.rightInset, node.margin.bottomInset, node.margin.leftInset] : [0, 0, 0, 0];
-
-    if (node.border) {
-      Object.assign(style, node.border[_xfa_object.$toStyle](borderWidths, marginWidths));
-    }
-
-    if (borderWidths.every(x => x === 0)) {
-      if (node.margin) {
-        Object.assign(style, node.margin[_xfa_object.$toStyle]());
-      }
-
-      style.padding = style.margin;
-      delete style.margin;
-    } else {
-      style.padding = measureToString(marginNode[0] - borderWidths[0] - marginWidths[0]) + " " + measureToString(marginNode[1] - borderWidths[1] - marginWidths[1]) + " " + measureToString(marginNode[2] - borderWidths[2] - marginWidths[2]) + " " + measureToString(marginNode[3] - borderWidths[3] - marginWidths[3]);
+  margin(node, style) {
+    if (node.margin) {
+      style.margin = node.margin[_xfa_object.$toStyle]().margin;
     }
   }
 
 };
+
+function setMinMaxDimensions(node, style) {
+  const parent = node[_xfa_object.$getSubformParent]();
+
+  if (parent.layout === "position") {
+    if (node.minW > 0) {
+      style.minWidth = measureToString(node.minW);
+    }
+
+    if (node.maxW > 0) {
+      style.maxWidth = measureToString(node.maxW);
+    }
+
+    if (node.minH > 0) {
+      style.minHeight = measureToString(node.minH);
+    }
+
+    if (node.maxH > 0) {
+      style.maxHeight = measureToString(node.maxH);
+    }
+  }
+}
+
+function layoutText(text, xfaFont, margin, lineHeight, fontFinder, width) {
+  const measure = new _text.TextMeasure(xfaFont, margin, lineHeight, fontFinder);
+
+  if (typeof text === "string") {
+    measure.addString(text);
+  } else {
+    text[_xfa_object.$pushGlyphs](measure);
+  }
+
+  return measure.compute(width);
+}
+
+function layoutNode(node, availableSpace) {
+  let height = null;
+  let width = null;
+  let isBroken = false;
+
+  if ((!node.w || !node.h) && node.value) {
+    let marginH = 0;
+    let marginV = 0;
+
+    if (node.margin) {
+      marginH = node.margin.leftInset + node.margin.rightInset;
+      marginV = node.margin.topInset + node.margin.bottomInset;
+    }
+
+    let lineHeight = null;
+    let margin = null;
+
+    if (node.para) {
+      margin = Object.create(null);
+      lineHeight = node.para.lineHeight === "" ? null : node.para.lineHeight;
+      margin.top = node.para.spaceAbove === "" ? 0 : node.para.spaceAbove;
+      margin.bottom = node.para.spaceBelow === "" ? 0 : node.para.spaceBelow;
+      margin.left = node.para.marginLeft === "" ? 0 : node.para.marginLeft;
+      margin.right = node.para.marginRight === "" ? 0 : node.para.marginRight;
+    }
+
+    let font = node.font;
+
+    if (!font) {
+      const root = node[_xfa_object.$getTemplateRoot]();
+
+      let parent = node[_xfa_object.$getParent]();
+
+      while (parent !== root) {
+        if (parent.font) {
+          font = parent.font;
+          break;
+        }
+
+        parent = parent[_xfa_object.$getParent]();
+      }
+    }
+
+    const maxWidth = (!node.w ? availableSpace.width : node.w) - marginH;
+    const fontFinder = node[_xfa_object.$globalData].fontFinder;
+
+    if (node.value.exData && node.value.exData[_xfa_object.$content] && node.value.exData.contentType === "text/html") {
+      const res = layoutText(node.value.exData[_xfa_object.$content], font, margin, lineHeight, fontFinder, maxWidth);
+      width = res.width;
+      height = res.height;
+      isBroken = res.isBroken;
+    } else {
+      const text = node.value[_xfa_object.$text]();
+
+      if (text) {
+        const res = layoutText(text, font, margin, lineHeight, fontFinder, maxWidth);
+        width = res.width;
+        height = res.height;
+        isBroken = res.isBroken;
+      }
+    }
+
+    if (width !== null && !node.w) {
+      width += marginH;
+    }
+
+    if (height !== null && !node.h) {
+      height += marginV;
+    }
+  }
+
+  return {
+    w: width,
+    h: height,
+    isBroken
+  };
+}
+
+function computeBbox(node, html, availableSpace) {
+  let bbox;
+
+  if (node.w !== "" && node.h !== "") {
+    bbox = [node.x, node.y, node.w, node.h];
+  } else {
+    if (!availableSpace) {
+      return null;
+    }
+
+    let width = node.w;
+
+    if (width === "") {
+      if (node.maxW === 0) {
+        const parent = node[_xfa_object.$getSubformParent]();
+
+        if (parent.layout === "position" && parent.w !== "") {
+          width = 0;
+        } else {
+          width = node.minW;
+        }
+      } else {
+        width = Math.min(node.maxW, availableSpace.width);
+      }
+
+      html.attributes.style.width = measureToString(width);
+    }
+
+    let height = node.h;
+
+    if (height === "") {
+      if (node.maxH === 0) {
+        const parent = node[_xfa_object.$getSubformParent]();
+
+        if (parent.layout === "position" && parent.h !== "") {
+          height = 0;
+        } else {
+          height = node.minH;
+        }
+      } else {
+        height = Math.min(node.maxH, availableSpace.height);
+      }
+
+      html.attributes.style.height = measureToString(height);
+    }
+
+    bbox = [node.x, node.y, width, height];
+  }
+
+  return bbox;
+}
+
+function fixDimensions(node) {
+  const parent = node[_xfa_object.$getSubformParent]();
+
+  if (parent.layout && parent.layout.includes("row")) {
+    const extra = parent[_xfa_object.$extra];
+    const colSpan = node.colSpan;
+    let width;
+
+    if (colSpan === -1) {
+      width = extra.columnWidths.slice(extra.currentColumn).reduce((a, w) => a + w, 0);
+    } else {
+      width = extra.columnWidths.slice(extra.currentColumn, extra.currentColumn + colSpan).reduce((a, w) => a + w, 0);
+    }
+
+    if (!isNaN(width)) {
+      node.w = width;
+    }
+  }
+
+  if (parent.layout && parent.layout !== "position") {
+    node.x = node.y = 0;
+  }
+
+  if (node.layout === "table") {
+    if (node.w === "" && Array.isArray(node.columnWidths)) {
+      node.w = node.columnWidths.reduce((a, x) => a + x, 0);
+    }
+  }
+}
 
 function layoutClass(node) {
   switch (node.layout) {
@@ -49492,6 +54411,11 @@ function toStyle(node, ...names) {
       continue;
     }
 
+    if (converters.hasOwnProperty(name)) {
+      converters[name](node, style);
+      continue;
+    }
+
     if (value instanceof _xfa_object.XFAObject) {
       const newStyle = value[_xfa_object.$toStyle]();
 
@@ -49500,46 +54424,233 @@ function toStyle(node, ...names) {
       } else {
         (0, _util.warn)(`(DEBUG) - XFA - style for ${name} not implemented yet`);
       }
-
-      continue;
-    }
-
-    if (converters.hasOwnProperty(name)) {
-      converters[name](node, style);
     }
   }
 
   return style;
 }
 
-function addExtraDivForMargin(html) {
-  const style = html.attributes.style;
+function createWrapper(node, html) {
+  const {
+    attributes
+  } = html;
+  const {
+    style
+  } = attributes;
+  const wrapper = {
+    name: "div",
+    attributes: {
+      class: ["xfaWrapper"],
+      style: Object.create(null)
+    },
+    children: []
+  };
+  attributes.class.push("xfaWrapped");
 
-  if (style.margin) {
-    const padding = style.margin;
-    delete style.margin;
-    const width = style.width || "auto";
-    const height = style.height || "auto";
-    style.width = "100%";
-    style.height = "100%";
-    return {
+  if (node.border) {
+    const {
+      widths,
+      insets
+    } = node.border[_xfa_object.$extra];
+    let width, height;
+    let top = insets[0];
+    let left = insets[3];
+    const insetsH = insets[0] + insets[2];
+    const insetsW = insets[1] + insets[3];
+
+    switch (node.border.hand) {
+      case "even":
+        top -= widths[0] / 2;
+        left -= widths[3] / 2;
+        width = `calc(100% + ${(widths[1] + widths[3]) / 2 - insetsW}px)`;
+        height = `calc(100% + ${(widths[0] + widths[2]) / 2 - insetsH}px)`;
+        break;
+
+      case "left":
+        top -= widths[0];
+        left -= widths[3];
+        width = `calc(100% + ${widths[1] + widths[3] - insetsW}px)`;
+        height = `calc(100% + ${widths[0] + widths[2] - insetsH}px)`;
+        break;
+
+      case "right":
+        width = insetsW ? `calc(100% - ${insetsW}px)` : "100%";
+        height = insetsH ? `calc(100% - ${insetsH}px)` : "100%";
+        break;
+    }
+
+    const classNames = ["xfaBorder"];
+
+    if (isPrintOnly(node.border)) {
+      classNames.push("xfaPrintOnly");
+    }
+
+    const border = {
       name: "div",
       attributes: {
+        class: classNames,
         style: {
-          padding,
+          top: `${top}px`,
+          left: `${left}px`,
           width,
           height
         }
       },
-      children: [html]
+      children: []
     };
+
+    for (const key of ["border", "borderWidth", "borderColor", "borderRadius", "borderStyle"]) {
+      if (style[key] !== undefined) {
+        border.attributes.style[key] = style[key];
+        delete style[key];
+      }
+    }
+
+    wrapper.children.push(border, html);
+  } else {
+    wrapper.children.push(html);
   }
 
-  return html;
+  for (const key of ["background", "backgroundClip", "top", "left", "width", "height", "minWidth", "minHeight", "maxWidth", "maxHeight", "transform", "transformOrigin", "visibility"]) {
+    if (style[key] !== undefined) {
+      wrapper.attributes.style[key] = style[key];
+      delete style[key];
+    }
+  }
+
+  if (style.position === "absolute") {
+    wrapper.attributes.style.position = "absolute";
+  } else {
+    wrapper.attributes.style.position = "relative";
+  }
+
+  delete style.position;
+
+  if (style.alignSelf) {
+    wrapper.attributes.style.alignSelf = style.alignSelf;
+    delete style.alignSelf;
+  }
+
+  return wrapper;
+}
+
+function fixTextIndent(styles) {
+  const indent = (0, _utils.getMeasurement)(styles.textIndent, "0px");
+
+  if (indent >= 0) {
+    return;
+  }
+
+  const align = styles.textAlign === "right" ? "right" : "left";
+  const name = "padding" + (align === "left" ? "Left" : "Right");
+  const padding = (0, _utils.getMeasurement)(styles[name], "0px");
+  styles[name] = `${padding - indent}px`;
+}
+
+function setAccess(node, classNames) {
+  switch (node.access) {
+    case "nonInteractive":
+      classNames.push("xfaNonInteractive");
+      break;
+
+    case "readOnly":
+      classNames.push("xfaReadOnly");
+      break;
+
+    case "protected":
+      classNames.push("xfaDisabled");
+      break;
+  }
+}
+
+function isPrintOnly(node) {
+  return node.relevant.length > 0 && !node.relevant[0].excluded && node.relevant[0].viewname === "print";
+}
+
+function getCurrentPara(node) {
+  const stack = node[_xfa_object.$getTemplateRoot]()[_xfa_object.$extra].paraStack;
+
+  return stack.length ? stack[stack.length - 1] : null;
+}
+
+function setPara(node, nodeStyle, value) {
+  if (value.attributes.class && value.attributes.class.includes("xfaRich")) {
+    if (nodeStyle) {
+      if (node.h === "") {
+        nodeStyle.height = "auto";
+      }
+
+      if (node.w === "") {
+        nodeStyle.width = "auto";
+      }
+    }
+
+    const para = getCurrentPara(node);
+
+    if (para) {
+      const valueStyle = value.attributes.style;
+      valueStyle.display = "flex";
+      valueStyle.flexDirection = "column";
+
+      switch (para.vAlign) {
+        case "top":
+          valueStyle.justifyContent = "start";
+          break;
+
+        case "bottom":
+          valueStyle.justifyContent = "end";
+          break;
+
+        case "middle":
+          valueStyle.justifyContent = "center";
+          break;
+      }
+
+      const paraStyle = para[_xfa_object.$toStyle]();
+
+      for (const [key, val] of Object.entries(paraStyle)) {
+        if (!(key in valueStyle)) {
+          valueStyle[key] = val;
+        }
+      }
+    }
+  }
+}
+
+function setFontFamily(xfaFont, node, fontFinder, style) {
+  const name = (0, _utils.stripQuotes)(xfaFont.typeface);
+  const typeface = fontFinder.find(name);
+  style.fontFamily = `"${name}"`;
+
+  if (typeface) {
+    const {
+      fontFamily
+    } = typeface.regular.cssFontInfo;
+
+    if (fontFamily !== name) {
+      style.fontFamily = `"${fontFamily}"`;
+    }
+
+    const para = getCurrentPara(node);
+
+    if (para && para.lineHeight !== "") {
+      return;
+    }
+
+    if (style.lineHeight) {
+      return;
+    }
+
+    const pdfFont = (0, _fonts.selectFont)(xfaFont, typeface);
+
+    if (pdfFont) {
+      style.lineHeight = Math.max(1.2, pdfFont.lineHeight);
+    }
+  }
 }
 
 /***/ }),
-/* 74 */
+/* 83 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -49547,315 +54658,553 @@ function addExtraDivForMargin(html) {
 Object.defineProperty(exports, "__esModule", ({
   value: true
 }));
-exports.createDataNode = createDataNode;
-exports.searchNode = searchNode;
+exports.getMetrics = getMetrics;
+exports.selectFont = selectFont;
+exports.FontFinder = void 0;
 
-var _xfa_object = __w_pdfjs_require__(68);
+var _xfa_object = __w_pdfjs_require__(75);
+
+var _utils = __w_pdfjs_require__(76);
 
 var _util = __w_pdfjs_require__(2);
 
-const namePattern = /^[^.[]+/;
-const indexPattern = /^[^\]]+/;
-const operators = {
-  dot: 0,
-  dotDot: 1,
-  dotHash: 2,
-  dotBracket: 3,
-  dotParen: 4
-};
-const shortcuts = new Map([["$data", (root, current) => root.datasets.data], ["$template", (root, current) => root.template], ["$connectionSet", (root, current) => root.connectionSet], ["$form", (root, current) => root.form], ["$layout", (root, current) => root.layout], ["$host", (root, current) => root.host], ["$dataWindow", (root, current) => root.dataWindow], ["$event", (root, current) => root.event], ["!", (root, current) => root.datasets], ["$xfa", (root, current) => root], ["xfa", (root, current) => root], ["$", (root, current) => current]]);
-const somCache = new WeakMap();
-
-function parseIndex(index) {
-  index = index.trim();
-
-  if (index === "*") {
-    return Infinity;
+class FontFinder {
+  constructor(pdfFonts) {
+    this.fonts = new Map();
+    this.cache = new Map();
+    this.warned = new Set();
+    this.defaultFont = null;
+    this.add(pdfFonts);
   }
 
-  return parseInt(index, 10) || 0;
-}
-
-function parseExpression(expr, dotDotAllowed) {
-  let match = expr.match(namePattern);
-
-  if (!match) {
-    return null;
-  }
-
-  let [name] = match;
-  const parsed = [{
-    name,
-    cacheName: "." + name,
-    index: 0,
-    js: null,
-    formCalc: null,
-    operator: operators.dot
-  }];
-  let pos = name.length;
-
-  while (pos < expr.length) {
-    const spos = pos;
-    const char = expr.charAt(pos++);
-
-    if (char === "[") {
-      match = expr.slice(pos).match(indexPattern);
-
-      if (!match) {
-        (0, _util.warn)("XFA - Invalid index in SOM expression");
-        return null;
-      }
-
-      parsed[parsed.length - 1].index = parseIndex(match[0]);
-      pos += match[0].length + 1;
-      continue;
+  add(pdfFonts, reallyMissingFonts = null) {
+    for (const pdfFont of pdfFonts) {
+      this.addPdfFont(pdfFont);
     }
 
-    let operator;
-
-    switch (expr.charAt(pos)) {
-      case ".":
-        if (!dotDotAllowed) {
-          return null;
-        }
-
-        pos++;
-        operator = operators.dotDot;
-        break;
-
-      case "#":
-        pos++;
-        operator = operators.dotHash;
-        break;
-
-      case "[":
-        operator = operators.dotBracket;
-        break;
-
-      case "(":
-        operator = operators.dotParen;
-        break;
-
-      default:
-        operator = operators.dot;
-        break;
+    for (const pdfFont of this.fonts.values()) {
+      if (!pdfFont.regular) {
+        pdfFont.regular = pdfFont.italic || pdfFont.bold || pdfFont.bolditalic;
+      }
     }
 
-    match = expr.slice(pos).match(namePattern);
-
-    if (!match) {
-      break;
+    if (!reallyMissingFonts || reallyMissingFonts.size === 0) {
+      return;
     }
 
-    [name] = match;
-    pos += name.length;
-    parsed.push({
-      name,
-      cacheName: expr.slice(spos, pos),
-      operator,
-      index: 0,
-      js: null,
-      formCalc: null
-    });
+    const myriad = this.fonts.get("PdfJS-Fallback-PdfJS-XFA");
+
+    for (const missing of reallyMissingFonts) {
+      this.fonts.set(missing, myriad);
+    }
   }
 
-  return parsed;
-}
+  addPdfFont(pdfFont) {
+    const cssFontInfo = pdfFont.cssFontInfo;
+    const name = cssFontInfo.fontFamily;
+    let font = this.fonts.get(name);
 
-function searchNode(root, container, expr, dotDotAllowed = true, useCache = true) {
-  const parsed = parseExpression(expr, dotDotAllowed);
+    if (!font) {
+      font = Object.create(null);
+      this.fonts.set(name, font);
 
-  if (!parsed) {
-    return null;
-  }
+      if (!this.defaultFont) {
+        this.defaultFont = font;
+      }
+    }
 
-  const fn = shortcuts.get(parsed[0].name);
-  let i = 0;
-  let isQualified;
+    let property = "";
+    const fontWeight = parseFloat(cssFontInfo.fontWeight);
 
-  if (fn) {
-    isQualified = true;
-    root = [fn(root, container)];
-    i = 1;
-  } else {
-    isQualified = container === null;
-    root = [container || root];
-  }
+    if (parseFloat(cssFontInfo.italicAngle) !== 0) {
+      property = fontWeight >= 700 ? "bolditalic" : "italic";
+    } else if (fontWeight >= 700) {
+      property = "bold";
+    }
 
-  for (let ii = parsed.length; i < ii; i++) {
-    const {
-      name,
-      cacheName,
-      operator,
-      index
-    } = parsed[i];
-    const nodes = [];
-
-    for (const node of root) {
-      if (!(node instanceof _xfa_object.XFAObject)) {
-        continue;
+    if (!property) {
+      if (pdfFont.name.includes("Bold") || pdfFont.psName && pdfFont.psName.includes("Bold")) {
+        property = "bold";
       }
 
-      let children, cached;
-
-      if (useCache) {
-        cached = somCache.get(node);
-
-        if (!cached) {
-          cached = new Map();
-          somCache.set(node, cached);
-        }
-
-        children = cached.get(cacheName);
+      if (pdfFont.name.includes("Italic") || pdfFont.name.endsWith("It") || pdfFont.psName && (pdfFont.psName.includes("Italic") || pdfFont.psName.endsWith("It"))) {
+        property += "italic";
       }
+    }
 
-      if (!children) {
-        switch (operator) {
-          case operators.dot:
-            children = node[_xfa_object.$getChildrenByName](name, false);
-            break;
+    if (!property) {
+      property = "regular";
+    }
 
-          case operators.dotDot:
-            children = node[_xfa_object.$getChildrenByName](name, true);
-            break;
+    font[property] = pdfFont;
+  }
 
-          case operators.dotHash:
-            children = node[_xfa_object.$getChildrenByClass](name);
+  getDefault() {
+    return this.defaultFont;
+  }
 
-            if (children instanceof _xfa_object.XFAObjectArray) {
-              children = children.children;
-            } else {
-              children = [children];
-            }
+  find(fontName, mustWarn = true) {
+    let font = this.fonts.get(fontName) || this.cache.get(fontName);
 
-            break;
+    if (font) {
+      return font;
+    }
 
-          default:
-            break;
-        }
+    const pattern = /,|-|_| |bolditalic|bold|italic|regular|it/gi;
+    let name = fontName.replace(pattern, "");
+    font = this.fonts.get(name);
 
-        if (useCache) {
-          cached.set(cacheName, children);
+    if (font) {
+      this.cache.set(fontName, font);
+      return font;
+    }
+
+    name = name.toLowerCase();
+    const maybe = [];
+
+    for (const [family, pdfFont] of this.fonts.entries()) {
+      if (family.replace(pattern, "").toLowerCase().startsWith(name)) {
+        maybe.push(pdfFont);
+      }
+    }
+
+    if (maybe.length === 0) {
+      for (const [, pdfFont] of this.fonts.entries()) {
+        if (pdfFont.regular.name && pdfFont.regular.name.replace(pattern, "").toLowerCase().startsWith(name)) {
+          maybe.push(pdfFont);
         }
       }
+    }
 
-      if (children.length > 0) {
-        nodes.push(children);
+    if (maybe.length === 0) {
+      name = name.replace(/psmt|mt/gi, "");
+
+      for (const [family, pdfFont] of this.fonts.entries()) {
+        if (family.replace(pattern, "").toLowerCase().startsWith(name)) {
+          maybe.push(pdfFont);
+        }
       }
     }
 
-    if (nodes.length === 0 && !isQualified && i === 0) {
-      const parent = container[_xfa_object.$getParent]();
+    if (maybe.length === 0) {
+      for (const pdfFont of this.fonts.values()) {
+        if (pdfFont.regular.name && pdfFont.regular.name.replace(pattern, "").toLowerCase().startsWith(name)) {
+          maybe.push(pdfFont);
+        }
+      }
+    }
 
-      container = parent;
-
-      if (!container) {
-        return null;
+    if (maybe.length >= 1) {
+      if (maybe.length !== 1 && mustWarn) {
+        (0, _util.warn)(`XFA - Too many choices to guess the correct font: ${fontName}`);
       }
 
-      i = -1;
-      root = [container];
-      continue;
+      this.cache.set(fontName, maybe[0]);
+      return maybe[0];
     }
 
-    if (isFinite(index)) {
-      root = nodes.filter(node => index < node.length).map(node => node[index]);
-    } else {
-      root = nodes.reduce((acc, node) => acc.concat(node), []);
+    if (mustWarn && !this.warned.has(fontName)) {
+      this.warned.add(fontName);
+      (0, _util.warn)(`XFA - Cannot find the font: ${fontName}`);
     }
-  }
 
-  if (root.length === 0) {
     return null;
   }
 
-  return root;
 }
 
-function createNodes(root, path) {
-  let node = null;
+exports.FontFinder = FontFinder;
 
-  for (const {
-    name,
-    index
-  } of path) {
-    for (let i = 0; i <= index; i++) {
-      node = new _xfa_object.XmlObject(root[_xfa_object.$namespaceId], name);
-
-      root[_xfa_object.$appendChild](node);
+function selectFont(xfaFont, typeface) {
+  if (xfaFont.posture === "italic") {
+    if (xfaFont.weight === "bold") {
+      return typeface.bolditalic;
     }
 
-    root = node;
+    return typeface.italic;
+  } else if (xfaFont.weight === "bold") {
+    return typeface.bold;
   }
 
-  return node;
+  return typeface.regular;
 }
 
-function createDataNode(root, container, expr) {
-  const parsed = parseExpression(expr);
+function getMetrics(xfaFont, real = false) {
+  let pdfFont = null;
 
-  if (!parsed) {
-    return null;
+  if (xfaFont) {
+    const name = (0, _utils.stripQuotes)(xfaFont.typeface);
+
+    const typeface = xfaFont[_xfa_object.$globalData].fontFinder.find(name);
+
+    pdfFont = selectFont(xfaFont, typeface);
   }
 
-  if (parsed.some(x => x.operator === operators.dotDot)) {
-    return null;
+  if (!pdfFont) {
+    return {
+      lineHeight: 12,
+      lineGap: 2,
+      lineNoGap: 10
+    };
   }
 
-  const fn = shortcuts.get(parsed[0].name);
-  let i = 0;
-
-  if (fn) {
-    root = fn(root, container);
-    i = 1;
-  } else {
-    root = container || root;
-  }
-
-  for (let ii = parsed.length; i < ii; i++) {
-    const {
-      cacheName,
-      index
-    } = parsed[i];
-
-    if (!isFinite(index)) {
-      parsed[i].index = 0;
-      return createNodes(root, parsed.slice(i));
-    }
-
-    const cached = somCache.get(root);
-
-    if (!cached) {
-      (0, _util.warn)(`XFA - createDataNode must be called after searchNode.`);
-      return null;
-    }
-
-    const children = cached.get(cacheName);
-
-    if (children.length === 0) {
-      return createNodes(root, parsed.slice(i));
-    }
-
-    if (index < children.length) {
-      const child = children[index];
-
-      if (!(child instanceof _xfa_object.XFAObject)) {
-        (0, _util.warn)(`XFA - Cannot create a node.`);
-        return null;
-      }
-
-      root = child;
-    } else {
-      parsed[i].index = children.length - index;
-      return createNodes(root, parsed.slice(i));
-    }
-  }
-
-  return null;
+  const size = xfaFont.size || 10;
+  const lineHeight = pdfFont.lineHeight ? Math.max(real ? 0 : 1.2, pdfFont.lineHeight) : 1.2;
+  const lineGap = pdfFont.lineGap === undefined ? 0.2 : pdfFont.lineGap;
+  return {
+    lineHeight: lineHeight * size,
+    lineGap: lineGap * size,
+    lineNoGap: Math.max(1, lineHeight - lineGap) * size
+  };
 }
 
 /***/ }),
-/* 75 */
+/* 84 */
+/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
+
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports.TextMeasure = void 0;
+
+var _fonts = __w_pdfjs_require__(83);
+
+const WIDTH_FACTOR = 1.02;
+
+class FontInfo {
+  constructor(xfaFont, margin, lineHeight, fontFinder) {
+    this.lineHeight = lineHeight;
+    this.paraMargin = margin || {
+      top: 0,
+      bottom: 0,
+      left: 0,
+      right: 0
+    };
+
+    if (!xfaFont) {
+      [this.pdfFont, this.xfaFont] = this.defaultFont(fontFinder);
+      return;
+    }
+
+    this.xfaFont = {
+      typeface: xfaFont.typeface,
+      posture: xfaFont.posture,
+      weight: xfaFont.weight,
+      size: xfaFont.size,
+      letterSpacing: xfaFont.letterSpacing
+    };
+    const typeface = fontFinder.find(xfaFont.typeface);
+
+    if (!typeface) {
+      [this.pdfFont, this.xfaFont] = this.defaultFont(fontFinder);
+      return;
+    }
+
+    this.pdfFont = (0, _fonts.selectFont)(xfaFont, typeface);
+
+    if (!this.pdfFont) {
+      [this.pdfFont, this.xfaFont] = this.defaultFont(fontFinder);
+    }
+  }
+
+  defaultFont(fontFinder) {
+    const font = fontFinder.find("Helvetica", false) || fontFinder.find("Myriad Pro", false) || fontFinder.find("Arial", false) || fontFinder.getDefault();
+
+    if (font && font.regular) {
+      const pdfFont = font.regular;
+      const info = pdfFont.cssFontInfo;
+      const xfaFont = {
+        typeface: info.fontFamily,
+        posture: "normal",
+        weight: "normal",
+        size: 10,
+        letterSpacing: 0
+      };
+      return [pdfFont, xfaFont];
+    }
+
+    const xfaFont = {
+      typeface: "Courier",
+      posture: "normal",
+      weight: "normal",
+      size: 10,
+      letterSpacing: 0
+    };
+    return [null, xfaFont];
+  }
+
+}
+
+class FontSelector {
+  constructor(defaultXfaFont, defaultParaMargin, defaultLineHeight, fontFinder) {
+    this.fontFinder = fontFinder;
+    this.stack = [new FontInfo(defaultXfaFont, defaultParaMargin, defaultLineHeight, fontFinder)];
+  }
+
+  pushData(xfaFont, margin, lineHeight) {
+    const lastFont = this.stack[this.stack.length - 1];
+
+    for (const name of ["typeface", "posture", "weight", "size", "letterSpacing"]) {
+      if (!xfaFont[name]) {
+        xfaFont[name] = lastFont.xfaFont[name];
+      }
+    }
+
+    for (const name of ["top", "bottom", "left", "right"]) {
+      if (isNaN(margin[name])) {
+        margin[name] = lastFont.paraMargin[name];
+      }
+    }
+
+    const fontInfo = new FontInfo(xfaFont, margin, lineHeight || lastFont.lineHeight, this.fontFinder);
+
+    if (!fontInfo.pdfFont) {
+      fontInfo.pdfFont = lastFont.pdfFont;
+    }
+
+    this.stack.push(fontInfo);
+  }
+
+  popFont() {
+    this.stack.pop();
+  }
+
+  topFont() {
+    return this.stack[this.stack.length - 1];
+  }
+
+}
+
+class TextMeasure {
+  constructor(defaultXfaFont, defaultParaMargin, defaultLineHeight, fonts) {
+    this.glyphs = [];
+    this.fontSelector = new FontSelector(defaultXfaFont, defaultParaMargin, defaultLineHeight, fonts);
+    this.extraHeight = 0;
+  }
+
+  pushData(xfaFont, margin, lineHeight) {
+    this.fontSelector.pushData(xfaFont, margin, lineHeight);
+  }
+
+  popFont(xfaFont) {
+    return this.fontSelector.popFont();
+  }
+
+  addPara() {
+    const lastFont = this.fontSelector.topFont();
+    this.extraHeight += lastFont.paraMargin.top + lastFont.paraMargin.bottom;
+  }
+
+  addString(str) {
+    if (!str) {
+      return;
+    }
+
+    const lastFont = this.fontSelector.topFont();
+    const fontSize = lastFont.xfaFont.size;
+
+    if (lastFont.pdfFont) {
+      const letterSpacing = lastFont.xfaFont.letterSpacing;
+      const pdfFont = lastFont.pdfFont;
+      const fontLineHeight = pdfFont.lineHeight || 1.2;
+      const lineHeight = lastFont.lineHeight || Math.max(1.2, fontLineHeight) * fontSize;
+      const lineGap = pdfFont.lineGap === undefined ? 0.2 : pdfFont.lineGap;
+      const noGap = fontLineHeight - lineGap;
+      const firstLineHeight = Math.max(1, noGap) * fontSize;
+      const scale = fontSize / 1000;
+      const fallbackWidth = pdfFont.defaultWidth || pdfFont.charsToGlyphs(" ")[0].width;
+
+      for (const line of str.split(/[\u2029\n]/)) {
+        const encodedLine = pdfFont.encodeString(line).join("");
+        const glyphs = pdfFont.charsToGlyphs(encodedLine);
+
+        for (const glyph of glyphs) {
+          const width = glyph.width || fallbackWidth;
+          this.glyphs.push([width * scale + letterSpacing, lineHeight, firstLineHeight, glyph.unicode, false]);
+        }
+
+        this.glyphs.push([0, 0, 0, "\n", true]);
+      }
+
+      this.glyphs.pop();
+      return;
+    }
+
+    for (const line of str.split(/[\u2029\n]/)) {
+      for (const char of line.split("")) {
+        this.glyphs.push([fontSize, 1.2 * fontSize, fontSize, char, false]);
+      }
+
+      this.glyphs.push([0, 0, 0, "\n", true]);
+    }
+
+    this.glyphs.pop();
+  }
+
+  compute(maxWidth) {
+    let lastSpacePos = -1,
+        lastSpaceWidth = 0,
+        width = 0,
+        height = 0,
+        currentLineWidth = 0,
+        currentLineHeight = 0;
+    let isBroken = false;
+    let isFirstLine = true;
+
+    for (let i = 0, ii = this.glyphs.length; i < ii; i++) {
+      const [glyphWidth, lineHeight, firstLineHeight, char, isEOL] = this.glyphs[i];
+      const isSpace = char === " ";
+      const glyphHeight = isFirstLine ? firstLineHeight : lineHeight;
+
+      if (isEOL) {
+        width = Math.max(width, currentLineWidth);
+        currentLineWidth = 0;
+        height += currentLineHeight;
+        currentLineHeight = glyphHeight;
+        lastSpacePos = -1;
+        lastSpaceWidth = 0;
+        isFirstLine = false;
+        continue;
+      }
+
+      if (isSpace) {
+        if (currentLineWidth + glyphWidth > maxWidth) {
+          width = Math.max(width, currentLineWidth);
+          currentLineWidth = 0;
+          height += currentLineHeight;
+          currentLineHeight = glyphHeight;
+          lastSpacePos = -1;
+          lastSpaceWidth = 0;
+          isBroken = true;
+          isFirstLine = false;
+        } else {
+          currentLineHeight = Math.max(glyphHeight, currentLineHeight);
+          lastSpaceWidth = currentLineWidth;
+          currentLineWidth += glyphWidth;
+          lastSpacePos = i;
+        }
+
+        continue;
+      }
+
+      if (currentLineWidth + glyphWidth > maxWidth) {
+        height += currentLineHeight;
+        currentLineHeight = glyphHeight;
+
+        if (lastSpacePos !== -1) {
+          i = lastSpacePos;
+          width = Math.max(width, lastSpaceWidth);
+          currentLineWidth = 0;
+          lastSpacePos = -1;
+          lastSpaceWidth = 0;
+        } else {
+          width = Math.max(width, currentLineWidth);
+          currentLineWidth = glyphWidth;
+        }
+
+        isBroken = true;
+        isFirstLine = false;
+        continue;
+      }
+
+      currentLineWidth += glyphWidth;
+      currentLineHeight = Math.max(glyphHeight, currentLineHeight);
+    }
+
+    width = Math.max(width, currentLineWidth);
+    height += currentLineHeight + this.extraHeight;
+    return {
+      width: WIDTH_FACTOR * width,
+      height,
+      isBroken
+    };
+  }
+
+}
+
+exports.TextMeasure = TextMeasure;
+
+/***/ }),
+/* 85 */
+/***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
+
+
+
+Object.defineProperty(exports, "__esModule", ({
+  value: true
+}));
+exports.DataHandler = void 0;
+
+var _xfa_object = __w_pdfjs_require__(75);
+
+class DataHandler {
+  constructor(root, data) {
+    this.data = data;
+    this.dataset = root.datasets || null;
+  }
+
+  serialize(storage) {
+    const stack = [[-1, this.data[_xfa_object.$getChildren]()]];
+
+    while (stack.length > 0) {
+      const last = stack[stack.length - 1];
+      const [i, children] = last;
+
+      if (i + 1 === children.length) {
+        stack.pop();
+        continue;
+      }
+
+      const child = children[++last[0]];
+      const storageEntry = storage.get(child[_xfa_object.$uid]);
+
+      if (storageEntry) {
+        child[_xfa_object.$setValue](storageEntry);
+      } else {
+        const attributes = child[_xfa_object.$getAttributes]();
+
+        for (const value of attributes.values()) {
+          const entry = storage.get(value[_xfa_object.$uid]);
+
+          if (entry) {
+            value[_xfa_object.$setValue](entry);
+
+            break;
+          }
+        }
+      }
+
+      const nodes = child[_xfa_object.$getChildren]();
+
+      if (nodes.length > 0) {
+        stack.push([-1, nodes]);
+      }
+    }
+
+    const buf = [`<xfa:datasets xmlns:xfa="http://www.xfa.org/schema/xfa-data/1.0/">`];
+
+    if (this.dataset) {
+      for (const child of this.dataset[_xfa_object.$getChildren]()) {
+        if (child[_xfa_object.$nodeName] !== "data") {
+          child[_xfa_object.$toString](buf);
+        }
+      }
+    }
+
+    this.data[_xfa_object.$toString](buf);
+
+    buf.push("</xfa:datasets>");
+    return buf.join("");
+  }
+
+}
+
+exports.DataHandler = DataHandler;
+
+/***/ }),
+/* 86 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -49865,11 +55214,11 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.XFAParser = void 0;
 
-var _xfa_object = __w_pdfjs_require__(68);
+var _xfa_object = __w_pdfjs_require__(75);
 
-var _xml_parser = __w_pdfjs_require__(61);
+var _xml_parser = __w_pdfjs_require__(68);
 
-var _builder = __w_pdfjs_require__(76);
+var _builder = __w_pdfjs_require__(87);
 
 var _util = __w_pdfjs_require__(2);
 
@@ -49878,10 +55227,14 @@ class XFAParser extends _xml_parser.XMLParserBase {
     super();
     this._builder = new _builder.Builder();
     this._stack = [];
+    this._globalData = {
+      usedTypefaces: new Set()
+    };
     this._ids = new Map();
     this._current = this._builder.buildRoot(this._ids);
     this._errorCode = _xml_parser.XMLParserErrorCode.NoError;
     this._whiteRegex = /^\s+$/;
+    this._nbsps = /\xa0+/g;
   }
 
   parse(data) {
@@ -49897,6 +55250,8 @@ class XFAParser extends _xml_parser.XMLParserBase {
   }
 
   onText(text) {
+    text = text.replace(this._nbsps, match => match.slice(1) + " ");
+
     if (this._current[_xfa_object.$acceptWhitespace]()) {
       this._current[_xfa_object.$onText](text);
 
@@ -49967,20 +55322,20 @@ class XFAParser extends _xml_parser.XMLParserBase {
     return [namespace, prefixes, attributeObj];
   }
 
-  _getNameAndPrefix(name) {
+  _getNameAndPrefix(name, nsAgnostic) {
     const i = name.indexOf(":");
 
     if (i === -1) {
       return [name, null];
     }
 
-    return [name.substring(i + 1), name.substring(0, i)];
+    return [name.substring(i + 1), nsAgnostic ? "" : name.substring(0, i)];
   }
 
   onBeginElement(tagName, attributes, isEmpty) {
     const [namespace, prefixes, attributesObj] = this._mkAttributes(attributes, tagName);
 
-    const [name, nsPrefix] = this._getNameAndPrefix(tagName);
+    const [name, nsPrefix] = this._getNameAndPrefix(tagName, this._builder.isNsAgnostic());
 
     const node = this._builder.build({
       nsPrefix,
@@ -49989,6 +55344,8 @@ class XFAParser extends _xml_parser.XMLParserBase {
       namespace,
       prefixes
     });
+
+    node[_xfa_object.$globalData] = this._globalData;
 
     if (isEmpty) {
       node[_xfa_object.$finalize]();
@@ -50010,6 +55367,15 @@ class XFAParser extends _xml_parser.XMLParserBase {
   onEndElement(name) {
     const node = this._current;
 
+    if (node[_xfa_object.$isCDATAXml]() && typeof node[_xfa_object.$content] === "string") {
+      const parser = new XFAParser();
+      parser._globalData = this._globalData;
+      const root = parser.parse(node[_xfa_object.$content]);
+      node[_xfa_object.$content] = null;
+
+      node[_xfa_object.$onChild](root);
+    }
+
     node[_xfa_object.$finalize]();
 
     this._current = this._stack.pop();
@@ -50030,7 +55396,7 @@ class XFAParser extends _xml_parser.XMLParserBase {
 exports.XFAParser = XFAParser;
 
 /***/ }),
-/* 76 */
+/* 87 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -50040,25 +55406,23 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.Builder = void 0;
 
-var _namespaces = __w_pdfjs_require__(70);
+var _namespaces = __w_pdfjs_require__(77);
 
-var _xfa_object = __w_pdfjs_require__(68);
+var _xfa_object = __w_pdfjs_require__(75);
 
-var _setup = __w_pdfjs_require__(77);
+var _setup = __w_pdfjs_require__(88);
 
-var _template = __w_pdfjs_require__(72);
+var _template = __w_pdfjs_require__(80);
 
-var _unknown = __w_pdfjs_require__(86);
+var _unknown = __w_pdfjs_require__(97);
 
 var _util = __w_pdfjs_require__(2);
-
-const _ids = Symbol();
 
 class Root extends _xfa_object.XFAObject {
   constructor(ids) {
     super(-1, "root", Object.create(null));
     this.element = null;
-    this[_ids] = ids;
+    this[_xfa_object.$ids] = ids;
   }
 
   [_xfa_object.$onChild](child) {
@@ -50070,7 +55434,11 @@ class Root extends _xfa_object.XFAObject {
     super[_xfa_object.$finalize]();
 
     if (this.element.template instanceof _template.Template) {
-      this.element.template[_xfa_object.$resolvePrototypes](this[_ids]);
+      this[_xfa_object.$ids].set(_xfa_object.$root, this.element);
+
+      this.element.template[_xfa_object.$resolvePrototypes](this[_xfa_object.$ids]);
+
+      this.element.template[_xfa_object.$ids] = this[_xfa_object.$ids];
     }
   }
 
@@ -50090,6 +55458,7 @@ class Empty extends _xfa_object.XFAObject {
 class Builder {
   constructor() {
     this._namespaceStack = [];
+    this._nsAgnosticLevel = 0;
     this._namespacePrefixes = new Map();
     this._namespaces = new Map();
     this._nextNsId = Math.max(...Object.values(_namespaces.NamespaceIds).map(({
@@ -50148,14 +55517,23 @@ class Builder {
 
     const node = namespaceToUse && namespaceToUse[_namespaces.$buildXFAObject](name, attributes) || new Empty();
 
-    if (hasNamespaceDef || prefixes) {
+    if (node[_xfa_object.$isNsAgnostic]()) {
+      this._nsAgnosticLevel++;
+    }
+
+    if (hasNamespaceDef || prefixes || node[_xfa_object.$isNsAgnostic]()) {
       node[_xfa_object.$cleanup] = {
         hasNamespace: hasNamespaceDef,
-        prefixes
+        prefixes,
+        nsAgnostic: node[_xfa_object.$isNsAgnostic]()
       };
     }
 
     return node;
+  }
+
+  isNsAgnostic() {
+    return this._nsAgnosticLevel > 0;
   }
 
   _searchNamespace(nsName) {
@@ -50225,7 +55603,8 @@ class Builder {
   clean(data) {
     const {
       hasNamespace,
-      prefixes
+      prefixes,
+      nsAgnostic
     } = data;
 
     if (hasNamespace) {
@@ -50239,6 +55618,10 @@ class Builder {
         this._namespacePrefixes.get(prefix).pop();
       });
     }
+
+    if (nsAgnostic) {
+      this._nsAgnosticLevel--;
+    }
   }
 
 }
@@ -50246,7 +55629,7 @@ class Builder {
 exports.Builder = Builder;
 
 /***/ }),
-/* 77 */
+/* 88 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -50256,23 +55639,23 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.NamespaceSetUp = void 0;
 
-var _config = __w_pdfjs_require__(78);
+var _config = __w_pdfjs_require__(89);
 
-var _connection_set = __w_pdfjs_require__(79);
+var _connection_set = __w_pdfjs_require__(90);
 
-var _datasets = __w_pdfjs_require__(80);
+var _datasets = __w_pdfjs_require__(91);
 
-var _locale_set = __w_pdfjs_require__(81);
+var _locale_set = __w_pdfjs_require__(92);
 
-var _signature = __w_pdfjs_require__(82);
+var _signature = __w_pdfjs_require__(93);
 
-var _stylesheet = __w_pdfjs_require__(83);
+var _stylesheet = __w_pdfjs_require__(94);
 
-var _template = __w_pdfjs_require__(72);
+var _template = __w_pdfjs_require__(80);
 
-var _xdp = __w_pdfjs_require__(84);
+var _xdp = __w_pdfjs_require__(95);
 
-var _xhtml = __w_pdfjs_require__(85);
+var _xhtml = __w_pdfjs_require__(96);
 
 const NamespaceSetUp = {
   config: _config.ConfigNamespace,
@@ -50288,7 +55671,7 @@ const NamespaceSetUp = {
 exports.NamespaceSetUp = NamespaceSetUp;
 
 /***/ }),
-/* 78 */
+/* 89 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -50298,11 +55681,11 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.ConfigNamespace = void 0;
 
-var _namespaces = __w_pdfjs_require__(70);
+var _namespaces = __w_pdfjs_require__(77);
 
-var _xfa_object = __w_pdfjs_require__(68);
+var _xfa_object = __w_pdfjs_require__(75);
 
-var _utils = __w_pdfjs_require__(69);
+var _utils = __w_pdfjs_require__(76);
 
 var _util = __w_pdfjs_require__(2);
 
@@ -50400,7 +55783,7 @@ class Area extends _xfa_object.XFAObject {
     this.level = (0, _utils.getInteger)({
       data: attributes.level,
       defaultValue: 0,
-      validator: n => n >= 1 && n <= 3
+      validate: n => n >= 1 && n <= 3
     });
     this.name = (0, _utils.getStringOption)(attributes.name, ["", "barcode", "coreinit", "deviceDriver", "font", "general", "layout", "merge", "script", "signature", "sourceSet", "templateCache"]);
   }
@@ -50442,7 +55825,7 @@ class BehaviorOverride extends _xfa_object.ContentObject {
   }
 
   [_xfa_object.$finalize]() {
-    this[_xfa_object.$content] = new Map(this[_xfa_object.$content].trim().split(/\s+/).filter(x => !!x && x.include(":")).map(x => x.split(":", 2)));
+    this[_xfa_object.$content] = new Map(this[_xfa_object.$content].trim().split(/\s+/).filter(x => x.includes(":")).map(x => x.split(":", 2)));
   }
 
 }
@@ -50674,7 +56057,7 @@ class Equate extends _xfa_object.XFAObject {
     this.force = (0, _utils.getInteger)({
       data: attributes.force,
       defaultValue: 1,
-      validator: n => n === 0
+      validate: n => n === 0
     });
     this.from = attributes.from || "";
     this.to = attributes.to || "";
@@ -51007,12 +56390,12 @@ class PageOffset extends _xfa_object.XFAObject {
     this.x = (0, _utils.getInteger)({
       data: attributes.x,
       defaultValue: "useXDCSetting",
-      validator: n => true
+      validate: n => true
     });
     this.y = (0, _utils.getInteger)({
       data: attributes.y,
       defaultValue: "useXDCSetting",
-      validator: n => true
+      validate: n => true
     });
   }
 
@@ -51430,7 +56813,7 @@ class TemplateCache extends _xfa_object.XFAObject {
     this.maxEntries = (0, _utils.getInteger)({
       data: attributes.maxEntries,
       defaultValue: 5,
-      validator: n => n >= 0
+      validate: n => n >= 0
     });
   }
 
@@ -52177,7 +57560,7 @@ class ConfigNamespace {
 exports.ConfigNamespace = ConfigNamespace;
 
 /***/ }),
-/* 79 */
+/* 90 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -52187,9 +57570,9 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.ConnectionSetNamespace = void 0;
 
-var _namespaces = __w_pdfjs_require__(70);
+var _namespaces = __w_pdfjs_require__(77);
 
-var _xfa_object = __w_pdfjs_require__(68);
+var _xfa_object = __w_pdfjs_require__(75);
 
 const CONNECTION_SET_NS_ID = _namespaces.NamespaceIds.connectionSet.id;
 
@@ -52391,7 +57774,7 @@ class ConnectionSetNamespace {
 exports.ConnectionSetNamespace = ConnectionSetNamespace;
 
 /***/ }),
-/* 80 */
+/* 91 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -52401,15 +57784,19 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.DatasetsNamespace = void 0;
 
-var _xfa_object = __w_pdfjs_require__(68);
+var _xfa_object = __w_pdfjs_require__(75);
 
-var _namespaces = __w_pdfjs_require__(70);
+var _namespaces = __w_pdfjs_require__(77);
 
 const DATASETS_NS_ID = _namespaces.NamespaceIds.datasets.id;
 
 class Data extends _xfa_object.XmlObject {
   constructor(attributes) {
     super(DATASETS_NS_ID, "data", attributes);
+  }
+
+  [_xfa_object.$isNsAgnostic]() {
+    return true;
   }
 
 }
@@ -52426,8 +57813,6 @@ class Datasets extends _xfa_object.XFAObject {
 
     if (name === "data" && child[_xfa_object.$namespaceId] === DATASETS_NS_ID || name === "Signature" && child[_xfa_object.$namespaceId] === _namespaces.NamespaceIds.signature.id) {
       this[name] = child;
-    } else {
-      child[_xfa_object.$global] = true;
     }
 
     this[_xfa_object.$appendChild](child);
@@ -52457,7 +57842,7 @@ class DatasetsNamespace {
 exports.DatasetsNamespace = DatasetsNamespace;
 
 /***/ }),
-/* 81 */
+/* 92 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -52467,11 +57852,11 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.LocaleSetNamespace = void 0;
 
-var _namespaces = __w_pdfjs_require__(70);
+var _namespaces = __w_pdfjs_require__(77);
 
-var _xfa_object = __w_pdfjs_require__(68);
+var _xfa_object = __w_pdfjs_require__(75);
 
-var _utils = __w_pdfjs_require__(69);
+var _utils = __w_pdfjs_require__(76);
 
 const LOCALE_SET_NS_ID = _namespaces.NamespaceIds.localeSet.id;
 
@@ -52795,7 +58180,7 @@ class LocaleSetNamespace {
 exports.LocaleSetNamespace = LocaleSetNamespace;
 
 /***/ }),
-/* 82 */
+/* 93 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -52805,9 +58190,9 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.SignatureNamespace = void 0;
 
-var _namespaces = __w_pdfjs_require__(70);
+var _namespaces = __w_pdfjs_require__(77);
 
-var _xfa_object = __w_pdfjs_require__(68);
+var _xfa_object = __w_pdfjs_require__(75);
 
 const SIGNATURE_NS_ID = _namespaces.NamespaceIds.signature.id;
 
@@ -52836,7 +58221,7 @@ class SignatureNamespace {
 exports.SignatureNamespace = SignatureNamespace;
 
 /***/ }),
-/* 83 */
+/* 94 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -52846,9 +58231,9 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.StylesheetNamespace = void 0;
 
-var _namespaces = __w_pdfjs_require__(70);
+var _namespaces = __w_pdfjs_require__(77);
 
-var _xfa_object = __w_pdfjs_require__(68);
+var _xfa_object = __w_pdfjs_require__(75);
 
 const STYLESHEET_NS_ID = _namespaces.NamespaceIds.stylesheet.id;
 
@@ -52877,7 +58262,7 @@ class StylesheetNamespace {
 exports.StylesheetNamespace = StylesheetNamespace;
 
 /***/ }),
-/* 84 */
+/* 95 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -52887,9 +58272,9 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.XdpNamespace = void 0;
 
-var _namespaces = __w_pdfjs_require__(70);
+var _namespaces = __w_pdfjs_require__(77);
 
-var _xfa_object = __w_pdfjs_require__(68);
+var _xfa_object = __w_pdfjs_require__(75);
 
 const XDP_NS_ID = _namespaces.NamespaceIds.xdp.id;
 
@@ -52931,7 +58316,7 @@ class XdpNamespace {
 exports.XdpNamespace = XdpNamespace;
 
 /***/ }),
-/* 85 */
+/* 96 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -52941,26 +58326,31 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.XhtmlNamespace = void 0;
 
-var _xfa_object = __w_pdfjs_require__(68);
+var _xfa_object = __w_pdfjs_require__(75);
 
-var _namespaces = __w_pdfjs_require__(70);
+var _namespaces = __w_pdfjs_require__(77);
 
-var _utils = __w_pdfjs_require__(69);
+var _html_utils = __w_pdfjs_require__(82);
 
-var _html_utils = __w_pdfjs_require__(73);
+var _utils = __w_pdfjs_require__(76);
 
 const XHTML_NS_ID = _namespaces.NamespaceIds.xhtml.id;
 const VALID_STYLES = new Set(["color", "font", "font-family", "font-size", "font-stretch", "font-style", "font-weight", "margin", "margin-bottom", "margin-left", "margin-right", "margin-top", "letter-spacing", "line-height", "orphans", "page-break-after", "page-break-before", "page-break-inside", "tab-interval", "tab-stop", "text-align", "text-decoration", "text-indent", "vertical-align", "widows", "kerning-mode", "xfa-font-horizontal-scale", "xfa-font-vertical-scale", "xfa-spacerun", "xfa-tab-stops"]);
-const StyleMapping = new Map([["page-break-after", "breakAfter"], ["page-break-before", "breakBefore"], ["page-break-inside", "breakInside"], ["kerning-mode", value => value === "none" ? "none" : "normal"], ["xfa-font-horizontal-scale", value => `scaleX(${Math.max(0, Math.min(parseInt(value) / 100)).toFixed(2)})`], ["xfa-font-vertical-scale", value => `scaleY(${Math.max(0, Math.min(parseInt(value) / 100)).toFixed(2)})`], ["xfa-spacerun", ""], ["xfa-tab-stops", ""], ["font-size", value => (0, _html_utils.measureToString)((0, _utils.getMeasurement)(value))], ["letter-spacing", value => (0, _html_utils.measureToString)((0, _utils.getMeasurement)(value))], ["line-height", value => (0, _html_utils.measureToString)((0, _utils.getMeasurement)(value))], ["margin", value => (0, _html_utils.measureToString)((0, _utils.getMeasurement)(value))], ["margin-bottom", value => (0, _html_utils.measureToString)((0, _utils.getMeasurement)(value))], ["margin-left", value => (0, _html_utils.measureToString)((0, _utils.getMeasurement)(value))], ["margin-right", value => (0, _html_utils.measureToString)((0, _utils.getMeasurement)(value))], ["margin-top", value => (0, _html_utils.measureToString)((0, _utils.getMeasurement)(value))]]);
+const StyleMapping = new Map([["page-break-after", "breakAfter"], ["page-break-before", "breakBefore"], ["page-break-inside", "breakInside"], ["kerning-mode", value => value === "none" ? "none" : "normal"], ["xfa-font-horizontal-scale", value => `scaleX(${Math.max(0, Math.min(parseInt(value) / 100)).toFixed(2)})`], ["xfa-font-vertical-scale", value => `scaleY(${Math.max(0, Math.min(parseInt(value) / 100)).toFixed(2)})`], ["xfa-spacerun", ""], ["xfa-tab-stops", ""], ["font-size", (value, original) => {
+  value = original.fontSize = (0, _utils.getMeasurement)(value);
+  return (0, _html_utils.measureToString)(0.99 * value);
+}], ["letter-spacing", value => (0, _html_utils.measureToString)((0, _utils.getMeasurement)(value))], ["line-height", value => (0, _html_utils.measureToString)((0, _utils.getMeasurement)(value))], ["margin", value => (0, _html_utils.measureToString)((0, _utils.getMeasurement)(value))], ["margin-bottom", value => (0, _html_utils.measureToString)((0, _utils.getMeasurement)(value))], ["margin-left", value => (0, _html_utils.measureToString)((0, _utils.getMeasurement)(value))], ["margin-right", value => (0, _html_utils.measureToString)((0, _utils.getMeasurement)(value))], ["margin-top", value => (0, _html_utils.measureToString)((0, _utils.getMeasurement)(value))], ["text-indent", value => (0, _html_utils.measureToString)((0, _utils.getMeasurement)(value))], ["font-family", value => value]]);
 const spacesRegExp = /\s+/g;
 const crlfRegExp = /[\r\n]+/g;
 
-function mapStyle(styleStr) {
+function mapStyle(styleStr, node) {
   const style = Object.create(null);
 
   if (!styleStr) {
     return style;
   }
+
+  const original = Object.create(null);
 
   for (const [key, value] of styleStr.split(";").map(s => s.split(":", 2))) {
     const mapping = StyleMapping.get(key);
@@ -52975,7 +58365,7 @@ function mapStyle(styleStr) {
       if (typeof mapping === "string") {
         newValue = mapping;
       } else {
-        newValue = mapping(value);
+        newValue = mapping(value, original);
       }
     }
 
@@ -52990,15 +58380,31 @@ function mapStyle(styleStr) {
     }
   }
 
+  if (style.fontFamily) {
+    (0, _html_utils.setFontFamily)({
+      typeface: style.fontFamily,
+      weight: style.fontWeight || "normal",
+      posture: style.fontStyle || "normal",
+      size: original.fontSize || 0
+    }, node, node[_xfa_object.$globalData].fontFinder, style);
+  }
+
+  (0, _html_utils.fixTextIndent)(style);
   return style;
 }
 
-function checkStyle(style) {
-  if (!style) {
+function checkStyle(node) {
+  if (!node.style) {
     return "";
   }
 
-  return style.trim().split(/\s*;\s*/).filter(s => !!s).map(s => s.split(/\s*:\s*/, 2)).filter(([key]) => VALID_STYLES.has(key)).map(kv => kv.join(":")).join(";");
+  return node.style.trim().split(/\s*;\s*/).filter(s => !!s).map(s => s.split(/\s*:\s*/, 2)).filter(([key, value]) => {
+    if (key === "font-family") {
+      node[_xfa_object.$globalData].usedTypefaces.add(value);
+    }
+
+    return VALID_STYLES.has(key);
+  }).map(kv => kv.join(":")).join(";");
 }
 
 const NoWhites = new Set(["body", "html"]);
@@ -53006,7 +58412,13 @@ const NoWhites = new Set(["body", "html"]);
 class XhtmlObject extends _xfa_object.XmlObject {
   constructor(attributes, name) {
     super(XHTML_NS_ID, name);
-    this.style = checkStyle(attributes.style);
+    this.style = attributes.style || "";
+  }
+
+  [_xfa_object.$clean](builder) {
+    super[_xfa_object.$clean](builder);
+
+    this.style = checkStyle(this);
   }
 
   [_xfa_object.$acceptWhitespace]() {
@@ -53025,16 +58437,130 @@ class XhtmlObject extends _xfa_object.XmlObject {
     }
   }
 
-  [_xfa_object.$toHTML]() {
-    return {
+  [_xfa_object.$pushGlyphs](measure, mustPop = true) {
+    const xfaFont = Object.create(null);
+    const margin = {
+      top: NaN,
+      bottom: NaN,
+      left: NaN,
+      right: NaN
+    };
+    let lineHeight = null;
+
+    for (const [key, value] of this.style.split(";").map(s => s.split(":", 2))) {
+      switch (key) {
+        case "font-family":
+          xfaFont.typeface = (0, _utils.stripQuotes)(value);
+          break;
+
+        case "font-size":
+          xfaFont.size = (0, _utils.getMeasurement)(value);
+          break;
+
+        case "font-weight":
+          xfaFont.weight = value;
+          break;
+
+        case "font-style":
+          xfaFont.posture = value;
+          break;
+
+        case "letter-spacing":
+          xfaFont.letterSpacing = (0, _utils.getMeasurement)(value);
+          break;
+
+        case "margin":
+          const values = value.split(/ \t/).map(x => (0, _utils.getMeasurement)(x));
+
+          switch (values.length) {
+            case 1:
+              margin.top = margin.bottom = margin.left = margin.right = values[0];
+              break;
+
+            case 2:
+              margin.top = margin.bottom = values[0];
+              margin.left = margin.right = values[1];
+              break;
+
+            case 3:
+              margin.top = values[0];
+              margin.bottom = values[2];
+              margin.left = margin.right = values[1];
+              break;
+
+            case 4:
+              margin.top = values[0];
+              margin.left = values[1];
+              margin.bottom = values[2];
+              margin.right = values[3];
+              break;
+          }
+
+          break;
+
+        case "margin-top":
+          margin.top = (0, _utils.getMeasurement)(value);
+          break;
+
+        case "margin-bottom":
+          margin.bottom = (0, _utils.getMeasurement)(value);
+          break;
+
+        case "margin-left":
+          margin.left = (0, _utils.getMeasurement)(value);
+          break;
+
+        case "margin-right":
+          margin.right = (0, _utils.getMeasurement)(value);
+          break;
+
+        case "line-height":
+          lineHeight = (0, _utils.getMeasurement)(value);
+          break;
+      }
+    }
+
+    measure.pushData(xfaFont, margin, lineHeight);
+
+    if (this[_xfa_object.$content]) {
+      measure.addString(this[_xfa_object.$content]);
+    } else {
+      for (const child of this[_xfa_object.$getChildren]()) {
+        if (child[_xfa_object.$nodeName] === "#text") {
+          measure.addString(child[_xfa_object.$content]);
+          continue;
+        }
+
+        child[_xfa_object.$pushGlyphs](measure);
+      }
+    }
+
+    if (mustPop) {
+      measure.popFont();
+    }
+  }
+
+  [_xfa_object.$toHTML](availableSpace) {
+    const children = [];
+    this[_xfa_object.$extra] = {
+      children
+    };
+
+    this[_xfa_object.$childrenToHTML]({});
+
+    if (children.length === 0 && !this[_xfa_object.$content]) {
+      return _utils.HTMLResult.EMPTY;
+    }
+
+    return _utils.HTMLResult.success({
       name: this[_xfa_object.$nodeName],
       attributes: {
         href: this.href,
-        style: mapStyle(this.style)
+        style: mapStyle(this.style, this)
       },
-      children: this[_xfa_object.$childrenToHTML]({}),
+      children,
       value: this[_xfa_object.$content] || ""
-    };
+    });
   }
 
 }
@@ -53052,6 +58578,16 @@ class B extends XhtmlObject {
     super(attributes, "b");
   }
 
+  [_xfa_object.$pushGlyphs](measure) {
+    measure.pushFont({
+      weight: "bold"
+    });
+
+    super[_xfa_object.$pushGlyphs](measure);
+
+    measure.popFont();
+  }
+
 }
 
 class Body extends XhtmlObject {
@@ -53059,11 +58595,20 @@ class Body extends XhtmlObject {
     super(attributes, "body");
   }
 
-  [_xfa_object.$toHTML]() {
-    const html = super[_xfa_object.$toHTML]();
+  [_xfa_object.$toHTML](availableSpace) {
+    const res = super[_xfa_object.$toHTML](availableSpace);
 
-    html.attributes.class = "xfaRich";
-    return html;
+    const {
+      html
+    } = res;
+
+    if (!html) {
+      return _utils.HTMLResult.EMPTY;
+    }
+
+    html.name = "div";
+    html.attributes.class = ["xfaRich"];
+    return res;
   }
 
 }
@@ -53077,10 +58622,14 @@ class Br extends XhtmlObject {
     return "\n";
   }
 
-  [_xfa_object.$toHTML]() {
-    return {
+  [_xfa_object.$pushGlyphs](measure) {
+    measure.addString("\n");
+  }
+
+  [_xfa_object.$toHTML](availableSpace) {
+    return _utils.HTMLResult.success({
       name: "br"
-    };
+    });
   }
 
 }
@@ -53090,36 +58639,41 @@ class Html extends XhtmlObject {
     super(attributes, "html");
   }
 
-  [_xfa_object.$toHTML]() {
-    const children = this[_xfa_object.$childrenToHTML]({});
+  [_xfa_object.$toHTML](availableSpace) {
+    const children = [];
+    this[_xfa_object.$extra] = {
+      children
+    };
+
+    this[_xfa_object.$childrenToHTML]({});
 
     if (children.length === 0) {
-      return {
+      return _utils.HTMLResult.success({
         name: "div",
         attributes: {
-          class: "xfaRich",
+          class: ["xfaRich"],
           style: {}
         },
         value: this[_xfa_object.$content] || ""
-      };
+      });
     }
 
     if (children.length === 1) {
       const child = children[0];
 
-      if (child.attributes && child.attributes.class === "xfaRich") {
-        return child;
+      if (child.attributes && child.attributes.class.includes("xfaRich")) {
+        return _utils.HTMLResult.success(child);
       }
     }
 
-    return {
+    return _utils.HTMLResult.success({
       name: "div",
       attributes: {
-        class: "xfaRich",
+        class: ["xfaRich"],
         style: {}
       },
       children
-    };
+    });
   }
 
 }
@@ -53127,6 +58681,16 @@ class Html extends XhtmlObject {
 class I extends XhtmlObject {
   constructor(attributes) {
     super(attributes, "i");
+  }
+
+  [_xfa_object.$pushGlyphs](measure) {
+    measure.pushFont({
+      posture: "italic"
+    });
+
+    super[_xfa_object.$pushGlyphs](measure);
+
+    measure.popFont();
   }
 
 }
@@ -53148,6 +58712,18 @@ class Ol extends XhtmlObject {
 class P extends XhtmlObject {
   constructor(attributes) {
     super(attributes, "p");
+  }
+
+  [_xfa_object.$pushGlyphs](measure) {
+    super[_xfa_object.$pushGlyphs](measure, false);
+
+    measure.addString("\n");
+    measure.addPara();
+    measure.popFont();
+  }
+
+  [_xfa_object.$text]() {
+    return super[_xfa_object.$text]() + "\n";
   }
 
 }
@@ -53246,7 +58822,7 @@ class XhtmlNamespace {
 exports.XhtmlNamespace = XhtmlNamespace;
 
 /***/ }),
-/* 86 */
+/* 97 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -53256,9 +58832,9 @@ Object.defineProperty(exports, "__esModule", ({
 }));
 exports.UnknownNamespace = void 0;
 
-var _namespaces = __w_pdfjs_require__(70);
+var _namespaces = __w_pdfjs_require__(77);
 
-var _xfa_object = __w_pdfjs_require__(68);
+var _xfa_object = __w_pdfjs_require__(75);
 
 class UnknownNamespace {
   constructor(nsId) {
@@ -53274,7 +58850,7 @@ class UnknownNamespace {
 exports.UnknownNamespace = UnknownNamespace;
 
 /***/ }),
-/* 87 */
+/* 98 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -53288,11 +58864,11 @@ var _util = __w_pdfjs_require__(2);
 
 var _primitives = __w_pdfjs_require__(5);
 
-var _parser = __w_pdfjs_require__(17);
+var _parser = __w_pdfjs_require__(27);
 
 var _core_utils = __w_pdfjs_require__(9);
 
-var _crypto = __w_pdfjs_require__(65);
+var _crypto = __w_pdfjs_require__(72);
 
 class XRef {
   constructor(stream, pdfManager) {
@@ -53678,17 +59254,35 @@ class XRef {
       } else if (m = objRegExp.exec(token)) {
         const num = m[1] | 0,
               gen = m[2] | 0;
+        let contentLength,
+            startPos = position + token.length,
+            updateEntries = false;
 
-        if (!this.entries[num] || this.entries[num].gen === gen) {
+        if (!this.entries[num]) {
+          updateEntries = true;
+        } else if (this.entries[num].gen === gen) {
+          try {
+            const parser = new _parser.Parser({
+              lexer: new _parser.Lexer(stream.makeSubStream(startPos))
+            });
+            parser.getObj();
+            updateEntries = true;
+          } catch (ex) {
+            if (ex instanceof _core_utils.ParserEOFException) {
+              (0, _util.warn)(`indexObjects -- checking object (${token}): "${ex}".`);
+            } else {
+              updateEntries = true;
+            }
+          }
+        }
+
+        if (updateEntries) {
           this.entries[num] = {
             offset: position - stream.start,
             gen,
             uncompressed: true
           };
         }
-
-        let contentLength,
-            startPos = position + token.length;
 
         while (startPos < buffer.length) {
           const endPos = startPos + skipUntil(buffer, startPos, objBytes) + 4;
@@ -54091,7 +59685,7 @@ class XRef {
 exports.XRef = XRef;
 
 /***/ }),
-/* 88 */
+/* 99 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -54591,7 +60185,7 @@ class MessageHandler {
 exports.MessageHandler = MessageHandler;
 
 /***/ }),
-/* 89 */
+/* 100 */
 /***/ ((__unused_webpack_module, exports, __w_pdfjs_require__) => {
 
 
@@ -54786,8 +60380,8 @@ Object.defineProperty(exports, "WorkerMessageHandler", ({
 
 var _worker = __w_pdfjs_require__(1);
 
-const pdfjsVersion = '2.9.273';
-const pdfjsBuild = 'e394da586';
+const pdfjsVersion = '2.11.22';
+const pdfjsBuild = '4ad5c5d52';
 })();
 
 /******/ 	return __webpack_exports__;

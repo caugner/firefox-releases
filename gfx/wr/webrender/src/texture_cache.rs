@@ -14,7 +14,7 @@ use crate::gpu_types::{ImageSource, UvRectKind};
 use crate::internal_types::{
     CacheTextureId, Swizzle, SwizzleSettings,
     TextureUpdateList, TextureUpdateSource, TextureSource,
-    TextureCacheAllocInfo, TextureCacheUpdate,
+    TextureCacheAllocInfo, TextureCacheUpdate, TextureCacheCategory,
 };
 use crate::lru_cache::LRUCache;
 use crate::profiler::{self, TransactionProfile};
@@ -305,13 +305,13 @@ impl BudgetType {
     ];
 
     pub const PRESSURE_COUNTERS: [usize; BudgetType::COUNT] = [
-        profiler::TEXTURE_CACHE_COLOR8_LINEAR_PRESSURE,
-        profiler::TEXTURE_CACHE_COLOR8_NEAREST_PRESSURE,
-        profiler::TEXTURE_CACHE_COLOR8_GLYPHS_PRESSURE,
-        profiler::TEXTURE_CACHE_ALPHA8_PRESSURE,
-        profiler::TEXTURE_CACHE_ALPHA8_GLYPHS_PRESSURE,
-        profiler::TEXTURE_CACHE_ALPHA16_PRESSURE,
-        profiler::TEXTURE_CACHE_STANDALONE_PRESSURE,
+        profiler::ATLAS_COLOR8_LINEAR_PRESSURE,
+        profiler::ATLAS_COLOR8_NEAREST_PRESSURE,
+        profiler::ATLAS_COLOR8_GLYPHS_PRESSURE,
+        profiler::ATLAS_ALPHA8_PRESSURE,
+        profiler::ATLAS_ALPHA8_GLYPHS_PRESSURE,
+        profiler::ATLAS_ALPHA16_PRESSURE,
+        profiler::ATLAS_STANDALONE_PRESSURE,
     ];
 
     pub fn iter() -> impl Iterator<Item = BudgetType> {
@@ -517,16 +517,8 @@ impl SharedTextures {
 struct PictureTexture {
     texture_id: CacheTextureId,
     size: DeviceIntSize,
-    format: ImageFormat,
     is_allocated: bool,
     last_frame_used: FrameId,
-}
-
-impl PictureTexture {
-    fn size_in_bytes(&self) -> usize {
-        let bpp = self.format.bytes_per_pixel() as usize;
-        (self.size.width * self.size.height) as usize * bpp
-    }
 }
 
 /// The textures used to hold picture cache tiles.
@@ -539,16 +531,20 @@ struct PictureTextures {
     default_tile_size: DeviceIntSize,
     /// Number of currently allocated textures in the pool
     allocated_texture_count: usize,
+    /// Texture filter to use for picture cache textures
+    filter: TextureFilter,
 }
 
 impl PictureTextures {
     fn new(
         default_tile_size: DeviceIntSize,
+        filter: TextureFilter,
     ) -> Self {
         PictureTextures {
             textures: Vec::new(),
             default_tile_size,
             allocated_texture_count: 0,
+            filter,
         }
     }
 
@@ -585,9 +581,10 @@ impl PictureTextures {
                 width: tile_size.width,
                 height: tile_size.height,
                 format: ImageFormat::RGBA8,
-                filter: TextureFilter::Nearest,
+                filter: self.filter,
                 is_shared_cache: false,
                 has_depth: true,
+                category: TextureCacheCategory::PictureTile,
             };
 
             pending_updates.push_alloc(texture_id, info);
@@ -595,7 +592,6 @@ impl PictureTextures {
             self.textures.push(PictureTexture {
                 texture_id,
                 is_allocated: true,
-                format: ImageFormat::RGBA8,
                 size: tile_size,
                 last_frame_used: FrameId::INVALID,
             });
@@ -612,7 +608,7 @@ impl PictureTextures {
             },
             uv_rect_handle: GpuCacheHandle::new(),
             input_format: ImageFormat::RGBA8,
-            filter: TextureFilter::Nearest,
+            filter: self.filter,
             swizzle: Swizzle::default(),
             texture_id,
             eviction_notice: None,
@@ -647,16 +643,7 @@ impl PictureTextures {
     }
 
     fn update_profile(&self, profile: &mut TransactionProfile) {
-        // For now, this profile counter just accumulates the tiles and bytes
-        // from all picture cache textures.
-        let mut picture_tiles = 0;
-        let mut picture_bytes = 0;
-        for texture in &self.textures {
-            picture_tiles += 1;
-            picture_bytes += texture.size_in_bytes();
-        }
-        profile.set(profiler::PICTURE_TILES, picture_tiles);
-        profile.set(profiler::PICTURE_TILES_MEM, profiler::bytes_to_mb(picture_bytes));
+        profile.set(profiler::PICTURE_TILES, self.textures.len());
     }
 
     /// Simple garbage collect of picture cache tiles
@@ -817,6 +804,7 @@ impl TextureCache {
         color_formats: TextureFormatPair<ImageFormat>,
         swizzle: Option<SwizzleSettings>,
         config: &TextureCacheConfig,
+        picture_texture_filter: TextureFilter,
     ) -> Self {
         let pending_updates = TextureUpdateList::new();
 
@@ -833,6 +821,7 @@ impl TextureCache {
             shared_textures: SharedTextures::new(color_formats, config),
             picture_textures: PictureTextures::new(
                 default_picture_tile_size,
+                picture_texture_filter,
             ),
             max_texture_size,
             tiling_threshold,
@@ -865,6 +854,7 @@ impl TextureCache {
             TextureFormatPair::from(image_format),
             None,
             &TextureCacheConfig::DEFAULT,
+            TextureFilter::Nearest,
         );
         let mut now = FrameStamp::first(DocumentId::new(IdNamespace(1), 1));
         now.advance();
@@ -952,18 +942,18 @@ impl TextureCache {
             profile.set(BudgetType::PRESSURE_COUNTERS[budget as usize], pressure);
         }
 
-        profile.set(profiler::TEXTURE_CACHE_A8_PIXELS, self.shared_textures.alpha8_linear.allocated_space());
-        profile.set(profiler::TEXTURE_CACHE_A8_TEXTURES, self.shared_textures.alpha8_linear.allocated_textures());
-        profile.set(profiler::TEXTURE_CACHE_A8_GLYPHS_PIXELS, self.shared_textures.alpha8_glyphs.allocated_space());
-        profile.set(profiler::TEXTURE_CACHE_A8_GLYPHS_TEXTURES, self.shared_textures.alpha8_glyphs.allocated_textures());
-        profile.set(profiler::TEXTURE_CACHE_A16_PIXELS, self.shared_textures.alpha16_linear.allocated_space());
-        profile.set(profiler::TEXTURE_CACHE_A16_TEXTURES, self.shared_textures.alpha16_linear.allocated_textures());
-        profile.set(profiler::TEXTURE_CACHE_RGBA8_LINEAR_PIXELS, self.shared_textures.color8_linear.allocated_space());
-        profile.set(profiler::TEXTURE_CACHE_RGBA8_LINEAR_TEXTURES, self.shared_textures.color8_linear.allocated_textures());
-        profile.set(profiler::TEXTURE_CACHE_RGBA8_NEAREST_PIXELS, self.shared_textures.color8_nearest.allocated_space());
-        profile.set(profiler::TEXTURE_CACHE_RGBA8_NEAREST_TEXTURES, self.shared_textures.color8_nearest.allocated_textures());
-        profile.set(profiler::TEXTURE_CACHE_RGBA8_GLYPHS_PIXELS, self.shared_textures.color8_glyphs.allocated_space());
-        profile.set(profiler::TEXTURE_CACHE_RGBA8_GLYPHS_TEXTURES, self.shared_textures.color8_glyphs.allocated_textures());
+        profile.set(profiler::ATLAS_A8_PIXELS, self.shared_textures.alpha8_linear.allocated_space());
+        profile.set(profiler::ATLAS_A8_TEXTURES, self.shared_textures.alpha8_linear.allocated_textures());
+        profile.set(profiler::ATLAS_A8_GLYPHS_PIXELS, self.shared_textures.alpha8_glyphs.allocated_space());
+        profile.set(profiler::ATLAS_A8_GLYPHS_TEXTURES, self.shared_textures.alpha8_glyphs.allocated_textures());
+        profile.set(profiler::ATLAS_A16_PIXELS, self.shared_textures.alpha16_linear.allocated_space());
+        profile.set(profiler::ATLAS_A16_TEXTURES, self.shared_textures.alpha16_linear.allocated_textures());
+        profile.set(profiler::ATLAS_RGBA8_LINEAR_PIXELS, self.shared_textures.color8_linear.allocated_space());
+        profile.set(profiler::ATLAS_RGBA8_LINEAR_TEXTURES, self.shared_textures.color8_linear.allocated_textures());
+        profile.set(profiler::ATLAS_RGBA8_NEAREST_PIXELS, self.shared_textures.color8_nearest.allocated_space());
+        profile.set(profiler::ATLAS_RGBA8_NEAREST_TEXTURES, self.shared_textures.color8_nearest.allocated_textures());
+        profile.set(profiler::ATLAS_RGBA8_GLYPHS_PIXELS, self.shared_textures.color8_glyphs.allocated_space());
+        profile.set(profiler::ATLAS_RGBA8_GLYPHS_TEXTURES, self.shared_textures.color8_glyphs.allocated_textures());
 
         self.picture_textures.update_profile(profile);
 
@@ -975,10 +965,8 @@ impl TextureCache {
             BudgetType::SharedAlpha8Glyphs,
             BudgetType::SharedAlpha16,
         ].iter().map(|b| self.bytes_allocated[*b as usize]).sum();
-        let standalone_bytes = self.bytes_allocated[BudgetType::Standalone as usize];
 
-        profile.set(profiler::TEXTURE_CACHE_SHARED_MEM, profiler::bytes_to_mb(shared_bytes));
-        profile.set(profiler::TEXTURE_CACHE_STANDALONE_MEM, profiler::bytes_to_mb(standalone_bytes));
+        profile.set(profiler::ATLAS_ITEMS_MEM, profiler::bytes_to_mb(shared_bytes));
 
         self.now = FrameStamp::INVALID;
     }
@@ -1057,6 +1045,11 @@ impl TextureCache {
     #[cfg(feature = "replay")]
     pub fn swizzle_settings(&self) -> Option<SwizzleSettings> {
         self.swizzle
+    }
+
+    #[cfg(feature = "replay")]
+    pub fn picture_texture_filter(&self) -> TextureFilter {
+        self.picture_textures.filter
     }
 
     pub fn pending_updates(&mut self) -> TextureUpdateList {
@@ -1199,7 +1192,7 @@ impl TextureCache {
         let origin = entry.details.describe();
         (
             entry.texture_id,
-            DeviceIntRect::new(origin, entry.size),
+            DeviceIntRect::from_origin_and_size(origin, entry.size),
             entry.swizzle,
             entry.uv_rect_handle,
             entry.user_data,
@@ -1485,6 +1478,7 @@ impl TextureCache {
                         filter: parameters.filter,
                         is_shared_cache: true,
                         has_depth: false,
+                        category: TextureCacheCategory::Atlas,
                     },
                 );
 
@@ -1504,7 +1498,7 @@ impl TextureCache {
         };
 
         let bpp = formats.internal.bytes_per_pixel();
-        let allocated_size_in_bytes = (allocated_rect.size.area() * bpp) as usize;
+        let allocated_size_in_bytes = (allocated_rect.area() * bpp) as usize;
         self.bytes_allocated[budget_type as usize] += allocated_size_in_bytes;
 
         (CacheEntry {
@@ -1512,7 +1506,7 @@ impl TextureCache {
             user_data: params.user_data,
             last_access: self.now,
             details: EntryDetails::Cache {
-                origin: allocated_rect.origin,
+                origin: allocated_rect.min,
                 alloc_id,
                 allocated_size_in_bytes,
             },
@@ -1576,6 +1570,7 @@ impl TextureCache {
             filter: TextureFilter::Linear,
             is_shared_cache: false,
             has_depth: false,
+            category: TextureCacheCategory::RenderTarget,
         };
 
         self.pending_updates.push_alloc(texture_id, info);
@@ -1608,6 +1603,7 @@ impl TextureCache {
             filter: params.filter,
             is_shared_cache: false,
             has_depth: false,
+            category: TextureCacheCategory::Standalone,
         };
 
         let size_in_bytes = (info.width * info.height * info.format.bytes_per_pixel()) as usize;
@@ -1827,14 +1823,14 @@ impl TextureCacheUpdate {
             DirtyRect::Partial(dirty) => {
                 // the dirty rectangle doesn't have to be within the area but has to intersect it, at least
                 let stride = descriptor.compute_stride();
-                let offset = descriptor.offset + dirty.origin.y * stride + dirty.origin.x * descriptor.format.bytes_per_pixel();
+                let offset = descriptor.offset + dirty.min.y * stride + dirty.min.x * descriptor.format.bytes_per_pixel();
 
                 TextureCacheUpdate {
-                    rect: DeviceIntRect::new(
-                        DeviceIntPoint::new(origin.x + dirty.origin.x, origin.y + dirty.origin.y),
+                    rect: DeviceIntRect::from_origin_and_size(
+                        DeviceIntPoint::new(origin.x + dirty.min.x, origin.y + dirty.min.y),
                         DeviceIntSize::new(
-                            dirty.size.width.min(size.width - dirty.origin.x),
-                            dirty.size.height.min(size.height - dirty.origin.y),
+                            dirty.width().min(size.width - dirty.min.x),
+                            dirty.height().min(size.height - dirty.min.y),
                         ),
                     ),
                     source,
@@ -1845,7 +1841,7 @@ impl TextureCacheUpdate {
             }
             DirtyRect::All => {
                 TextureCacheUpdate {
-                    rect: DeviceIntRect::new(origin, size),
+                    rect: DeviceIntRect::from_origin_and_size(origin, size),
                     source,
                     stride: descriptor.stride,
                     offset: descriptor.offset,

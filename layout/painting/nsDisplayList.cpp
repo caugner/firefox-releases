@@ -823,8 +823,8 @@ AnimatedGeometryRoot* nsDisplayListBuilder::WrapAGRForFrame(
   RefPtr<AnimatedGeometryRoot> result =
       mFrameToAnimatedGeometryRootMap.Get(aAnimatedGeometryRoot);
   if (!result) {
-    MOZ_ASSERT(nsLayoutUtils::IsAncestorFrameCrossDoc(RootReferenceFrame(),
-                                                      aAnimatedGeometryRoot));
+    MOZ_ASSERT(nsLayoutUtils::IsAncestorFrameCrossDocInProcess(
+        RootReferenceFrame(), aAnimatedGeometryRoot));
     RefPtr<AnimatedGeometryRoot> parent = aParent;
     if (!parent) {
       nsIFrame* parentFrame =
@@ -872,7 +872,6 @@ AnimatedGeometryRoot* nsDisplayListBuilder::FindAnimatedGeometryRootFor(
   bool isAsync;
   nsIFrame* agrFrame = FindAnimatedGeometryRootFrameFor(aFrame, isAsync);
   result = WrapAGRForFrame(agrFrame, isAsync);
-  mFrameToAnimatedGeometryRootMap.InsertOrUpdate(aFrame, RefPtr{result});
   return result;
 }
 
@@ -1594,7 +1593,7 @@ static bool IsStickyFrameActive(nsDisplayListBuilder* aBuilder,
     return false;
   }
 
-  return sf->IsScrollingActive(aBuilder);
+  return sf->IsScrollingActive();
 }
 
 nsDisplayListBuilder::AGRState nsDisplayListBuilder::IsAnimatedGeometryRoot(
@@ -1637,7 +1636,7 @@ nsDisplayListBuilder::AGRState nsDisplayListBuilder::IsAnimatedGeometryRoot(
   if (parentType == LayoutFrameType::Scroll ||
       parentType == LayoutFrameType::ListControl) {
     nsIScrollableFrame* sf = do_QueryFrame(parent);
-    if (sf->GetScrolledFrame() == aFrame && sf->IsScrollingActive(this)) {
+    if (sf->GetScrolledFrame() == aFrame && sf->IsScrollingActive()) {
       MOZ_ASSERT(!aFrame->IsTransformed());
       aIsAsync = sf->IsMaybeAsynchronouslyScrolled();
       return AGR_YES;
@@ -1648,11 +1647,7 @@ nsDisplayListBuilder::AGRState nsDisplayListBuilder::IsAnimatedGeometryRoot(
   // its own layer so that it can move without repainting.
   if (parentType == LayoutFrameType::Slider) {
     auto* sf = static_cast<nsSliderFrame*>(parent)->GetScrollFrame();
-    // The word "Maybe" in IsMaybeScrollingActive might be confusing but we do
-    // indeed need to always consider scroll thumbs as AGRs if
-    // IsMaybeScrollingActive is true because that is the same condition we use
-    // in ScrollFrameHelper::AppendScrollPartsTo to layerize scroll thumbs.
-    if (sf && sf->IsMaybeScrollingActive()) {
+    if (sf && sf->IsScrollingActive()) {
       return AGR_YES;
     }
   }
@@ -1689,8 +1684,8 @@ nsDisplayListBuilder::AGRState nsDisplayListBuilder::IsAnimatedGeometryRoot(
 
 nsIFrame* nsDisplayListBuilder::FindAnimatedGeometryRootFrameFor(
     nsIFrame* aFrame, bool& aIsAsync) {
-  MOZ_ASSERT(
-      nsLayoutUtils::IsAncestorFrameCrossDoc(RootReferenceFrame(), aFrame));
+  MOZ_ASSERT(nsLayoutUtils::IsAncestorFrameCrossDocInProcess(
+      RootReferenceFrame(), aFrame));
   nsIFrame* cursor = aFrame;
   while (cursor != RootReferenceFrame()) {
     nsIFrame* next;
@@ -2993,7 +2988,7 @@ nsDisplayItem::nsDisplayItem(nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
   // This can return the wrong result if the item override
   // ShouldFixToViewport(), the item needs to set it again in its constructor.
   mAnimatedGeometryRoot = aBuilder->FindAnimatedGeometryRootFor(aFrame);
-  MOZ_ASSERT(nsLayoutUtils::IsAncestorFrameCrossDoc(
+  MOZ_ASSERT(nsLayoutUtils::IsAncestorFrameCrossDocInProcess(
                  aBuilder->RootReferenceFrame(), *mAnimatedGeometryRoot),
              "Bad");
   NS_ASSERTION(
@@ -4937,10 +4932,7 @@ bool nsDisplayOutline::CreateWebRenderCommands(
 }
 
 bool nsDisplayOutline::HasRadius() const {
-  const auto& radius =
-      StaticPrefs::layout_css_outline_follows_border_radius_enabled()
-          ? mFrame->StyleBorder()->mBorderRadius
-          : mFrame->StyleOutline()->mOutlineRadius;
+  const auto& radius = mFrame->StyleBorder()->mBorderRadius;
   return !nsLayoutUtils::HasNonZeroCorner(radius);
 }
 
@@ -5843,6 +5835,12 @@ void nsDisplayOpacity::Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx) {
     return;
   }
 
+  if (GetOpacity() == 1.0f) {
+    GetChildren()->Paint(aBuilder, aCtx,
+                         mFrame->PresContext()->AppUnitsPerDevPixel());
+    return;
+  }
+
   // TODO: Compute a bounds rect to pass to PushLayer for a smaller
   // allocation.
   aCtx->GetDrawTarget()->PushLayer(false, GetOpacity(), nullptr,
@@ -6216,30 +6214,34 @@ void nsDisplayBlendMode::Paint(nsDisplayListBuilder* aBuilder,
                                gfxContext* aCtx) {
   // This should be switched to use PushLayerWithBlend, once it's
   // been implemented for all DrawTarget backends.
+  DrawTarget* dt = aCtx->GetDrawTarget();
   int32_t appUnitsPerDevPixel = mFrame->PresContext()->AppUnitsPerDevPixel();
-  IntRect rect =
-      IntRect::RoundOut(NSRectToRect(GetPaintRect(), appUnitsPerDevPixel));
-  if (rect.IsEmpty()) {
+  Rect rect = NSRectToRect(GetPaintRect(), appUnitsPerDevPixel);
+  rect.RoundOut();
+
+  // Create a temporary DrawTarget that is clipped to the area that
+  // we're going to draw to. This will include the same transform as
+  // is currently on |dt|.
+  RefPtr<DrawTarget> temp =
+      dt->CreateClippedDrawTarget(rect, SurfaceFormat::B8G8R8A8);
+  if (!temp) {
     return;
   }
 
-  RefPtr<DrawTarget> dt = aCtx->GetDrawTarget()->CreateSimilarDrawTarget(
-      rect.Size(), SurfaceFormat::B8G8R8A8);
-  if (!dt) {
-    return;
-  }
-
-  dt->SetTransform(Matrix::Translation(-rect.x, -rect.y));
-  RefPtr<gfxContext> ctx = gfxContext::CreatePreservingTransformOrNull(dt);
+  RefPtr<gfxContext> ctx = gfxContext::CreatePreservingTransformOrNull(temp);
 
   GetChildren()->Paint(aBuilder, ctx,
                        mFrame->PresContext()->AppUnitsPerDevPixel());
 
-  dt->Flush();
-  RefPtr<SourceSurface> surface = dt->Snapshot();
-  aCtx->GetDrawTarget()->DrawSurface(
-      surface, Rect(rect.x, rect.y, rect.width, rect.height),
-      Rect(0, 0, rect.width, rect.height), DrawSurfaceOptions(),
+  // Draw the temporary DT to the real destination, applying the blend mode, but
+  // no transform.
+  temp->Flush();
+  RefPtr<SourceSurface> surface = temp->Snapshot();
+  gfxContextMatrixAutoSaveRestore saveMatrix(aCtx);
+  dt->SetTransform(Matrix());
+  dt->DrawSurface(
+      surface, Rect(surface->GetRect()), Rect(surface->GetRect()),
+      DrawSurfaceOptions(),
       DrawOptions(1.0f, nsCSSRendering::GetGFXBlendMode(mBlendMode)));
 }
 
@@ -7627,47 +7629,50 @@ bool nsDisplayTransform::ComputePerspectiveMatrix(const nsIFrame* aFrame,
    * value for perspective we need to use
    */
 
-  // TODO: Is it possible that the cbFrame's bounds haven't been set correctly
-  // yet
-  // (similar to the aBoundsOverride case for GetResultingTransformMatrix)?
-  nsIFrame* cbFrame = aFrame->GetContainingBlock(nsIFrame::SKIP_SCROLLED_FRAME);
-  if (!cbFrame) {
+  // TODO: Is it possible that the perspectiveFrame's bounds haven't been set
+  // correctly yet (similar to the aBoundsOverride case for
+  // GetResultingTransformMatrix)?
+  nsIFrame* perspectiveFrame =
+      aFrame->GetClosestFlattenedTreeAncestorPrimaryFrame();
+  if (!perspectiveFrame) {
     return false;
   }
 
   /* Grab the values for perspective and perspective-origin (if present) */
-  const nsStyleDisplay* cbDisplay = cbFrame->StyleDisplay();
-  if (cbDisplay->mChildPerspective.IsNone()) {
+  const nsStyleDisplay* perspectiveDisplay = perspectiveFrame->StyleDisplay();
+  if (perspectiveDisplay->mChildPerspective.IsNone()) {
     return false;
   }
 
-  MOZ_ASSERT(cbDisplay->mChildPerspective.IsLength());
+  MOZ_ASSERT(perspectiveDisplay->mChildPerspective.IsLength());
   // TODO(emilio): Seems quite silly to go through app units just to convert to
   // float pixels below.
-  nscoord perspective = cbDisplay->mChildPerspective.length._0.ToAppUnits();
+  nscoord perspective =
+      perspectiveDisplay->mChildPerspective.length._0.ToAppUnits();
   if (perspective < std::numeric_limits<Float>::epsilon()) {
     return true;
   }
 
-  TransformReferenceBox refBox(cbFrame);
+  TransformReferenceBox refBox(perspectiveFrame);
 
   Point perspectiveOrigin = nsStyleTransformMatrix::Convert2DPosition(
-      cbDisplay->mPerspectiveOrigin.horizontal,
-      cbDisplay->mPerspectiveOrigin.vertical, refBox, aAppUnitsPerPixel);
+      perspectiveDisplay->mPerspectiveOrigin.horizontal,
+      perspectiveDisplay->mPerspectiveOrigin.vertical, refBox,
+      aAppUnitsPerPixel);
 
-  /* GetOffsetTo computes the offset required to move from 0,0 in cbFrame to 0,0
-   * in aFrame. Although we actually want the inverse of this, it's faster to
-   * compute this way.
+  /* GetOffsetTo computes the offset required to move from 0,0 in
+   * perspectiveFrame to 0,0 in aFrame. Although we actually want the inverse of
+   * this, it's faster to compute this way.
    */
-  nsPoint frameToCbOffset = -aFrame->GetOffsetTo(cbFrame);
-  Point frameToCbGfxOffset(
-      NSAppUnitsToFloatPixels(frameToCbOffset.x, aAppUnitsPerPixel),
-      NSAppUnitsToFloatPixels(frameToCbOffset.y, aAppUnitsPerPixel));
+  nsPoint frameToPerspectiveOffset = -aFrame->GetOffsetTo(perspectiveFrame);
+  Point frameToPerspectiveGfxOffset(
+      NSAppUnitsToFloatPixels(frameToPerspectiveOffset.x, aAppUnitsPerPixel),
+      NSAppUnitsToFloatPixels(frameToPerspectiveOffset.y, aAppUnitsPerPixel));
 
   /* Move the perspective origin to be relative to aFrame, instead of relative
    * to the containing block which is how it was specified in the style system.
    */
-  perspectiveOrigin += frameToCbGfxOffset;
+  perspectiveOrigin += frameToPerspectiveGfxOffset;
 
   aOutMatrix._34 =
       -1.0 / NSAppUnitsToFloatPixels(perspective, aAppUnitsPerPixel);
@@ -8283,13 +8288,14 @@ already_AddRefed<Layer> nsDisplayTransform::BuildLayer(
 }
 
 void nsDisplayTransform::Collect3DTransformLeaves(
-    nsTArray<nsDisplayTransform*>& aLeaves) {
+    nsDisplayListBuilder* aBuilder, nsTArray<nsDisplayTransform*>& aLeaves) {
   if (!IsParticipating3DContext() || IsLeafOf3DContext()) {
     aLeaves.AppendElement(this);
     return;
   }
 
-  for (nsDisplayItem* item : mChildren) {
+  FlattenedDisplayListIterator iter(aBuilder, &mChildren);
+  while (nsDisplayItem* item = iter.GetNextItem()) {
     if (item->GetType() == DisplayItemType::TYPE_PERSPECTIVE) {
       auto* perspective = static_cast<nsDisplayPerspective*>(item);
       if (!perspective->GetChildren()->GetTop()) {
@@ -8297,8 +8303,13 @@ void nsDisplayTransform::Collect3DTransformLeaves(
       }
       item = perspective->GetChildren()->GetTop();
     }
-    MOZ_RELEASE_ASSERT(item->GetType() == DisplayItemType::TYPE_TRANSFORM);
-    static_cast<nsDisplayTransform*>(item)->Collect3DTransformLeaves(aLeaves);
+    if (item->GetType() != DisplayItemType::TYPE_TRANSFORM) {
+      gfxCriticalError() << "Invalid child item within 3D transform of type: "
+                         << item->Name();
+      continue;
+    }
+    static_cast<nsDisplayTransform*>(item)->Collect3DTransformLeaves(aBuilder,
+                                                                     aLeaves);
   }
 }
 
@@ -8324,7 +8335,7 @@ void nsDisplayTransform::CollectSorted3DTransformLeaves(
   std::list<TransformPolygon> inputLayers;
 
   nsTArray<nsDisplayTransform*> leaves;
-  Collect3DTransformLeaves(leaves);
+  Collect3DTransformLeaves(aBuilder, leaves);
   for (nsDisplayTransform* item : leaves) {
     auto bounds = LayoutDeviceRect::FromAppUnits(
         item->mChildBounds, item->mFrame->PresContext()->AppUnitsPerDevPixel());
@@ -8379,7 +8390,7 @@ void nsDisplayTransform::Paint(nsDisplayListBuilder* aBuilder, gfxContext* aCtx,
   }
 
   gfxContextMatrixAutoSaveRestore saveMatrix(aCtx);
-  Matrix4x4 trans = GetAccumulatedPreserved3DTransform(aBuilder);
+  Matrix4x4 trans = ShouldSkipTransform(aBuilder) ? Matrix4x4() : GetAccumulatedPreserved3DTransform(aBuilder);
   if (!IsFrameVisible(mFrame, trans)) {
     return;
   }
@@ -8924,7 +8935,7 @@ nsDisplayPerspective::nsDisplayPerspective(nsDisplayListBuilder* aBuilder,
   MOZ_ASSERT(mList.Count() == 1);
   MOZ_ASSERT(mList.GetTop()->GetType() == DisplayItemType::TYPE_TRANSFORM);
   mAnimatedGeometryRoot = aBuilder->FindAnimatedGeometryRootFor(
-      mFrame->GetContainingBlock(nsIFrame::SKIP_SCROLLED_FRAME));
+      mFrame->GetClosestFlattenedTreeAncestorPrimaryFrame());
 }
 
 already_AddRefed<Layer> nsDisplayPerspective::BuildLayer(
@@ -9041,7 +9052,7 @@ bool nsDisplayPerspective::CreateWebRenderCommands(
   perspectiveMatrix.PostTranslate(roundedOrigin);
 
   nsIFrame* perspectiveFrame =
-      mFrame->GetContainingBlock(nsIFrame::SKIP_SCROLLED_FRAME);
+      mFrame->GetClosestFlattenedTreeAncestorPrimaryFrame();
 
   // Passing true here is always correct, since perspective always combines
   // transforms with the descendants. However that'd make WR do a lot of work
@@ -9776,9 +9787,8 @@ static Maybe<wr::WrClipId> CreateSimpleClipRegion(
   const nsRect refBox =
       nsLayoutUtils::ComputeGeometryBox(frame, clipPath.AsShape()._1);
 
-  AutoTArray<wr::ComplexClipRegion, 1> clipRegions;
+  wr::WrClipId clipId;
 
-  wr::LayoutRect rect;
   switch (shape.tag) {
     case StyleBasicShape::Tag::Inset: {
       const nsRect insetRect = ShapeUtils::ComputeInsetRect(shape, refBox) +
@@ -9787,12 +9797,15 @@ static Maybe<wr::WrClipId> CreateSimpleClipRegion(
       nscoord radii[8] = {0};
 
       if (ShapeUtils::ComputeInsetRadii(shape, refBox, radii)) {
-        clipRegions.AppendElement(
+        clipId = aBuilder.DefineRoundedRectClip(
+            Nothing(),
             wr::ToComplexClipRegion(insetRect, radii, appUnitsPerDevPixel));
+      } else {
+        clipId = aBuilder.DefineRectClip(
+            Nothing(), wr::ToLayoutRect(LayoutDeviceRect::FromAppUnits(
+                           insetRect, appUnitsPerDevPixel)));
       }
 
-      rect = wr::ToLayoutRect(
-          LayoutDeviceRect::FromAppUnits(insetRect, appUnitsPerDevPixel));
       break;
     }
     case StyleBasicShape::Tag::Ellipse:
@@ -9817,11 +9830,10 @@ static Maybe<wr::WrClipId> CreateSimpleClipRegion(
             HalfCornerIsX(corner) ? radii.width : radii.height;
       }
 
-      clipRegions.AppendElement(wr::ToComplexClipRegion(
-          ellipseRect, ellipseRadii, appUnitsPerDevPixel));
+      clipId = aBuilder.DefineRoundedRectClip(
+          Nothing(), wr::ToComplexClipRegion(ellipseRect, ellipseRadii,
+                                             appUnitsPerDevPixel));
 
-      rect = wr::ToLayoutRect(
-          LayoutDeviceRect::FromAppUnits(ellipseRect, appUnitsPerDevPixel));
       break;
     }
     default:
@@ -9833,7 +9845,7 @@ static Maybe<wr::WrClipId> CreateSimpleClipRegion(
       MOZ_ASSERT_UNREACHABLE("Unhandled shape id?");
       return Nothing();
   }
-  wr::WrClipId clipId = aBuilder.DefineClip(Nothing(), rect, &clipRegions);
+
   return Some(clipId);
 }
 
@@ -10266,7 +10278,8 @@ bool nsDisplayFilters::CreateWebRenderCommands(
   if (filterClip) {
     auto devPxRect = LayoutDeviceRect::FromAppUnits(
         filterClip.value() + ToReferenceFrame(), auPerDevPixel);
-    wr::WrClipId clipId = aBuilder.DefineRectClip(wr::ToLayoutRect(devPxRect));
+    wr::WrClipId clipId =
+        aBuilder.DefineRectClip(Nothing(), wr::ToLayoutRect(devPxRect));
     clip = wr::WrStackingContextClip::ClipId(clipId);
   } else {
     clip = wr::WrStackingContextClip::ClipChain(aBuilder.CurrentClipChainId());
@@ -10562,7 +10575,7 @@ nsDisplayListBuilder::AutoBuildingDisplayList::AutoBuildingDisplayList(
     aBuilder->mCurrentAGR = aBuilder->FindAnimatedGeometryRootFor(aForChild);
   }
 
-  MOZ_ASSERT(nsLayoutUtils::IsAncestorFrameCrossDoc(
+  MOZ_ASSERT(nsLayoutUtils::IsAncestorFrameCrossDocInProcess(
       aBuilder->RootReferenceFrame(), *aBuilder->mCurrentAGR));
 
   // If aForChild is being visited from a frame other than it's ancestor frame,

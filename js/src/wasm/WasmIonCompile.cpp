@@ -95,7 +95,7 @@ class FunctionCompiler {
   };
 
   using ControlFlowPatchVector = Vector<ControlFlowPatch, 0, SystemAllocPolicy>;
-  using ControlFlowPatchsVector =
+  using ControlFlowPatchVectorVector =
       Vector<ControlFlowPatchVector, 0, SystemAllocPolicy>;
 
   const ModuleEnvironment& moduleEnv_;
@@ -114,7 +114,7 @@ class FunctionCompiler {
 
   uint32_t loopDepth_;
   uint32_t blockDepth_;
-  ControlFlowPatchsVector blockPatches_;
+  ControlFlowPatchVectorVector blockPatches_;
 
   // TLS pointer argument to the current function.
   MWasmParameter* tlsPointer_;
@@ -910,7 +910,7 @@ class FunctionCompiler {
   MWasmLoadTls* maybeLoadMemoryBase() {
     MWasmLoadTls* load = nullptr;
 #ifdef JS_CODEGEN_X86
-    AliasSet aliases = moduleEnv_.maxMemoryLength.isSome()
+    AliasSet aliases = !moduleEnv_.memory->canMovingGrow()
                            ? AliasSet::None()
                            : AliasSet::Load(AliasSet::WasmHeapMeta);
     load = MWasmLoadTls::New(alloc(), tlsPointer_,
@@ -930,7 +930,7 @@ class FunctionCompiler {
     if (moduleEnv_.hugeMemoryEnabled()) {
       return nullptr;
     }
-    AliasSet aliases = moduleEnv_.maxMemoryLength.isSome()
+    AliasSet aliases = !moduleEnv_.memory->canMovingGrow()
                            ? AliasSet::None()
                            : AliasSet::Load(AliasSet::WasmHeapMeta);
     auto* load = MWasmLoadTls::New(alloc(), tlsPointer_,
@@ -943,7 +943,7 @@ class FunctionCompiler {
  public:
   MWasmHeapBase* memoryBase() {
     MWasmHeapBase* base = nullptr;
-    AliasSet aliases = moduleEnv_.maxMemoryLength.isSome()
+    AliasSet aliases = !moduleEnv_.memory->canMovingGrow()
                            ? AliasSet::None()
                            : AliasSet::Load(AliasSet::WasmHeapMeta);
     base = MWasmHeapBase::New(alloc(), tlsPointer_, aliases);
@@ -1024,8 +1024,7 @@ class FunctionCompiler {
     //
     // If the memory's max size is known to be smaller than 64K pages exactly,
     // we can use a 32-bit check and avoid extension and wrapping.
-    bool check64 = (moduleEnv_.maxMemoryLength.isNothing() ||
-                    moduleEnv_.maxMemoryLength.value() >= 0x100000000) &&
+    bool check64 = !moduleEnv_.memory->boundsCheckLimitIs32Bits() &&
                    ArrayBufferObject::maxBufferByteLength() >= 0x100000000;
 #else
     bool check64 = false;
@@ -2493,9 +2492,6 @@ static bool EmitEnd(FunctionCompiler& f) {
     case LabelKind::CatchAll:
       MOZ_CRASH("NYI");
       break;
-    case LabelKind::Unwind:
-      MOZ_CRASH("NYI");
-      break;
 #endif
   }
 
@@ -2617,17 +2613,6 @@ static bool EmitDelegate(FunctionCompiler& f) {
     return false;
   }
   f.iter().popDelegate();
-
-  MOZ_CRASH("NYI");
-}
-
-static bool EmitUnwind(FunctionCompiler& f) {
-  ResultType resultType;
-  DefVector tryValues;
-
-  if (!f.iter().readUnwind(&resultType, &tryValues)) {
-    return false;
-  }
 
   MOZ_CRASH("NYI");
 }
@@ -4583,11 +4568,6 @@ static bool EmitBodyExprs(FunctionCompiler& f) {
           return false;
         }
         break;
-      case uint16_t(Op::Unwind):
-        if (!f.moduleEnv().exceptionsEnabled()) {
-          return f.iter().unrecognizedOpcode(&op);
-        }
-        CHECK(EmitUnwind(f));
       case uint16_t(Op::Throw):
         if (!f.moduleEnv().exceptionsEnabled()) {
           return f.iter().unrecognizedOpcode(&op);
@@ -5696,7 +5676,9 @@ bool wasm::IonCompileFunctions(const ModuleEnvironment& moduleEnv,
     CompileInfo compileInfo(locals.length());
     MIRGenerator mir(nullptr, options, &alloc, &graph, &compileInfo,
                      IonOptimizations.get(OptimizationLevel::Wasm));
-    mir.initMinWasmHeapLength(moduleEnv.minMemoryLength);
+    if (moduleEnv.usesMemory()) {
+      mir.initMinWasmHeapLength(moduleEnv.memory->initialLength32());
+    }
 
     // Build MIR graph
     {

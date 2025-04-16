@@ -65,7 +65,6 @@ import androidx.annotation.UiThread;
 import android.text.TextUtils;
 import android.util.Base64;
 import android.util.Log;
-import android.util.LongSparseArray;
 import android.util.SparseArray;
 import android.view.Surface;
 import android.view.inputmethod.CursorAnchorInfo;
@@ -716,33 +715,13 @@ public class GeckoSession {
                             GeckoSession.this, message.getStringArray("perms"),
                             new PermissionCallback("android", callback));
                 } else if ("GeckoView:ContentPermission".equals(event)) {
-                    final String typeString = message.getString("perm");
-                    final int type;
-                    if ("geolocation".equals(typeString)) {
-                        type = PermissionDelegate.PERMISSION_GEOLOCATION;
-                    } else if ("desktop-notification".equals(typeString)) {
-                        type = PermissionDelegate.PERMISSION_DESKTOP_NOTIFICATION;
-                    } else if ("persistent-storage".equals(typeString)) {
-                        type = PermissionDelegate.PERMISSION_PERSISTENT_STORAGE;
-                    } else if ("xr".equals(typeString)) {
-                        type = PermissionDelegate.PERMISSION_XR;
-                    } else if ("midi".equals(typeString)) {
-                        // We can get this from WPT and presumably other content, but Gecko
-                        // doesn't support Web MIDI.
-                        callback.sendError("Unsupported");
+                    final GeckoResult<Integer> res = delegate.onContentPermissionRequest(GeckoSession.this, new PermissionDelegate.ContentPermission(message));
+                    if (res == null) {
+                        callback.sendSuccess(PermissionDelegate.ContentPermission.VALUE_PROMPT);
                         return;
-                    } else if ("autoplay-media-inaudible".equals(typeString)) {
-                        type = PermissionDelegate.PERMISSION_AUTOPLAY_INAUDIBLE;
-                    } else if ("autoplay-media-audible".equals(typeString)) {
-                        type = PermissionDelegate.PERMISSION_AUTOPLAY_AUDIBLE;
-                    } else if ("media-key-system-access".equals(typeString)) {
-                        type = PermissionDelegate.PERMISSION_MEDIA_KEY_SYSTEM_ACCESS;
-                    } else {
-                        throw new IllegalArgumentException("Unknown permission request: " + typeString);
                     }
-                    delegate.onContentPermissionRequest(
-                            GeckoSession.this, message.getString("uri"),
-                            type, new PermissionCallback(typeString, callback));
+
+                    callback.resolveTo(res);
                 } else if ("GeckoView:MediaPermission".equals(event)) {
                     final GeckoBundle[] videoBundles = message.getBundleArray("video");
                     final GeckoBundle[] audioBundles = message.getBundleArray("audio");
@@ -811,26 +790,10 @@ public class GeckoSession {
             }
         };
 
-    private LongSparseArray<MediaElement> mMediaElements = new LongSparseArray<>();
-    /* package */ LongSparseArray<MediaElement> getMediaElements() {
-        return mMediaElements;
-    }
     private final GeckoSessionHandler<MediaDelegate> mMediaHandler =
             new GeckoSessionHandler<MediaDelegate>(
                     "GeckoViewMedia", this,
                     new String[]{
-                        "GeckoView:MediaAdd",
-                        "GeckoView:MediaRemove",
-                        "GeckoView:MediaRemoveAll",
-                        "GeckoView:MediaReadyStateChanged",
-                        "GeckoView:MediaTimeChanged",
-                        "GeckoView:MediaPlaybackStateChanged",
-                        "GeckoView:MediaMetadataChanged",
-                        "GeckoView:MediaProgress",
-                        "GeckoView:MediaVolumeChanged",
-                        "GeckoView:MediaRateChanged",
-                        "GeckoView:MediaFullscreenChanged",
-                        "GeckoView:MediaError",
                         "GeckoView:MediaRecordingStatusChanged",
                     }
             ) {
@@ -839,18 +802,7 @@ public class GeckoSession {
                                   final String event,
                                   final GeckoBundle message,
                                   final EventCallback callback) {
-            if ("GeckoView:MediaAdd".equals(event)) {
-                final MediaElement element = new MediaElement(message.getLong("id"), GeckoSession.this);
-                delegate.onMediaAdd(GeckoSession.this, element);
-                return;
-            } else if ("GeckoView:MediaRemoveAll".equals(event)) {
-                for (int i = 0; i < mMediaElements.size(); i++) {
-                    final long key = mMediaElements.keyAt(i);
-                    delegate.onMediaRemove(GeckoSession.this, mMediaElements.get(key));
-                }
-                mMediaElements.clear();
-                return;
-            } else if ("GeckoView:MediaRecordingStatusChanged".equals(event)) {
+            if ("GeckoView:MediaRecordingStatusChanged".equals(event)) {
                 final GeckoBundle[] deviceBundles = message.getBundleArray("devices");
                 final MediaDelegate.RecordingDevice[] devices = new MediaDelegate.RecordingDevice[deviceBundles.length];
                 for (int i = 0; i < deviceBundles.length; i++) {
@@ -858,38 +810,6 @@ public class GeckoSession {
                 }
                 delegate.onRecordingStatusChanged(GeckoSession.this, devices);
                 return;
-            }
-
-            final long id = message.getLong("id", 0);
-            final MediaElement element = mMediaElements.get(id);
-            if (element == null) {
-                Log.w(LOGTAG, "MediaElement not found for '" + id + "'");
-                return;
-            }
-
-            if ("GeckoView:MediaTimeChanged".equals(event)) {
-                element.notifyTimeChange(message.getDouble("time"));
-            } else if ("GeckoView:MediaProgress".equals(event)) {
-                element.notifyLoadProgress(message);
-            } else if ("GeckoView:MediaMetadataChanged".equals(event)) {
-                element.notifyMetadataChange(message);
-            } else if ("GeckoView:MediaReadyStateChanged".equals(event)) {
-                element.notifyReadyStateChange(message.getInt("readyState"));
-            } else if ("GeckoView:MediaPlaybackStateChanged".equals(event)) {
-                element.notifyPlaybackStateChange(message.getString("playbackState"));
-            } else if ("GeckoView:MediaVolumeChanged".equals(event)) {
-                element.notifyVolumeChange(message.getDouble("volume"), message.getBoolean("muted"));
-            } else if ("GeckoView:MediaRateChanged".equals(event)) {
-                element.notifyPlaybackRateChange(message.getDouble("rate"));
-            } else if ("GeckoView:MediaFullscreenChanged".equals(event)) {
-                element.notifyFullscreenChange(message.getBoolean("fullscreen"));
-            } else if ("GeckoView:MediaRemove".equals(event)) {
-                delegate.onMediaRemove(GeckoSession.this, element);
-                mMediaElements.remove(element.getVideoId());
-            } else if ("GeckoView:MediaError".equals(event)) {
-                element.notifyError(message.getInt("code"));
-            } else {
-                throw new UnsupportedOperationException(event + " media message not implemented");
             }
         }
     };
@@ -2609,12 +2529,7 @@ public class GeckoSession {
      * Set the media callback handler.
      * This will replace the current handler.
      * @param delegate An implementation of MediaDelegate.
-     *
-     * @deprecated This API has been replaced by the
-     *             {@link org.mozilla.geckoview.MediaSession MediaSession} API
-     *             and will be removed in GeckoView 91.
      */
-    @Deprecated @DeprecationSchedule(version = 91, id = "media-element")
     @AnyThread
     public void setMediaDelegate(final @Nullable MediaDelegate delegate) {
         mMediaHandler.setDelegate(delegate, this);
@@ -2623,12 +2538,7 @@ public class GeckoSession {
     /**
      * Get the Media callback handler.
      * @return The current Media callback handler.
-     *
-     * @deprecated This API has been replaced by the
-     *             {@link org.mozilla.geckoview.MediaSession MediaSession} API
-     *             and will be removed in GeckoView 91.
      */
-    @Deprecated @DeprecationSchedule(version = 91, id = "media-element")
     @AnyThread
     public @Nullable MediaDelegate getMediaDelegate() {
         return mMediaHandler.getDelegate();
@@ -2839,6 +2749,31 @@ public class GeckoSession {
                 res = delegate.onLoginSave(session, request);
                 break;
             }
+            case "Autocomplete:Save:Address": {
+                final int hint = message.getInt("hint");
+                final GeckoBundle[] addressBundles =
+                        message.getBundleArray("addresses");
+
+                if (addressBundles == null) {
+                    break;
+                }
+
+                final Autocomplete.AddressSaveOption[] options =
+                        new Autocomplete.AddressSaveOption[addressBundles.length];
+
+                for (int i = 0; i < options.length; ++i) {
+                    options[i] = new Autocomplete.AddressSaveOption(
+                            new Autocomplete.Address(addressBundles[i]),
+                            hint);
+                }
+
+                final PromptDelegate.AutocompleteRequest
+                        <Autocomplete.AddressSaveOption> request =
+                        new PromptDelegate.AutocompleteRequest<>(options);
+
+                res = delegate.onAddressSave(session, request);
+                break;
+            }
             case "Autocomplete:Select:Login": {
                 final GeckoBundle[] optionBundles =
                     message.getBundleArray("options");
@@ -2883,6 +2818,29 @@ public class GeckoSession {
                     new PromptDelegate.AutocompleteRequest<>(options);
 
                 res = delegate.onCreditCardSelect(session, request);
+                break;
+            }
+            case "Autocomplete:Select:Address": {
+                final GeckoBundle[] optionBundles =
+                        message.getBundleArray("options");
+
+                if (optionBundles == null) {
+                    break;
+                }
+
+                final Autocomplete.AddressSelectOption[] options =
+                        new Autocomplete.AddressSelectOption[optionBundles.length];
+
+                for (int i = 0; i < options.length; ++i) {
+                    options[i] = Autocomplete.AddressSelectOption.fromBundle(
+                            optionBundles[i]);
+                }
+
+                final PromptDelegate.AutocompleteRequest
+                        <Autocomplete.AddressSelectOption> request =
+                        new PromptDelegate.AutocompleteRequest<>(options);
+
+                res = delegate.onAddressSelect(session, request);
                 break;
             }
             default: {
@@ -5181,6 +5139,34 @@ public class GeckoSession {
         }
 
         /**
+         * Handle a address save prompt request.
+         * This is triggered by the user entering new or modified address
+         * credentials into a address form.
+         *
+         * @param session The {@link GeckoSession} that triggered the request.
+         * @param request The {@link AutocompleteRequest} containing the request
+         *                details.
+         *
+         * @return A {@link GeckoResult} resolving to a {@link PromptResponse}.
+         *
+         *         Confirm the request with an {@link Autocomplete.Option}
+         *         to trigger a
+         *         {@link Autocomplete.StorageDelegate#onAddressSave} request
+         *         to save the given selection.
+         *         The confirmed selection may be an entry out of the request's
+         *         options, a modified option, or a freshly created address entry.
+         *
+         *         Dismiss the request to deny the saving request.
+         */
+        @UiThread
+        default @Nullable GeckoResult<PromptResponse> onAddressSave(
+                @NonNull final GeckoSession session,
+                @NonNull final AutocompleteRequest<Autocomplete.AddressSaveOption>
+                        request) {
+            return null;
+        }
+
+        /**
          * Handle a login selection prompt request.
          * This is triggered by the user focusing on a login username field.
          *
@@ -5234,6 +5220,34 @@ public class GeckoSession {
                     request) {
             return null;
         }
+
+        /**
+         * Handle a address selection prompt request.
+         * This is triggered by the user focusing on a address field.
+         *
+         * @param session The {@link GeckoSession} that triggered the request.
+         * @param request The {@link AutocompleteRequest} containing the request
+         *                details.
+         *
+         * @return A {@link GeckoResult} resolving to a {@link PromptResponse}
+         *
+         *         Confirm the request with an {@link Autocomplete.Option}
+         *         to let GeckoView fill out the address forms with the given
+         *         selection details.
+         *         The confirmed selection may be an entry out of the request's
+         *         options, a modified option, or a freshly created address entry.
+         *
+         *         Dismiss the request to deny autocompletion for the detected
+         *         form.
+         */
+        @UiThread
+        default @Nullable GeckoResult<PromptResponse> onAddressSelect(
+                @NonNull final GeckoSession session,
+                @NonNull final AutocompleteRequest<Autocomplete.AddressSelectOption>
+                        request) {
+            return null;
+        }
+
     }
 
     /**
@@ -5450,6 +5464,12 @@ public class GeckoSession {
         int PERMISSION_MEDIA_KEY_SYSTEM_ACCESS = 6;
 
         /**
+         * Permission for trackers to operate on the page -- disables all tracking protection
+         * features for a given site.
+         */
+        int PERMISSION_TRACKING = 7;
+
+        /**
          * Represents a content permission -- including the type of permission,
          * the present value of the permission, the URL the permission pertains to,
          * and other information.
@@ -5495,6 +5515,12 @@ public class GeckoSession {
              */
             final public @Value int value;
 
+            /**
+             * The context ID associated with the permission if any.
+             * @see GeckoSessionSettings.Builder#contextId
+             */
+            final public @Nullable String contextId;
+
             final private String mPrincipal;
 
             protected ContentPermission() {
@@ -5503,6 +5529,7 @@ public class GeckoSession {
                 this.permission = PERMISSION_GEOLOCATION;
                 this.value = VALUE_ALLOW;
                 this.mPrincipal = "";
+                this.contextId = null;
             }
 
             private ContentPermission(final @NonNull GeckoBundle bundle) {
@@ -5510,10 +5537,45 @@ public class GeckoSession {
                 this.mPrincipal = bundle.getString("principal");
                 this.privateMode = bundle.getBoolean("privateMode");
 
-                final String permission = bundle.getString("type");
+                final String permission = bundle.getString("perm");
                 this.permission = convertType(permission);
 
                 this.value = bundle.getInt("value");
+                this.contextId = StorageController.retrieveUnsafeSessionContextId(bundle.getString("contextId"));
+            }
+
+            /**
+             * Converts a JSONObject to a ContentPermission -- should only be used on the output of
+             * {@link #toJson()}.
+             *
+             * @param perm A JSONObject representing a ContentPermission, output by {@link #toJson()}.
+             *
+             * @return The corresponding ContentPermission.
+             */
+            @AnyThread
+            public static @Nullable ContentPermission fromJson(final @NonNull JSONObject perm) {
+                ContentPermission res = null;
+                try {
+                    res = new ContentPermission(GeckoBundle.fromJSONObject(perm));
+                } catch (final JSONException e) {
+                    Log.w(LOGTAG, "Failed to create ContentPermission; invalid JSONObject.", e);
+                }
+                return res;
+            }
+
+            /**
+             * Converts a ContentPermission to a JSONObject that can be converted back to
+             * a ContentPermission by {@link #fromJson(JSONObject)}.
+             *
+             * @return A JSONObject representing this ContentPermission. Modifying any of
+             *         the fields may result in undefined behavior when converted back
+             *         to a ContentPermission and used.
+             *
+             * @throws JSONException if the conversion fails for any reason.
+             */
+            @AnyThread
+            public @NonNull JSONObject toJson() throws JSONException {
+                return toGeckoBundle().toJSONObject();
             }
 
             private static int convertType(final @NonNull String type) {
@@ -5531,8 +5593,34 @@ public class GeckoSession {
                     return PERMISSION_AUTOPLAY_AUDIBLE;
                 } else if ("media-key-system-access".equals(type)) {
                     return PERMISSION_MEDIA_KEY_SYSTEM_ACCESS;
+                } else if ("trackingprotection".equals(type) || "trackingprotection-pb".equals(type)) {
+                    return PERMISSION_TRACKING;
                 } else {
                     return -1;
+                }
+            }
+
+            // This also gets used in StorageController, so it's package rather than private.
+            /* package */ static String convertType(final int type, final boolean privateMode) {
+                switch (type) {
+                    case PERMISSION_GEOLOCATION:
+                        return "geolocation";
+                    case PERMISSION_DESKTOP_NOTIFICATION:
+                        return "desktop-notification";
+                    case PERMISSION_PERSISTENT_STORAGE:
+                        return "persistent-storage";
+                    case PERMISSION_XR:
+                        return "xr";
+                    case PERMISSION_AUTOPLAY_INAUDIBLE:
+                        return "autoplay-media-inaudible";
+                    case PERMISSION_AUTOPLAY_AUDIBLE:
+                        return "autoplay-media-audible";
+                    case PERMISSION_MEDIA_KEY_SYSTEM_ACCESS:
+                        return "media-key-system-access";
+                    case PERMISSION_TRACKING:
+                        return privateMode ? "trackingprotection-pb" : "trackingprotection";
+                    default:
+                        return "";
                 }
             }
 
@@ -5549,6 +5637,17 @@ public class GeckoSession {
                     }
                     res.add(temp);
                 }
+                return res;
+            }
+
+            /* package */ @NonNull GeckoBundle toGeckoBundle() {
+                final GeckoBundle res = new GeckoBundle(5);
+                res.putString("uri", uri);
+                res.putString("principal", mPrincipal);
+                res.putBoolean("privateMode", privateMode);
+                res.putString("perm", convertType(permission, privateMode));
+                res.putInt("value", value);
+                res.putString("contextId", contextId);
                 return res;
             }
         }
@@ -5599,18 +5698,14 @@ public class GeckoSession {
          * from being redisplayed to the user.
          *
          * @param session GeckoSession instance requesting the permission.
-         * @param uri The URI of the content requesting the permission.
-         * @param type The type of the requested permission; possible values are,
-         *             PERMISSION_GEOLOCATION
-         *             PERMISSION_DESKTOP_NOTIFICATION
-         *             PERMISSION_PERSISTENT_STORAGE
-         *             PERMISSION_XR
-         * @param callback Callback interface.
+         * @param perm An {@link ContentPermission} describing the permission being requested and its current status.
+         *
+         * @return A {@link GeckoResult} resolving to one of {@link ContentPermission#VALUE_PROMPT VALUE_*}, determining
+         *         the response to the permission request and updating the permissions for this site.
          */
         @UiThread
-        default void onContentPermissionRequest(@NonNull final GeckoSession session, @Nullable final String uri,
-                                                @Permission final int type, @NonNull final Callback callback) {
-            callback.reject();
+        default @Nullable GeckoResult<Integer> onContentPermissionRequest(@NonNull final GeckoSession session, @NonNull ContentPermission perm) {
+            return GeckoResult.fromValue(ContentPermission.VALUE_PROMPT);
         }
 
         class MediaSource {
@@ -6172,12 +6267,7 @@ public class GeckoSession {
 
     /**
      * GeckoSession applications implement this interface to handle media events.
-     *
-     * @deprecated This API has been replaced by the
-     *             {@link org.mozilla.geckoview.MediaSession MediaSession} API
-     *             and will be removed in GeckoView 91.
      */
-    @Deprecated @DeprecationSchedule(version = 91, id = "media-element")
     public interface MediaDelegate {
 
         class RecordingDevice {
@@ -6256,31 +6346,6 @@ public class GeckoSession {
                 type = Type.CAMERA;
             }
         }
-        /**
-         * An HTMLMediaElement has been created.
-         * @param session Session instance.
-         * @param element The media element that was just created.
-         *
-         * @deprecated This API has been replaced by the
-         *             {@link org.mozilla.geckoview.MediaSession MediaSession} API
-         *             and will be removed in GeckoView 91.
-         */
-        @Deprecated @DeprecationSchedule(version = 91, id = "media-element")
-        @UiThread
-        default void onMediaAdd(@NonNull final GeckoSession session, @NonNull final MediaElement element) {}
-
-        /**
-         * An HTMLMediaElement has been unloaded.
-         * @param session Session instance.
-         * @param element The media element that was unloaded.
-         *
-         * @deprecated This API has been replaced by the
-         *             {@link org.mozilla.geckoview.MediaSession MediaSession} API
-         *             and will be removed in GeckoView 91.
-         */
-        @Deprecated @DeprecationSchedule(version = 91, id = "media-element")
-        @UiThread
-        default void onMediaRemove(@NonNull final GeckoSession session, @NonNull final MediaElement element) {}
 
         /**
          * A recording device has changed state.

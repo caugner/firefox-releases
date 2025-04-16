@@ -19,6 +19,9 @@ const TOP_SITES = [
 
 const FIREFOX_SUGGEST_LABEL = "Firefox Suggest";
 
+// %s is replaced with the engine name.
+const ENGINE_SUGGESTIONS_LABEL = "%s Suggestions";
+
 add_task(async function init() {
   Assert.ok(
     UrlbarPrefs.get("showSearchSuggestionsFirst"),
@@ -114,7 +117,7 @@ add_task(async function generalBeforeSuggestions() {
       });
       await checkLabels(MAX_RESULTS, {
         1: FIREFOX_SUGGEST_LABEL,
-        [MAX_RESULTS - 2]: `${engine.name} suggestions`,
+        [MAX_RESULTS - 2]: engineSuggestionsLabel(engine.name),
       });
       await UrlbarTestUtils.promisePopupClose(window);
     });
@@ -282,9 +285,9 @@ add_task(async function repeatLabels() {
     });
     await checkLabels(results.length, {
       0: FIREFOX_SUGGEST_LABEL,
-      1: `${engineName} suggestions`,
+      1: engineSuggestionsLabel(engineName),
       2: FIREFOX_SUGGEST_LABEL,
-      3: `${engineName} suggestions`,
+      3: engineSuggestionsLabel(engineName),
     });
     await UrlbarTestUtils.promisePopupClose(window);
   });
@@ -324,6 +327,7 @@ add_task(async function clickLabel() {
       let loadPromise = BrowserTestUtils.browserLoaded(
         gBrowser.selectedBrowser
       );
+
       info("Performing click relative to index 3");
       await UrlbarTestUtils.promisePopupClose(window, () =>
         click(result3.element.row, { y: -2 })
@@ -331,12 +335,12 @@ add_task(async function clickLabel() {
       info("Waiting for load after performing click relative to index 3");
       await loadPromise;
       Assert.equal(gBrowser.currentURI.spec, url2, "Loaded URL at index 2");
-
       // Now do the search again.
       await UrlbarTestUtils.promiseAutocompleteResultPopup({
         window,
         value: "test",
       });
+
       await checkLabels(MAX_RESULTS, {
         1: FIREFOX_SUGGEST_LABEL,
       });
@@ -461,6 +465,10 @@ async function checkLabels(resultCount, labelsByIndex) {
       );
     }
   }
+}
+
+function engineSuggestionsLabel(engineName) {
+  return ENGINE_SUGGESTIONS_LABEL.replace("%s", engineName);
 }
 
 /**

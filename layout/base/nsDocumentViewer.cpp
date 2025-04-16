@@ -106,6 +106,7 @@
 #  include "nsIWebBrowserPrint.h"
 
 #  include "nsPrintJob.h"
+#  include "nsDeviceContextSpecProxy.h"
 
 // Print Options
 #  include "nsIPrintSettings.h"
@@ -783,7 +784,9 @@ nsresult nsDocumentViewer::InitPresentationStuff(bool aDoInitialReflow) {
 static nsPresContext* CreatePresContext(Document* aDocument,
                                         nsPresContext::nsPresContextType aType,
                                         nsView* aContainerView) {
-  if (aContainerView) return new nsPresContext(aDocument, aType);
+  if (aContainerView) {
+    return new nsPresContext(aDocument, aType);
+  }
   return new nsRootPresContext(aDocument, aType);
 }
 
@@ -1848,8 +1851,10 @@ nsDocumentViewer::SetDocumentInternal(Document* aDocument,
       aDocument->SetNavigationTiming(mDocument->GetNavigationTiming());
     }
 
-    if (mDocument && mDocument->IsStaticDocument()) {
-      mDocument->Destroy();
+    if (mDocument &&
+        (mDocument->IsStaticDocument() || aDocument->IsStaticDocument())) {
+      nsContentUtils::AddScriptRunner(NewRunnableMethod(
+          "Document::Destroy", mDocument, &Document::Destroy));
     }
 
     // Clear the list of old child docshells. Child docshells for the new
@@ -2037,7 +2042,7 @@ nsDocumentViewer::Move(int32_t aX, int32_t aY) {
 }
 
 NS_IMETHODIMP
-nsDocumentViewer::Show(void) {
+nsDocumentViewer::Show() {
   NS_ENSURE_TRUE(mDocument, NS_ERROR_NOT_AVAILABLE);
 
   // We don't need the previous viewer anymore since we're not
@@ -2151,7 +2156,7 @@ nsDocumentViewer::Show(void) {
 }
 
 NS_IMETHODIMP
-nsDocumentViewer::Hide(void) {
+nsDocumentViewer::Hide() {
   if (!mAttachedToParent && mWindow) {
     mWindow->Show(false);
   }
@@ -2238,7 +2243,9 @@ nsDocumentViewer::ClearHistoryEntry() {
 
 nsresult nsDocumentViewer::MakeWindow(const nsSize& aSize,
                                       nsView* aContainerView) {
-  if (GetIsPrintPreview()) return NS_OK;
+  if (GetIsPrintPreview()) {
+    return NS_OK;
+  }
 
   bool shouldAttach = ShouldAttachToTopLevel();
 
@@ -3487,6 +3494,53 @@ void nsDocumentViewer::OnDonePrinting() {
     }
   }
 #endif  // NS_PRINTING && NS_PRINT_PREVIEW
+}
+
+NS_IMETHODIMP nsDocumentViewer::SetPrintSettingsForSubdocument(
+    nsIPrintSettings* aPrintSettings) {
+#ifdef NS_PRINTING
+  {
+    nsAutoScriptBlocker scriptBlocker;
+
+    if (mPresShell) {
+      DestroyPresShell();
+    }
+
+    if (mPresContext) {
+      DestroyPresContext();
+    }
+
+    MOZ_ASSERT(!mPresContext);
+    MOZ_ASSERT(!mPresShell);
+
+    RefPtr<nsIDeviceContextSpec> devspec = new nsDeviceContextSpecProxy();
+    nsresult rv =
+        devspec->Init(nullptr, aPrintSettings, /* aIsPrintPreview = */ true);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    mDeviceContext = new nsDeviceContext();
+    rv = mDeviceContext->InitForPrinting(devspec);
+
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    mPresContext = CreatePresContext(
+        mDocument, nsPresContext::eContext_PrintPreview, FindContainerView());
+    mPresContext->SetPrintSettings(aPrintSettings);
+    rv = mPresContext->Init(mDeviceContext);
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    rv = MakeWindow(nsSize(mPresContext->DevPixelsToAppUnits(mBounds.width),
+                           mPresContext->DevPixelsToAppUnits(mBounds.height)),
+                    FindContainerView());
+    NS_ENSURE_SUCCESS(rv, rv);
+
+    MOZ_TRY(InitPresentationStuff(true));
+  }
+
+  RefPtr<PresShell> shell = mPresShell;
+  shell->FlushPendingNotifications(FlushType::Layout);
+#endif
+  return NS_OK;
 }
 
 NS_IMETHODIMP nsDocumentViewer::SetPageModeForTesting(

@@ -134,6 +134,7 @@ use style::traversal_flags::{self, TraversalFlags};
 use style::use_counters::UseCounters;
 use style::values::animated::{Animate, Procedure, ToAnimatedZero};
 use style::values::computed::{self, Context, ToComputedValue};
+use style::values::computed::font::{FontFamilyList, FontFamily, GenericFontFamily};
 use style::values::distance::ComputeSquaredDistance;
 use style::values::specified::gecko::IntersectionObserverRootMargin;
 use style::values::specified::source_size_list::SourceSizeList;
@@ -1807,6 +1808,8 @@ pub unsafe extern "C" fn Servo_StyleSet_MediumFeaturesChanged(
     document_set: &RawServoStyleSet,
     non_document_styles: &mut nsTArray<&mut RawServoAuthorStyles>,
     may_affect_default_style: bool,
+    viewport_changed: bool,
+    root: Option<&RawGeckoElement>,
 ) -> structs::MediumFeaturesChangedResult {
     let global_style_data = &*GLOBAL_STYLE_DATA;
     let guard = global_style_data.shared_lock.read();
@@ -1853,12 +1856,19 @@ pub unsafe extern "C" fn Servo_StyleSet_MediumFeaturesChanged(
         }
     }
 
-    let uses_viewport_units = document_data.stylist.device().used_viewport_size();
+    if viewport_changed && document_data.stylist.device().used_viewport_size() {
+        if let Some(root) = root {
+            if style::invalidation::viewport_units::invalidate(GeckoElement(root)) {
+                // The invalidation machinery propagates the bits up, but we still need
+                // to tell the Gecko restyle root machinery about it.
+                bindings::Gecko_NoteDirtySubtreeForInvalidation(root);
+            }
+        }
+    }
 
     structs::MediumFeaturesChangedResult {
         mAffectsDocumentRules: affects_document_rules,
         mAffectsNonDocumentRules: affects_non_document_rules,
-        mUsesViewportUnits: uses_viewport_units,
     }
 }
 
@@ -5154,6 +5164,31 @@ pub extern "C" fn Servo_DeclarationBlock_SetLengthValue(
 }
 
 #[no_mangle]
+pub extern "C" fn Servo_DeclarationBlock_SetPathValue(
+    declarations: &RawServoDeclarationBlock,
+    property: nsCSSPropertyID,
+    path: &nsTArray<f32>,
+) {
+    use style::properties::PropertyDeclaration;
+    use style::values::specified::DProperty;
+
+    // 1. Decode the path data from SVG.
+    let path = match specified::SVGPathData::decode_from_f32_array(path) {
+        Ok(p) => p,
+        Err(()) => return,
+    };
+
+    // 2. Set decoded path into style.
+    let long = get_longhand_from_id!(property);
+    let prop = match_wrap_declared! { long,
+        D => if path.0.is_empty() { DProperty::None } else { DProperty::Path(path) },
+    };
+    write_locked_arc(declarations, |decls: &mut PropertyDeclarationBlock| {
+        decls.push(prop, Importance::Normal);
+    })
+}
+
+#[no_mangle]
 pub extern "C" fn Servo_DeclarationBlock_SetNumberValue(
     declarations: &RawServoDeclarationBlock,
     property: nsCSSPropertyID,
@@ -6734,13 +6769,12 @@ pub extern "C" fn Servo_ParseTransformIntoMatrix(
 pub unsafe extern "C" fn Servo_ParseFontShorthandForMatching(
     value: &nsACString,
     data: *mut URLExtraData,
-    family: &mut structs::RefPtr<structs::SharedFontList>,
+    family: &mut FontFamilyList,
     style: &mut ComputedFontStyleDescriptor,
     stretch: &mut f32,
     weight: &mut f32,
 ) -> bool {
     use style::properties::shorthands::font;
-    use style::values::computed::font::FontFamilyList;
     use style::values::computed::font::FontWeight as ComputedFontWeight;
     use style::values::generics::font::FontStyle as GenericFontStyle;
     use style::values::specified::font::{
@@ -6768,8 +6802,7 @@ pub unsafe extern "C" fn Servo_ParseFontShorthandForMatching(
 
     // The system font is not acceptable, so we return false.
     match font.font_family {
-        FontFamily::Values(FontFamilyList::SharedFontList(list)) => family.set_move(list),
-        FontFamily::Values(list) => family.set_move(list.shared_font_list().clone()),
+        FontFamily::Values(list) => *family = list,
         FontFamily::System(_) => return false,
     }
 
@@ -7058,4 +7091,32 @@ pub unsafe extern "C" fn Servo_CursorKind_Parse(
         },
         Err(..) => false,
     }
+}
+
+#[no_mangle]
+pub extern "C" fn Servo_FontFamily_Generic(generic: GenericFontFamily) -> &'static FontFamily {
+    FontFamily::generic(generic)
+}
+
+#[no_mangle]
+pub extern "C" fn Servo_FontFamily_ForSystemFont(name: &nsACString, out: &mut FontFamily) {
+    *out = FontFamily::for_system_font(&name.to_utf8());
+}
+
+#[no_mangle]
+pub extern "C" fn Servo_FontFamilyList_Normalize(list: &mut FontFamilyList) {
+    list.normalize()
+}
+
+#[no_mangle]
+pub extern "C" fn Servo_FontFamilyList_WithNames(names: &nsTArray<computed::font::SingleFontFamily>, out: &mut FontFamilyList) {
+    *out = FontFamilyList {
+        list: style_traits::arc_slice::ArcSlice::from_iter(names.iter().cloned()),
+        fallback: GenericFontFamily::None,
+    };
+}
+
+#[no_mangle]
+pub extern "C" fn Servo_GenericFontFamily_Parse(input: &nsACString) -> GenericFontFamily {
+    GenericFontFamily::from_ident(&*input.to_utf8()).unwrap_or(GenericFontFamily::None)
 }

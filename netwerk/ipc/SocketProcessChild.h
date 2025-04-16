@@ -35,7 +35,7 @@ class SocketProcessChild final
   static SocketProcessChild* GetSingleton();
 
   bool Init(base::ProcessId aParentPid, const char* aParentBuildID,
-            MessageLoop* aIOLoop, UniquePtr<IPC::Channel> aChannel);
+            mozilla::ipc::ScopedPort aPort);
 
   void ActorDestroy(ActorDestroyReason aWhy) override;
 
@@ -56,6 +56,10 @@ class SocketProcessChild final
       Endpoint<mozilla::net::PSocketProcessBridgeParent>&& aEndpoint);
   mozilla::ipc::IPCResult RecvInitProfiler(
       Endpoint<mozilla::PProfilerChild>&& aEndpoint);
+#if defined(MOZ_SANDBOX) && defined(MOZ_DEBUG) && defined(ENABLE_TESTS)
+  mozilla::ipc::IPCResult RecvInitSandboxTesting(
+      Endpoint<PSandboxTestingChild>&& aEndpoint);
+#endif
   mozilla::ipc::IPCResult RecvSocketProcessTelemetryPing();
 
   PWebrtcTCPSocketChild* AllocPWebrtcTCPSocketChild(const Maybe<TabId>& tabId);
@@ -147,13 +151,11 @@ class SocketProcessChild final
   nsRefPtrHashtable<nsUint32HashKey, SocketProcessBridgeParent>
       mSocketProcessBridgeParentMap;
 
-#ifdef MOZ_GECKO_PROFILER
   RefPtr<ChildProfilerController> mProfilerController;
-#endif
 
-  bool mShuttingDown;
+  bool mShuttingDown{false};
   // Protect the table below.
-  Mutex mMutex;
+  Mutex mMutex{"SocketProcessChild::mMutex"};
   nsTHashMap<uint64_t, RefPtr<BackgroundDataBridgeParent>>
       mBackgroundDataBridgeMap;
 };

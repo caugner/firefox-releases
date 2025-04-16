@@ -119,29 +119,62 @@ void gfxGDIFont::Initialize() {
 
   if (mAdjustedSize == 0.0) {
     mAdjustedSize = GetAdjustedSize();
-    if (mStyle.sizeAdjust > 0.0 && mAdjustedSize > 0.0) {
-      // to implement font-size-adjust, we first create the "unadjusted" font
-      FillLogFont(logFont, mAdjustedSize);
-      mFont = ::CreateFontIndirectW(&logFont);
+    if (FontSizeAdjust::Tag(mStyle.sizeAdjustBasis) !=
+        FontSizeAdjust::Tag::None) {
+      if (mStyle.sizeAdjust > 0.0 && mAdjustedSize > 0.0) {
+        // to implement font-size-adjust, we first create the "unadjusted" font
+        FillLogFont(logFont, mAdjustedSize);
+        mFont = ::CreateFontIndirectW(&logFont);
 
-      // initialize its metrics so we can calculate size adjustment
-      Initialize();
+        // initialize its metrics so we can calculate size adjustment
+        Initialize();
 
-      // Unless the font was so small that GDI metrics rounded to zero,
-      // calculate the properly adjusted size, and then proceed
-      // to recreate mFont and recalculate metrics
-      if (mMetrics->xHeight > 0.0 && mMetrics->emHeight > 0.0) {
-        gfxFloat aspect = mMetrics->xHeight / mMetrics->emHeight;
-        mAdjustedSize = mStyle.GetAdjustedSize(aspect);
+        // Unless the font was so small that GDI metrics rounded to zero,
+        // calculate the properly adjusted size, and then proceed
+        // to recreate mFont and recalculate metrics
+        if (mMetrics->emHeight > 0.0) {
+          gfxFloat aspect;
+          switch (FontSizeAdjust::Tag(mStyle.sizeAdjustBasis)) {
+            default:
+              MOZ_ASSERT_UNREACHABLE("unhandled sizeAdjustBasis?");
+              aspect = 0.0;
+              break;
+            case FontSizeAdjust::Tag::ExHeight:
+              aspect = mMetrics->xHeight / mMetrics->emHeight;
+              break;
+            case FontSizeAdjust::Tag::CapHeight:
+              aspect = mMetrics->capHeight / mMetrics->emHeight;
+              break;
+            case FontSizeAdjust::Tag::ChWidth: {
+              gfxFloat advance = GetCharAdvance('0');
+              aspect = advance > 0.0 ? advance / mMetrics->emHeight : 0.5;
+              break;
+            }
+            case FontSizeAdjust::Tag::IcWidth:
+            case FontSizeAdjust::Tag::IcHeight: {
+              bool vertical = FontSizeAdjust::Tag(mStyle.sizeAdjustBasis) ==
+                              FontSizeAdjust::Tag::IcHeight;
+              gfxFloat advance = GetCharAdvance(0x6C34, vertical);
+              aspect = advance > 0.0 ? advance / mMetrics->emHeight : 1.0;
+              break;
+            }
+          }
+          if (aspect > 0.0) {
+            // If we created a shaper above (to measure glyphs), discard it so
+            // we get a new one for the adjusted scaling.
+            mHarfBuzzShaper = nullptr;
+            mAdjustedSize = mStyle.GetAdjustedSize(aspect);
+          }
+        }
+
+        // delete the temporary font and metrics
+        ::DeleteObject(mFont);
+        mFont = nullptr;
+        delete mMetrics;
+        mMetrics = nullptr;
+      } else {
+        mAdjustedSize = 0.0;
       }
-
-      // delete the temporary font and metrics
-      ::DeleteObject(mFont);
-      mFont = nullptr;
-      delete mMetrics;
-      mMetrics = nullptr;
-    } else if (mStyle.sizeAdjust == 0.0) {
-      mAdjustedSize = 0.0;
     }
   }
 

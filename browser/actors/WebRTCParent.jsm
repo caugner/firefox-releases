@@ -388,29 +388,21 @@ class WebRTCParent extends JSWindowActorParent {
     if (!aRequest.secure) {
       return false;
     }
+    // Always prompt for screen sharing
+    if (aRequest.sharingScreen) {
+      return false;
+    }
+    if (aRequest.audioOutputDevices?.length) {
+      return false;
+    }
 
-    let { audioDevices, videoDevices, sharingScreen } = aRequest;
-
-    let micAllowed =
-      SitePermissions.getForPrincipal(aPrincipal, "microphone").state ==
-      SitePermissions.ALLOW;
-    let camAllowed =
-      SitePermissions.getForPrincipal(aPrincipal, "camera").state ==
-      SitePermissions.ALLOW;
-
-    let perms = Services.perms;
-    let mediaManagerPerm = perms.testExactPermissionFromPrincipal(
-      aPrincipal,
-      "MediaManagerVideo"
-    );
-    if (mediaManagerPerm) {
+    let { perms } = Services;
+    if (
+      perms.testExactPermissionFromPrincipal(aPrincipal, "MediaManagerVideo")
+    ) {
       perms.removeFromPrincipal(aPrincipal, "MediaManagerVideo");
     }
 
-    // Screen sharing shouldn't follow the camera permissions.
-    if (videoDevices.length && sharingScreen) {
-      camAllowed = false;
-    }
     // Don't use persistent permissions from the top-level principal
     // if we're in a cross-origin iframe and permission delegation is not
     // allowed, or when we're handling a potentially insecure third party
@@ -418,108 +410,68 @@ class WebRTCParent extends JSWindowActorParent {
     let limited =
       (aRequest.isThirdPartyOrigin && !aRequest.shouldDelegatePermission) ||
       aRequest.secondOrigin;
-    if (limited) {
-      camAllowed = false;
-      micAllowed = false;
+
+    let set = webrtcUI.activePerms.get(this.manager.outerWindowId);
+    let { callID, windowID } = aRequest;
+
+    // We consider a camera active if it is active or was active within a
+    // grace period of milliseconds ago.
+    const isAllowed = ({ mediaSource, id }, permissionID) =>
+      set?.has(windowID + mediaSource + id) ||
+      (!limited &&
+        (SitePermissions.getForPrincipal(aPrincipal, permissionID).state ==
+          SitePermissions.ALLOW ||
+          SitePermissions.getForPrincipal(
+            aPrincipal,
+            [mediaSource, id].join("^"),
+            this.getBrowser()
+          ).state == SitePermissions.ALLOW));
+
+    let {
+      audioInputDevices: [microphone],
+      videoInputDevices: [camera],
+    } = aRequest;
+
+    if (microphone && !isAllowed(microphone, "microphone")) {
+      return false;
+    }
+    if (camera && !isAllowed(camera, "camera")) {
+      return false;
     }
 
-    let activeCamera;
-    let activeMic;
-    let browser = this.getBrowser();
-
-    // Always prompt for screen sharing
-    if (!sharingScreen) {
-      let set = webrtcUI.activePerms.get(this.manager.outerWindowId);
-
-      for (let device of videoDevices) {
-        if (
-          (set &&
-            set.has(aRequest.windowID + device.mediaSource + device.id)) ||
-          (!limited &&
-            SitePermissions.getForPrincipal(
-              aPrincipal,
-              [device.mediaSource, device.id].join("^"),
-              browser
-            ).state == SitePermissions.ALLOW)
-        ) {
-          // We consider a camera active if it is active or was active within a
-          // grace period of milliseconds ago.
-          activeCamera = device;
-        }
-        // Only consider activity of the first (most ideal) video device
-        break;
-      }
-
-      for (let device of audioDevices) {
-        if (
-          (set &&
-            set.has(aRequest.windowID + device.mediaSource + device.id)) ||
-          (!limited &&
-            SitePermissions.getForPrincipal(
-              aPrincipal,
-              [device.mediaSource, device.id].join("^"),
-              browser
-            ).state == SitePermissions.ALLOW)
-        ) {
-          // We consider a microphone active if it is active or was active
-          // within a grace period of milliseconds ago.
-          activeMic = device;
-        }
-        // Only consider activity of the first (most ideal) audio device
-        break;
-      }
-    }
-    if (
-      (!audioDevices.length || micAllowed || activeMic) &&
-      (!videoDevices.length || camAllowed || activeCamera)
-    ) {
-      let allowedDevices = [];
-      if (videoDevices.length) {
-        let { deviceIndex, mediaSource, id } = activeCamera || videoDevices[0];
-        allowedDevices.push(deviceIndex);
-        perms.addFromPrincipal(
-          aPrincipal,
-          "MediaManagerVideo",
-          perms.ALLOW_ACTION,
-          perms.EXPIRE_SESSION
-        );
-        this.activateDevicePerm(aRequest.windowID, mediaSource, id);
-      }
-      if (audioDevices.length) {
-        let { deviceIndex, mediaSource, id } = activeMic || audioDevices[0];
-        allowedDevices.push(deviceIndex);
-        this.activateDevicePerm(aRequest.windowID, mediaSource, id);
-      }
-
-      // If sharingScreen, we're requesting screen-sharing, otherwise camera
-      let camNeeded = !!videoDevices.length && !sharingScreen;
-      let scrNeeded = !!videoDevices.length && sharingScreen;
-      let micNeeded = !!audioDevices.length;
-      this.checkOSPermission(camNeeded, micNeeded, scrNeeded).then(
-        havePermission => {
-          if (havePermission) {
-            this.sendAsyncMessage("webrtc:Allow", {
-              callID: aRequest.callID,
-              windowID: aRequest.windowID,
-              devices: allowedDevices,
-            });
-          } else {
-            this.denyRequestNoPermission(aRequest);
-          }
-        }
+    let devices = [];
+    if (camera) {
+      perms.addFromPrincipal(
+        aPrincipal,
+        "MediaManagerVideo",
+        perms.ALLOW_ACTION,
+        perms.EXPIRE_SESSION
       );
-
-      return true;
+      devices.push(camera.deviceIndex);
+      this.activateDevicePerm(windowID, camera.mediaSource, camera.id);
     }
-
-    return false;
+    if (microphone) {
+      devices.push(microphone.deviceIndex);
+      this.activateDevicePerm(windowID, microphone.mediaSource, microphone.id);
+    }
+    this.checkOSPermission(!!camera, !!microphone, false).then(
+      havePermission => {
+        if (havePermission) {
+          this.sendAsyncMessage("webrtc:Allow", { callID, windowID, devices });
+        } else {
+          this.denyRequestNoPermission(aRequest);
+        }
+      }
+    );
+    return true;
   }
 }
 
 function prompt(aActor, aBrowser, aRequest) {
   let {
-    audioDevices,
-    videoDevices,
+    audioInputDevices,
+    videoInputDevices,
+    audioOutputDevices,
     sharingScreen,
     sharingAudio,
     requestTypes,
@@ -564,26 +516,17 @@ function prompt(aActor, aBrowser, aRequest) {
 
   // If the user has already denied access once in this tab,
   // deny again without even showing the notification icon.
-  if (
-    (audioDevices.length &&
-      SitePermissions.getForPrincipal(principal, "microphone", aBrowser)
-        .state == SitePermissions.BLOCK) ||
-    (videoDevices.length &&
-      SitePermissions.getForPrincipal(
-        principal,
-        sharingScreen ? "screen" : "camera",
-        aBrowser
-      ).state == SitePermissions.BLOCK)
-  ) {
-    aActor.denyRequest(aRequest);
-    return;
+  for (const type of requestTypes) {
+    const permissionID =
+      type == "AudioCapture" ? "microphone" : type.toLowerCase();
+    if (
+      SitePermissions.getForPrincipal(principal, permissionID, aBrowser)
+        .state == SitePermissions.BLOCK
+    ) {
+      aActor.denyRequest(aRequest);
+      return;
+    }
   }
-
-  // Tell the browser to refresh the identity block display in case there
-  // are expired permission states.
-  aBrowser.dispatchEvent(
-    new aBrowser.ownerGlobal.CustomEvent("PermissionStateChange")
-  );
 
   let chromeDoc = aBrowser.ownerDocument;
   let stringBundle = chromeDoc.defaultView.gNavigatorBundle;
@@ -604,6 +547,7 @@ function prompt(aActor, aBrowser, aRequest) {
       "getUserMedia.shareMicrophoneUnsafeDelegations2.message",
       "getUserMedia.shareScreenUnsafeDelegation2.message",
       "getUserMedia.shareAudioCaptureUnsafeDelegation2.message",
+      "selectAudioOutput.shareSpeakerUnsafeDelegation.message",
       // Combinations of the above request types last.
       "getUserMedia.shareCameraAndMicrophoneUnsafeDelegation2.message",
       "getUserMedia.shareCameraAndAudioCaptureUnsafeDelegation2.message",
@@ -617,6 +561,7 @@ function prompt(aActor, aBrowser, aRequest) {
       "getUserMedia.shareMicrophone3.message",
       "getUserMedia.shareScreen4.message",
       "getUserMedia.shareAudioCapture3.message",
+      "selectAudioOutput.shareSpeaker.message",
       // Combinations of the above request types last.
       "getUserMedia.shareCameraAndMicrophone3.message",
       "getUserMedia.shareCameraAndAudioCapture3.message",
@@ -727,15 +672,15 @@ function prompt(aActor, aBrowser, aRequest) {
           // permissions at this point. We need to remove them.
           clearTemporaryGrants(
             notification.browser,
-            videoDevices.length && !sharingScreen,
-            audioDevices.length
+            videoInputDevices.length && !sharingScreen,
+            audioInputDevices.length
           );
 
           let scope = SitePermissions.SCOPE_TEMPORARY;
           if (aState && aState.checkboxChecked) {
             scope = SitePermissions.SCOPE_PERSISTENT;
           }
-          if (audioDevices.length) {
+          if (audioInputDevices.length) {
             SitePermissions.setForPrincipal(
               principal,
               "microphone",
@@ -744,7 +689,7 @@ function prompt(aActor, aBrowser, aRequest) {
               notification.browser
             );
           }
-          if (videoDevices.length) {
+          if (videoInputDevices.length) {
             SitePermissions.setForPrincipal(
               principal,
               sharingScreen ? "screen" : "camera",
@@ -1095,28 +1040,34 @@ function prompt(aActor, aBrowser, aRequest) {
       }
 
       doc.getElementById("webRTC-selectCamera").hidden =
-        !videoDevices.length || sharingScreen;
+        !videoInputDevices.length || sharingScreen;
       doc.getElementById("webRTC-selectWindowOrScreen").hidden =
-        !sharingScreen || !videoDevices.length;
+        !sharingScreen || !videoInputDevices.length;
       doc.getElementById("webRTC-selectMicrophone").hidden =
-        !audioDevices.length || sharingAudio;
+        !audioInputDevices.length || sharingAudio;
+      doc.getElementById(
+        "webRTC-selectSpeaker"
+      ).hidden = !audioOutputDevices.length;
 
       let camMenupopup = doc.getElementById("webRTC-selectCamera-menupopup");
       let windowMenupopup = doc.getElementById("webRTC-selectWindow-menupopup");
       let micMenupopup = doc.getElementById(
         "webRTC-selectMicrophone-menupopup"
       );
+      let speakerMenupopup = doc.getElementById(
+        "webRTC-selectSpeaker-menupopup"
+      );
       let describedByIDs = ["webRTC-shareDevices-notification-description"];
       let describedBySuffix = "icon";
 
       if (sharingScreen) {
-        listScreenShareDevices(windowMenupopup, videoDevices);
+        listScreenShareDevices(windowMenupopup, videoInputDevices);
         checkDisabledWindowMenuItem();
       } else {
         let labelID = "webRTC-selectCamera-single-device-label";
-        listDevices(camMenupopup, videoDevices, labelID);
+        listDevices(camMenupopup, videoInputDevices, labelID);
         notificationElement.removeAttribute("invalidselection");
-        if (videoDevices.length == 1) {
+        if (videoInputDevices.length == 1) {
           describedByIDs.push("webRTC-selectCamera-" + describedBySuffix);
           describedByIDs.push(labelID);
         }
@@ -1124,11 +1075,18 @@ function prompt(aActor, aBrowser, aRequest) {
 
       if (!sharingAudio) {
         let labelID = "webRTC-selectMicrophone-single-device-label";
-        listDevices(micMenupopup, audioDevices, labelID);
-        if (audioDevices.length == 1) {
+        listDevices(micMenupopup, audioInputDevices, labelID);
+        if (audioInputDevices.length == 1) {
           describedByIDs.push("webRTC-selectMicrophone-" + describedBySuffix);
           describedByIDs.push(labelID);
         }
+      }
+
+      let labelID = "webRTC-selectSpeaker-single-device-label";
+      listDevices(speakerMenupopup, audioOutputDevices, labelID);
+      if (audioInputDevices.length == 1) {
+        describedByIDs.push("webRTC-selectSpeaker-icon");
+        describedByIDs.push(labelID);
       }
 
       // PopupNotifications knows to clear the aria-describedby attribute
@@ -1150,7 +1108,7 @@ function prompt(aActor, aBrowser, aRequest) {
 
         let allowedDevices = [];
         let perms = Services.perms;
-        if (videoDevices.length) {
+        if (videoInputDevices.length) {
           let listId =
             "webRTC-select" +
             (sharingScreen ? "Window" : "Camera") +
@@ -1167,7 +1125,7 @@ function prompt(aActor, aBrowser, aRequest) {
               perms.ALLOW_ACTION,
               perms.EXPIRE_SESSION
             );
-            let { mediaSource, id } = videoDevices.find(
+            let { mediaSource, id } = videoInputDevices.find(
               ({ deviceIndex }) => deviceIndex == videoDeviceIndex
             );
             aActor.activateDevicePerm(aRequest.windowID, mediaSource, id);
@@ -1180,7 +1138,7 @@ function prompt(aActor, aBrowser, aRequest) {
             }
           }
         }
-        if (audioDevices.length) {
+        if (audioInputDevices.length) {
           if (!sharingAudio) {
             let audioDeviceIndex = doc.getElementById(
               "webRTC-selectMicrophone-menulist"
@@ -1188,7 +1146,7 @@ function prompt(aActor, aBrowser, aRequest) {
             let allowMic = audioDeviceIndex != "-1";
             if (allowMic) {
               allowedDevices.push(audioDeviceIndex);
-              let { mediaSource, id } = audioDevices.find(
+              let { mediaSource, id } = audioInputDevices.find(
                 ({ deviceIndex }) => deviceIndex == audioDeviceIndex
               );
               aActor.activateDevicePerm(aRequest.windowID, mediaSource, id);
@@ -1205,15 +1163,24 @@ function prompt(aActor, aBrowser, aRequest) {
             allowedDevices.push(0);
           }
         }
+        if (audioOutputDevices.length) {
+          let audioDeviceIndex = doc.getElementById(
+            "webRTC-selectSpeaker-menulist"
+          ).value;
+          let allowSpeaker = audioDeviceIndex != "-1";
+          if (allowSpeaker) {
+            allowedDevices.push(audioDeviceIndex);
+          }
+        }
 
         if (!allowedDevices.length) {
           aActor.denyRequest(aRequest);
           return;
         }
 
-        let camNeeded = !!videoDevices.length && !sharingScreen;
-        let scrNeeded = !!videoDevices.length && sharingScreen;
-        let micNeeded = !!audioDevices.length;
+        let camNeeded = !!videoInputDevices.length && !sharingScreen;
+        let scrNeeded = !!videoInputDevices.length && sharingScreen;
+        let micNeeded = !!audioInputDevices.length;
         let havePermission = await aActor.checkOSPermission(
           camNeeded,
           micNeeded,
@@ -1252,6 +1219,12 @@ function prompt(aActor, aBrowser, aRequest) {
     // Don't offer "always remember" action in maybe unsafe permission
     // delegation
     if (aRequest.shouldDelegatePermission && aRequest.secondOrigin) {
+      return false;
+    }
+
+    // "Always allow this speaker" not yet supported for
+    // selectAudioOutput().  Bug 1712892
+    if (audioOutputDevices.length) {
       return false;
     }
 

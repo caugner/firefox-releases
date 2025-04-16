@@ -129,7 +129,7 @@ class MarionetteBaseProtocolPart(BaseProtocolPart):
                 pass
             except errors.JavascriptException as e:
                 # This can happen if we navigate, but just keep going
-                self.logger.debug(e.message)
+                self.logger.debug(e)
                 pass
             except IOError:
                 self.logger.debug("Socket closed")
@@ -494,7 +494,7 @@ class MarionetteCoverageProtocolPart(CoverageProtocolPart):
             return
 
         script = """
-            const {PerTestCoverageUtils} = ChromeUtils.import("chrome://marionette/content/PerTestCoverageUtils.jsm");
+            const {PerTestCoverageUtils} = ChromeUtils.import("chrome://remote/content/marionette/PerTestCoverageUtils.jsm");
             return PerTestCoverageUtils.enabled;
             """
         with self.marionette.using_context(self.marionette.CONTEXT_CHROME):
@@ -504,7 +504,7 @@ class MarionetteCoverageProtocolPart(CoverageProtocolPart):
         script = """
             var callback = arguments[arguments.length - 1];
 
-            const {PerTestCoverageUtils} = ChromeUtils.import("chrome://marionette/content/PerTestCoverageUtils.jsm");
+            const {PerTestCoverageUtils} = ChromeUtils.import("chrome://remote/content/marionette/PerTestCoverageUtils.jsm");
             PerTestCoverageUtils.beforeTest().then(callback, callback);
             """
         with self.marionette.using_context(self.marionette.CONTEXT_CHROME):
@@ -524,7 +524,7 @@ class MarionetteCoverageProtocolPart(CoverageProtocolPart):
         script = """
             var callback = arguments[arguments.length - 1];
 
-            const {PerTestCoverageUtils} = ChromeUtils.import("chrome://marionette/content/PerTestCoverageUtils.jsm");
+            const {PerTestCoverageUtils} = ChromeUtils.import("chrome://remote/content/marionette/PerTestCoverageUtils.jsm");
             PerTestCoverageUtils.afterTest().then(callback, callback);
             """
         with self.marionette.using_context(self.marionette.CONTEXT_CHROME):
@@ -734,11 +734,12 @@ class MarionetteProtocol(Protocol):
             try:
                 self.marionette._request_in_app_shutdown()
                 self.marionette.delete_session(send_request=False)
+                self.marionette.cleanup()
             except Exception:
                 # This is typically because the session never started
                 pass
         if self.marionette is not None:
-            del self.marionette
+            self.marionette = None
         super(MarionetteProtocol, self).teardown()
 
     def is_alive(self):
@@ -801,7 +802,7 @@ class ExecuteAsyncScriptRun(TimedRunner):
             self.logger.info("NoSuchWindowException on command, setting status to CRASH")
             self.result = False, ("CRASH", None)
         except Exception as e:
-            if isinstance(e, errors.JavascriptException) and e.message.startswith("Document was unloaded"):
+            if isinstance(e, errors.JavascriptException) and str(e).startswith("Document was unloaded"):
                 message = "Document unloaded; maybe test navigated the top-level-browsing context?"
             else:
                 message = getattr(e, "message", "")

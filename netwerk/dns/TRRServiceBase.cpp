@@ -6,19 +6,17 @@
 
 #include "TRRServiceBase.h"
 
-#include "mozilla/Logging.h"
 #include "mozilla/Preferences.h"
 #include "nsHostResolver.h"
 #include "nsNetUtil.h"
 #include "nsIOService.h"
 #include "nsIDNSService.h"
+// Put DNSLogging.h at the end to avoid LOG being overwritten by other headers.
+#include "DNSLogging.h"
+#include "mozilla/StaticPrefs_network.h"
 
 namespace mozilla {
 namespace net {
-
-#undef LOG
-extern mozilla::LazyLogModule gHostResolverLog;
-#define LOG(args) MOZ_LOG(gHostResolverLog, mozilla::LogLevel::Debug, args)
 
 TRRServiceBase::TRRServiceBase()
     : mMode(nsIDNSService::MODE_NATIVEONLY), mURISetByDetection(false) {}
@@ -88,7 +86,7 @@ void TRRServiceBase::CheckURIPrefs() {
   }
 
   // Otherwise just use the default value.
-  MaybeSetPrivateURI(mURIPref);
+  MaybeSetPrivateURI(mDefaultURIPref);
 }
 
 // static
@@ -147,6 +145,7 @@ void TRRServiceBase::OnTRRURIChange() {
   mURIPrefHasUserValue = Preferences::HasUserValue("network.trr.uri");
   Preferences::GetCString("network.trr.uri", mURIPref);
   Preferences::GetCString(kRolloutURIPref, mRolloutURIPref);
+  Preferences::GetCString("network.trr.default_provider_uri", mDefaultURIPref);
 
   CheckURIPrefs();
 }

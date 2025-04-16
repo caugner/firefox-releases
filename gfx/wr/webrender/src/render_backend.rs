@@ -366,6 +366,10 @@ impl ScratchBuffer {
         self.frame.begin_frame();
     }
 
+    pub fn end_frame(&mut self) {
+        self.primitive.end_frame();
+    }
+
     pub fn recycle(&mut self, recycler: &mut Recycler) {
         self.primitive.recycle(recycler);
         self.picture.recycle(recycler);
@@ -486,7 +490,7 @@ impl Document {
     }
 
     fn has_pixels(&self) -> bool {
-        !self.view.scene.device_rect.size.is_empty()
+        !self.view.scene.device_rect.is_empty()
     }
 
     fn process_frame_msg(
@@ -576,7 +580,7 @@ impl Document {
                 gpu_cache,
                 &mut self.rg_builder,
                 self.stamp,
-                self.view.scene.device_rect.origin,
+                self.view.scene.device_rect.min,
                 &self.dynamic_properties,
                 &mut self.data_stores,
                 &mut self.scratch,

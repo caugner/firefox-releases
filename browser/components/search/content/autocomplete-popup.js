@@ -81,6 +81,12 @@
       };
     }
 
+    // We override this because even though we have a shadow root, we want our
+    // inheritance to be done on the light tree.
+    getElementForAttrInheritance(selector) {
+      return this.querySelector(selector);
+    }
+
     initialize() {
       super.initialize();
       this.initializeAttributeInheritance();
@@ -108,7 +114,7 @@
       <menuseparator class="searchbar-separator"/>
       <richlistbox class="autocomplete-richlistbox search-panel-tree" flex="1"></richlistbox>
       <menuseparator class="searchbar-separator"/>
-      <hbox class="search-one-offs"></hbox>
+      <hbox class="search-one-offs" is_searchbar="true"/>
     `;
     }
 

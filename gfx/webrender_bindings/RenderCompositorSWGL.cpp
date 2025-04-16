@@ -131,8 +131,8 @@ bool RenderCompositorSWGL::AllocateMappedBuffer(
   LayoutDeviceIntRegion opaque;
   for (size_t i = 0; i < aNumOpaqueRects; i++) {
     const auto& rect = aOpaqueRects[i];
-    opaque.OrWith(LayoutDeviceIntRect(rect.origin.x, rect.origin.y,
-                                      rect.size.width, rect.size.height));
+    opaque.OrWith(LayoutDeviceIntRect(rect.min.x, rect.min.y, rect.width(),
+                                      rect.height()));
   }
 
   LayoutDeviceIntRegion clear = mWidget->GetTransparentRegion();
@@ -148,8 +148,9 @@ bool RenderCompositorSWGL::AllocateMappedBuffer(
 }
 
 void RenderCompositorSWGL::StartCompositing(
-    const wr::DeviceIntRect* aDirtyRects, size_t aNumDirtyRects,
-    const wr::DeviceIntRect* aOpaqueRects, size_t aNumOpaqueRects) {
+    wr::ColorF aClearColor, const wr::DeviceIntRect* aDirtyRects,
+    size_t aNumDirtyRects, const wr::DeviceIntRect* aOpaqueRects,
+    size_t aNumOpaqueRects) {
   if (mDT) {
     // Cancel any existing buffers that might accidentally be left from updates
     CommitMappedBuffer(false);
@@ -162,8 +163,8 @@ void RenderCompositorSWGL::StartCompositing(
     mDirtyRegion.SetEmpty();
     for (size_t i = 0; i < aNumDirtyRects; i++) {
       const auto& rect = aDirtyRects[i];
-      mDirtyRegion.OrWith(LayoutDeviceIntRect(
-          rect.origin.x, rect.origin.y, rect.size.width, rect.size.height));
+      mDirtyRegion.OrWith(LayoutDeviceIntRect(rect.min.x, rect.min.y,
+                                              rect.width(), rect.height()));
     }
     // Ensure the region lies within the widget bounds
     mDirtyRegion.AndWith(bounds);

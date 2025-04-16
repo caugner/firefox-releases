@@ -144,41 +144,18 @@ CATEGORIES = {
 
 def search_path(mozilla_dir, packages_txt):
     with open(os.path.join(mozilla_dir, packages_txt)) as f:
-        packages = [line.rstrip().split(":") for line in f]
+        packages = [line.rstrip().split(":", maxsplit=1) for line in f]
 
-    def handle_package(package):
-        if package[0] == "optional":
-            try:
-                for path in handle_package(package[1:]):
-                    yield path
-            except Exception:
-                pass
-
-        if package[0] in ("windows", "!windows"):
-            for_win = not package[0].startswith("!")
-            is_win = sys.platform == "win32"
-            if is_win == for_win:
-                for path in handle_package(package[1:]):
-                    yield path
-
-        if package[0] in ("python2", "python3"):
-            for_python3 = package[0].endswith("3")
-            is_python3 = sys.version_info[0] > 2
-            if is_python3 == for_python3:
-                for path in handle_package(package[1:]):
-                    yield path
-
-        if package[0] == "packages.txt":
-            assert len(package) == 2
-            for p in search_path(mozilla_dir, package[1]):
+    def handle_package(action, package):
+        if action == "packages.txt":
+            for p in search_path(mozilla_dir, package):
                 yield os.path.join(mozilla_dir, p)
 
-        if package[0].endswith(".pth"):
-            assert len(package) == 2
-            yield os.path.join(mozilla_dir, package[1])
+        if action == "pth":
+            yield os.path.join(mozilla_dir, package)
 
-    for package in packages:
-        for path in handle_package(package):
+    for current_action, current_package in packages:
+        for path in handle_package(current_action, current_package):
             yield path
 
 
@@ -193,9 +170,9 @@ def bootstrap(topsrcdir):
     # Ensure we are running Python 2.7 or 3.5+. We put this check here so we
     # generate a user-friendly error message rather than a cryptic stack trace
     # on module import.
-    major, minor = sys.version_info[:2]
-    if (major == 2 and minor < 7) or (major == 3 and minor < 5):
-        print("Python 2.7 or Python 3.5+ is required to run mach.")
+    major = sys.version_info[:2][0]
+    if sys.version_info < (3, 6):
+        print("Python 3.6+ is required to run mach.")
         print("You are running Python", platform.python_version())
         sys.exit(1)
 

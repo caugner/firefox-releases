@@ -42,6 +42,13 @@ plugs:
   browser-sandbox:
     interface: browser-support
     allow-sandbox: true
+  etc-firefox-policies:
+    interface: system-files
+    read: [/etc/firefox/policies]
+
+layout:
+  /usr/share/libdrm:
+    bind: $SNAP/gnome-platform/usr/share/libdrm
 
 parts:
   firefox:

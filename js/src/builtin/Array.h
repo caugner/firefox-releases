@@ -22,18 +22,18 @@ namespace js {
 class ArrayObject;
 
 MOZ_ALWAYS_INLINE bool IdIsIndex(jsid id, uint32_t* indexp) {
-  if (JSID_IS_INT(id)) {
-    int32_t i = JSID_TO_INT(id);
+  if (id.isInt()) {
+    int32_t i = id.toInt();
     MOZ_ASSERT(i >= 0);
-    *indexp = (uint32_t)i;
+    *indexp = uint32_t(i);
     return true;
   }
 
-  if (MOZ_UNLIKELY(!JSID_IS_STRING(id))) {
+  if (MOZ_UNLIKELY(!id.isAtom())) {
     return false;
   }
 
-  JSAtom* atom = JSID_TO_ATOM(id);
+  JSAtom* atom = id.toAtom();
   return atom->isIndex(indexp);
 }
 
@@ -41,25 +41,25 @@ MOZ_ALWAYS_INLINE bool IdIsIndex(jsid id, uint32_t* indexp) {
 
 // Create a dense array with no capacity allocated, length set to 0, in the
 // normal (i.e. non-tenured) heap.
-extern ArrayObject* JS_FASTCALL
-NewDenseEmptyArray(JSContext* cx, HandleObject proto = nullptr);
+extern ArrayObject* NewDenseEmptyArray(JSContext* cx,
+                                       HandleObject proto = nullptr);
 
 // Create a dense array with no capacity allocated, length set to 0, in the
 // tenured heap.
-extern ArrayObject* JS_FASTCALL
-NewTenuredDenseEmptyArray(JSContext* cx, HandleObject proto = nullptr);
+extern ArrayObject* NewTenuredDenseEmptyArray(JSContext* cx,
+                                              HandleObject proto = nullptr);
 
 // Create a dense array with a set length, but without allocating space for the
 // contents. This is useful, e.g., when accepting length from the user.
-extern ArrayObject* JS_FASTCALL NewDenseUnallocatedArray(
+extern ArrayObject* NewDenseUnallocatedArray(
     JSContext* cx, uint32_t length, HandleObject proto = nullptr,
     NewObjectKind newKind = GenericObject);
 
 // Create a dense array with length and capacity == 'length', initialized length
 // set to 0.
-extern ArrayObject* JS_FASTCALL NewDenseFullyAllocatedArray(
+extern ArrayObject* NewDenseFullyAllocatedArray(
     JSContext* cx, uint32_t length, HandleObject proto = nullptr,
-    NewObjectKind newKind = GenericObject);
+    NewObjectKind newKind = GenericObject, gc::AllocSite* site = nullptr);
 
 // Create a dense array with length == 'length', initialized length set to 0,
 // and capacity == 'length' clamped to EagerAllocationMaxLength.

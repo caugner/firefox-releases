@@ -171,6 +171,7 @@ WindowSurfaceWayland::WindowSurfaceWayland(nsWindow* aWindow)
       mSmoothRendering(StaticPrefs::widget_wayland_smooth_rendering()),
       mSurfaceReadyTimerID(),
       mSurfaceLock("WindowSurfaceWayland lock") {
+  LOGWAYLAND(("WindowSurfaceWayland::WindowSurfaceWayland() [%p]\n", this));
   // Use slow compositing on KDE only.
   const char* currentDesktop = getenv("XDG_CURRENT_DESKTOP");
   if (currentDesktop && strstr(currentDesktop, "KDE") != nullptr) {
@@ -179,6 +180,8 @@ WindowSurfaceWayland::WindowSurfaceWayland(nsWindow* aWindow)
 }
 
 WindowSurfaceWayland::~WindowSurfaceWayland() {
+  LOGWAYLAND(("WindowSurfaceWayland::~WindowSurfaceWayland() [%p]\n", this));
+
   MutexAutoLock lock(mSurfaceLock);
 
   if (mSurfaceReadyTimerID) {
@@ -682,6 +685,12 @@ bool WindowSurfaceWayland::FlushPendingCommitsLocked() {
 
   wl_proxy_set_queue((struct wl_proxy*)waylandSurface,
                      mWaylandDisplay->GetEventQueue());
+
+  // We can't use frame callbacks from previous surfaces
+  if (moz_container_wayland_get_and_reset_remapped(container)) {
+    mLastCommittedSurfaceID = -1;
+    g_clear_pointer(&mFrameCallback, wl_callback_destroy);
+  }
 
   // We have an active frame callback request so handle it.
   if (mFrameCallback) {

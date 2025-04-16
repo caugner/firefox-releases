@@ -99,18 +99,16 @@ ServiceWorkerPrivate::ServiceWorkerPrivate(ServiceWorkerInfo* aInfo)
   mIdleWorkerTimer = NS_NewTimer();
   MOZ_ASSERT(mIdleWorkerTimer);
 
-  if (ServiceWorkerParentInterceptEnabled()) {
-    RefPtr<ServiceWorkerPrivateImpl> inner = new ServiceWorkerPrivateImpl(this);
+  RefPtr<ServiceWorkerPrivateImpl> inner = new ServiceWorkerPrivateImpl(this);
 
-    // Assert in all debug builds as well as non-debug Nightly and Dev Edition.
+  // Assert in all debug builds as well as non-debug Nightly and Dev Edition.
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
-    MOZ_DIAGNOSTIC_ASSERT(NS_SUCCEEDED(inner->Initialize()));
+  MOZ_DIAGNOSTIC_ASSERT(NS_SUCCEEDED(inner->Initialize()));
 #else
-    MOZ_ALWAYS_SUCCEEDS(inner->Initialize());
+  MOZ_ALWAYS_SUCCEEDS(inner->Initialize());
 #endif
 
-    mInner = std::move(inner);
-  }
+  mInner = std::move(inner);
 }
 
 ServiceWorkerPrivate::~ServiceWorkerPrivate() {
@@ -1390,7 +1388,7 @@ class FetchEventRunnable : public ExtendableFunctionalEventWorkerRunnable,
       mChannel->SetChannelResetEnd(timeStamp);
       mChannel->SaveTimeStamps();
 
-      nsresult rv = mChannel->ResetInterception();
+      nsresult rv = mChannel->ResetInterception(false);
       if (NS_FAILED(rv)) {
         NS_WARNING("Failed to resume intercepted network request");
         mChannel->CancelInterception(rv);
@@ -1549,7 +1547,7 @@ nsresult ServiceWorkerPrivate::SendFetchEvent(
   // condition we handle the reset here instead of returning an error which
   // would in turn trigger a console report.
   if (!registration) {
-    nsresult rv = aChannel->ResetInterception();
+    nsresult rv = aChannel->ResetInterception(false);
     if (NS_FAILED(rv)) {
       NS_WARNING("Failed to resume intercepted network request");
       aChannel->CancelInterception(rv);
@@ -1561,7 +1559,7 @@ nsresult ServiceWorkerPrivate::SendFetchEvent(
   // any fetch event handlers, then abort the interception and maybe trigger
   // the soft update algorithm.
   if (!mInfo->HandlesFetch()) {
-    nsresult rv = aChannel->ResetInterception();
+    nsresult rv = aChannel->ResetInterception(false);
     if (NS_FAILED(rv)) {
       NS_WARNING("Failed to resume intercepted network request");
       aChannel->CancelInterception(rv);
@@ -1752,7 +1750,7 @@ nsresult ServiceWorkerPrivate::SpawnWorkerIfNeeded(WakeUpReason aWhy,
   NS_ConvertUTF8toUTF16 scriptSpec(mInfo->ScriptSpec());
 
   mWorkerPrivate = WorkerPrivate::Constructor(jsapi.cx(), scriptSpec, false,
-                                              WorkerTypeService, VoidString(),
+                                              WorkerKindService, VoidString(),
                                               ""_ns, &info, error);
   if (NS_WARN_IF(error.Failed())) {
     return error.StealNSResult();

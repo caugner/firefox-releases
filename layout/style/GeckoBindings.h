@@ -35,12 +35,10 @@ class ComputedStyle;
 class SeenPtrs;
 class ServoElementSnapshot;
 class ServoElementSnapshotTable;
-class SharedFontList;
 class StyleSheet;
 enum class PseudoStyleType : uint8_t;
 enum class PointerCapabilities : uint8_t;
 enum class UpdateAnimationsTasks : uint8_t;
-struct FontFamilyName;
 struct Keyframe;
 
 namespace css {
@@ -78,8 +76,6 @@ void Gecko_Snapshot_DebugListAttributes(const mozilla::ServoElementSnapshot*,
 bool Gecko_IsSignificantChild(const nsINode*, bool whitespace_is_significant);
 
 const nsINode* Gecko_GetLastChild(const nsINode*);
-const nsINode* Gecko_GetPreviousSibling(const nsINode*);
-
 const nsINode* Gecko_GetFlattenedTreeParentNode(const nsINode*);
 const mozilla::dom::Element* Gecko_GetBeforeOrAfterPseudo(
     const mozilla::dom::Element*, bool is_before);
@@ -272,27 +268,6 @@ nsAtom* Gecko_Atomize(const char* aString, uint32_t aLength);
 nsAtom* Gecko_Atomize16(const nsAString* aString);
 void Gecko_AddRefAtom(nsAtom* aAtom);
 void Gecko_ReleaseAtom(nsAtom* aAtom);
-
-// Font style
-void Gecko_CopyFontFamilyFrom(nsFont* dst, const nsFont* src);
-
-void Gecko_nsTArray_FontFamilyName_AppendNamed(
-    nsTArray<mozilla::FontFamilyName>* aNames, nsAtom* aName,
-    mozilla::StyleFontFamilyNameSyntax);
-
-void Gecko_nsTArray_FontFamilyName_AppendGeneric(
-    nsTArray<mozilla::FontFamilyName>* aNames, mozilla::StyleGenericFontFamily);
-
-// Returns an already-AddRefed SharedFontList with an empty mNames array.
-mozilla::SharedFontList* Gecko_SharedFontList_Create();
-
-size_t Gecko_SharedFontList_SizeOfIncludingThis(
-    mozilla::SharedFontList* fontlist);
-
-size_t Gecko_SharedFontList_SizeOfIncludingThisIfUnshared(
-    mozilla::SharedFontList* fontlist);
-
-NS_DECL_THREADSAFE_FFI_REFCOUNTING(mozilla::SharedFontList, SharedFontList);
 
 // will not run destructors on dst, give it uninitialized memory
 // font_id is LookAndFeel::FontID
@@ -502,14 +477,6 @@ void Gecko_nsStyleFont_SetLang(nsStyleFont* font, nsAtom* atom);
 void Gecko_nsStyleFont_CopyLangFrom(nsStyleFont* aFont,
                                     const nsStyleFont* aSource);
 
-// Moves the generic family in the font-family to the front, or prepends
-// aDefaultGeneric, so that user-configured fonts take precedent over document
-// fonts.
-//
-// Document fonts may still be used as fallback for unsupported glyphs though.
-void Gecko_nsStyleFont_PrioritizeUserFonts(
-    nsStyleFont* font, mozilla::StyleGenericFontFamily aDefaultGeneric);
-
 mozilla::Length Gecko_nsStyleFont_ComputeMinSize(const nsStyleFont*,
                                                  const mozilla::dom::Document*);
 
@@ -541,7 +508,8 @@ bool Gecko_IsDocumentBody(const mozilla::dom::Element* element);
 // We use an int32_t here instead of a LookAndFeel::ColorID
 // because forward-declaring a nested enum/struct is impossible
 nscolor Gecko_GetLookAndFeelSystemColor(int32_t color_id,
-                                        const mozilla::dom::Document*);
+                                        const mozilla::dom::Document*,
+                                        mozilla::StyleSystemColorScheme);
 
 int32_t Gecko_GetLookAndFeelInt(int32_t int_id);
 
@@ -556,9 +524,6 @@ void Gecko_AddPropertyToSet(nsCSSPropertyIDSet*, nsCSSPropertyID);
   void Gecko_Destroy_nsStyle##name(nsStyle##name* ptr);
 #include "nsStyleStructList.h"
 #undef STYLE_STRUCT
-
-void Gecko_RegisterProfilerThread(const char* name);
-void Gecko_UnregisterProfilerThread();
 
 #ifdef MOZ_GECKO_PROFILER
 void Gecko_Construct_AutoProfilerLabel(mozilla::AutoProfilerLabel*,

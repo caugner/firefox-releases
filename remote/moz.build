@@ -5,7 +5,9 @@
 DIRS += [
     "cdp",
     "components",
+    "marionette",
     "shared",
+    "webdriver-bidi",
 ]
 
 JAR_MANIFESTS += ["jar.mn"]

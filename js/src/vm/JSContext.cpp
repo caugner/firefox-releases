@@ -28,6 +28,7 @@
 #  include <processthreadsapi.h>
 #endif  // XP_WIN
 
+#include "jsapi.h"  // JS_SetNativeStackQuota
 #include "jsexn.h"
 #include "jspubtd.h"
 #include "jstypes.h"
@@ -154,6 +155,21 @@ bool JSContext::init(ContextKind kind) {
   return true;
 }
 
+static void InitDefaultStackQuota(JSContext* cx) {
+  // Initialize stack quota to a reasonable default. Embedders can override this
+  // by calling JS_SetNativeStackQuota.
+  //
+  // NOTE: Firefox overrides these values. For the main thread this happens in
+  // XPCJSContext::Initialize.
+
+#if defined(MOZ_ASAN) || (defined(DEBUG) && !defined(XP_WIN))
+  static constexpr size_t MaxStackSize = 2 * 128 * sizeof(size_t) * 1024;
+#else
+  static constexpr size_t MaxStackSize = 128 * sizeof(size_t) * 1024;
+#endif
+  JS_SetNativeStackQuota(cx, MaxStackSize);
+}
+
 JSContext* js::NewContext(uint32_t maxBytes, JSRuntime* parentRuntime) {
   AutoNoteSingleThreadedRegion anstr;
 
@@ -188,11 +204,20 @@ JSContext* js::NewContext(uint32_t maxBytes, JSRuntime* parentRuntime) {
     return nullptr;
   }
 
+  // Initialize stack quota last because simulators rely on the JSRuntime having
+  // been initialized.
+  if (cx->isMainThreadContext()) {
+    InitDefaultStackQuota(cx);
+  }
+
   return cx;
 }
 
 void js::DestroyContext(JSContext* cx) {
   JS_AbortIfWrongThread(cx);
+
+  MOZ_ASSERT(!cx->realm(), "Shouldn't destroy context with active realm");
+  MOZ_ASSERT(!cx->activation(), "Shouldn't destroy context with activations");
 
   cx->checkNoGCRooters();
 
@@ -247,7 +272,7 @@ bool AutoResolving::alreadyStartedSlow() const {
  * Furthermore, callers of ReportOutOfMemory (viz., malloc) assume a GC does
  * not occur, so GC must be avoided or suppressed.
  */
-JS_FRIEND_API void js::ReportOutOfMemory(JSContext* cx) {
+JS_PUBLIC_API void js::ReportOutOfMemory(JSContext* cx) {
   /*
    * OOMs are non-deterministic, especially across different execution modes
    * (e.g. interpreter vs JIT). When doing differential testing, print to stderr
@@ -310,7 +335,7 @@ void js::ReportOverRecursed(JSContext* maybecx, unsigned errorNumber) {
   }
 }
 
-JS_FRIEND_API void js::ReportOverRecursed(JSContext* maybecx) {
+JS_PUBLIC_API void js::ReportOverRecursed(JSContext* maybecx) {
   ReportOverRecursed(maybecx, JSMSG_OVER_RECURSED);
 }
 
@@ -417,9 +442,8 @@ static void PrintErrorLine(FILE* file, const char* prefix,
                            JSErrorNotes::Note* note) {}
 
 template <typename T>
-static void PrintSingleError(JSContext* cx, FILE* file,
-                             JS::ConstUTF8CharsZ toStringResult, T* report,
-                             PrintErrorKind kind) {
+static void PrintSingleError(FILE* file, JS::ConstUTF8CharsZ toStringResult,
+                             T* report, PrintErrorKind kind) {
   UniqueChars prefix;
   if (report->filename) {
     prefix = JS_smprintf("%s:", report->filename);
@@ -472,8 +496,7 @@ static void PrintSingleError(JSContext* cx, FILE* file,
   fflush(file);
 }
 
-static void PrintErrorImpl(JSContext* cx, FILE* file,
-                           JS::ConstUTF8CharsZ toStringResult,
+static void PrintErrorImpl(FILE* file, JS::ConstUTF8CharsZ toStringResult,
                            JSErrorReport* report, bool reportWarnings) {
   MOZ_ASSERT(report);
 
@@ -486,25 +509,25 @@ static void PrintErrorImpl(JSContext* cx, FILE* file,
   if (report->isWarning()) {
     kind = PrintErrorKind::Warning;
   }
-  PrintSingleError(cx, file, toStringResult, report, kind);
+  PrintSingleError(file, toStringResult, report, kind);
 
   if (report->notes) {
     for (auto&& note : *report->notes) {
-      PrintSingleError(cx, file, JS::ConstUTF8CharsZ(), note.get(),
+      PrintSingleError(file, JS::ConstUTF8CharsZ(), note.get(),
                        PrintErrorKind::Note);
     }
   }
 }
 
-JS_PUBLIC_API void JS::PrintError(JSContext* cx, FILE* file,
-                                  JSErrorReport* report, bool reportWarnings) {
-  PrintErrorImpl(cx, file, JS::ConstUTF8CharsZ(), report, reportWarnings);
+JS_PUBLIC_API void JS::PrintError(FILE* file, JSErrorReport* report,
+                                  bool reportWarnings) {
+  PrintErrorImpl(file, JS::ConstUTF8CharsZ(), report, reportWarnings);
 }
 
-JS_PUBLIC_API void JS::PrintError(JSContext* cx, FILE* file,
+JS_PUBLIC_API void JS::PrintError(FILE* file,
                                   const JS::ErrorReportBuilder& builder,
                                   bool reportWarnings) {
-  PrintErrorImpl(cx, file, builder.toStringResult(), builder.report(),
+  PrintErrorImpl(file, builder.toStringResult(), builder.report(),
                  reportWarnings);
 }
 
@@ -679,7 +702,7 @@ void JSContext::recoverFromOutOfMemory() {
   }
 }
 
-JS_FRIEND_API bool js::UseInternalJobQueues(JSContext* cx) {
+JS_PUBLIC_API bool js::UseInternalJobQueues(JSContext* cx) {
   // Internal job queue handling must be set up very early. Self-hosting
   // initialization is as good a marker for that as any.
   MOZ_RELEASE_ASSERT(
@@ -700,17 +723,17 @@ JS_FRIEND_API bool js::UseInternalJobQueues(JSContext* cx) {
   return true;
 }
 
-JS_FRIEND_API bool js::EnqueueJob(JSContext* cx, JS::HandleObject job) {
+JS_PUBLIC_API bool js::EnqueueJob(JSContext* cx, JS::HandleObject job) {
   MOZ_ASSERT(cx->jobQueue);
   return cx->jobQueue->enqueuePromiseJob(cx, nullptr, job, nullptr, nullptr);
 }
 
-JS_FRIEND_API void js::StopDrainingJobQueue(JSContext* cx) {
+JS_PUBLIC_API void js::StopDrainingJobQueue(JSContext* cx) {
   MOZ_ASSERT(cx->internalJobQueue.ref());
   cx->internalJobQueue->interrupt();
 }
 
-JS_FRIEND_API void js::RunJobs(JSContext* cx) {
+JS_PUBLIC_API void js::RunJobs(JSContext* cx) {
   MOZ_ASSERT(cx->jobQueue);
   cx->jobQueue->runJobs(cx);
   JS::ClearKeptObjects(cx);

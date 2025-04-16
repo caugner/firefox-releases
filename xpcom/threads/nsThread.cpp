@@ -33,6 +33,7 @@
 #include "mozilla/SchedulerGroup.h"
 #include "mozilla/Services.h"
 #include "mozilla/SpinEventLoopUntil.h"
+#include "mozilla/StaticLocalPtr.h"
 #include "mozilla/StaticPrefs_threads.h"
 #include "mozilla/TaskController.h"
 #include "nsXPCOMPrivate.h"
@@ -92,12 +93,6 @@ using GetCurrentThreadStackLimitsFn = void(WINAPI*)(PULONG_PTR LowLimit,
 #  include <signal.h>
 #  include <fcntl.h>
 #  include "nsXULAppAPI.h"
-#endif
-
-#ifdef MOZ_TASK_TRACER
-#  include "GeckoTaskTracer.h"
-#  include "TracedTaskCommon.h"
-using namespace mozilla::tasktracer;
 #endif
 
 using namespace mozilla;
@@ -186,6 +181,7 @@ NS_INTERFACE_MAP_BEGIN(nsThread)
   NS_INTERFACE_MAP_ENTRY(nsIEventTarget)
   NS_INTERFACE_MAP_ENTRY(nsISerialEventTarget)
   NS_INTERFACE_MAP_ENTRY(nsISupportsPriority)
+  NS_INTERFACE_MAP_ENTRY_CONDITIONAL(nsIDelayedRunnableObserver, mEventTarget)
   NS_INTERFACE_MAP_ENTRY(nsIDirectTaskDispatcher)
   NS_INTERFACE_MAP_ENTRY_AMBIGUOUS(nsISupports, nsIThread)
   if (aIID.Equals(NS_GET_IID(nsIClassInfo))) {
@@ -236,6 +232,9 @@ class nsThreadShutdownEvent : public Runnable {
         mShutdownContext(aCtx) {}
   NS_IMETHOD Run() override {
     mThread->mShutdownContext = mShutdownContext;
+    if (mThread->mEventTarget) {
+      mThread->mEventTarget->NotifyShutdown();
+    }
     MessageLoop::current()->Quit();
     return NS_OK;
   }
@@ -313,13 +312,15 @@ struct ThreadInitData {
 }  // namespace
 
 /* static */ mozilla::OffTheBooksMutex& nsThread::ThreadListMutex() {
-  static OffTheBooksMutex sMutex("nsThread::ThreadListMutex");
-  return sMutex;
+  static StaticLocalAutoPtr<OffTheBooksMutex> sMutex(
+      new OffTheBooksMutex("nsThread::ThreadListMutex"));
+  return *sMutex;
 }
 
 /* static */ LinkedList<nsThread>& nsThread::ThreadList() {
-  static LinkedList<nsThread> sList;
-  return sList;
+  static StaticLocalAutoPtr<LinkedList<nsThread>> sList(
+      new LinkedList<nsThread>());
+  return *sList;
 }
 
 /* static */
@@ -438,10 +439,6 @@ void nsThread::ThreadFunc(void* aArg) {
 
   // Release any observer of the thread here.
   self->SetObserver(nullptr);
-
-#ifdef MOZ_TASK_TRACER
-  FreeTraceInfo();
-#endif
 
   // The PRThread will be deleted in PR_JoinThread(), so clear references.
   self->mThread = nullptr;
@@ -1320,6 +1317,8 @@ void nsThread::SetScriptObserver(
   mScriptObserver = aScriptObserver;
 }
 
+void NS_DispatchMemoryPressure();
+
 void nsThread::DoMainThreadSpecificProcessing() const {
   MOZ_ASSERT(mIsMainThread);
 
@@ -1327,23 +1326,7 @@ void nsThread::DoMainThreadSpecificProcessing() const {
 
   // Fire a memory pressure notification, if one is pending.
   if (!ShuttingDown()) {
-    MemoryPressureState mpPending = NS_GetPendingMemoryPressure();
-    if (mpPending != MemPressure_None) {
-      nsCOMPtr<nsIObserverService> os = services::GetObserverService();
-
-      if (os) {
-        if (mpPending == MemPressure_Stopping) {
-          os->NotifyObservers(nullptr, "memory-pressure-stop", nullptr);
-        } else {
-          os->NotifyObservers(nullptr, "memory-pressure",
-                              mpPending == MemPressure_New
-                                  ? u"low-memory"
-                                  : u"low-memory-ongoing");
-        }
-      } else {
-        NS_WARNING("Can't get observer service!");
-      }
-    }
+    NS_DispatchMemoryPressure();
   }
 }
 
@@ -1386,6 +1369,18 @@ NS_IMETHODIMP nsThread::HaveDirectTasks(bool* aValue) {
 nsIEventTarget* nsThread::EventTarget() { return this; }
 
 nsISerialEventTarget* nsThread::SerialEventTarget() { return this; }
+
+void nsThread::OnDelayedRunnableCreated(mozilla::DelayedRunnable* aRunnable) {
+  mEventTarget->OnDelayedRunnableCreated(aRunnable);
+}
+
+void nsThread::OnDelayedRunnableScheduled(mozilla::DelayedRunnable* aRunnable) {
+  mEventTarget->OnDelayedRunnableScheduled(aRunnable);
+}
+
+void nsThread::OnDelayedRunnableRan(mozilla::DelayedRunnable* aRunnable) {
+  mEventTarget->OnDelayedRunnableRan(aRunnable);
+}
 
 nsLocalExecutionRecord nsThread::EnterLocalExecution() {
   MOZ_RELEASE_ASSERT(!mIsInLocalExecutionMode);
@@ -1481,7 +1476,6 @@ void PerformanceCounterState::MaybeReportAccumulatedTime(TimeStamp aNow) {
     }
     mLastLongTaskEnd = aNow;
 
-#ifdef MOZ_GECKO_PROFILER
     if (profiler_thread_is_being_profiled()) {
       struct LongTaskMarker {
         static constexpr Span<const char> MarkerTypeName() {
@@ -1506,7 +1500,6 @@ void PerformanceCounterState::MaybeReportAccumulatedTime(TimeStamp aNow) {
                           MarkerTiming::Interval(mCurrentTimeSliceStart, aNow),
                           LongTaskMarker{});
     }
-#endif
   }
 }
 

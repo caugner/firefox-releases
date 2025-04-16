@@ -1941,6 +1941,10 @@ void CodeGenerator::visitWasmSelect(LWasmSelect* ins) {
   }
 }
 
+void CodeGenerator::visitWasmCompareAndSelect(LWasmCompareAndSelect* ins) {
+  emitWasmCompareAndSelect(ins);
+}
+
 void CodeGenerator::visitWasmReinterpret(LWasmReinterpret* lir) {
   MOZ_ASSERT(gen->compilingWasm());
   MWasmReinterpret* ins = lir->mir();
@@ -2034,6 +2038,12 @@ void CodeGenerator::visitNegI(LNegI* ins) {
   Register output = ToRegister(ins->output());
 
   masm.ma_negu(output, input);
+}
+
+void CodeGenerator::visitNegI64(LNegI64* ins) {
+  Register64 input = ToRegister64(ins->getInt64Operand(0));
+  MOZ_ASSERT(input == ToOutRegister64(ins));
+  masm.neg64(input);
 }
 
 void CodeGenerator::visitNegD(LNegD* ins) {

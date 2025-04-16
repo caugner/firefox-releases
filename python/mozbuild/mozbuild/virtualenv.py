@@ -8,6 +8,7 @@
 from __future__ import absolute_import, print_function, unicode_literals
 
 import argparse
+import json
 import os
 import platform
 import shutil
@@ -17,8 +18,6 @@ import sys
 IS_NATIVE_WIN = sys.platform == "win32" and os.sep == "\\"
 IS_CYGWIN = sys.platform == "cygwin"
 
-PY2 = sys.version_info[0] == 2
-PY3 = sys.version_info[0] == 3
 
 UPGRADE_WINDOWS = """
 Please upgrade to the latest MozillaBuild development environment. See
@@ -39,30 +38,6 @@ here = os.path.abspath(os.path.dirname(__file__))
 # We can't import six.ensure_binary() or six.ensure_text() because this module
 # has to run stand-alone.  Instead we'll implement an abbreviated version of the
 # checks it does.
-if PY3:
-    text_type = str
-    binary_type = bytes
-else:
-    text_type = unicode
-    binary_type = str
-
-
-def ensure_binary(s, encoding="utf-8"):
-    if isinstance(s, text_type):
-        return s.encode(encoding, errors="strict")
-    elif isinstance(s, binary_type):
-        return s
-    else:
-        raise TypeError("not expecting type '%s'" % type(s))
-
-
-def ensure_text(s, encoding="utf-8"):
-    if isinstance(s, binary_type):
-        return s.decode(encoding, errors="strict")
-    elif isinstance(s, text_type):
-        return s
-    else:
-        raise TypeError("not expecting type '%s'" % type(s))
 
 
 class VirtualenvHelper(object):
@@ -204,8 +179,25 @@ class VirtualenvManager(VirtualenvHelper):
         if (python != self.python_path) and (hexversion != orig_version):
             return False
 
+        packages = self.packages()
+        pypi_packages = [package for action, package in packages if action == "pypi"]
+        if pypi_packages:
+            pip_json = self._run_pip(
+                ["list", "--format", "json"], capture_output=True
+            ).stdout
+            installed_packages = json.loads(pip_json)
+            installed_packages = {
+                package["name"]: package["version"] for package in installed_packages
+            }
+            for pypi_package in pypi_packages:
+                name, version = pypi_package.split("==")
+                if installed_packages.get(name, None) != version:
+                    return False
+
         # recursively check sub packages.txt files
-        submanifests = [i[1] for i in self.packages() if i[0] == "packages.txt"]
+        submanifests = [
+            package for action, package in packages if action == "packages.txt"
+        ]
         for submanifest in submanifests:
             submanifest = os.path.join(self.topsrcdir, submanifest)
             submanager = VirtualenvManager(
@@ -230,11 +222,6 @@ class VirtualenvManager(VirtualenvHelper):
         return self.build(python)
 
     def _log_process_output(self, *args, **kwargs):
-        env = kwargs.pop("env", None) or os.environ.copy()
-        # PYTHONEXECUTABLE can mess up the creation of virtualenvs when set.
-        env.pop("PYTHONEXECUTABLE", None)
-        kwargs["env"] = ensure_subprocess_env(env)
-
         if hasattr(self.log_handle, "fileno"):
             return subprocess.call(
                 *args, stdout=self.log_handle, stderr=subprocess.STDOUT, **kwargs
@@ -245,10 +232,7 @@ class VirtualenvManager(VirtualenvHelper):
         )
 
         for line in proc.stdout:
-            if PY2:
-                self.log_handle.write(line)
-            else:
-                self.log_handle.write(line.decode("UTF-8"))
+            self.log_handle.write(line.decode("UTF-8"))
 
         return proc.wait()
 
@@ -287,44 +271,29 @@ class VirtualenvManager(VirtualenvHelper):
         return self.virtualenv_root
 
     def packages(self):
-        mode = "rU" if PY2 else "r"
-        with open(self.manifest_path, mode) as fh:
-            packages = [line.rstrip().split(":") for line in fh]
-        return packages
+        with open(self.manifest_path, "r") as fh:
+            return [line.rstrip().split(":", maxsplit=1) for line in fh]
 
-    def populate(self, ignore_sitecustomize=False):
+    def populate(self):
         """Populate the virtualenv.
 
         The manifest file consists of colon-delimited fields. The first field
         specifies the action. The remaining fields are arguments to that
         action. The following actions are supported:
 
-        filename.pth -- Adds the path given as argument to filename.pth under
+        pth -- Adds the path given as argument to "mach.pth" under
             the virtualenv site packages directory.
+
+        pypi -- Fetch the package, plus dependencies, from PyPI.
 
         thunderbird -- This denotes the action as to only occur for Thunderbird
             checkouts. The initial "thunderbird" field is stripped, then the
             remaining line is processed like normal. e.g.
-            "thunderbird:comms.pth:python/foo"
+            "thunderbird:pth:python/foo"
 
         packages.txt -- Denotes that the specified path is a child manifest. It
             will be read and processed as if its contents were concatenated
             into the manifest being read.
-
-        windows -- This denotes that the action should only be taken when run
-            on Windows.
-
-        !windows -- This denotes that the action should only be taken when run
-            on non-Windows systems.
-
-        python3 -- This denotes that the action should only be taken when run
-            on Python 3.
-
-        python2 -- This denotes that the action should only be taken when run
-            on python 2.
-
-        set-variable -- Set the given environment variable; e.g.
-            `set-variable FOO=1`.
 
         Note that the Python interpreter running this function should be the
         one from the virtualenv. If it is the system Python or if the
@@ -333,15 +302,15 @@ class VirtualenvManager(VirtualenvHelper):
         """
         import distutils.sysconfig
 
-        is_thunderbird = os.path.exists(os.path.join(self.topsrcdir, "comm"))
-        packages = self.packages()
+        thunderbird_dir = os.path.join(self.topsrcdir, "comm")
+        is_thunderbird = os.path.exists(thunderbird_dir) and bool(
+            os.listdir(thunderbird_dir)
+        )
         python_lib = distutils.sysconfig.get_python_lib()
 
-        def handle_package(package):
-            if package[0] == "packages.txt":
-                assert len(package) == 2
-
-                src = os.path.join(self.topsrcdir, package[1])
+        def handle_package(action, package):
+            if action == "packages.txt":
+                src = os.path.join(self.topsrcdir, package)
                 assert os.path.isfile(src), "'%s' does not exist" % src
                 submanager = VirtualenvManager(
                     self.topsrcdir,
@@ -350,35 +319,31 @@ class VirtualenvManager(VirtualenvHelper):
                     src,
                     populate_local_paths=self.populate_local_paths,
                 )
-                submanager.populate(ignore_sitecustomize=True)
-            elif package[0].endswith(".pth"):
-                assert len(package) == 2
-
+                submanager.populate()
+            elif action == "pth":
                 if not self.populate_local_paths:
                     return
 
-                path = os.path.join(self.topsrcdir, package[1])
+                path = os.path.join(self.topsrcdir, package)
 
-                with open(os.path.join(python_lib, package[0]), "a") as f:
+                with open(os.path.join(python_lib, "mach.pth"), "a") as f:
                     # This path is relative to the .pth file.  Using a
                     # relative path allows the srcdir/objdir combination
                     # to be moved around (as long as the paths relative to
                     # each other remain the same).
                     f.write("%s\n" % os.path.relpath(path, python_lib))
-            elif package[0] == "thunderbird":
+            elif action == "thunderbird":
                 if is_thunderbird:
-                    handle_package(package[1:])
-            elif package[0] in ("windows", "!windows"):
-                for_win = not package[0].startswith("!")
-                is_win = sys.platform == "win32"
-                if is_win == for_win:
-                    handle_package(package[1:])
-            elif package[0] in ("python2", "python3"):
-                for_python3 = package[0].endswith("3")
-                if PY3 == for_python3:
-                    handle_package(package[1:])
+                    handle_package(*package.split(":", maxsplit=1))
+            elif action == "pypi":
+                if len(package.split("==")) != 2:
+                    raise Exception(
+                        "Expected pypi package version to be pinned in the "
+                        'format "package==version", found "{}"'.format(package)
+                    )
+                self.install_pip_package(package)
             else:
-                raise Exception("Unknown action: %s" % package[0])
+                raise Exception("Unknown action: %s" % action)
 
         # We always target the OS X deployment target that Python itself was
         # built with, regardless of what's in the current environment. If we
@@ -417,23 +382,10 @@ class VirtualenvManager(VirtualenvHelper):
                 old_env_variables[k] = os.environ[k]
                 del os.environ[k]
 
-            for package in packages:
-                handle_package(package)
+            for current_action, current_package in self.packages():
+                handle_package(current_action, current_package)
 
         finally:
-            # This hack isn't necessary for Python 3, or for the
-            # out-of-objdir virtualenvs.
-            if PY2 and self.populate_local_paths and not ignore_sitecustomize:
-                with open(
-                    os.path.join(os.path.dirname(python_lib), "sitecustomize.py"),
-                    mode="w",
-                ) as sitecustomize:
-                    sitecustomize.write(
-                        "# Importing mach_bootstrap has the side effect of\n"
-                        "# installing an import hook\n"
-                        "import mach_bootstrap\n"
-                    )
-
             os.environ.pop("MACOSX_DEPLOYMENT_TARGET", None)
 
             if old_target is not None:
@@ -456,7 +408,6 @@ class VirtualenvManager(VirtualenvHelper):
         try:
             env = os.environ.copy()
             env.setdefault("ARCHFLAGS", get_archflags())
-            env = ensure_subprocess_env(env)
             output = subprocess.check_output(
                 program,
                 cwd=directory,
@@ -523,11 +474,6 @@ class VirtualenvManager(VirtualenvHelper):
         """
 
         exec(open(self.activate_path).read(), dict(__file__=self.activate_path))
-        # Activating the virtualenv can make `os.environ` a little janky under
-        # Python 2.
-        env = ensure_subprocess_env(os.environ)
-        os.environ.clear()
-        os.environ.update(env)
 
     def install_pip_package(self, package, vendored=False):
         """Install a package via pip.
@@ -540,6 +486,9 @@ class VirtualenvManager(VirtualenvHelper):
         If vendored is True, no package index will be used and no dependencies
         will be installed.
         """
+        import mozfile
+        from mozfile import TemporaryDirectory
+
         if sys.executable.startswith(self.bin_path):
             # If we're already running in this interpreter, we can optimize in
             # the case that the package requirement is already satisfied.
@@ -550,10 +499,8 @@ class VirtualenvManager(VirtualenvHelper):
             if req.satisfied_by is not None:
                 return
 
-        args = [
-            "install",
-            package,
-        ]
+        args = ["install"]
+        vendored_dist_info_dir = None
 
         if vendored:
             args.extend(
@@ -572,8 +519,23 @@ class VirtualenvManager(VirtualenvHelper):
                     "--no-build-isolation",
                 ]
             )
+            vendored_dist_info_dir = next(
+                (d for d in os.listdir(package) if d.endswith(".dist-info")), None
+            )
 
-        return self._run_pip(args)
+        with TemporaryDirectory() as tmp:
+            if vendored_dist_info_dir:
+                # This is a vendored wheel. We have to re-pack it in order for pip
+                # to install it.
+                wheel_file = os.path.join(
+                    tmp, "{}-1.0-py3-none-any.whl".format(os.path.basename(package))
+                )
+                shutil.make_archive(wheel_file, "zip", package)
+                mozfile.move("{}.zip".format(wheel_file), wheel_file)
+                package = wheel_file
+
+            args.append(package)
+            return self._run_pip(args, stderr=subprocess.STDOUT)
 
     def install_pip_requirements(
         self, path, require_hashes=True, quiet=False, vendored=False
@@ -591,11 +553,7 @@ class VirtualenvManager(VirtualenvHelper):
         if not os.path.isabs(path):
             path = os.path.join(self.topsrcdir, path)
 
-        args = [
-            "install",
-            "--requirement",
-            path,
-        ]
+        args = ["install", "--requirement", path]
 
         if require_hashes:
             args.append("--require-hashes")
@@ -604,14 +562,9 @@ class VirtualenvManager(VirtualenvHelper):
             args.append("--quiet")
 
         if vendored:
-            args.extend(
-                [
-                    "--no-deps",
-                    "--no-index",
-                ]
-            )
+            args.extend(["--no-deps", "--no-index"])
 
-        return self._run_pip(args)
+        return self._run_pip(args, stderr=subprocess.STDOUT)
 
     def _disable_pip_outdated_warning(self):
         """Disables the pip outdated warning by changing pip's 'installer'
@@ -662,10 +615,11 @@ class VirtualenvManager(VirtualenvHelper):
         with open(os.path.join(site_packages, pip_dist_info, "INSTALLER"), "w") as file:
             file.write("mach")
 
-    def _run_pip(self, args):
+    def _run_pip(self, args, **kwargs):
+        kwargs.setdefault("check", True)
+
         env = os.environ.copy()
         env.setdefault("ARCHFLAGS", get_archflags())
-        env = ensure_subprocess_env(env)
 
         # It's tempting to call pip natively via pip.main(). However,
         # the current Python interpreter may not be the virtualenv python.
@@ -675,12 +629,8 @@ class VirtualenvManager(VirtualenvHelper):
         # It /might/ be possible to cheat and set sys.executable to
         # self.python_path. However, this seems more risk than it's worth.
         pip = os.path.join(self.bin_path, "pip")
-        subprocess.check_call(
-            [pip] + args,
-            stderr=subprocess.STDOUT,
-            cwd=self.topsrcdir,
-            env=env,
-            universal_newlines=PY3,
+        return subprocess.run(
+            [pip] + args, cwd=self.topsrcdir, env=env, universal_newlines=True, **kwargs
         )
 
 
@@ -698,10 +648,7 @@ def verify_python_version(log_handle):
     from distutils.version import LooseVersion
 
     major, minor, micro = sys.version_info[:3]
-    minimum_python_versions = {
-        2: LooseVersion("2.7.3"),
-        3: LooseVersion("3.6.0"),
-    }
+    minimum_python_versions = {2: LooseVersion("2.7.3"), 3: LooseVersion("3.6.0")}
     our = LooseVersion("%d.%d.%d" % (major, minor, micro))
 
     if major not in minimum_python_versions or our < minimum_python_versions[major]:
@@ -716,35 +663,6 @@ def verify_python_version(log_handle):
             log_handle.write(UPGRADE_OTHER)
 
         sys.exit(1)
-
-
-def ensure_subprocess_env(env, encoding="utf-8"):
-    """Ensure the environment is in the correct format for the `subprocess`
-    module.
-
-    This method uses the method with same name from mozbuild.utils as
-    virtualenv.py must be a standalone module.
-
-    This will convert all keys and values to bytes on Python 2, and text on
-    Python 3.
-
-    Args:
-        env (dict): Environment to ensure.
-        encoding (str): Encoding to use when converting to/from bytes/text
-                        (default: utf-8).
-    """
-    ensure = ensure_binary if PY2 else ensure_text
-
-    try:
-        return {
-            ensure(k, encoding=encoding): ensure(v, encoding=encoding)
-            for k, v in env.iteritems()
-        }
-    except AttributeError:
-        return {
-            ensure(k, encoding=encoding): ensure(v, encoding=encoding)
-            for k, v in env.items()
-        }
 
 
 if __name__ == "__main__":

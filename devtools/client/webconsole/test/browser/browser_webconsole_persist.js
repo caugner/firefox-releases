@@ -17,6 +17,9 @@ registerCleanupFunction(() => {
 const INITIAL_LOGS_NUMBER = 5;
 
 const { MESSAGE_TYPE } = require("devtools/client/webconsole/constants");
+const {
+  WILL_NAVIGATE_TIME_SHIFT,
+} = require("devtools/server/actors/webconsole/listeners/document-events");
 
 async function logAndAssertInitialMessages(hud) {
   await SpecialPowers.spawn(
@@ -31,6 +34,12 @@ async function logAndAssertInitialMessages(hud) {
 }
 
 add_task(async function() {
+  // Disable bfcache for Fission for now.
+  // If Fission is disabled, the pref is no-op.
+  await SpecialPowers.pushPrefEnv({
+    set: [["fission.bfcacheInParent", false]],
+  });
+
   info("Testing that messages disappear on a refresh if logs aren't persisted");
   const hud = await openNewTabAndConsole(TEST_COM_URI);
 
@@ -63,6 +72,12 @@ add_task(async function() {
 });
 
 add_task(async function() {
+  // Disable bfcache for Fission for now.
+  // If Fission is disabled, the pref is no-op.
+  await SpecialPowers.pushPrefEnv({
+    set: [["fission.bfcacheInParent", false]],
+  });
+
   info("Testing that messages persist on a refresh if logs are persisted");
 
   const hud = await openNewTabAndConsole(TEST_COM_URI);
@@ -79,7 +94,9 @@ add_task(async function() {
     "Navigated to " + TEST_COM_URI
   );
   const onReloaded = hud.ui.once("reloaded");
-  let timeBeforeNavigation = Date.now();
+  // Because will-navigate DOCUMENT_EVENT timestamp is shifted to workaround some other limitation,
+  // the reported time of navigation may actually be slightly off and be older than the real navigation start
+  let timeBeforeNavigation = Date.now() - WILL_NAVIGATE_TIME_SHIFT;
   refreshTab();
   await onNavigatedMessage;
   await onReloaded;
@@ -100,7 +117,7 @@ add_task(async function() {
     hud,
     "Navigated to " + TEST_ORG_URI
   );
-  timeBeforeNavigation = Date.now();
+  timeBeforeNavigation = Date.now() - WILL_NAVIGATE_TIME_SHIFT;
   await navigateTo(TEST_ORG_URI);
   await onNavigatedMessage2;
 
@@ -120,7 +137,7 @@ add_task(async function() {
     hud,
     "Navigated to " + TEST_NET_URI
   );
-  timeBeforeNavigation = Date.now();
+  timeBeforeNavigation = Date.now() - WILL_NAVIGATE_TIME_SHIFT;
   await navigateTo(TEST_NET_URI);
   await onNavigatedMessage3;
 

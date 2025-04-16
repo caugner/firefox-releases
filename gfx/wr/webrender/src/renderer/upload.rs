@@ -34,7 +34,7 @@ use crate::device::{
     Device, UploadMethod, Texture, DrawTarget, UploadStagingBuffer, TextureFlags, TextureUploader,
     TextureFilter,
 };
-use crate::gpu_types::{ZBufferId, CompositeInstance};
+use crate::gpu_types::{ZBufferId, CompositeInstance, CompositorTransform};
 use crate::batch::BatchTextures;
 use crate::texture_pack::{GuillotineAllocator, FreeRectSlice};
 use crate::composite::{CompositeFeatures, CompositeSurfaceFormat};
@@ -82,7 +82,7 @@ pub fn upload_to_texture_cache(
     let num_updates = update_list.len();
 
     for (texture_id, updates) in update_list {
-        let texture = &renderer.texture_resolver.texture_cache_map[&texture_id];
+        let texture = &renderer.texture_resolver.texture_cache_map[&texture_id].texture;
         for update in updates {
             let TextureCacheUpdate { rect, stride, offset, format_override, source } = update;
 
@@ -103,8 +103,8 @@ pub fn upload_to_texture_cache(
                         ExternalImageSource::Invalid => {
                             // Create a local buffer to fill the pbo.
                             let bpp = texture.get_format().bytes_per_pixel();
-                            let width = stride.unwrap_or(rect.size.width * bpp);
-                            let total_size = width * rect.size.height;
+                            let width = stride.unwrap_or(rect.width() * bpp);
+                            let total_size = width * rect.height();
                             // WR haven't support RGBAF32 format in texture_cache, so
                             // we use u8 type here.
                             dummy_data = vec![0xFFu8; total_size as usize];
@@ -133,8 +133,8 @@ pub fn upload_to_texture_cache(
 
             let use_batch_upload = renderer.device.use_batched_texture_uploads() &&
                 texture.flags().contains(TextureFlags::IS_SHARED_TEXTURE_CACHE) &&
-                rect.size.width <= BATCH_UPLOAD_TEXTURE_SIZE.width &&
-                rect.size.height <= BATCH_UPLOAD_TEXTURE_SIZE.height;
+                rect.width() <= BATCH_UPLOAD_TEXTURE_SIZE.width &&
+                rect.height() <= BATCH_UPLOAD_TEXTURE_SIZE.height;
 
             if use_batch_upload {
                 copy_into_staging_buffer(
@@ -327,11 +327,11 @@ fn copy_into_staging_buffer<'a>(
 
     // Allocate a region within the staging buffer for this update. If there is
     // no room in an existing buffer then allocate another texture and buffer.
-    let (slice, origin) = match allocator.allocate(&update_rect.size) {
+    let (slice, origin) = match allocator.allocate(&update_rect.size()) {
         Some((slice, origin)) => (slice, origin),
         None => {
             let new_slice = FreeRectSlice(buffers.len() as u32);
-            allocator.extend(new_slice, BATCH_UPLOAD_TEXTURE_SIZE, update_rect.size);
+            allocator.extend(new_slice, BATCH_UPLOAD_TEXTURE_SIZE, update_rect.size());
 
             let texture_alloc_time_start = precise_time_ns();
             let staging_texture = staging_texture_pool.get_texture(device, texture.get_format());
@@ -367,26 +367,26 @@ fn copy_into_staging_buffer<'a>(
         }
     };
     let buffer = &mut buffers[slice.0 as usize];
-    let allocated_rect = DeviceIntRect::new(origin, update_rect.size);
+    let allocated_rect = DeviceIntRect::from_origin_and_size(origin, update_rect.size());
     buffer.upload_rect = buffer.upload_rect.union(&allocated_rect);
 
     batch_upload_copies.push(BatchUploadCopy {
         src_texture_index: buffer.texture_index,
-        src_offset: allocated_rect.origin,
+        src_offset: allocated_rect.min,
         dest_texture_id,
-        dest_offset: update_rect.origin,
-        size: update_rect.size,
+        dest_offset: update_rect.min,
+        size: update_rect.size(),
     });
 
     unsafe {
         let memcpy_start_time = precise_time_ns();
         let bpp = texture.get_format().bytes_per_pixel() as usize;
-        let width_bytes = update_rect.size.width as usize * bpp;
+        let width_bytes = update_rect.width() as usize * bpp;
         let src_stride = update_stride.map_or(width_bytes, |stride| {
             assert!(stride >= 0);
             stride as usize
         });
-        let src_size = (update_rect.size.height as usize - 1) * src_stride + width_bytes;
+        let src_size = (update_rect.height() as usize - 1) * src_stride + width_bytes;
         assert!(src_size <= data.len());
 
         let src: &[mem::MaybeUninit<u8>] = std::slice::from_raw_parts(data.as_ptr() as *const _, src_size);
@@ -403,11 +403,11 @@ fn copy_into_staging_buffer<'a>(
 
         // copy the data line-by-line in to the buffer so that we do not overwrite
         // any other region of the buffer.
-        for y in 0..allocated_rect.size.height as usize {
+        for y in 0..allocated_rect.height() as usize {
             let src_start = y * src_stride;
             let src_end = src_start + width_bytes;
-            let dst_start = (allocated_rect.origin.y as usize + y as usize) * dst_stride +
-                allocated_rect.origin.x as usize * bpp;
+            let dst_start = (allocated_rect.min.y as usize + y as usize) * dst_stride +
+                allocated_rect.min.x as usize * bpp;
             let dst_end = dst_start + width_bytes;
 
             dst[dst_start..dst_end].copy_from_slice(&src[src_start..src_end])
@@ -429,7 +429,7 @@ fn copy_from_staging_to_cache(
     batch_upload_copies: Vec<BatchUploadCopy>,
 ) {
     for copy in batch_upload_copies {
-        let dest_texture = &renderer.texture_resolver.texture_cache_map[&copy.dest_texture_id];
+        let dest_texture = &renderer.texture_resolver.texture_cache_map[&copy.dest_texture_id].texture;
 
         renderer.device.copy_texture_sub_region(
             &batch_upload_textures[copy.src_texture_index],
@@ -495,7 +495,7 @@ fn copy_from_staging_to_cache_using_draw_calls(
         }
 
         if dst_changed {
-            let dest_texture = &renderer.texture_resolver.texture_cache_map[&copy.dest_texture_id];
+            let dest_texture = &renderer.texture_resolver.texture_cache_map[&copy.dest_texture_id].texture;
             let target_size = dest_texture.get_dimensions();
 
             let draw_target = DrawTarget::from_texture(
@@ -539,10 +539,10 @@ fn copy_from_staging_to_cache_using_draw_calls(
             prev_src = Some(copy.src_texture_index)
         }
 
-        let dest_rect = DeviceRect {
-            origin: copy.dest_offset.to_f32(),
-            size: copy.size.to_f32(),
-        };
+        let dest_rect = DeviceRect::from_origin_and_size(
+            copy.dest_offset.to_f32(),
+            copy.size.to_f32(),
+        );
 
         let src_rect = TexelRect::new(
             copy.src_offset.x as f32,
@@ -552,11 +552,12 @@ fn copy_from_staging_to_cache_using_draw_calls(
         );
 
         copy_instances.push(CompositeInstance::new_rgb(
-            dest_rect,
+            dest_rect.cast_unit(),
             dest_rect,
             PremultipliedColorF::WHITE,
             ZBufferId(0),
             src_rect,
+            CompositorTransform::identity(),
         ));
     }
 

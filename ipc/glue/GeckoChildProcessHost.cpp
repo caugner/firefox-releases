@@ -46,6 +46,7 @@
 #include "mozilla/Telemetry.h"
 #include "mozilla/ipc/BrowserProcessSubThread.h"
 #include "mozilla/ipc/EnvironmentMap.h"
+#include "mozilla/ipc/NodeController.h"
 #include "mozilla/net/SocketProcessHost.h"
 #include "nsDirectoryService.h"
 #include "nsDirectoryServiceDefs.h"
@@ -70,6 +71,7 @@
 #  endif
 
 #  include "mozilla/NativeNt.h"
+#  include "mozilla/CacheNtDllThunk.h"
 #endif
 
 #if defined(XP_LINUX) && defined(MOZ_SANDBOX)
@@ -227,7 +229,8 @@ class WindowsProcessLauncher : public BaseProcessLauncher {
                          std::vector<std::string>&& aExtraOpts)
       : BaseProcessLauncher(aHost, std::move(aExtraOpts)),
         mProfileDir(aHost->mProfileDir),
-        mCachedNtdllThunk(aHost->sCachedNtDllThunk) {}
+        mCachedNtdllThunk(GetCachedNtDllThunk()),
+        mWerDataPointer(&(aHost->mWerData)) {}
 
  protected:
   bool SetChannel(IPC::Channel*) override { return true; }
@@ -240,7 +243,8 @@ class WindowsProcessLauncher : public BaseProcessLauncher {
 
   nsCOMPtr<nsIFile> mProfileDir;
 
-  const StaticAutoPtr<Buffer<IMAGE_THUNK_DATA>>& mCachedNtdllThunk;
+  const Buffer<IMAGE_THUNK_DATA>* mCachedNtdllThunk;
+  CrashReporter::WindowsErrorReportingData const* mWerDataPointer;
 };
 typedef WindowsProcessLauncher ProcessLauncher;
 #endif  // XP_WIN
@@ -348,51 +352,6 @@ mozilla::StaticAutoPtr<mozilla::LinkedList<GeckoChildProcessHost>>
 
 mozilla::StaticMutex GeckoChildProcessHost::sMutex;
 
-#ifdef XP_WIN
-mozilla::StaticAutoPtr<Buffer<IMAGE_THUNK_DATA>>
-    GeckoChildProcessHost::sCachedNtDllThunk;
-
-// This static method initializes sCachedNtDllThunk.  Because it's called in
-// XREMain::XRE_main, which happens long before WindowsProcessLauncher's ctor
-// accesses sCachedNtDllThunk, there is no race on sCachedNtDllThunk, thus
-// no mutex is needed.
-/* static */
-void GeckoChildProcessHost::CacheNtDllThunk() {
-  if (sCachedNtDllThunk) {
-    return;
-  }
-
-  do {
-    nt::PEHeaders ourExeImage(::GetModuleHandleW(nullptr));
-    if (!ourExeImage) {
-      break;
-    }
-
-    nt::PEHeaders ntdllImage(::GetModuleHandleW(L"ntdll.dll"));
-    if (!ntdllImage) {
-      break;
-    }
-
-    Maybe<Range<const uint8_t>> ntdllBoundaries = ntdllImage.GetBounds();
-    if (!ntdllBoundaries) {
-      break;
-    }
-
-    Maybe<Span<IMAGE_THUNK_DATA>> maybeNtDllThunks =
-        ourExeImage.GetIATThunksForModule("ntdll.dll", ntdllBoundaries.ptr());
-    if (maybeNtDllThunks.isNothing()) {
-      break;
-    }
-
-    sCachedNtDllThunk = new Buffer<IMAGE_THUNK_DATA>(maybeNtDllThunks.value());
-    return;
-  } while (false);
-
-  // Failed to cache IAT.  Initializing the variable with nullptr.
-  sCachedNtDllThunk = new Buffer<IMAGE_THUNK_DATA>();
-}
-#endif
-
 GeckoChildProcessHost::GeckoChildProcessHost(GeckoProcessType aProcessType,
                                              bool aIsFileContent)
     : mProcessType(aProcessType),
@@ -402,6 +361,9 @@ GeckoChildProcessHost::GeckoChildProcessHost(GeckoProcessType aProcessType,
       mProcessState(CREATING_CHANNEL),
 #ifdef XP_WIN
       mGroupId(u"-"),
+      mWerData{.mWerNotifyProc = CrashReporter::WerNotifyProc,
+               .mChildPid = 0,
+               .mMinidumpFile = {}},
 #endif
 #if defined(MOZ_SANDBOX) && defined(XP_WIN)
       mEnableSandboxLogging(false),
@@ -596,6 +558,13 @@ uint32_t GeckoChildProcessHost::sNextUniqueID = 1;
 
 /* static */
 uint32_t GeckoChildProcessHost::GetUniqueID() { return sNextUniqueID++; }
+
+/* static */
+void GeckoChildProcessHost::SetEnv(const char* aKey, const char* aValue) {
+  MOZ_ASSERT(mLaunchOptions);
+  mLaunchOptions->env_map[ENVIRONMENT_STRING(aKey)] =
+      ENVIRONMENT_STRING(aValue);
+}
 
 void GeckoChildProcessHost::PrepareLaunch() {
   if (CrashReporter::GetEnabled()) {
@@ -831,8 +800,16 @@ bool GeckoChildProcessHost::LaunchAndWaitForProcessHandle(
   return WaitForProcessHandle();
 }
 
-void GeckoChildProcessHost::InitializeChannel() {
+void GeckoChildProcessHost::InitializeChannel(
+    const std::function<void(IPC::Channel*)>& aChannelReady) {
   CreateChannel();
+
+  aChannelReady(GetChannel());
+
+  if (mProcessType != GeckoProcessType_ForkServer) {
+    RefPtr<NodeController> node = NodeController::GetSingleton();
+    mInitialPort = node->InviteChildProcess(TakeChannel());
+  }
 
   MonitorAutoLock lock(mMonitor);
   mProcessState = CHANNEL_INITIALIZED;
@@ -1516,6 +1493,10 @@ bool WindowsProcessLauncher::DoSetup() {
     mLaunchOptions->handles_to_inherit.push_back(reinterpret_cast<HANDLE>(h));
     std::string hStr = std::to_string(h);
     mCmdLine->AppendLooseValue(UTF8ToWide(hStr));
+
+    char werDataAddress[17] = {};
+    SprintfLiteral(werDataAddress, "%p", mWerDataPointer);
+    mCmdLine->AppendLooseValue(UTF8ToWide(werDataAddress));
   }
 
   // Process type
@@ -1783,9 +1764,13 @@ RefPtr<ProcessLaunchPromise> BaseProcessLauncher::Launch(
   // data races with the IO thread (where e.g. OnChannelConnected may run
   // concurrently). The pool currently needs access to the channel, which is not
   // great.
-  aHost->InitializeChannel();
-  IPC::Channel* channel = aHost->GetChannel();
-  if (!channel || !SetChannel(channel)) {
+  bool failed = false;
+  aHost->InitializeChannel([&](IPC::Channel* channel) {
+    if (!channel || !SetChannel(channel)) {
+      failed = true;
+    }
+  });
+  if (failed) {
     return ProcessLaunchPromise::CreateAndReject(LaunchError{}, __func__);
   }
   mChannelId = aHost->GetChannelId();

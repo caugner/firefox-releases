@@ -97,13 +97,6 @@ XPCOMUtils.defineLazyGetter(this, "gBrowserBundle", function() {
   );
 });
 
-XPCOMUtils.defineLazyPreferenceGetter(
-  this,
-  "protonDoorhangersEnabled",
-  "browser.proton.doorhangers.enabled",
-  false
-);
-
 var PermissionUI = {};
 
 /**
@@ -408,12 +401,6 @@ var PermissionPromptPrototype = {
         this.allow();
         return;
       }
-
-      // Tell the browser to refresh the identity block display in case there
-      // are expired permission states.
-      this.browser.dispatchEvent(
-        new this.browser.ownerGlobal.CustomEvent("PermissionStateChange")
-      );
     } else if (this.permissionKey) {
       // If we're reading a permission which already has a temporary value,
       // see if we can use the temporary value.
@@ -596,10 +583,7 @@ var PermissionPromptPrototype = {
       options.hideClose = true;
     }
 
-    if (
-      protonDoorhangersEnabled &&
-      !mainAction.hasOwnProperty("disableHighlight")
-    ) {
+    if (!mainAction.hasOwnProperty("disableHighlight")) {
       mainAction.disableHighlight = true;
     }
 

@@ -14,6 +14,7 @@
 #include "nsHttp.h"
 #include "nsHttpHandler.h"
 #include "nsHttpChannel.h"
+#include "nsHTTPCompressConv.h"
 #include "nsHttpAuthCache.h"
 #include "nsStandardURL.h"
 #include "LoadContextInfo.h"
@@ -94,10 +95,6 @@
 #if defined(XP_MACOSX)
 #  include <CoreServices/CoreServices.h>
 #  include "nsCocoaFeatures.h"
-#endif
-
-#ifdef MOZ_TASK_TRACER
-#  include "GeckoTaskTracer.h"
 #endif
 
 //-----------------------------------------------------------------------------
@@ -210,59 +207,12 @@ static nsCString DocumentAcceptHeader(const nsCString& aImageAcceptHeader) {
 }
 
 nsHttpHandler::nsHttpHandler()
-    : mHttpVersion(HttpVersion::v1_1),
-      mProxyHttpVersion(HttpVersion::v1_1),
-      mCapabilities(NS_HTTP_ALLOW_KEEPALIVE),
-      mFastFallbackToIPv4(false),
-      mIdleTimeout(PR_SecondsToInterval(10)),
+    : mIdleTimeout(PR_SecondsToInterval(10)),
       mSpdyTimeout(PR_SecondsToInterval(180)),
       mResponseTimeout(PR_SecondsToInterval(300)),
-      mResponseTimeoutEnabled(false),
-      mNetworkChangedTimeout(5000),
-      mMaxRequestAttempts(6),
-      mMaxRequestDelay(10),
-      mIdleSynTimeout(250),
-      mFallbackSynTimeout(5),
-      mH2MandatorySuiteEnabled(false),
-      mMaxUrgentExcessiveConns(3),
-      mMaxConnections(24),
-      mMaxPersistentConnectionsPerServer(2),
-      mMaxPersistentConnectionsPerProxy(4),
-      mThrottleEnabled(true),
-      mThrottleVersion(2),
-      mThrottleSuspendFor(3000),
-      mThrottleResumeFor(200),
-      mThrottleReadLimit(8000),
-      mThrottleReadInterval(500),
-      mThrottleHoldTime(600),
-      mThrottleMaxTime(3000),
-      mSendWindowSize(1024),
-      mUrgentStartEnabled(true),
-      mTailBlockingEnabled(true),
-      mTailDelayQuantum(600),
-      mTailDelayQuantumAfterDCL(100),
-      mTailDelayMax(6000),
-      mTailTotalMax(0),
-      mRedirectionLimit(10),
-      mBeConservativeForProxy(true),
-      mPhishyUserPassLength(1),
-      mQoSBits(0x00),
-      mEnforceAssocReq(false),
       mImageAcceptHeader(ImageAcceptHeader()),
       mDocumentAcceptHeader(DocumentAcceptHeader(ImageAcceptHeader())),
       mLastUniqueID(NowInSeconds()),
-      mSessionStartTime(0),
-      mLegacyAppName("Mozilla"),
-      mLegacyAppVersion("5.0"),
-      mProduct("Gecko"),
-      mCompatFirefoxEnabled(false),
-      mUserAgentIsDirty(true),
-      mAcceptLanguagesIsDirty(true),
-      mPromptTempRedirect(true),
-      mEnablePersistentHttpsCaching(false),
-      mSafeHintEnabled(false),
-      mParentalControlEnabled(false),
-      mHandlerActive(false),
       mDebugObservations(false),
       mEnableSpdy(false),
       mHttp2Enabled(true),
@@ -276,43 +226,8 @@ nsHttpHandler::nsHttpHandler()
       mEnableOriginExtension(false),
       mEnableH2Websockets(true),
       mDumpHpackTables(false),
-      mSpdySendingChunkSize(ASpdySession::kSendingChunkSize),
-      mSpdySendBufferSize(ASpdySession::kTCPSendBufferSize),
-      mSpdyPushAllowance(131072)  // match default pref
-      ,
-      mSpdyPullAllowance(ASpdySession::kInitialRwin),
-      mDefaultSpdyConcurrent(ASpdySession::kDefaultMaxConcurrent),
       mSpdyPingThreshold(PR_SecondsToInterval(58)),
-      mSpdyPingTimeout(PR_SecondsToInterval(8)),
-      mConnectTimeout(90000),
-      mTLSHandshakeTimeout(30000),
-      mParallelSpeculativeConnectLimit(6),
-      mRequestTokenBucketEnabled(true),
-      mRequestTokenBucketMinParallelism(6),
-      mRequestTokenBucketHz(100),
-      mRequestTokenBucketBurst(32),
-      mCriticalRequestPrioritization(true),
-      mTCPKeepaliveShortLivedEnabled(false),
-      mTCPKeepaliveShortLivedTimeS(60),
-      mTCPKeepaliveShortLivedIdleTimeS(10),
-      mTCPKeepaliveLongLivedEnabled(false),
-      mTCPKeepaliveLongLivedIdleTimeS(600),
-      mEnforceH1Framing(FRAMECHECK_BARELY),
-      mDefaultHpackBuffer(4096),
-      mBug1563538(true),
-      mHttp3Enabled(true),
-      mQpackTableSize(4096),
-      mHttp3MaxBlockedStreams(10),
-      mMaxHttpResponseHeaderSize(393216),
-      mFocusedWindowTransactionRatio(0.9f),
-      mSpeculativeConnectEnabled(false),
-      mActiveTabPriority(true),
-      mProcessId(0),
-      mNextChannelId(1),
-      mLastActiveTabLoadOptimizationLock(
-          "nsHttpConnectionMgr::LastActiveTabLoadOptimization"),
-      mHttpExclusionLock("nsHttpHandler::HttpExclusion"),
-      mThroughCaptivePortal(false) {
+      mSpdyPingTimeout(PR_SecondsToInterval(8)) {
   LOG(("Creating nsHttpHandler [this=%p].\n", this));
 
   mUserAgentOverride.SetIsVoid(true);
@@ -703,20 +618,6 @@ bool nsHttpHandler::IsAcceptableEncoding(const char* enc, bool isSecure) {
   return rv;
 }
 
-nsresult nsHttpHandler::GetStreamConverterService(
-    nsIStreamConverterService** result) {
-  if (!mStreamConvSvc) {
-    nsresult rv;
-    nsCOMPtr<nsIStreamConverterService> service =
-        do_GetService(NS_STREAMCONVERTERSERVICE_CONTRACTID, &rv);
-    if (NS_FAILED(rv)) return rv;
-    mStreamConvSvc = new nsMainThreadPtrHolder<nsIStreamConverterService>(
-        "nsHttpHandler::mStreamConvSvc", service);
-  }
-  *result = do_AddRef(mStreamConvSvc.get()).take();
-  return NS_OK;
-}
-
 nsISiteSecurityService* nsHttpHandler::GetSSService() {
   if (!mSSService) {
     nsCOMPtr<nsISiteSecurityService> service =
@@ -983,7 +884,7 @@ void nsHttpHandler::InitUserAgentComponents() {
   // Always return an "Intel" UA string, even on ARM64 macOS like Safari does.
   mOscpu = nsPrintfCString("Intel Mac OS X 10.%d", uaVersion);
 #elif defined(XP_UNIX)
-  struct utsname name;
+  struct utsname name {};
   int ret = uname(&name);
   if (ret >= 0) {
     nsAutoCString buf;
@@ -1016,10 +917,11 @@ uint32_t nsHttpHandler::MaxSocketCount() {
   // starve other users.
 
   uint32_t maxCount = nsSocketTransportService::gMaxCount;
-  if (maxCount <= 8)
+  if (maxCount <= 8) {
     maxCount = 1;
-  else
+  } else {
     maxCount -= 8;
+  }
 
   return maxCount;
 }
@@ -1106,14 +1008,16 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
 
   if (PREF_CHANGED(HTTP_PREF("keep-alive.timeout"))) {
     rv = Preferences::GetInt(HTTP_PREF("keep-alive.timeout"), &val);
-    if (NS_SUCCEEDED(rv))
+    if (NS_SUCCEEDED(rv)) {
       mIdleTimeout = PR_SecondsToInterval(clamped(val, 1, 0xffff));
+    }
   }
 
   if (PREF_CHANGED(HTTP_PREF("request.max-attempts"))) {
     rv = Preferences::GetInt(HTTP_PREF("request.max-attempts"), &val);
-    if (NS_SUCCEEDED(rv))
+    if (NS_SUCCEEDED(rv)) {
       mMaxRequestAttempts = (uint16_t)clamped(val, 1, 0xffff);
+    }
   }
 
   if (PREF_CHANGED(HTTP_PREF("request.max-start-delay"))) {
@@ -1135,8 +1039,9 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
 
   if (PREF_CHANGED(HTTP_PREF("response.timeout"))) {
     rv = Preferences::GetInt(HTTP_PREF("response.timeout"), &val);
-    if (NS_SUCCEEDED(rv))
+    if (NS_SUCCEEDED(rv)) {
       mResponseTimeout = PR_SecondsToInterval(clamped(val, 0, 0xffff));
+    }
   }
 
   if (PREF_CHANGED(HTTP_PREF("network-changed.timeout"))) {
@@ -1240,20 +1145,22 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
 
   if (PREF_CHANGED(HTTP_PREF("fallback-connection-timeout"))) {
     rv = Preferences::GetInt(HTTP_PREF("fallback-connection-timeout"), &val);
-    if (NS_SUCCEEDED(rv))
+    if (NS_SUCCEEDED(rv)) {
       mFallbackSynTimeout = (uint16_t)clamped(val, 0, 10 * 60);
+    }
   }
 
   if (PREF_CHANGED(HTTP_PREF("version"))) {
     nsAutoCString httpVersion;
     Preferences::GetCString(HTTP_PREF("version"), httpVersion);
     if (!httpVersion.IsVoid()) {
-      if (httpVersion.EqualsLiteral("1.1"))
+      if (httpVersion.EqualsLiteral("1.1")) {
         mHttpVersion = HttpVersion::v1_1;
-      else if (httpVersion.EqualsLiteral("0.9"))
+      } else if (httpVersion.EqualsLiteral("0.9")) {
         mHttpVersion = HttpVersion::v0_9;
-      else
+      } else {
         mHttpVersion = HttpVersion::v1_0;
+      }
     }
   }
 
@@ -1261,10 +1168,11 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
     nsAutoCString httpVersion;
     Preferences::GetCString(HTTP_PREF("proxy.version"), httpVersion);
     if (!httpVersion.IsVoid()) {
-      if (httpVersion.EqualsLiteral("1.1"))
+      if (httpVersion.EqualsLiteral("1.1")) {
         mProxyHttpVersion = HttpVersion::v1_1;
-      else
+      } else {
         mProxyHttpVersion = HttpVersion::v1_0;
+      }
       // it does not make sense to issue a HTTP/0.9 request to a proxy server
     }
   }
@@ -1310,9 +1218,9 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
     nsAutoCString sval;
     rv = Preferences::GetCString(HTTP_PREF("default-socket-type"), sval);
     if (NS_SUCCEEDED(rv)) {
-      if (sval.IsEmpty())
+      if (sval.IsEmpty()) {
         mDefaultSocketType.SetIsVoid(true);
-      else {
+      } else {
         // verify that this socket type is actually valid
         nsCOMPtr<nsISocketProviderService> sps =
             nsSocketProviderService::GetOrCreate();
@@ -1350,8 +1258,9 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
 
   if (PREF_CHANGED(HTTP_PREF("phishy-userpass-length"))) {
     rv = Preferences::GetInt(HTTP_PREF("phishy-userpass-length"), &val);
-    if (NS_SUCCEEDED(rv))
+    if (NS_SUCCEEDED(rv)) {
       mPhishyUserPassLength = (uint8_t)clamped(val, 0, 0xff);
+    }
   }
 
   if (PREF_CHANGED(HTTP_PREF("spdy.enabled"))) {
@@ -1386,33 +1295,37 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
 
   if (PREF_CHANGED(HTTP_PREF("spdy.timeout"))) {
     rv = Preferences::GetInt(HTTP_PREF("spdy.timeout"), &val);
-    if (NS_SUCCEEDED(rv))
+    if (NS_SUCCEEDED(rv)) {
       mSpdyTimeout = PR_SecondsToInterval(clamped(val, 1, 0xffff));
+    }
   }
 
   if (PREF_CHANGED(HTTP_PREF("spdy.chunk-size"))) {
     // keep this within http/2 ranges of 1 to 2^14-1
     rv = Preferences::GetInt(HTTP_PREF("spdy.chunk-size"), &val);
-    if (NS_SUCCEEDED(rv))
+    if (NS_SUCCEEDED(rv)) {
       mSpdySendingChunkSize = (uint32_t)clamped(val, 1, 0x3fff);
+    }
   }
 
   // The amount of idle seconds on a spdy connection before initiating a
   // server ping. 0 will disable.
   if (PREF_CHANGED(HTTP_PREF("spdy.ping-threshold"))) {
     rv = Preferences::GetInt(HTTP_PREF("spdy.ping-threshold"), &val);
-    if (NS_SUCCEEDED(rv))
+    if (NS_SUCCEEDED(rv)) {
       mSpdyPingThreshold =
           PR_SecondsToInterval((uint16_t)clamped(val, 0, 0x7fffffff));
+    }
   }
 
   // The amount of seconds to wait for a spdy ping response before
   // closing the session.
   if (PREF_CHANGED(HTTP_PREF("spdy.ping-timeout"))) {
     rv = Preferences::GetInt(HTTP_PREF("spdy.ping-timeout"), &val);
-    if (NS_SUCCEEDED(rv))
+    if (NS_SUCCEEDED(rv)) {
       mSpdyPingTimeout =
           PR_SecondsToInterval((uint16_t)clamped(val, 0, 0x7fffffff));
+    }
   }
 
   if (PREF_CHANGED(HTTP_PREF("spdy.allow-push"))) {
@@ -1470,8 +1383,9 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
   // closing the session.
   if (PREF_CHANGED(HTTP_PREF("spdy.send-buffer-size"))) {
     rv = Preferences::GetInt(HTTP_PREF("spdy.send-buffer-size"), &val);
-    if (NS_SUCCEEDED(rv))
+    if (NS_SUCCEEDED(rv)) {
       mSpdySendBufferSize = (uint32_t)clamped(val, 1500, 0x7fffffff);
+    }
   }
 
   if (PREF_CHANGED(HTTP_PREF("spdy.enable-hpack-dump"))) {
@@ -1485,25 +1399,28 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
   // established
   if (PREF_CHANGED(HTTP_PREF("connection-timeout"))) {
     rv = Preferences::GetInt(HTTP_PREF("connection-timeout"), &val);
-    if (NS_SUCCEEDED(rv))
+    if (NS_SUCCEEDED(rv)) {
       // the pref is in seconds, but the variable is in milliseconds
       mConnectTimeout = clamped(val, 1, 0xffff) * PR_MSEC_PER_SEC;
+    }
   }
 
   // The maximum amount of time to wait for a tls handshake to finish.
   if (PREF_CHANGED(HTTP_PREF("tls-handshake-timeout"))) {
     rv = Preferences::GetInt(HTTP_PREF("tls-handshake-timeout"), &val);
-    if (NS_SUCCEEDED(rv))
+    if (NS_SUCCEEDED(rv)) {
       // the pref is in seconds, but the variable is in milliseconds
       mTLSHandshakeTimeout = clamped(val, 1, 0xffff) * PR_MSEC_PER_SEC;
+    }
   }
 
   // The maximum number of current global half open sockets allowable
   // for starting a new speculative connection.
   if (PREF_CHANGED(HTTP_PREF("speculative-parallel-limit"))) {
     rv = Preferences::GetInt(HTTP_PREF("speculative-parallel-limit"), &val);
-    if (NS_SUCCEEDED(rv))
+    if (NS_SUCCEEDED(rv)) {
       mParallelSpeculativeConnectLimit = (uint32_t)clamped(val, 0, 1024);
+    }
   }
 
   // Whether or not to block requests for non head js/css items (e.g. media)
@@ -1735,15 +1652,17 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
 
   if (PREF_CHANGED(HTTP_PREF("tcp_keepalive.short_lived_time"))) {
     rv = Preferences::GetInt(HTTP_PREF("tcp_keepalive.short_lived_time"), &val);
-    if (NS_SUCCEEDED(rv) && val > 0)
+    if (NS_SUCCEEDED(rv) && val > 0) {
       mTCPKeepaliveShortLivedTimeS = clamped(val, 1, 300);  // Max 5 mins.
+    }
   }
 
   if (PREF_CHANGED(HTTP_PREF("tcp_keepalive.short_lived_idle_time"))) {
     rv = Preferences::GetInt(HTTP_PREF("tcp_keepalive.short_lived_idle_time"),
                              &val);
-    if (NS_SUCCEEDED(rv) && val > 0)
+    if (NS_SUCCEEDED(rv) && val > 0) {
       mTCPKeepaliveShortLivedIdleTimeS = clamped(val, 1, kMaxTCPKeepIdle);
+    }
   }
 
   // Keepalive values for Long-lived Connections.
@@ -1758,8 +1677,9 @@ void nsHttpHandler::PrefsChanged(const char* pref) {
   if (PREF_CHANGED(HTTP_PREF("tcp_keepalive.long_lived_idle_time"))) {
     rv = Preferences::GetInt(HTTP_PREF("tcp_keepalive.long_lived_idle_time"),
                              &val);
-    if (NS_SUCCEEDED(rv) && val > 0)
+    if (NS_SUCCEEDED(rv) && val > 0) {
       mTCPKeepaliveLongLivedIdleTimeS = clamped(val, 1, kMaxTCPKeepIdle);
+    }
   }
 
   if (PREF_CHANGED(HTTP_PREF("enforce-framing.http1")) ||
@@ -2043,14 +1963,6 @@ nsresult nsHttpHandler::SetupChannelInternal(
     uint32_t proxyResolveFlags, nsIURI* proxyURI, nsILoadInfo* aLoadInfo,
     nsIChannel** result) {
   RefPtr<HttpBaseChannel> httpChannel = aChannel;
-
-#ifdef MOZ_TASK_TRACER
-  if (tasktracer::IsStartLogging()) {
-    nsAutoCString urispec;
-    uri->GetSpec(urispec);
-    tasktracer::AddLabel("nsHttpHandler::NewProxiedChannel2 %s", urispec.get());
-  }
-#endif
 
   nsCOMPtr<nsProxyInfo> proxyInfo;
   if (givenProxyInfo) {
@@ -2400,8 +2312,9 @@ nsresult nsHttpHandler::SpeculativeConnectInternal(
 
   nsCOMPtr<nsILoadContext> loadContext = do_GetInterface(aCallbacks);
   uint32_t flags = 0;
-  if (loadContext && loadContext->UsePrivateBrowsing())
+  if (loadContext && loadContext->UsePrivateBrowsing()) {
     flags |= nsISocketProvider::NO_PERMANENT_STORAGE;
+  }
 
   OriginAttributes originAttributes;
   // If the principal is given, we use the originAttributes from this
@@ -2416,9 +2329,8 @@ nsresult nsHttpHandler::SpeculativeConnectInternal(
       aURI, originAttributes);
 
   nsCOMPtr<nsIURI> clone;
-  if (NS_SUCCEEDED(sss->IsSecureURI(nsISiteSecurityService::HEADER_HSTS, aURI,
-                                    flags, originAttributes, nullptr, nullptr,
-                                    &isStsHost)) &&
+  if (NS_SUCCEEDED(sss->IsSecureURI(aURI, flags, originAttributes, nullptr,
+                                    nullptr, &isStsHost)) &&
       isStsHost) {
     if (NS_SUCCEEDED(NS_GetSecureUpgradedURI(aURI, getter_AddRefs(clone)))) {
       aURI = clone.get();
@@ -2440,8 +2352,9 @@ nsresult nsHttpHandler::SpeculativeConnectInternal(
     }
   }
   // Ensure that this is HTTP or HTTPS, otherwise we don't do preconnect here
-  else if (!scheme.EqualsLiteral("http"))
+  else if (!scheme.EqualsLiteral("http")) {
     return NS_ERROR_UNEXPECTED;
+  }
 
   // Construct connection info object
   if (aURI->SchemeIs("https") && !mSpeculativeConnectEnabled) {
@@ -2648,7 +2561,7 @@ void nsHttpHandler::NotifyActiveTabLoadOptimization() {
   SetLastActiveTabLoadOptimizationHit(TimeStamp::Now());
 }
 
-TimeStamp const nsHttpHandler::GetLastActiveTabLoadOptimizationHit() {
+TimeStamp nsHttpHandler::GetLastActiveTabLoadOptimizationHit() {
   MutexAutoLock lock(mLastActiveTabLoadOptimizationLock);
 
   return mLastActiveTabLoadOptimizationHit;

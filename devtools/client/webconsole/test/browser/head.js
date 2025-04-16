@@ -1270,11 +1270,9 @@ async function waitForNoEagerEvaluationResult(hud) {
  * Selects a node in the inspector.
  *
  * @param {Object} toolbox
- * @param {Object} testActor: A test actor registered on the target. Needed to click on
- *                            the content element.
  * @param {String} selector: The selector for the node we want to select.
  */
-async function selectNodeWithPicker(toolbox, testActor, selector) {
+async function selectNodeWithPicker(toolbox, selector) {
   const inspector = toolbox.getPanel("inspector");
 
   const onPickerStarted = toolbox.nodePicker.once("picker-started");
@@ -1287,11 +1285,7 @@ async function selectNodeWithPicker(toolbox, testActor, selector) {
   const onPickerStopped = toolbox.nodePicker.once("picker-stopped");
   const onInspectorUpdated = inspector.once("inspector-updated");
 
-  testActor.synthesizeMouse({
-    selector,
-    center: true,
-    options: {},
-  });
+  await safeSynthesizeMouseEventAtCenterInContentPage(selector);
 
   await onPickerStopped;
   await onInspectorUpdated;

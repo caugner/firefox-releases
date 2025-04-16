@@ -139,7 +139,6 @@ pub enum DisplayItem {
     RectClip(RectClipDisplayItem),
     RoundedRectClip(RoundedRectClipDisplayItem),
     ImageMaskClip(ImageMaskClipDisplayItem),
-    Clip(ClipDisplayItem),
     ClipChain(ClipChainItem),
 
     // Spaces and Frames that content can be scoped under.
@@ -191,7 +190,6 @@ pub enum DebugDisplayItem {
     ImageMaskClip(ImageMaskClipDisplayItem),
     RoundedRectClip(RoundedRectClipDisplayItem),
     RectClip(RectClipDisplayItem),
-    Clip(ClipDisplayItem, Vec<ComplexClipRegion>),
     ClipChain(ClipChainItem, Vec<ClipId>),
 
     ScrollFrame(ScrollFrameDisplayItem),
@@ -1344,7 +1342,7 @@ pub enum YuvColorSpace {
     Rec601 = 0,
     Rec709 = 1,
     Rec2020 = 2,
-    Identity = 3, // aka RGB as per ISO/IEC 23091-2:2019
+    Identity = 3, // aka GBR as per ISO/IEC 23091-2:2019
 }
 
 #[repr(u8)]
@@ -1352,6 +1350,44 @@ pub enum YuvColorSpace {
 pub enum ColorRange {
     Limited = 0,
     Full = 1,
+}
+
+#[repr(u8)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, MallocSizeOf, PartialEq, Serialize, PeekPoke)]
+pub enum YuvRangedColorSpace {
+    Rec601Narrow = 0,
+    Rec601Full = 1,
+    Rec709Narrow = 2,
+    Rec709Full = 3,
+    Rec2020Narrow = 4,
+    Rec2020Full = 5,
+    GbrIdentity = 6,
+}
+
+impl YuvColorSpace {
+    pub fn with_range(self, range: ColorRange) -> YuvRangedColorSpace {
+        match self {
+            YuvColorSpace::Identity => YuvRangedColorSpace::GbrIdentity,
+            YuvColorSpace::Rec601 => {
+                match range {
+                    ColorRange::Limited => YuvRangedColorSpace::Rec601Narrow,
+                    ColorRange::Full => YuvRangedColorSpace::Rec601Full,
+                }
+            }
+            YuvColorSpace::Rec709 => {
+                match range {
+                    ColorRange::Limited => YuvRangedColorSpace::Rec709Narrow,
+                    ColorRange::Full => YuvRangedColorSpace::Rec709Full,
+                }
+            }
+            YuvColorSpace::Rec2020 => {
+                match range {
+                    ColorRange::Limited => YuvRangedColorSpace::Rec2020Narrow,
+                    ColorRange::Full => YuvRangedColorSpace::Rec2020Full,
+                }
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize, PeekPoke)]
@@ -1657,7 +1693,6 @@ impl DisplayItem {
             DisplayItem::RectClip(..) => "rect_clip",
             DisplayItem::RoundedRectClip(..) => "rounded_rect_clip",
             DisplayItem::ImageMaskClip(..) => "image_mask_clip",
-            DisplayItem::Clip(..) => "clip",
             DisplayItem::ClipChain(..) => "clip_chain",
             DisplayItem::ConicGradient(..) => "conic_gradient",
             DisplayItem::Gradient(..) => "gradient",
@@ -1729,6 +1764,7 @@ impl_default_for_enums! {
     ImageRendering => Auto,
     AlphaType => Alpha,
     YuvColorSpace => Rec601,
+    YuvRangedColorSpace => Rec601Narrow,
     ColorRange => Limited,
     YuvData => NV12(ImageKey::default(), ImageKey::default()),
     YuvFormat => NV12,

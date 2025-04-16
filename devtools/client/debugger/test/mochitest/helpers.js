@@ -15,7 +15,6 @@ Services.scriptloader.loadSubScript(
 );
 
 var { Toolbox } = require("devtools/client/framework/toolbox");
-const { Task } = require("devtools/shared/task");
 const asyncStorage = require("devtools/shared/async-storage");
 
 const {
@@ -400,7 +399,7 @@ function assertPausedAtSourceAndLine(dbg, expectedSourceId, expectedLine) {
   const frames = dbg.selectors.getCurrentThreadFrames();
   ok(frames.length >= 1, "Got at least one frame");
   const { sourceId, line } = frames[0].location;
-  ok(sourceId == expectedSourceId, "Frame has correct source");
+  is(sourceId, expectedSourceId, "Frame has correct source");
   ok(
     line == expectedLine,
     `Frame paused at ${line}, but expected ${expectedLine}`
@@ -1114,6 +1113,7 @@ const keyMappings = {
   quickOpenFunc: { code: "o", modifiers: cmdShift },
   quickOpenLine: { code: ":", modifiers: cmdOrCtrl },
   fileSearch: { code: "f", modifiers: cmdOrCtrl },
+  projectSearch: { code: "f", modifiers: cmdShift },
   fileSearchNext: { code: "g", modifiers: { metaKey: true } },
   fileSearchPrev: { code: "g", modifiers: cmdShift },
   goToLine: { code: "g", modifiers: { ctrlKey: true } },
@@ -1425,7 +1425,8 @@ const selectors = {
   searchField: ".search-field",
   blackbox: ".action.black-box",
   projectSearchCollapsed: ".project-text-search .arrow:not(.expanded)",
-  projectSerchExpandedResults: ".project-text-search .result",
+  projectSearchExpandedResults: ".project-text-search .result",
+  projectSearchFileResults: ".project-text-search .file-result",
   threadsPaneItems: ".threads-pane .thread",
   threadsPaneItem: i => `.threads-pane .thread:nth-child(${i})`,
   threadsPaneItemPause: i => `${selectors.threadsPaneItem(i)} .pause-badge`,
@@ -1963,6 +1964,28 @@ async function editExpression(dbg, input) {
   await evaluated;
 }
 
+/**
+ * Get the text representation of a watch expression label given its position in the panel
+ *
+ * @param {Object} dbg
+ * @param {Number} index: Position in the panel of the expression we want the label of
+ * @returns {String}
+ */
+function getWatchExpressionLabel(dbg, index) {
+  return findElement(dbg, "expressionNode", index).innerText;
+}
+
+/**
+ * Get the text representation of a watch expression value given its position in the panel
+ *
+ * @param {Object} dbg
+ * @param {Number} index: Position in the panel of the expression we want the value of
+ * @returns {String}
+ */
+function getWatchExpressionValue(dbg, index) {
+  return findElement(dbg, "expressionValue", index).innerText;
+}
+
 async function waitUntilPredicate(predicate) {
   let result;
   await waitUntil(() => {
@@ -1995,11 +2018,11 @@ async function getDebuggerSplitConsole(dbg) {
 // string in the topmost frame.
 async function evaluateInTopFrame(dbg, text) {
   const threadFront = dbg.toolbox.target.threadFront;
-  const consoleFront = await dbg.toolbox.target.getFront("console");
   const { frames } = await threadFront.getFrames(0, 1);
   ok(frames.length == 1, "Got one frame");
-  const options = { thread: threadFront.actor, frameActor: frames[0].actorID };
-  const response = await consoleFront.evaluateJSAsync(text, options);
+  const response = await dbg.commands.scriptCommand.execute(text, {
+    frameActor: frames[0].actorID,
+  });
   return response.result.type == "undefined" ? undefined : response.result;
 }
 

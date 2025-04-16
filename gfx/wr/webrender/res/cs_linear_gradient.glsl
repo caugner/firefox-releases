@@ -13,7 +13,6 @@ flat varying float v_start_offset;
 
 #define EXTEND_MODE_REPEAT 1
 
-// Rectangle in origin+size format
 PER_INSTANCE in vec4 aTaskRect;
 PER_INSTANCE in vec2 aStartPoint;
 PER_INSTANCE in vec2 aEndPoint;
@@ -22,7 +21,7 @@ PER_INSTANCE in int aExtendMode;
 PER_INSTANCE in int aGradientStopsAddress;
 
 void main(void) {
-    vec2 pos = aTaskRect.xy + aTaskRect.zw * aPosition.xy;
+    vec2 pos = mix(aTaskRect.xy, aTaskRect.zw, aPosition.xy);
     gl_Position = uTransform * vec4(pos, 0.0, 1.0);
 
     v_pos = aPosition.xy * aScale;
@@ -33,7 +32,7 @@ void main(void) {
     v_scale_dir = dir / dot(dir, dir);
     v_start_offset = dot(aStartPoint, v_scale_dir);
 
-    v_scale_dir *= aTaskRect.zw;
+    v_scale_dir *= (aTaskRect.zw - aTaskRect.xy);
 
     v_gradient_repeat = float(aExtendMode == EXTEND_MODE_REPEAT);
     v_gradient_address = aGradientStopsAddress;

@@ -42,6 +42,7 @@
 #include "vm/ThrowMsgKind.h"  // ThrowCondition
 #include "wasm/WasmInstance.h"
 
+#include "jit/BaselineFrame-inl.h"
 #include "jit/MacroAssembler-inl.h"
 #include "vm/ArrayBufferObject-inl.h"
 #include "vm/BytecodeUtil-inl.h"
@@ -212,6 +213,9 @@ const void* CacheIRCloner::getRawPointerField(uint32_t stubOffset) {
 }
 uint64_t CacheIRCloner::getRawInt64Field(uint32_t stubOffset) {
   return static_cast<uint64_t>(readStubInt64(stubOffset));
+}
+gc::AllocSite* CacheIRCloner::getAllocSiteField(uint32_t stubOffset) {
+  return reinterpret_cast<gc::AllocSite*>(readStubWord(stubOffset));
 }
 
 jsid CacheIRCloner::getIdField(uint32_t stubOffset) {
@@ -557,7 +561,7 @@ static bool IsCacheableNoProperty(JSContext* cx, NativeObject* obj,
 static NativeGetPropCacheability CanAttachNativeGetProp(
     JSContext* cx, JSObject* obj, PropertyKey id, NativeObject** holder,
     Maybe<PropertyInfo>* propInfo, jsbytecode* pc) {
-  MOZ_ASSERT(JSID_IS_STRING(id) || JSID_IS_SYMBOL(id));
+  MOZ_ASSERT(id.isString() || id.isSymbol());
   MOZ_ASSERT(!*holder);
 
   // The lookup needs to be universally pure, otherwise we risk calling hooks
@@ -608,7 +612,7 @@ static void GuardReceiverProto(CacheIRWriter& writer, NativeObject* obj,
 // dense elements and dynamic properties).
 static void TestMatchingNativeReceiver(CacheIRWriter& writer, NativeObject* obj,
                                        ObjOperandId objId) {
-  writer.guardShapeForOwnProperties(objId, obj->lastProperty());
+  writer.guardShapeForOwnProperties(objId, obj->shape());
 }
 
 // Similar to |TestMatchingNativeReceiver|, but specialized for ProxyObject.
@@ -730,7 +734,8 @@ static void GeneratePrototypeHoleGuards(CacheIRWriter& writer,
     // Make sure the shape matches, to ensure the proto is unchanged and to
     // avoid non-dense elements or anything else that is being checked by
     // CanAttachDenseElementHole.
-    writer.guardShape(protoId, pobj->as<NativeObject>().lastProperty());
+    MOZ_ASSERT(pobj->is<NativeObject>());
+    writer.guardShape(protoId, pobj->shape());
 
     // Also make sure there are no dense elements.
     writer.guardNoDenseElements(protoId);
@@ -747,7 +752,7 @@ static void TestMatchingHolder(CacheIRWriter& writer, NativeObject* obj,
   // The GeneratePrototypeGuards + TestMatchingHolder checks only support
   // prototype chains composed of NativeObject (excluding the receiver
   // itself).
-  writer.guardShapeForOwnProperties(objId, obj->lastProperty());
+  writer.guardShapeForOwnProperties(objId, obj->shape());
 }
 
 // Emit a shape guard for all objects on the proto chain. This does NOT include
@@ -1582,8 +1587,7 @@ static void CheckDOMProxyExpandoDoesNotShadow(CacheIRWriter& writer,
     // the shape matches the current expando object.
     NativeObject& expandoObj = expandoVal.toObject().as<NativeObject>();
     MOZ_ASSERT(!expandoObj.containsPure(id));
-    writer.guardDOMExpandoMissingOrGuardShape(expandoId,
-                                              expandoObj.lastProperty());
+    writer.guardDOMExpandoMissingOrGuardShape(expandoId, expandoObj.shape());
   } else {
     MOZ_CRASH("Invalid expando value");
   }
@@ -2052,8 +2056,7 @@ AttachDecision GetPropIRGenerator::tryAttachArgumentsObjectIterator(
     return AttachDecision::NoAction;
   }
 
-  if (!JSID_IS_SYMBOL(id) ||
-      JSID_TO_SYMBOL(id) != cx_->wellKnownSymbols().iterator) {
+  if (!id.isWellKnownSymbol(JS::SymbolCode::iterator)) {
     return AttachDecision::NoAction;
   }
 
@@ -2495,9 +2498,9 @@ AttachDecision GetPropIRGenerator::tryAttachSparseElement(
   return AttachDecision::Attach;
 }
 
-// For Uint32Array we let the stub return a double only if the current result is
-// a double, to allow better codegen in Warp.
-static bool AllowDoubleForUint32Array(TypedArrayObject* tarr, uint64_t index) {
+// For Uint32Array we let the stub return an Int32 if we have not seen a
+// double, to allow better codegen in Warp while avoiding bailout loops.
+static bool ForceDoubleForUint32Array(TypedArrayObject* tarr, uint64_t index) {
   MOZ_ASSERT(index < tarr->length());
 
   if (tarr->type() != Scalar::Type::Uint32) {
@@ -2531,11 +2534,11 @@ AttachDecision GetPropIRGenerator::tryAttachTypedArrayElement(
   }
 
   // If the number is not representable as an integer the result will be
-  // |undefined| so we leave |allowDoubleForUint32| as false.
-  bool allowDoubleForUint32 = false;
+  // |undefined| so we leave |forceDoubleForUint32| as false.
+  bool forceDoubleForUint32 = false;
   if (!handleOOB) {
     uint64_t index = uint64_t(indexInt64);
-    allowDoubleForUint32 = AllowDoubleForUint32Array(tarr, index);
+    forceDoubleForUint32 = ForceDoubleForUint32Array(tarr, index);
   }
 
   writer.guardShapeForClass(objId, tarr->shape());
@@ -2544,7 +2547,7 @@ AttachDecision GetPropIRGenerator::tryAttachTypedArrayElement(
   IntPtrOperandId intPtrIndexId = guardToIntPtrIndex(idVal_, keyId, handleOOB);
 
   writer.loadTypedArrayElementResult(objId, intPtrIndexId, tarr->type(),
-                                     handleOOB, allowDoubleForUint32);
+                                     handleOOB, forceDoubleForUint32);
   writer.returnFromIC();
 
   trackAttached("TypedElement");
@@ -2755,17 +2758,17 @@ AttachDecision GetNameIRGenerator::tryAttachGlobalNameValue(ObjOperandId objId,
     }
 
     // Shape guard for global lexical.
-    writer.guardShape(objId, globalLexical->lastProperty());
+    writer.guardShape(objId, globalLexical->shape());
 
     // Guard on the shape of the GlobalObject.
     ObjOperandId globalId = writer.loadEnclosingEnvironment(objId);
-    writer.guardShape(globalId, globalLexical->global().lastProperty());
+    writer.guardShape(globalId, globalLexical->global().shape());
 
     ObjOperandId holderId = globalId;
     if (holder != &globalLexical->global()) {
       // Shape guard holder.
       holderId = writer.loadObject(holder);
-      writer.guardShape(holderId, holder->lastProperty());
+      writer.guardShape(holderId, holder->shape());
     }
 
     EmitLoadSlotResult(writer, holderId, holder, *prop);
@@ -2804,16 +2807,16 @@ AttachDecision GetNameIRGenerator::tryAttachGlobalNameGetter(ObjOperandId objId,
   }
 
   // Shape guard for global lexical.
-  writer.guardShape(objId, globalLexical->lastProperty());
+  writer.guardShape(objId, globalLexical->shape());
 
   // Guard on the shape of the GlobalObject.
   ObjOperandId globalId = writer.loadEnclosingEnvironment(objId);
-  writer.guardShape(globalId, global->lastProperty());
+  writer.guardShape(globalId, global->shape());
 
   if (holder != global) {
     // Shape guard holder.
     ObjOperandId holderId = writer.loadObject(holder);
-    writer.guardShape(holderId, holder->lastProperty());
+    writer.guardShape(holderId, holder->shape());
     EmitGuardGetterSetterSlot(writer, holder, *prop, holderId,
                               /* holderIsConstant = */ true);
   } else {
@@ -2991,7 +2994,7 @@ AttachDecision BindNameIRGenerator::tryAttachGlobalName(ObjOperandId objId,
     // a shape guard.
     Maybe<PropertyInfo> prop = result->as<GlobalObject>().lookup(cx_, id);
     if (prop.isNothing() || prop->configurable()) {
-      writer.guardShape(objId, globalLexical->lastProperty());
+      writer.guardShape(objId, globalLexical->shape());
     }
     ObjOperandId globalId = writer.loadEnclosingEnvironment(objId);
     writer.loadObjectResult(globalId);
@@ -3639,8 +3642,7 @@ AttachDecision SetPropIRGenerator::tryAttachNativeSetSlot(HandleObject obj,
   // Don't attach a megamorphic store slot stub for ops like JSOp::InitElem.
   if (mode_ == ICState::Mode::Megamorphic && cacheKind_ == CacheKind::SetProp &&
       IsPropertySetOp(JSOp(*pc_))) {
-    writer.megamorphicStoreSlot(objId, JSID_TO_ATOM(id)->asPropertyName(),
-                                rhsId);
+    writer.megamorphicStoreSlot(objId, id.toAtom()->asPropertyName(), rhsId);
     writer.returnFromIC();
     trackAttached("MegamorphicNativeSlot");
     return AttachDecision::Attach;
@@ -4414,7 +4416,7 @@ AttachDecision SetPropIRGenerator::tryAttachWindowProxy(HandleObject obj,
 
   ObjOperandId windowObjId =
       GuardAndLoadWindowProxyWindow(writer, objId, windowObj);
-  writer.guardShape(windowObjId, windowObj->lastProperty());
+  writer.guardShape(windowObjId, windowObj->shape());
 
   EmitStoreSlotAndReturn(writer, windowObjId, windowObj, *prop, rhsId);
 
@@ -4544,18 +4546,21 @@ AttachDecision SetPropIRGenerator::tryAttachAddSlotStub(HandleShape oldShape) {
   NativeObject* holder = nobj;
 
   // The property must be the last added property of the object.
-  Shape* newShape = holder->lastProperty();
-  MOZ_RELEASE_ASSERT(newShape->propertyInfo() == propInfo);
+  Shape* newShape = holder->shape();
+  MOZ_RELEASE_ASSERT(newShape->lastProperty() == propInfo);
 
-  // Old shape should be parent of new shape. Object flag updates may make this
-  // false even for simple data properties. It may be possible to support these
-  // transitions in the future, but ignore now for simplicity.
-  if (newShape->previous() != oldShape) {
-    return AttachDecision::NoAction;
+#ifdef DEBUG
+  // Verify exactly one property was added by comparing the property map
+  // lengths.
+  if (oldShape->propMapLength() == PropMap::Capacity) {
+    MOZ_ASSERT(newShape->propMapLength() == 1);
+  } else {
+    MOZ_ASSERT(newShape->propMapLength() == oldShape->propMapLength() + 1);
   }
+#endif
 
   // Basic shape checks.
-  if (newShape->inDictionary() || !propInfo.isDataProperty() ||
+  if (newShape->isDictionary() || !propInfo.isDataProperty() ||
       !propInfo.writable()) {
     return AttachDecision::NoAction;
   }
@@ -4675,7 +4680,7 @@ AttachDecision InstanceOfIRGenerator::tryAttachStub() {
   ValOperandId rhs(writer.setInputOperandId(1));
 
   ObjOperandId rhsId = writer.guardToObject(rhs);
-  writer.guardShape(rhsId, fun->lastProperty());
+  writer.guardShape(rhsId, fun->shape());
 
   // Ensure that the shapes up the prototype chain for the RHS remain the same
   // so that @@hasInstance is not shadowed by some intermediate prototype
@@ -4955,19 +4960,20 @@ AttachDecision OptimizeSpreadCallIRGenerator::tryAttachArray() {
   ObjOperandId objId = writer.guardToObject(valId);
 
   // Guard the object is a packed array with Array.prototype as proto.
-  writer.guardShape(objId, obj->as<ArrayObject>().lastProperty());
+  MOZ_ASSERT(obj->is<ArrayObject>());
+  writer.guardShape(objId, obj->shape());
   writer.guardArrayIsPacked(objId);
 
   // Guard on Array.prototype[@@iterator].
   ObjOperandId arrProtoId = writer.loadObject(arrProto);
   ObjOperandId iterId = writer.loadObject(iterFun);
-  writer.guardShape(arrProtoId, arrProto->lastProperty());
+  writer.guardShape(arrProtoId, arrProto->shape());
   writer.guardDynamicSlotIsSpecificObject(arrProtoId, iterId, arrProtoIterSlot);
 
   // Guard on %ArrayIteratorPrototype%.next.
   ObjOperandId iterProtoId = writer.loadObject(arrayIteratorProto);
   ObjOperandId nextId = writer.loadObject(nextFun);
-  writer.guardShape(iterProtoId, arrayIteratorProto->lastProperty());
+  writer.guardShape(iterProtoId, arrayIteratorProto->shape());
   writer.guardDynamicSlotIsSpecificObject(iterProtoId, nextId, iterNextSlot);
 
   writer.loadBooleanResult(true);
@@ -5324,13 +5330,13 @@ AttachDecision CallIRGenerator::tryAttachDataViewGet(HandleFunction callee,
     return AttachDecision::NoAction;
   }
 
-  // For getUint32 we let the stub return a double only if the current result is
-  // a double, to allow better codegen in Warp.
-  bool allowDoubleForUint32 = false;
+  // For getUint32 we let the stub return an Int32 if we have not seen a
+  // double, to allow better codegen in Warp while avoiding bailout loops.
+  bool forceDoubleForUint32 = false;
   if (type == Scalar::Uint32) {
     bool isLittleEndian = argc_ > 1 && args_[1].toBoolean();
     uint32_t res = dv->read<uint32_t>(offsetInt64, isLittleEndian);
-    allowDoubleForUint32 = res >= INT32_MAX;
+    forceDoubleForUint32 = res >= INT32_MAX;
   }
 
   // Initialize the input operand.
@@ -5361,7 +5367,7 @@ AttachDecision CallIRGenerator::tryAttachDataViewGet(HandleFunction callee,
   }
 
   writer.loadDataViewValueResult(objId, intPtrOffsetId, boolLittleEndianId,
-                                 type, allowDoubleForUint32);
+                                 type, forceDoubleForUint32);
   writer.returnFromIC();
 
   trackAttached("DataViewGet");
@@ -8191,7 +8197,7 @@ AttachDecision CallIRGenerator::tryAttachArrayIteratorPrototypeOptimizable(
   ObjOperandId protoId = writer.loadObject(arrayIteratorProto);
   ObjOperandId nextId = writer.loadObject(nextFun);
 
-  writer.guardShape(protoId, arrayIteratorProto->lastProperty());
+  writer.guardShape(protoId, arrayIteratorProto->shape());
 
   // Ensure that proto[slot] == nextFun.
   writer.guardDynamicSlotIsSpecificObject(protoId, nextId, slot);
@@ -8551,7 +8557,8 @@ AttachDecision CallIRGenerator::tryAttachWasmCall(HandleFunction calleeFunc) {
   // If there are too many arguments, don't optimize (we won't be able to store
   // the arguments in the LIR node).
   static_assert(wasm::MaxArgsForJitInlineCall <= ArgumentKindArgIndexLimit);
-  if (sig.args().length() > wasm::MaxArgsForJitInlineCall) {
+  if (sig.args().length() > wasm::MaxArgsForJitInlineCall ||
+      argc_ > ArgumentKindArgIndexLimit) {
     return AttachDecision::NoAction;
   }
 
@@ -9168,7 +9175,7 @@ AttachDecision CallIRGenerator::tryAttachCallScripted(
       ValOperandId newTargetValId = writer.loadArgumentDynamicSlot(
           ArgumentKind::NewTarget, argcId, flags);
       ObjOperandId newTargetObjId = writer.guardToObject(newTargetValId);
-      writer.guardShape(newTargetObjId, newTarget->lastProperty());
+      writer.guardShape(newTargetObjId, newTarget->shape());
       ObjOperandId protoId = writer.loadObject(prototypeObject);
       writer.guardDynamicSlotIsSpecificObject(newTargetObjId, protoId, slot);
 
@@ -9415,8 +9422,8 @@ JSObject* jit::NewWrapperWithObjectShape(JSContext* cx,
     if (!wrapper) {
       return nullptr;
     }
-    wrapper->as<NativeObject>().setSlot(
-        SHAPE_CONTAINER_SLOT, PrivateGCThingValue(obj->lastProperty()));
+    wrapper->as<NativeObject>().setSlot(SHAPE_CONTAINER_SLOT,
+                                        PrivateGCThingValue(obj->shape()));
   }
   if (!JS_WrapObject(cx, &wrapper)) {
     return nullptr;
@@ -9982,7 +9989,9 @@ void ToBoolIRGenerator::trackAttached(const char* name) {
 
 AttachDecision ToBoolIRGenerator::tryAttachStub() {
   AutoAssertNoPendingException aanpe(cx_);
+  writer.setTypeData(TypeData(JSValueType(val_.type())));
 
+  TRY_ATTACH(tryAttachBool());
   TRY_ATTACH(tryAttachInt32());
   TRY_ATTACH(tryAttachNumber());
   TRY_ATTACH(tryAttachString());
@@ -9993,6 +10002,19 @@ AttachDecision ToBoolIRGenerator::tryAttachStub() {
 
   trackAttached(IRGenerator::NotAttached);
   return AttachDecision::NoAction;
+}
+
+AttachDecision ToBoolIRGenerator::tryAttachBool() {
+  if (!val_.isBoolean()) {
+    return AttachDecision::NoAction;
+  }
+
+  ValOperandId valId(writer.setInputOperandId(0));
+  writer.guardNonDoubleType(valId, ValueType::Boolean);
+  writer.loadOperandResult(valId);
+  writer.returnFromIC();
+  trackAttached("ToBoolBool");
+  return AttachDecision::Attach;
 }
 
 AttachDecision ToBoolIRGenerator::tryAttachInt32() {
@@ -10988,12 +11010,14 @@ AttachDecision BinaryArithIRGenerator::tryAttachStringInt32Arith() {
 
 NewArrayIRGenerator::NewArrayIRGenerator(JSContext* cx, HandleScript script,
                                          jsbytecode* pc, ICState state, JSOp op,
-                                         HandleObject templateObj)
+                                         HandleObject templateObj,
+                                         BaselineFrame* frame)
     : IRGenerator(cx, script, pc, CacheKind::NewArray, state),
 #ifdef JS_CACHEIR_SPEW
       op_(op),
 #endif
-      templateObject_(templateObj) {
+      templateObject_(templateObj),
+      frame_(frame) {
   MOZ_ASSERT(templateObject_);
 }
 
@@ -11003,6 +11027,24 @@ void NewArrayIRGenerator::trackAttached(const char* name) {
     sp.opcodeProperty("op", op_);
   }
 #endif
+}
+
+// Allocation sites are usually created during baseline compilation, but we also
+// need to created them when an IC stub is added to a baseline compiled script
+// and when trial inlining.
+static gc::AllocSite* MaybeCreateAllocSite(jsbytecode* pc,
+                                           BaselineFrame* frame) {
+  MOZ_ASSERT(BytecodeOpCanHaveAllocSite(JSOp(*pc)));
+
+  JSScript* outerScript = frame->outerScript();
+  bool inInterpreter = frame->runningInInterpreter();
+  bool isInlined = frame->icScript()->isInlined();
+
+  if (inInterpreter && !isInlined) {
+    return outerScript->zone()->unknownAllocSite();
+  }
+
+  return outerScript->createAllocSite();
 }
 
 AttachDecision NewArrayIRGenerator::tryAttachArrayObject() {
@@ -11026,10 +11068,15 @@ AttachDecision NewArrayIRGenerator::tryAttachArrayObject() {
   writer.guardNoAllocationMetadataBuilder(
       cx_->realm()->addressOfMetadataBuilder());
 
-  Shape* shape = arrayObj->lastProperty();
+  gc::AllocSite* site = MaybeCreateAllocSite(pc_, frame_);
+  if (!site) {
+    return AttachDecision::NoAction;
+  }
+
+  Shape* shape = arrayObj->shape();
   uint32_t length = arrayObj->length();
 
-  writer.newArrayObjectResult(length, shape);
+  writer.newArrayObjectResult(length, shape, site);
 
   writer.returnFromIC();
 
@@ -11048,12 +11095,14 @@ AttachDecision NewArrayIRGenerator::tryAttachStub() {
 
 NewObjectIRGenerator::NewObjectIRGenerator(JSContext* cx, HandleScript script,
                                            jsbytecode* pc, ICState state,
-                                           JSOp op, HandleObject templateObj)
+                                           JSOp op, HandleObject templateObj,
+                                           BaselineFrame* frame)
     : IRGenerator(cx, script, pc, CacheKind::NewObject, state),
 #ifdef JS_CACHEIR_SPEW
       op_(op),
 #endif
-      templateObject_(templateObj) {
+      templateObject_(templateObj),
+      frame_(frame) {
   MOZ_ASSERT(templateObject_);
 }
 
@@ -11086,14 +11135,20 @@ AttachDecision NewObjectIRGenerator::tryAttachPlainObject() {
   MOZ_ASSERT(!nativeObj->hasDynamicElements());
   MOZ_ASSERT(!nativeObj->isSharedMemory());
 
+  gc::AllocSite* site = MaybeCreateAllocSite(pc_, frame_);
+  if (!site) {
+    return AttachDecision::NoAction;
+  }
+
   uint32_t numFixedSlots = nativeObj->numUsedFixedSlots();
   uint32_t numDynamicSlots = nativeObj->numDynamicSlots();
   gc::AllocKind allocKind = nativeObj->allocKindForTenure();
-  Shape* shape = nativeObj->lastProperty();
+  Shape* shape = nativeObj->shape();
 
   writer.guardNoAllocationMetadataBuilder(
       cx_->realm()->addressOfMetadataBuilder());
-  writer.newPlainObjectResult(numFixedSlots, numDynamicSlots, allocKind, shape);
+  writer.newPlainObjectResult(numFixedSlots, numDynamicSlots, allocKind, shape,
+                              site);
 
   writer.returnFromIC();
 

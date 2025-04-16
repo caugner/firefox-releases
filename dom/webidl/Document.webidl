@@ -191,7 +191,6 @@ partial interface Document {
                 attribute EventHandler onbeforescriptexecute;
                 attribute EventHandler onafterscriptexecute;
 
-                [Pref="dom.select_events.enabled"]
                 attribute EventHandler onselectionchange;
 
   /**
@@ -471,9 +470,6 @@ partial interface Document {
   readonly attribute XULCommandDispatcher? commandDispatcher;
 
   [ChromeOnly]
-  attribute Node? popupNode;
-
-  [ChromeOnly]
   attribute boolean devToolsWatchingDOMMutations;
 
   /**
@@ -485,8 +481,6 @@ partial interface Document {
   readonly attribute Node? popupRangeParent;
   [Throws, ChromeOnly]
   readonly attribute long  popupRangeOffset;
-  [ChromeOnly]
-  attribute Node? tooltipNode;
 
   /**
    * Returns all the shadow roots connected to the document, in no particular

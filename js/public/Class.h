@@ -35,7 +35,7 @@ class PropertyResult;
 
 // This is equal to JSFunction::class_.  Use it in places where you don't want
 // to #include jsfun.h.
-extern JS_FRIEND_DATA const JSClass* const FunctionClassPtr;
+extern JS_PUBLIC_DATA const JSClass* const FunctionClassPtr;
 
 }  // namespace js
 
@@ -345,7 +345,7 @@ typedef bool (*GetOwnPropertyOp)(
 typedef bool (*DeletePropertyOp)(JSContext* cx, JS::HandleObject obj,
                                  JS::HandleId id, JS::ObjectOpResult& result);
 
-class JS_FRIEND_API ElementAdder {
+class JS_PUBLIC_API ElementAdder {
  public:
   enum GetBehavior {
     // Check if the element exists before performing the Get and preserve
@@ -573,7 +573,7 @@ static const uint32_t JSCLASS_FOREGROUND_FINALIZE =
 // application.
 static const uint32_t JSCLASS_GLOBAL_APPLICATION_SLOTS = 5;
 static const uint32_t JSCLASS_GLOBAL_SLOT_COUNT =
-    JSCLASS_GLOBAL_APPLICATION_SLOTS + JSProto_LIMIT * 2 + 31;
+    JSCLASS_GLOBAL_APPLICATION_SLOTS + JSProto_LIMIT * 2 + 30;
 
 static constexpr uint32_t JSCLASS_GLOBAL_FLAGS_WITH_SLOTS(uint32_t n) {
   return JSCLASS_IS_GLOBAL |
@@ -821,7 +821,7 @@ enum class ESClass {
 bool Unbox(JSContext* cx, JS::HandleObject obj, JS::MutableHandleValue vp);
 
 #ifdef DEBUG
-JS_FRIEND_API bool HasObjectMovedOp(JSObject* obj);
+JS_PUBLIC_API bool HasObjectMovedOp(JSObject* obj);
 #endif
 
 } /* namespace js */

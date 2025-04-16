@@ -102,28 +102,6 @@ void ChromeObserver::SetDrawsTitle(bool aState) {
   }
 }
 
-void ChromeObserver::UpdateWindowAppearance() {
-  nsIWidget* mainWidget = GetWindowWidget();
-  if (mainWidget) {
-    nsIWidget::WindowAppearance appearance;
-    switch (mDocument->GetDocumentLWTheme()) {
-      case Document::Doc_Theme_Bright:
-        // Reversing light to dark since we want to have dark windows for bright
-        // text.
-        appearance = nsIWidget::WindowAppearance::eDark;
-        break;
-      case Document::Doc_Theme_Dark:
-        // Reversing dark to light since we want to have light windows for dark
-        // text.
-        appearance = nsIWidget::WindowAppearance::eLight;
-        break;
-      default:
-        appearance = nsIWidget::WindowAppearance::eSystem;
-    }
-    mainWidget->SetWindowAppearance(appearance);
-  }
-}
-
 class MarginSetter : public Runnable {
  public:
   explicit MarginSetter(nsIWidget* aWidget)
@@ -184,9 +162,6 @@ void ChromeObserver::AttributeChanged(dom::Element* aElement,
       HideWindowChrome(value->Equals(u"true"_ns, eCaseMatters));
     } else if (aName == nsGkAtoms::chromemargin) {
       SetChromeMargins(value);
-    } else if (aName == nsGkAtoms::windowtype && aElement->IsXULElement()) {
-      RefPtr<nsXULElement> xulElement = nsXULElement::FromNodeOrNull(aElement);
-      xulElement->MaybeUpdatePrivateLifetime();
     }
     // title and drawintitlebar are settable on
     // any root node (windows, dialogs, etc)
@@ -205,7 +180,6 @@ void ChromeObserver::AttributeChanged(dom::Element* aElement,
       // if the lwtheme changed, make sure to reset the document lwtheme
       // cache
       mDocument->ResetDocumentLWTheme();
-      UpdateWindowAppearance();
     }
   } else {
     if (aName == nsGkAtoms::hidechrome) {
@@ -220,7 +194,6 @@ void ChromeObserver::AttributeChanged(dom::Element* aElement,
                 aName == nsGkAtoms::lwthemetextcolor)) {
       // if the lwtheme changed, make sure to restyle appropriately
       mDocument->ResetDocumentLWTheme();
-      UpdateWindowAppearance();
     } else if (aName == nsGkAtoms::drawintitlebar) {
       SetDrawsInTitlebar(false);
     } else if (aName == nsGkAtoms::drawtitle) {

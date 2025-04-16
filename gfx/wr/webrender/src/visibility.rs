@@ -216,6 +216,14 @@ pub fn update_primitive_visibility(
                         &[],
                         frame_context.spatial_tree,
                     );
+
+                    // Let the picture cache know that we are pushing an off-screen
+                    // surface, so it can treat dependencies of surface atomically.
+                    frame_state.tile_cache.as_mut().unwrap().push_surface(
+                        pic.estimated_local_rect,
+                        pic.spatial_node_index,
+                        frame_context.spatial_tree,
+                    );
                 }
             }
         }
@@ -348,7 +356,7 @@ pub fn update_primitive_visibility(
                 // Pass through pictures are always considered visible in all dirty tiles.
                 prim_instance.vis.state = VisibilityState::PassThrough;
             } else {
-                if prim_local_rect.size.width <= 0.0 || prim_local_rect.size.height <= 0.0 {
+                if prim_local_rect.width() <= 0.0 || prim_local_rect.height() <= 0.0 {
                     if prim_instance.is_chased() {
                         println!("\tculled for zero local rectangle");
                     }
@@ -435,7 +443,7 @@ pub fn update_primitive_visibility(
                     prim_instance.clip_set.local_clip_rect
                 };
 
-                if prim_instance.vis.combined_local_clip_rect.size.is_empty() {
+                if prim_instance.vis.combined_local_clip_rect.is_empty() {
                     if prim_instance.is_chased() {
                         println!("\tculled for zero local clip rectangle");
                     }
@@ -526,7 +534,7 @@ pub fn update_primitive_visibility(
                             &map_surface_to_world,
                         ) {
                             let rect = rect * frame_context.global_device_pixel_scale;
-                            if rect.size.width > 70.0 && rect.size.height > 70.0 {
+                            if rect.width() > 70.0 && rect.height() > 70.0 {
                                 frame_state.scratch.primitive.push_debug_rect(rect, debug_colors::PURPLE, debug_colors::PURPLE);
                             }
                         }
@@ -596,16 +604,22 @@ pub fn update_primitive_visibility(
             pic.prev_precise_local_rect = pic.precise_local_rect;
         }
 
-        if let PictureCompositeMode::TileCache { .. } = rc.composite_mode {
-            let mut tile_cache = frame_state.tile_cache.take().unwrap();
+        match rc.composite_mode {
+            PictureCompositeMode::TileCache { .. } => {
+                let mut tile_cache = frame_state.tile_cache.take().unwrap();
 
-            // Build the dirty region(s) for this tile cache.
-            tile_cache.post_update(
-                frame_context,
-                frame_state,
-            );
+                // Build the dirty region(s) for this tile cache.
+                tile_cache.post_update(
+                    frame_context,
+                    frame_state,
+                );
 
-            tile_caches.insert(SliceId::new(tile_cache.slice), tile_cache);
+                tile_caches.insert(SliceId::new(tile_cache.slice), tile_cache);
+            }
+            _ => {
+                // Pop the off-screen surface from the picture cache stack
+                frame_state.tile_cache.as_mut().unwrap().pop_surface();
+            }
         }
 
         None
@@ -706,7 +720,7 @@ fn calculate_prim_clipped_world_rect(
     map_surface_to_world: &SpaceMapper<PicturePixel, WorldPixel>,
 ) -> Option<WorldRect> {
     map_surface_to_world
-        .map(pic_clip_rect)
+        .map(&pic_clip_rect)
         .and_then(|world_rect| {
             world_rect.intersection(world_culling_rect)
         })

@@ -697,7 +697,7 @@ pub mod desc {
         }],
         instance_attributes: &[
             VertexAttribute {
-                name: "aDeviceRect",
+                name: "aLocalRect",
                 count: 4,
                 kind: VertexAttributeKind::F32,
             },
@@ -728,6 +728,11 @@ pub mod desc {
             },
             VertexAttribute {
                 name: "aUvRect2",
+                count: 4,
+                kind: VertexAttributeKind::F32,
+            },
+            VertexAttribute {
+                name: "aTransform",
                 count: 4,
                 kind: VertexAttributeKind::F32,
             },
@@ -880,8 +885,7 @@ impl<T> VertexDataTexture<T> {
             MAX_VERTEX_TEXTURE_WIDTH - (MAX_VERTEX_TEXTURE_WIDTH % texels_per_item)
         };
 
-        let rect = DeviceIntRect::new(
-            DeviceIntPoint::zero(),
+        let rect = DeviceIntRect::from_size(
             DeviceIntSize::new(logical_width as i32, needed_height),
         );
 

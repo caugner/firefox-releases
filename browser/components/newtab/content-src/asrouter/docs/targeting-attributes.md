@@ -39,8 +39,6 @@ Please note that some targeting attributes require stricter controls on the tele
 * [userPrefs](#userprefs)
 * [attachedFxAOAuthClients](#attachedfxaoauthclients)
 * [platformName](#platformname)
-* [scores](#scores)
-* [scoreThreshold](#scorethreshold)
 * [messageImpressions](#messageimpressions)
 * [blockedCountByType](#blockedcountbytype)
 * [isChinaRepack](#ischinarepack)
@@ -52,6 +50,8 @@ Please note that some targeting attributes require stricter controls on the tele
 * [activeNotifications](#activenotifications)
 * [isMajorUpgrade](#ismajorupgrade)
 * [hasActiveEnterprisePolicies](#hasactiveenterprisepolicies)
+* [mainPingSubmissions](#mainpingsubmissions)
+* [userMonthlyActivity](#usermonthlyactivity)
 
 ## Detailed usage
 
@@ -589,26 +589,6 @@ declare const attachedFxAOAuthClients: Promise<OAuthClient[]>
 declare const platformName = "linux" | "win" | "macosx" | "android" | "other";
 ```
 
-### `scores`
-
-#### Definition
-
-See more in [CFR Machine Learning Experiment](https://bugzilla.mozilla.org/show_bug.cgi?id=1594422).
-
-```
-declare const scores = { [cfrId: string]: number (integer); }
-```
-
-### `scoreThreshold`
-
-#### Definition
-
-See more in [CFR Machine Learning Experiment](https://bugzilla.mozilla.org/show_bug.cgi?id=1594422).
-
-```
-declare const scoreThreshold = integer;
-```
-
 ### `messageImpressions`
 
 Dictionary that maps message ids to impression timestamps. Timestamps are stored in
@@ -838,3 +818,23 @@ A boolean. `true` if the browser just updated to a new major version.
 ### `hasActiveEnterprisePolicies`
 
 A boolean. `true` if any Enterprise Policies are active.
+
+### `mainPingSubmissions`
+
+Filter through the local telemetry pings archive submitted and select the `main`
+pings sent at least 24 hours apart. Result is sorted in ascending order.
+
+```javascript
+interface MainTelemetryPing {
+  id: string,
+  type: "main",
+  timestampCreated: number,
+}
+
+declare const mainPingSubmissions: Promise<MainTelemetryPing[]>
+```
+
+### `userMonthlyActivity`
+
+Returns an array of entries in the form `[int, unixTimestamp]` for each day of
+user activity where the first entry is the total urls visited for that day.

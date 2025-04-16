@@ -100,8 +100,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleFont {
   mozilla::Length mFontSizeOffset;
   mozilla::StyleFontSizeKeyword mFontSizeKeyword;
 
-  mozilla::StyleGenericFontFamily mGenericID;
-
   // math-depth support (used for MathML scriptlevel)
   int8_t mMathDepth;
   // MathML  mathvariant support
@@ -622,8 +620,6 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleOutline {
 
   nsChangeHint CalcDifference(const nsStyleOutline& aNewData) const;
 
-  mozilla::StyleBorderRadius mOutlineRadius;
-
   // This is the specified value of outline-width, but with length values
   // computed to absolute.  mActualOutlineWidth stores the outline-width
   // value used by layout.  (We must store mOutlineWidth for the same
@@ -915,7 +911,7 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleText {
   mozilla::StyleColor mWebkitTextFillColor;
   mozilla::StyleColor mWebkitTextStrokeColor;
 
-  mozilla::StyleNonNegativeLengthOrNumber mMozTabSize;
+  mozilla::StyleNonNegativeLengthOrNumber mTabSize;
   mozilla::LengthPercentage mWordSpacing;
   mozilla::StyleLetterSpacing mLetterSpacing;
   mozilla::StyleLineHeight mLineHeight;
@@ -1923,6 +1919,8 @@ struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleSVGReset {
 
   mozilla::StyleVectorEffect mVectorEffect;
   mozilla::StyleMaskType mMaskType;
+
+  mozilla::StyleDProperty mD;
 };
 
 struct MOZ_NEEDS_MEMMOVABLE_MEMBERS nsStyleEffects {

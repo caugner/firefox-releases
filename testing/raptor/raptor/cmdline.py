@@ -353,7 +353,8 @@ def create_parser(mach_interface=False):
         dest="conditioned_profile",
         default=None,
         type=str,
-        help="Name of conditioned profile to use.",
+        help="Name of conditioned profile to use. Prefix with `artifact:` "
+        "if we should obtain the profile from CI.",
     )
 
     # for browsertime jobs, cold page load is determined by a '--cold' cmd line argument
@@ -500,23 +501,6 @@ def verify_options(parser, args):
             parser.error(
                 "Memory test is only supported when running Raptor on Firefox Android "
                 "browsers!"
-            )
-
-    # if --enable-webrender specified, must be on desktop firefox or geckoview-based browser.
-    if args.enable_webrender:
-        if (
-            args.app
-            not in [
-                "firefox",
-                "geckoview",
-                "refbrow",
-                "fenix",
-            ]
-            and platform.system().lower() not in ("darwin",)
-        ):
-            parser.error(
-                "WebRender is only supported when running Raptor on Firefox Desktop "
-                "or GeckoView-based Android browsers!"
             )
 
     # if running on geckoview/refbrow/fenix, we need an activity and intent

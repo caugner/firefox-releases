@@ -191,7 +191,23 @@ interface BrowsingContext {
    * This allows chrome to override the default choice of whether touch events
    * are available in a specific BrowsingContext and its descendents.
    */
-  [SetterThrows] attribute TouchEventsOverride touchEventsOverride;
+  readonly attribute TouchEventsOverride touchEventsOverride;
+
+  /**
+   * Partially determines whether script execution is allowed in this
+   * BrowsingContext. Script execution will be permitted only if this
+   * attribute is true and script execution is allowed in the parent
+   * WindowContext.
+   *
+   * May only be set in the parent process.
+   */
+  [SetterThrows] attribute boolean allowJavascript;
+
+  /*
+   * Default load flags (as defined in nsIRequest) that will be set on all
+   * requests made by this BrowsingContext.
+   */
+  [SetterThrows] attribute long defaultLoadFlags;
 
   /**
    * The nsID of the browsing context in the session history.
@@ -289,6 +305,14 @@ interface CanonicalBrowsingContext : BrowsingContext {
   readonly attribute URI? currentURI;
 
   void clearRestoreState();
+
+  /**
+   * This allows chrome to override the default choice of whether touch events
+   * are available in a specific BrowsingContext and its descendents.
+   */
+  [SetterThrows] inherit attribute TouchEventsOverride touchEventsOverride;
+
+  readonly attribute boolean isReplaced;
 };
 
 [Exposed=Window, ChromeOnly]

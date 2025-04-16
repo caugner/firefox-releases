@@ -24,6 +24,7 @@
 #include "mozilla/UniquePtr.h"
 
 #include "nsCOMPtr.h"
+#include "nsCSSRendering.h"
 #include "nsAbsoluteContainingBlock.h"
 #include "nsBlockReflowContext.h"
 #include "BlockReflowInput.h"
@@ -219,15 +220,21 @@ static nsRect GetLineTextArea(nsLineBox* aLine,
  * our high contrast theme.
  */
 static Maybe<nscolor> GetBackplateColor(nsIFrame* aFrame) {
+  nsPresContext* pc = aFrame->PresContext();
   for (nsIFrame* frame = aFrame; frame; frame = frame->GetParent()) {
     if (frame->IsThemed()) {
       return Nothing();
     }
-    auto* bg = frame->StyleBackground();
-    if (bg->IsTransparent(frame)) {
+    auto* style = frame->Style();
+    if (style->StyleBackground()->IsTransparent(style)) {
       continue;
     }
-    nscolor backgroundColor = bg->BackgroundColor(frame);
+    bool drawImage = false, drawColor = false;
+    nscolor backgroundColor = nsCSSRendering::DetermineBackgroundColor(
+        pc, style, frame, drawImage, drawColor);
+    if (!drawColor && !drawImage) {
+      continue;
+    }
     if (NS_GET_A(backgroundColor) != 0) {
       // NOTE: We intentionally disregard the alpha channel here for the purpose
       // of the backplate, in order to guarantee contrast.
@@ -6749,10 +6756,14 @@ void nsBlockFrame::ReflowPushedFloats(BlockReflowInput& aState,
       continue;
     }
 
-    // Always call FlowAndPlaceFloat; we might need to place this float
-    // if didn't belong to this block the last time it was reflowed.
-    aState.FlowAndPlaceFloat(f);
-    ConsiderChildOverflow(aOverflowAreas, f);
+    // Always call FlowAndPlaceFloat; we might need to place this float if it
+    // didn't belong to this block the last time it was reflowed.  Note that if
+    // the float doesn't get placed, we don't consider its overflow areas.
+    // (Not-getting-placed means it didn't fit and we pushed it instead of
+    // placing it, and its position could be stale.)
+    if (aState.FlowAndPlaceFloat(f)) {
+      ConsiderChildOverflow(aOverflowAreas, f);
+    }
 
     nsIFrame* next = !prev ? mFloats.FirstChild() : prev->GetNextSibling();
     if (next == f) {
@@ -7391,6 +7402,11 @@ void nsBlockFrame::SetMarkerFrameForListItem(nsIFrame* aMarkerFrame) {
     SetProperty(InsideMarkerProperty(), aMarkerFrame);
     AddStateBits(NS_BLOCK_FRAME_HAS_INSIDE_MARKER);
   } else {
+    if (nsBlockFrame* marker = do_QueryFrame(aMarkerFrame)) {
+      // An outside ::marker needs to be an independent formatting context
+      // to avoid being influenced by the float manager etc.
+      marker->AddStateBits(NS_BLOCK_FORMATTING_CONTEXT_STATE_BITS);
+    }
     SetProperty(OutsideMarkerProperty(),
                 new (PresShell()) nsFrameList(aMarkerFrame, aMarkerFrame));
     AddStateBits(NS_BLOCK_FRAME_HAS_OUTSIDE_MARKER);
@@ -7403,8 +7419,9 @@ bool nsBlockFrame::MarkerIsEmpty() const {
                "should only care when we have an outside ::marker");
   nsIFrame* marker = GetMarker();
   const nsStyleList* list = marker->StyleList();
-  return list->mCounterStyle.IsNone() && list->mListStyleImage.IsNone() &&
-         marker->StyleContent()->ContentCount() == 0;
+  return marker->StyleContent()->mContent.IsNone() ||
+         (list->mCounterStyle.IsNone() && list->mListStyleImage.IsNone() &&
+          marker->StyleContent()->ContentCount() == 0);
 }
 
 void nsBlockFrame::ReflowOutsideMarker(nsIFrame* aMarkerFrame,

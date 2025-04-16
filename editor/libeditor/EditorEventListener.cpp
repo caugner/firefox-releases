@@ -572,7 +572,7 @@ nsresult EditorEventListener::KeyUp(const WidgetKeyboardEvent* aKeyboardEvent) {
   RefPtr<EditorBase> editorBase(mEditorBase);
   if ((aKeyboardEvent->mKeyCode == NS_VK_SHIFT ||
        aKeyboardEvent->mKeyCode == NS_VK_CONTROL) &&
-      mShouldSwitchTextDirection && editorBase->IsPlaintextEditor()) {
+      mShouldSwitchTextDirection && editorBase->IsInPlaintextMode()) {
     editorBase->SwitchTextDirectionTo(mSwitchToRTL
                                           ? EditorBase::TextDirection::eRTL
                                           : EditorBase::TextDirection::eLTR);
@@ -666,9 +666,9 @@ nsresult EditorEventListener::MouseClick(WidgetMouseEvent* aMouseClickEvent) {
     return NS_OK;
   }
   // nothing to do if editor isn't editable or clicked on out of the editor.
-  RefPtr<TextEditor> textEditor = mEditorBase->AsTextEditor();
-  if (textEditor->IsReadonly() ||
-      !textEditor->IsAcceptableInputEvent(aMouseClickEvent)) {
+  OwningNonNull<EditorBase> editorBase = *mEditorBase;
+  if (editorBase->IsReadonly() ||
+      !editorBase->IsAcceptableInputEvent(aMouseClickEvent)) {
     return NS_OK;
   }
 
@@ -723,7 +723,7 @@ nsresult EditorEventListener::MouseClick(WidgetMouseEvent* aMouseClickEvent) {
   nsEventStatus status = nsEventStatus_eIgnore;
   RefPtr<EventStateManager> esm = presContext->EventStateManager();
   DebugOnly<nsresult> rvIgnored = esm->HandleMiddleClickPaste(
-      presShell, aMouseClickEvent, &status, textEditor);
+      presShell, aMouseClickEvent, &status, editorBase);
   NS_WARNING_ASSERTION(
       NS_SUCCEEDED(rvIgnored),
       "EventStateManager::HandleMiddleClickPaste() failed, but ignored");
@@ -831,7 +831,7 @@ nsresult EditorEventListener::DragOverOrDrop(DragEvent* aDragEvent) {
   int32_t dropOffset = -1;
   nsCOMPtr<nsIContent> dropParentContent =
       aDragEvent->GetRangeParentContentAndOffset(&dropOffset);
-  if (NS_WARN_IF(!dropParentContent)) {
+  if (NS_WARN_IF(!dropParentContent) || NS_WARN_IF(dropOffset < 0)) {
     return NS_ERROR_FAILURE;
   }
   if (DetachedFromEditor()) {
@@ -859,7 +859,7 @@ nsresult EditorEventListener::DragOverOrDrop(DragEvent* aDragEvent) {
   if (notEditable) {
     // If we're a text control element which is readonly or disabled,
     // we should refuse to drop.
-    if (!mEditorBase->AsHTMLEditor()) {
+    if (mEditorBase->IsTextEditor()) {
       RefuseToDropAndHideCaret(aDragEvent);
       return NS_OK;
     }
@@ -890,9 +890,10 @@ nsresult EditorEventListener::DragOverOrDrop(DragEvent* aDragEvent) {
   aDragEvent->StopImmediatePropagation();
 
   if (aDragEvent->WidgetEventPtr()->mMessage == eDrop) {
-    RefPtr<TextEditor> textEditor = mEditorBase->AsTextEditor();
-    nsresult rv = textEditor->OnDrop(aDragEvent);
-    NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "TextEditor::OnDrop() failed");
+    RefPtr<EditorBase> editorBase = mEditorBase;
+    nsresult rv = editorBase->HandleDropEvent(aDragEvent);
+    NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
+                         "EditorBase::HandleDropEvent() failed");
     return rv;
   }
 
@@ -973,7 +974,7 @@ bool EditorEventListener::DragEventHasSupportingData(
   return dataTransfer->HasType(NS_LITERAL_STRING_FROM_CSTRING(kTextMime)) ||
          dataTransfer->HasType(
              NS_LITERAL_STRING_FROM_CSTRING(kMozTextInternal)) ||
-         (!mEditorBase->IsPlaintextEditor() &&
+         (!mEditorBase->IsInPlaintextMode() &&
           (dataTransfer->HasType(NS_LITERAL_STRING_FROM_CSTRING(kHTMLMime)) ||
            dataTransfer->HasType(NS_LITERAL_STRING_FROM_CSTRING(kFileMime))));
 }
@@ -1031,7 +1032,8 @@ bool EditorEventListener::CanInsertAtDropPosition(DragEvent* aDragEvent) {
   int32_t dropOffset = -1;
   nsCOMPtr<nsIContent> dropParentContent =
       aDragEvent->GetRangeParentContentAndOffset(&dropOffset);
-  if (!dropParentContent || NS_WARN_IF(DetachedFromEditor())) {
+  if (!dropParentContent || NS_WARN_IF(dropOffset < 0) ||
+      NS_WARN_IF(DetachedFromEditor())) {
     return false;
   }
 
@@ -1192,6 +1194,16 @@ nsresult EditorEventListener::Blur(InternalFocusEvent* aBlurEvent) {
 
   Element* focusedElement = focusManager->GetFocusedElement();
   if (!focusedElement) {
+    // If it's in the designMode, and blur occurs, the target must be the
+    // window.  If a blur event is fired and the target is an element, it
+    // must be delayed blur event at initializing the `HTMLEditor`.
+    if (mEditorBase->IsHTMLEditor() &&
+        mEditorBase->AsHTMLEditor()->IsInDesignMode()) {
+      if (nsCOMPtr<Element> targetElement =
+              do_QueryInterface(aBlurEvent->mTarget)) {
+        return NS_OK;
+      }
+    }
     RefPtr<EditorBase> editorBase(mEditorBase);
     DebugOnly<nsresult> rvIgnored = editorBase->FinalizeSelection();
     NS_WARNING_ASSERTION(NS_SUCCEEDED(rvIgnored),
@@ -1228,7 +1240,7 @@ bool EditorEventListener::IsFileControlTextBox() {
     return false;
   }
   nsCOMPtr<nsIFormControl> formControl = do_QueryInterface(parent);
-  return formControl->ControlType() == NS_FORM_INPUT_FILE;
+  return formControl->ControlType() == FormControlType::InputFile;
 }
 
 bool EditorEventListener::ShouldHandleNativeKeyBindings(
@@ -1249,13 +1261,12 @@ bool EditorEventListener::ShouldHandleNativeKeyBindings(
     return false;
   }
 
-  RefPtr<EditorBase> editorBase(mEditorBase);
-  HTMLEditor* htmlEditor = editorBase->AsHTMLEditor();
+  RefPtr<HTMLEditor> htmlEditor = HTMLEditor::GetFrom(mEditorBase);
   if (!htmlEditor) {
     return false;
   }
 
-  RefPtr<Document> doc = editorBase->GetDocument();
+  RefPtr<Document> doc = htmlEditor->GetDocument();
   if (doc->HasFlag(NODE_IS_EDITABLE)) {
     // Don't need to perform any checks in designMode documents.
     return true;

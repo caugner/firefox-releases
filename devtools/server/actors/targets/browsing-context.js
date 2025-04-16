@@ -73,6 +73,13 @@ loader.lazyRequireGetter(
   true
 );
 
+loader.lazyRequireGetter(
+  this,
+  "TouchSimulator",
+  "devtools/server/actors/emulation/touch-simulator",
+  true
+);
+
 function getWindowID(window) {
   return window.windowGlobalChild.innerWindowId;
 }
@@ -317,6 +324,10 @@ const browsingContextTargetPrototype = {
       watchpoints: true,
       // Supports back and forward navigation
       navigation: true,
+      // @backward-compat { version 91 } Starting with Firefox 91,
+      // javascriptEnabled is only read from the parent process and is not set
+      // in the BrowsingContextTargetActor form.
+      javascriptEnabledHandledInParent: true,
     };
 
     this._workerDescriptorActorList = null;
@@ -547,11 +558,14 @@ const browsingContextTargetPrototype = {
     );
     assert(this.actorID, "Actor should have an actorID.");
 
+    const innerWindowId = this.window ? getInnerId(this.window) : null;
+
     const response = {
       actor: this.actorID,
       browsingContextID: this.browsingContextID,
       // True for targets created by JSWindowActors, see constructor JSDoc.
       followWindowGlobalLifeCycle: this.followWindowGlobalLifeCycle,
+      innerWindowId,
       isTopLevelTarget: this.isTopLevelTarget,
       traits: {
         // @backward-compat { version 64 } Exposes a new trait to help identify
@@ -598,6 +612,11 @@ const browsingContextTargetPrototype = {
     if (this._attached) {
       // TODO: Bug 997119: Remove this coupling with thread actor
       this.threadActor._parentClosed = true;
+    }
+
+    if (this._touchSimulator) {
+      this._touchSimulator.stop();
+      this._touchSimulator = null;
     }
 
     this._detach();
@@ -1074,8 +1093,6 @@ const browsingContextTargetPrototype = {
 
     return {
       threadActor: this.threadActor.actorID,
-      cacheDisabled: this._getCacheDisabled(),
-      javascriptEnabled: this._getJavascriptEnabled(),
       traits: this.traits,
     };
   },
@@ -1138,6 +1155,10 @@ const browsingContextTargetPrototype = {
 
   /**
    * Reload the page in this browsing context.
+   *
+   * @backward-compat { legacy }
+   *                  reload is preserved for third party tools. See Bug 1717837.
+   *                  DevTools should use Descriptor::reloadDescriptor instead.
    */
   reload(request) {
     const force = request?.options?.force;
@@ -1236,28 +1257,32 @@ const browsingContextTargetPrototype = {
       return;
     }
 
+    let reload = false;
+    if (typeof options.touchEventsOverride !== "undefined") {
+      const enableTouchSimulator = options.touchEventsOverride === "enabled";
+
+      // We want to reload the document if it's a top level target on which the touch
+      // simulator will be toggled and the user has turned the "reload on touch simulation"
+      // settings on.
+      if (
+        enableTouchSimulator !== this.touchSimulator.enabled &&
+        options.reloadOnTouchSimulationToggle === true &&
+        this.isTopLevelTarget
+      ) {
+        reload = true;
+      }
+
+      if (enableTouchSimulator) {
+        this.touchSimulator.start();
+      } else {
+        this.touchSimulator.stop();
+      }
+    }
+
     if (!this.isTopLevelTarget) {
-      // DevTools target options should only apply to the top target and be
+      // Following DevTools target options should only apply to the top target and be
       // propagated through the browsing context tree via the platform.
       return;
-    }
-
-    // Wait a tick so that the response packet can be dispatched before the
-    // subsequent navigation event packet.
-    let reload = false;
-
-    if (
-      typeof options.javascriptEnabled !== "undefined" &&
-      options.javascriptEnabled !== this._getJavascriptEnabled()
-    ) {
-      this._setJavascriptEnabled(options.javascriptEnabled);
-      reload = true;
-    }
-    if (
-      typeof options.cacheDisabled !== "undefined" &&
-      options.cacheDisabled !== this._getCacheDisabled()
-    ) {
-      this._setCacheDisabled(options.cacheDisabled);
     }
     if (
       typeof options.paintFlashing !== "undefined" &&
@@ -1270,8 +1295,16 @@ const browsingContextTargetPrototype = {
     }
 
     if (reload) {
-      this.reload();
+      this.webNavigation.reload(Ci.nsIWebNavigation.LOAD_FLAGS_NONE);
     }
+  },
+
+  get touchSimulator() {
+    if (!this._touchSimulator) {
+      this._touchSimulator = new TouchSimulator(this.chromeEventHandler);
+    }
+
+    return this._touchSimulator;
   },
 
   /**
@@ -1279,8 +1312,6 @@ const browsingContextTargetPrototype = {
    * state when closing the toolbox.
    */
   _restoreTargetConfiguration() {
-    this._restoreJavascript();
-    this._setCacheDisabled(false);
     this._setPaintFlashingEnabled(false);
 
     if (this._restoreFocus && this.browsingContext?.isActive) {
@@ -1289,67 +1320,11 @@ const browsingContextTargetPrototype = {
   },
 
   /**
-   * Disable or enable the cache via docShell.
-   */
-  _setCacheDisabled(disabled) {
-    const enable = Ci.nsIRequest.LOAD_NORMAL;
-    const disable = Ci.nsIRequest.LOAD_BYPASS_CACHE;
-
-    this.docShell.defaultLoadFlags = disabled ? disable : enable;
-  },
-
-  /**
-   * Disable or enable JS via docShell.
-   */
-  _wasJavascriptEnabled: null,
-  _setJavascriptEnabled(allow) {
-    if (this._wasJavascriptEnabled === null) {
-      this._wasJavascriptEnabled = this.docShell.allowJavascript;
-    }
-    this.docShell.allowJavascript = allow;
-  },
-
-  /**
-   * Restore JS state, before the actor modified it.
-   */
-  _restoreJavascript() {
-    if (this._wasJavascriptEnabled !== null) {
-      this._setJavascriptEnabled(this._wasJavascriptEnabled);
-      this._wasJavascriptEnabled = null;
-    }
-  },
-
-  /**
-   * Return JS allowed status.
-   */
-  _getJavascriptEnabled() {
-    if (!this.docShell) {
-      // The browsing context is already closed.
-      return null;
-    }
-
-    return this.docShell.allowJavascript;
-  },
-
-  /**
    * Disable or enable the paint flashing on the target.
    */
   _setPaintFlashingEnabled(enabled) {
     const windowUtils = this.window.windowUtils;
     windowUtils.paintFlashing = enabled;
-  },
-
-  /**
-   * Return cache allowed status.
-   */
-  _getCacheDisabled() {
-    if (!this.docShell) {
-      // The browsing context is already closed.
-      return null;
-    }
-
-    const disable = Ci.nsIRequest.LOAD_BYPASS_CACHE;
-    return this.docShell.defaultLoadFlags === disable;
   },
 
   /**
@@ -1421,9 +1396,16 @@ const browsingContextTargetPrototype = {
       this._updateChildDocShells();
     }
 
+    // If this follows WindowGlobal lifecycle, a new Target actor will be spawn for the top level
+    // target document. Only notify about in-process iframes.
+    // Note that OOP iframes won't emit window-ready and will also have their dedicated target.
+    if (this.followWindowGlobalLifeCycle && isTopLevel) {
+      return;
+    }
+
     this.emit("window-ready", {
-      window: window,
-      isTopLevel: isTopLevel,
+      window,
+      isTopLevel,
       isBFCache,
       id: getWindowID(window),
       isFrameSwitching,
@@ -1431,11 +1413,20 @@ const browsingContextTargetPrototype = {
   },
 
   _windowDestroyed(window, id = null, isFrozen = false) {
+    const isTopLevel = window == this.window;
+
+    // If this follows WindowGlobal lifecycle, this target will be destroyed, alongside its top level document.
+    // Only notify about in-process iframes.
+    // Note that OOP iframes won't emit window-ready and will also have their dedicated target.
+    if (this.followWindowGlobalLifeCycle && isTopLevel) {
+      return;
+    }
+
     this.emit("window-destroyed", {
-      window: window,
-      isTopLevel: window == this.window,
+      window,
+      isTopLevel,
       id: id || getWindowID(window),
-      isFrozen: isFrozen,
+      isFrozen,
     });
   },
 

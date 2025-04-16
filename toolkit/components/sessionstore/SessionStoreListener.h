@@ -79,11 +79,11 @@ class TabListener : public nsIDOMEventListener,
   nsresult Init();
   ContentSessionStore* GetSessionStore() { return mSessionStore; }
   // the function is called only when TabListener is in parent process
-  bool ForceFlushFromParent(bool aIsFinal);
+  bool ForceFlushFromParent();
   void RemoveListeners();
   void SetEpoch(uint32_t aEpoch) { mEpoch = aEpoch; }
   uint32_t GetEpoch() { return mEpoch; }
-  void UpdateSHistoryChanges(bool aImmediately);
+  void UpdateSHistoryChanges() { AddTimerForUpdate(); }
   void SetOwnerContent(Element* aElement);
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
@@ -100,7 +100,7 @@ class TabListener : public nsIDOMEventListener,
   void StopTimerForUpdate();
   void AddEventListeners();
   void RemoveEventListeners();
-  bool UpdateSessionStore(bool aIsFlush = false, bool aIsFinal = false);
+  bool UpdateSessionStore(bool aIsFlush = false);
   virtual ~TabListener();
 
   nsCOMPtr<nsIDocShell> mDocShell;

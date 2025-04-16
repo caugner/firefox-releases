@@ -162,7 +162,6 @@ struct GbmFormat {
 class nsDMABufDevice {
  public:
   nsDMABufDevice();
-  ~nsDMABufDevice();
 
   gbm_device* GetGbmDevice();
   // Returns -1 if we fails to gbm device file descriptor.
@@ -170,6 +169,8 @@ class nsDMABufDevice {
 
   // Use dmabuf for WebRender general web content
   bool IsDMABufTexturesEnabled();
+  // Use dmabuf for video playback
+  bool IsDMABufVideoEnabled();
   // Use dmabuf for VA-API video playback
   bool IsDMABufVAAPIEnabled();
   // Use dmabuf for WebGL content
@@ -184,8 +185,6 @@ class nsDMABufDevice {
 
  private:
   bool IsDMABufEnabled();
-
-  void* mRegistry;
 
   GbmFormat mXRGBFormat;
   GbmFormat mARGBFormat;

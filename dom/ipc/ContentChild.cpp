@@ -43,6 +43,7 @@
 #include "mozilla/SharedStyleSheetCache.h"
 #include "mozilla/SimpleEnumerator.h"
 #include "mozilla/SpinEventLoopUntil.h"
+#include "mozilla/StaticPrefs_accessibility.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_fission.h"
 #include "mozilla/StaticPrefs_media.h"
@@ -133,9 +134,7 @@
 #  include "mozilla/Omnijar.h"
 #endif
 
-#ifdef MOZ_GECKO_PROFILER
-#  include "ChildProfilerController.h"
-#endif
+#include "ChildProfilerController.h"
 
 #if defined(MOZ_SANDBOX)
 #  include "mozilla/SandboxSettings.h"
@@ -267,8 +266,8 @@
 #include "GMPServiceChild.h"
 #include "GfxInfoBase.h"
 #include "MMPrinter.h"
-#include "ProcessUtils.h"
-#include "URIUtils.h"
+#include "mozilla/ipc/ProcessUtils.h"
+#include "mozilla/ipc/URIUtils.h"
 #include "VRManagerChild.h"
 #include "gfxPlatform.h"
 #include "gfxPlatformFontList.h"
@@ -309,6 +308,54 @@ using namespace mozilla::layout;
 using namespace mozilla::net;
 using namespace mozilla::widget;
 using mozilla::loader::PScriptCacheChild;
+
+namespace geckoprofiler::markers {
+struct ProcessPriorityChange {
+  static constexpr Span<const char> MarkerTypeName() {
+    return MakeStringSpan("ProcessPriorityChange");
+  }
+  static void StreamJSONMarkerData(baseprofiler::SpliceableJSONWriter& aWriter,
+                                   const ProfilerString8View& aPreviousPriority,
+                                   const ProfilerString8View& aNewPriority) {
+    aWriter.StringProperty("Before", aPreviousPriority);
+    aWriter.StringProperty("After", aNewPriority);
+  }
+  static MarkerSchema MarkerTypeDisplay() {
+    using MS = MarkerSchema;
+    MS schema{MS::Location::markerChart, MS::Location::markerTable};
+    schema.AddKeyFormat("Before", MS::Format::string);
+    schema.AddKeyFormat("After", MS::Format::string);
+    schema.AddStaticLabelValue("Note",
+                               "This is a notification of the priority change "
+                               "that was done by the parent process");
+    schema.SetAllLabels(
+        "priority: {marker.data.Before} -> {marker.data.After}");
+    return schema;
+  }
+};
+
+struct ProcessPriority {
+  static constexpr Span<const char> MarkerTypeName() {
+    return MakeStringSpan("ProcessPriority");
+  }
+  static void StreamJSONMarkerData(baseprofiler::SpliceableJSONWriter& aWriter,
+                                   const ProfilerString8View& aPriority,
+                                   const ProfilingState& aProfilingState) {
+    aWriter.StringProperty("Priority", aPriority);
+    aWriter.StringProperty("Marker cause",
+                           ProfilerString8View::WrapNullTerminatedString(
+                               ProfilingStateToString(aProfilingState)));
+  }
+  static MarkerSchema MarkerTypeDisplay() {
+    using MS = MarkerSchema;
+    MS schema{MS::Location::markerChart, MS::Location::markerTable};
+    schema.AddKeyFormat("Priority", MS::Format::string);
+    schema.AddKeyFormat("Marker cause", MS::Format::string);
+    schema.SetAllLabels("priority: {marker.data.Priority}");
+    return schema;
+  }
+};
+}  // namespace geckoprofiler::markers
 
 namespace mozilla {
 
@@ -573,6 +620,23 @@ ContentChild::ContentChild()
   // multiprocess mode!
   nsDebugImpl::SetMultiprocessMode("Child");
 
+  // Our static analysis doesn't allow capturing ref-counted pointers in
+  // lambdas, so we need to hide it in a uintptr_t. This is safe because this
+  // lambda will be destroyed in ~ContentChild().
+  uintptr_t self = reinterpret_cast<uintptr_t>(this);
+  profiler_add_state_change_callback(
+      AllProfilingStates(),
+      [self](ProfilingState aProfilingState) {
+        const ContentChild* selfPtr =
+            reinterpret_cast<const ContentChild*>(self);
+        PROFILER_MARKER("Process Priority", OTHER,
+                        mozilla::MarkerThreadId::MainThread(), ProcessPriority,
+                        ProfilerString8View::WrapNullTerminatedString(
+                            ProcessPriorityToString(selfPtr->mProcessPriority)),
+                        aProfilingState);
+      },
+      self);
+
   // When ContentChild is created, the observer service does not even exist.
   // When ContentChild::RecvSetXPCOMProcessAttributes is called (the first
   // IPDL call made on this object), shutdown may have already happened. Thus
@@ -592,6 +656,8 @@ ContentChild::ContentChild()
 #endif
 
 ContentChild::~ContentChild() {
+  profiler_remove_state_change_callback(reinterpret_cast<uintptr_t>(this));
+
 #ifndef NS_FREE_PERMANENT_DATA
   MOZ_CRASH("Content Child shouldn't be destroyed.");
 #endif
@@ -642,9 +708,8 @@ class nsGtkNativeInitRunnable : public Runnable {
   }
 };
 
-bool ContentChild::Init(MessageLoop* aIOLoop, base::ProcessId aParentPid,
-                        const char* aParentBuildID,
-                        UniquePtr<IPC::Channel> aChannel, uint64_t aChildID,
+bool ContentChild::Init(base::ProcessId aParentPid, const char* aParentBuildID,
+                        mozilla::ipc::ScopedPort aPort, uint64_t aChildID,
                         bool aIsForBrowser) {
 #ifdef MOZ_WIDGET_GTK
   // When running X11 only build we need to pass a display down
@@ -698,7 +763,7 @@ bool ContentChild::Init(MessageLoop* aIOLoop, base::ProcessId aParentPid,
     return false;
   }
 
-  if (!Open(std::move(aChannel), aParentPid, aIOLoop)) {
+  if (!Open(std::move(aPort), aParentPid)) {
     return false;
   }
   sSingleton = this;
@@ -1316,8 +1381,6 @@ void ContentChild::InitXPCOM(
 
   GfxInfoBase::SetFeatureStatus(std::move(aXPCOMInit.gfxFeatureStatus()));
 
-  DataStorage::SetCachedStorageEntries(aXPCOMInit.dataStorage());
-
   // Initialize the RemoteDecoderManager thread and its associated PBackground
   // channel.
   RemoteDecoderManagerChild::Init();
@@ -1404,9 +1467,7 @@ mozilla::ipc::IPCResult ContentChild::RecvInitGMPService(
 
 mozilla::ipc::IPCResult ContentChild::RecvInitProfiler(
     Endpoint<PProfilerChild>&& aEndpoint) {
-#ifdef MOZ_GECKO_PROFILER
   mProfilerController = ChildProfilerController::Create(std::move(aEndpoint));
-#endif
   return IPC_OK();
 }
 
@@ -1596,7 +1657,7 @@ mozilla::ipc::IPCResult ContentChild::RecvSetProcessSandbox(
 #if defined(MOZ_SANDBOX)
 
 #  ifdef MOZ_USING_WASM_SANDBOXING
-  mozilla::ipc::PreloadSandboxedDynamicLibraries();
+  mozilla::ipc::PreloadSandboxedDynamicLibrary();
 #  endif
 
   bool sandboxEnabled = true;
@@ -2190,34 +2251,6 @@ mozilla::ipc::IPCResult ContentChild::RecvCollectPerfStatsJSON(
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult ContentChild::RecvDataStoragePut(
-    const nsString& aFilename, const DataStorageItem& aItem) {
-  RefPtr<DataStorage> storage = DataStorage::GetFromRawFileName(aFilename);
-  if (storage) {
-    storage->Put(aItem.key(), aItem.value(), aItem.type());
-  }
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult ContentChild::RecvDataStorageRemove(
-    const nsString& aFilename, const nsCString& aKey,
-    const DataStorageType& aType) {
-  RefPtr<DataStorage> storage = DataStorage::GetFromRawFileName(aFilename);
-  if (storage) {
-    storage->Remove(aKey, aType);
-  }
-  return IPC_OK();
-}
-
-mozilla::ipc::IPCResult ContentChild::RecvDataStorageClear(
-    const nsString& aFilename) {
-  RefPtr<DataStorage> storage = DataStorage::GetFromRawFileName(aFilename);
-  if (storage) {
-    storage->Clear();
-  }
-  return IPC_OK();
-}
-
 mozilla::ipc::IPCResult ContentChild::RecvNotifyAlertsObserver(
     const nsCString& aType, const nsString& aData) {
   nsTArray<nsCOMPtr<nsIObserver>> observersToNotify;
@@ -2469,7 +2502,8 @@ mozilla::ipc::IPCResult ContentChild::RecvActivateA11y(
   MOZ_ASSERT(aMainChromeTid != 0);
   mMainChromeTid = aMainChromeTid;
 
-  MOZ_ASSERT(aMsaaID != 0);
+  MOZ_ASSERT(StaticPrefs::accessibility_cache_enabled_AtStartup() ? !aMsaaID
+                                                                  : aMsaaID);
   mMsaaID = aMsaaID;
 #  endif  // XP_WIN
 
@@ -2641,17 +2675,6 @@ void ContentChild::PreallocInit() {
 // for telemetry.
 const nsACString& ContentChild::GetRemoteType() const { return mRemoteType; }
 
-mozilla::ipc::IPCResult ContentChild::RecvInitServiceWorkers(
-    const ServiceWorkerConfiguration& aConfig) {
-  RefPtr<ServiceWorkerManager> swm = ServiceWorkerManager::GetInstance();
-  if (!swm) {
-    // browser shutdown began
-    return IPC_OK();
-  }
-  swm->LoadRegistrations(aConfig.serviceWorkerRegistrations());
-  return IPC_OK();
-}
-
 mozilla::ipc::IPCResult ContentChild::RecvInitBlobURLs(
     nsTArray<BlobURLRegistrationData>&& aRegistrations) {
   for (uint32_t i = 0; i < aRegistrations.Length(); ++i) {
@@ -2708,6 +2731,14 @@ mozilla::ipc::IPCResult ContentChild::RecvNotifyProcessPriorityChanged(
 
   RefPtr<nsHashPropertyBag> props = new nsHashPropertyBag();
   props->SetPropertyAsInt32(u"priority"_ns, static_cast<int32_t>(aPriority));
+
+  PROFILER_MARKER("Process Priority", OTHER,
+                  mozilla::MarkerThreadId::MainThread(), ProcessPriorityChange,
+                  ProfilerString8View::WrapNullTerminatedString(
+                      ProcessPriorityToString(mProcessPriority)),
+                  ProfilerString8View::WrapNullTerminatedString(
+                      ProcessPriorityToString(aPriority)));
+  mProcessPriority = aPriority;
 
   os->NotifyObservers(static_cast<nsIPropertyBag2*>(props),
                       "ipc:process-priority-changed", nullptr);
@@ -2934,7 +2965,6 @@ void ContentChild::ShutdownInternal() {
 
   GetIPCChannel()->SetAbortOnError(false);
 
-#ifdef MOZ_GECKO_PROFILER
   if (mProfilerController) {
     const bool isProfiling = profiler_is_active();
     CrashReporter::AnnotateCrashReport(
@@ -2963,7 +2993,6 @@ void ContentChild::ShutdownInternal() {
                     ? "Profiling - SendShutdownProfile (failed)"_ns
                     : "Not profiling - SendShutdownProfile (failed)"_ns));
   }
-#endif
 
   // Start a timer that will insure we quickly exit after a reasonable
   // period of time. Prevents shutdown hangs after our connection to the
@@ -4330,6 +4359,13 @@ mozilla::ipc::IPCResult ContentChild::RecvDecoderSupportedMimeTypes(
   return IPC_OK();
 }
 
+mozilla::ipc::IPCResult ContentChild::RecvInitNextGenLocalStorageEnabled(
+    const bool& aEnabled) {
+  mozilla::dom::RecvInitNextGenLocalStorageEnabled(aEnabled);
+
+  return IPC_OK();
+}
+
 /* static */ void ContentChild::DispatchBeforeUnloadToSubtree(
     BrowsingContext* aStartingAt,
     const DispatchBeforeUnloadToSubtreeResolver& aResolver) {
@@ -4644,6 +4680,13 @@ OpenBSDPledgePromises(const nsACString& aPath) {
 }
 
 void ExpandUnveilPath(nsAutoCString& path) {
+  // Expand $XDG_RUNTIME_DIR to the environment variable, or ~/.cache
+  nsCString xdgRuntimeDir(PR_GetEnv("XDG_RUNTIME_DIR"));
+  if (xdgRuntimeDir.IsEmpty()) {
+    xdgRuntimeDir = "~/.cache";
+  }
+  path.ReplaceSubstring("$XDG_RUNTIME_DIR", xdgRuntimeDir.get());
+
   // Expand $XDG_CONFIG_HOME to the environment variable, or ~/.config
   nsCString xdgConfigHome(PR_GetEnv("XDG_CONFIG_HOME"));
   if (xdgConfigHome.IsEmpty()) {
@@ -4755,8 +4798,18 @@ OpenBSDUnveilPaths(const nsACString& uPath, const nsACString& pledgePath) {
   if (disabled) {
     warnx("%s: disabled", PromiseFlatCString(uPath).get());
   } else {
-    if (unveil(PromiseFlatCString(pledgePath).get(), "r") == -1) {
-      err(1, "unveil(%s, r) failed", PromiseFlatCString(pledgePath).get());
+    struct stat st;
+
+    // Only unveil the pledgePath file if it's not already unveiled, otherwise
+    // some containing directory will lose visibility.
+    if (stat(PromiseFlatCString(pledgePath).get(), &st) == -1) {
+      if (errno == ENOENT) {
+        if (unveil(PromiseFlatCString(pledgePath).get(), "r") == -1) {
+          err(1, "unveil(%s, r) failed", PromiseFlatCString(pledgePath).get());
+        }
+      } else {
+        err(1, "stat(%s)", PromiseFlatCString(pledgePath).get());
+      }
     }
   }
 
@@ -4773,7 +4826,7 @@ bool StartOpenBSDSandbox(GeckoProcessType type) {
       OpenBSDFindPledgeUnveilFilePath("unveil.main", unveilFile);
 
       // Ensure dconf dir exists before we veil the filesystem
-      nsAutoCString dConf("$XDG_CACHE_HOME/dconf");
+      nsAutoCString dConf("$XDG_RUNTIME_DIR/dconf");
       ExpandUnveilPath(dConf);
       MkdirP(dConf);
       break;
@@ -4787,6 +4840,16 @@ bool StartOpenBSDSandbox(GeckoProcessType type) {
     case GeckoProcessType_GPU:
       OpenBSDFindPledgeUnveilFilePath("pledge.gpu", pledgeFile);
       OpenBSDFindPledgeUnveilFilePath("unveil.gpu", unveilFile);
+      break;
+
+    case GeckoProcessType_Socket:
+      OpenBSDFindPledgeUnveilFilePath("pledge.socket", pledgeFile);
+      OpenBSDFindPledgeUnveilFilePath("unveil.socket", unveilFile);
+      break;
+
+    case GeckoProcessType_RDD:
+      OpenBSDFindPledgeUnveilFilePath("pledge.rdd", pledgeFile);
+      OpenBSDFindPledgeUnveilFilePath("unveil.rdd", unveilFile);
       break;
 
     default:

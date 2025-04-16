@@ -199,10 +199,10 @@ PerHandlerParser<ParseHandler>::PerHandlerParser(
     CompilationState& compilationState, void* internalSyntaxParser)
     : ParserBase(cx, options, foldConstants, compilationState),
       handler_(cx, compilationState.allocScope.alloc(),
-               compilationState.input.lazy),
+               compilationState.input.lazyOuterScript()),
       internalSyntaxParser_(internalSyntaxParser) {
   MOZ_ASSERT(compilationState.isInitialStencil() ==
-             !compilationState.input.lazy);
+             compilationState.input.isInitialStencil());
 }
 
 template <class ParseHandler, typename Unit>
@@ -776,12 +776,15 @@ bool GeneralParser<ParseHandler, Unit>::noteDeclaredPrivateName(
     case PropertyType::AsyncMethod:
     case PropertyType::AsyncGeneratorMethod:
       if (placement == FieldPlacement::Instance) {
-        // Optimized private method. Must be marked closed-over so that
-        // EmitterScope::lookupPrivate() works even if the method is used, but
-        // not within any method (from a computed property name).
+        // Optimized private method. Non-optimized paths still get
+        // DeclarationKind::Synthetic.
         declKind = DeclarationKind::PrivateMethod;
-        closedOver = ClosedOver::Yes;
       }
+
+      // Methods must be marked closed-over so that
+      // EmitterScope::lookupPrivate() works even if the method is used, but not
+      // within any method (from a computed property name, or debugger frame)
+      closedOver = ClosedOver::Yes;
       kind = PrivateNameKind::Method;
       break;
     case PropertyType::Getter:
@@ -1558,7 +1561,7 @@ Maybe<ClassBodyScope::ParserData*> NewClassBodyScopeData(
 
   // `EmitterScope::lookupPrivate()` requires `.privateBrand` to be stored in a
   // predictable slot: the first slot available in the environment object,
-  // `JSSLOT_FREE(&ClassBodyLexicalEnvironmentObject::class_)`. We assume that
+  // `ClassBodyLexicalEnvironmentObject::privateBrandSlot()`. We assume that
   // if `.privateBrand` is first in the scope, it will be stored there.
   MOZ_ASSERT_IF(!privateBrand.empty(),
                 GetScopeDataTrailingNames(bindings)[0].name() ==
@@ -2897,8 +2900,7 @@ bool GeneralParser<ParseHandler, Unit>::functionArguments(
 
 template <typename Unit>
 bool Parser<FullParseHandler, Unit>::skipLazyInnerFunction(
-    FunctionNode* funNode, uint32_t toStringStart, FunctionSyntaxKind kind,
-    bool tryAnnexB) {
+    FunctionNode* funNode, uint32_t toStringStart, bool tryAnnexB) {
   // When a lazily-parsed function is called, we only fully parse (and emit)
   // that function, not any of its nested children. The initial syntax-only
   // parse recorded the free variables of nested functions and their extents,
@@ -2963,16 +2965,14 @@ bool Parser<FullParseHandler, Unit>::skipLazyInnerFunction(
 
 template <typename Unit>
 bool Parser<SyntaxParseHandler, Unit>::skipLazyInnerFunction(
-    FunctionNodeType funNode, uint32_t toStringStart, FunctionSyntaxKind kind,
-    bool tryAnnexB) {
+    FunctionNodeType funNode, uint32_t toStringStart, bool tryAnnexB) {
   MOZ_CRASH("Cannot skip lazy inner functions when syntax parsing");
 }
 
 template <class ParseHandler, typename Unit>
 bool GeneralParser<ParseHandler, Unit>::skipLazyInnerFunction(
-    FunctionNodeType funNode, uint32_t toStringStart, FunctionSyntaxKind kind,
-    bool tryAnnexB) {
-  return asFinalParser()->skipLazyInnerFunction(funNode, toStringStart, kind,
+    FunctionNodeType funNode, uint32_t toStringStart, bool tryAnnexB) {
+  return asFinalParser()->skipLazyInnerFunction(funNode, toStringStart,
                                                 tryAnnexB);
 }
 
@@ -3073,7 +3073,7 @@ GeneralParser<ParseHandler, Unit>::functionDefinition(
   // functions, which are also lazy. Instead, their free variables and source
   // extents are recorded and may be skipped.
   if (handler_.canSkipLazyInnerFunctions()) {
-    if (!skipLazyInnerFunction(funNode, toStringStart, kind, tryAnnexB)) {
+    if (!skipLazyInnerFunction(funNode, toStringStart, tryAnnexB)) {
       return null();
     }
 
@@ -8102,7 +8102,6 @@ GeneralParser<ParseHandler, Unit>::synthesizeConstructor(
   // extents are recorded and may be skipped.
   if (handler_.canSkipLazyInnerFunctions()) {
     if (!skipLazyInnerFunction(funNode, synthesizedBodyPos.begin,
-                               functionSyntaxKind,
                                /* tryAnnexB = */ false)) {
       return null();
     }

@@ -15,7 +15,6 @@
 #include "mozilla/layers/SurfacePoolWayland.h"
 #include "mozilla/widget/MozContainerWayland.h"
 #include "mozilla/widget/WaylandShmBuffer.h"
-#include "nsISupportsImpl.h"
 #include "nsRegion.h"
 #include "nsTArray.h"
 
@@ -35,6 +34,10 @@ class NativeLayerRootWayland : public NativeLayerRoot {
   static already_AddRefed<NativeLayerRootWayland> CreateForMozContainer(
       MozContainer* aContainer);
 
+  virtual NativeLayerRootWayland* AsNativeLayerRootWayland() override {
+    return this;
+  }
+
   // Overridden methods
   already_AddRefed<NativeLayer> CreateLayer(
       const IntSize& aSize, bool aIsOpaque,
@@ -42,6 +45,7 @@ class NativeLayerRootWayland : public NativeLayerRoot {
   void AppendLayer(NativeLayer* aLayer) override;
   void RemoveLayer(NativeLayer* aLayer) override;
   void SetLayers(const nsTArray<RefPtr<NativeLayer>>& aLayers) override;
+  void UpdateLayersOnMainThread();
   UniquePtr<NativeLayerRootSnapshotter> CreateSnapshotter() override;
   bool CommitToScreen() override;
 
@@ -52,11 +56,11 @@ class NativeLayerRootWayland : public NativeLayerRoot {
   void PauseCompositor() override;
   bool ResumeCompositor() override;
 
-  void SetBackingScale(float aBackingScale);
-  float BackingScale();
-
   already_AddRefed<NativeLayer> CreateLayerForExternalTexture(
       bool aIsOpaque) override;
+
+  void AfterFrameClockAfterPaint();
+  void RequestFrameCallback(CallbackFunc aCallbackFunc, void* aCallbackData);
 
  protected:
   explicit NativeLayerRootWayland(MozContainer* aContainer);
@@ -70,9 +74,13 @@ class NativeLayerRootWayland : public NativeLayerRoot {
   Mutex mMutex;
 
   nsTArray<RefPtr<NativeLayerWayland>> mSublayers;
-  float mBackingScale = 1.0f;
+  nsTArray<RefPtr<NativeLayerWayland>> mSublayersOnMainThread;
   MozContainer* mContainer = nullptr;
   RefPtr<widget::WaylandShmBuffer> mShmBuffer;
+  bool mCompositorRunning = true;
+  gulong mGdkAfterPaintId = 0;
+  RefPtr<CallbackMultiplexHelper> mCallbackMultiplexHelper;
+  bool mCommitRequested = false;
 };
 
 class NativeLayerWayland : public NativeLayer {
@@ -104,8 +112,6 @@ class NativeLayerWayland : public NativeLayer {
 
   void AttachExternalImage(wr::RenderTextureHost* aExternalImage) override;
 
-  void SetBackingScale(float aBackingScale);
-
  protected:
   friend class NativeLayerRootWayland;
 
@@ -125,7 +131,6 @@ class NativeLayerWayland : public NativeLayer {
   IntSize mSize;
   Maybe<IntRect> mClipRect;
   SamplingFilter mSamplingFilter = SamplingFilter::POINT;
-  float mBackingScale = 1.0f;
   bool mSurfaceIsFlipped = false;
   const bool mIsOpaque = false;
   bool mIsShown = false;

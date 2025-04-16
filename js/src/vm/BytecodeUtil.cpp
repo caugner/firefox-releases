@@ -33,6 +33,7 @@
 #include "jit/IonScript.h"  // IonBlockCounts
 #include "js/CharacterEncoding.h"
 #include "js/experimental/CodeCoverage.h"
+#include "js/experimental/PCCountProfiling.h"  // JS::{Start,Stop}PCCountProfiling, JS::PurgePCCounts, JS::GetPCCountScript{Count,Summary,Contents}
 #include "js/friend/DumpFunctions.h"  // js::DumpPC, js::DumpScript
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/Printf.h"
@@ -1125,7 +1126,7 @@ bool js::Disassemble(JSContext* cx, HandleScript script, bool lines,
   return DisassembleAtPC(cx, script, lines, nullptr, false, sp, skeptically);
 }
 
-JS_FRIEND_API bool js::DumpPC(JSContext* cx, FILE* fp) {
+JS_PUBLIC_API bool js::DumpPC(JSContext* cx, FILE* fp) {
   gc::AutoSuppressGC suppressGC(cx);
   Sprinter sprinter(cx);
   if (!sprinter.init()) {
@@ -1142,7 +1143,7 @@ JS_FRIEND_API bool js::DumpPC(JSContext* cx, FILE* fp) {
   return ok;
 }
 
-JS_FRIEND_API bool js::DumpScript(JSContext* cx, JSScript* scriptArg,
+JS_PUBLIC_API bool js::DumpScript(JSContext* cx, JSScript* scriptArg,
                                   FILE* fp) {
   gc::AutoSuppressGC suppressGC(cx);
   Sprinter sprinter(cx);
@@ -1458,7 +1459,13 @@ static unsigned Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
       }
       break;
     }
-
+    case JOF_DEBUGCOORD: {
+      EnvironmentCoordinate ec(pc);
+      if (!sp->jsprintf("(hops = %u, slot = %u)", ec.hops(), ec.slot())) {
+        return 0;
+      }
+      break;
+    }
     case JOF_ATOM: {
       RootedValue v(cx, StringValue(script->getAtom(pc)));
       UniqueChars bytes = ToDisassemblySource(cx, v);
@@ -2549,7 +2556,7 @@ static void ReleaseScriptCounts(JSRuntime* rt) {
   rt->scriptAndCountsVector = nullptr;
 }
 
-JS_FRIEND_API void js::StartPCCountProfiling(JSContext* cx) {
+void JS::StartPCCountProfiling(JSContext* cx) {
   JSRuntime* rt = cx->runtime();
 
   if (rt->profilingScripts) {
@@ -2565,7 +2572,7 @@ JS_FRIEND_API void js::StartPCCountProfiling(JSContext* cx) {
   rt->profilingScripts = true;
 }
 
-JS_FRIEND_API void js::StopPCCountProfiling(JSContext* cx) {
+void JS::StopPCCountProfiling(JSContext* cx) {
   JSRuntime* rt = cx->runtime();
 
   if (!rt->profilingScripts) {
@@ -2595,7 +2602,7 @@ JS_FRIEND_API void js::StopPCCountProfiling(JSContext* cx) {
   rt->scriptAndCountsVector = vec;
 }
 
-JS_FRIEND_API void js::PurgePCCounts(JSContext* cx) {
+void JS::PurgePCCounts(JSContext* cx) {
   JSRuntime* rt = cx->runtime();
 
   if (!rt->scriptAndCountsVector) {
@@ -2606,7 +2613,7 @@ JS_FRIEND_API void js::PurgePCCounts(JSContext* cx) {
   ReleaseScriptCounts(rt);
 }
 
-JS_FRIEND_API size_t js::GetPCCountScriptCount(JSContext* cx) {
+size_t JS::GetPCCountScriptCount(JSContext* cx) {
   JSRuntime* rt = cx->runtime();
 
   if (!rt->scriptAndCountsVector) {
@@ -2626,8 +2633,7 @@ JS_FRIEND_API size_t js::GetPCCountScriptCount(JSContext* cx) {
   return true;
 }
 
-JS_FRIEND_API JSString* js::GetPCCountScriptSummary(JSContext* cx,
-                                                    size_t index) {
+JSString* JS::GetPCCountScriptSummary(JSContext* cx, size_t index) {
   JSRuntime* rt = cx->runtime();
 
   if (!rt->scriptAndCountsVector ||
@@ -2834,8 +2840,7 @@ static bool GetPCCountJSON(JSContext* cx, const ScriptAndCounts& sac,
   return true;
 }
 
-JS_FRIEND_API JSString* js::GetPCCountScriptContents(JSContext* cx,
-                                                     size_t index) {
+JSString* JS::GetPCCountScriptContents(JSContext* cx, size_t index) {
   JSRuntime* rt = cx->runtime();
 
   if (!rt->scriptAndCountsVector ||
@@ -2984,7 +2989,7 @@ static bool GenerateLcovInfo(JSContext* cx, JS::Realm* realm,
   return true;
 }
 
-JS_FRIEND_API UniqueChars js::GetCodeCoverageSummaryAll(JSContext* cx,
+JS_PUBLIC_API UniqueChars js::GetCodeCoverageSummaryAll(JSContext* cx,
                                                         size_t* length) {
   Sprinter out(cx);
   if (!out.init()) {
@@ -3002,7 +3007,7 @@ JS_FRIEND_API UniqueChars js::GetCodeCoverageSummaryAll(JSContext* cx,
   return js::DuplicateString(cx, out.string(), *length);
 }
 
-JS_FRIEND_API UniqueChars js::GetCodeCoverageSummary(JSContext* cx,
+JS_PUBLIC_API UniqueChars js::GetCodeCoverageSummary(JSContext* cx,
                                                      size_t* length) {
   Sprinter out(cx);
   if (!out.init()) {

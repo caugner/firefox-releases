@@ -19,6 +19,7 @@
 #    include "mozilla/a11y/nsWinUtils.h"
 #  endif
 #endif
+#include "mozilla/AppShutdown.h"
 #include "mozilla/dom/CanonicalBrowsingContext.h"
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/BrowserParent.h"
@@ -405,6 +406,8 @@ already_AddRefed<BrowsingContext> BrowsingContext::CreateDetached(
 
   fields.mTouchEventsOverrideInternal = TouchEventsOverride::None;
 
+  fields.mAllowJavascript = inherit ? inherit->GetAllowJavascript() : true;
+
   RefPtr<BrowsingContext> context;
   if (XRE_IsParentProcess()) {
     context = new CanonicalBrowsingContext(parentWC, group, id,
@@ -537,6 +540,7 @@ BrowsingContext::BrowsingContext(WindowContext* aParentWindow,
       mUseRemoteSubframes(false),
       mCreatedDynamically(false),
       mIsInBFCache(false),
+      mCanExecuteScripts(true),
       mChildOffset(0) {
   MOZ_RELEASE_ASSERT(!mParentWindow || mParentWindow->Group() == mGroup);
   MOZ_RELEASE_ASSERT(mBrowsingContextId != 0);
@@ -689,6 +693,10 @@ void BrowsingContext::SetEmbedderElement(Element* aEmbedder) {
     MOZ_ALWAYS_SUCCEEDS(txn.Commit(this));
   }
 
+  if (XRE_IsParentProcess() && IsTopContent()) {
+    Canonical()->MaybeSetPermanentKey(aEmbedder);
+  }
+
   mEmbedderElement = aEmbedder;
 
   if (mEmbedderElement) {
@@ -741,6 +749,7 @@ void BrowsingContext::Attach(bool aFromIPC, ContentParent* aOriginProcess) {
     mChildOffset =
         mCreatedDynamically ? -1 : mParentWindow->Children().Length();
     mParentWindow->AppendChildBrowsingContext(this);
+    RecomputeCanExecuteScripts();
   } else {
     mGroup->Toplevels().AppendElement(this);
   }
@@ -789,6 +798,10 @@ void BrowsingContext::Attach(bool aFromIPC, ContentParent* aOriginProcess) {
   if (nsCOMPtr<nsIObserverService> obs = services::GetObserverService()) {
     obs->NotifyWhenScriptSafe(ToSupports(this), "browsing-context-attached",
                               nullptr);
+  }
+
+  if (XRE_IsParentProcess()) {
+    Canonical()->CanonicalAttach();
   }
 }
 
@@ -1579,6 +1592,10 @@ NS_IMETHODIMP BrowsingContext::SetPrivateBrowsing(bool aPrivateBrowsing) {
     if (IsContent()) {
       mOriginAttributes.SyncAttributesWithPrivateBrowsing(aPrivateBrowsing);
     }
+
+    if (XRE_IsParentProcess()) {
+      Canonical()->AdjustPrivateBrowsingCount(aPrivateBrowsing);
+    }
   }
   AssertOriginAttributesMatchPrivateBrowsing();
 
@@ -1789,6 +1806,30 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(BrowsingContext)
       mDocShell, mParentWindow, mGroup, mEmbedderElement, mWindowContexts,
       mCurrentWindowContext, mSessionStorageManager, mChildSessionHistory)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+
+static bool IsCertainlyAliveForCC(BrowsingContext* aContext) {
+  return aContext->HasKnownLiveWrapper() ||
+         (AppShutdown::GetCurrentShutdownPhase() ==
+              ShutdownPhase::NotInShutdown &&
+          aContext->EverAttached() && !aContext->IsDiscarded());
+}
+
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(BrowsingContext)
+  if (IsCertainlyAliveForCC(tmp)) {
+    if (tmp->PreservingWrapper()) {
+      tmp->MarkWrapperLive();
+    }
+    return true;
+  }
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_END
+
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_IN_CC_BEGIN(BrowsingContext)
+  return IsCertainlyAliveForCC(tmp) && tmp->HasNothingToTrace(tmp);
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_IN_CC_END
+
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_BEGIN(BrowsingContext)
+  return IsCertainlyAliveForCC(tmp);
+NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_END
 
 class RemoteLocationProxy
     : public RemoteObjectProxy<BrowsingContext::LocationProxy,
@@ -2603,6 +2644,43 @@ void BrowsingContext::DidSet(FieldIndex<IDX_HasMainMediaController>,
   Group()->UpdateToplevelsSuspendedIfNeeded();
 }
 
+auto BrowsingContext::CanSet(FieldIndex<IDX_AllowJavascript>, bool aValue,
+                             ContentParent* aSource) -> CanSetResult {
+  if (mozilla::SessionHistoryInParent()) {
+    return XRE_IsParentProcess() && !aSource ? CanSetResult::Allow
+                                             : CanSetResult::Deny;
+  }
+
+  // Without Session History in Parent, session restore code still needs to set
+  // this from content processes.
+  return LegacyRevertIfNotOwningOrParentProcess(aSource);
+}
+
+void BrowsingContext::DidSet(FieldIndex<IDX_AllowJavascript>, bool aOldValue) {
+  RecomputeCanExecuteScripts();
+}
+
+void BrowsingContext::RecomputeCanExecuteScripts() {
+  const bool old = mCanExecuteScripts;
+  if (!AllowJavascript()) {
+    // Scripting has been explicitly disabled on our BrowsingContext.
+    mCanExecuteScripts = false;
+  } else if (GetParentWindowContext()) {
+    // Otherwise, inherit parent.
+    mCanExecuteScripts = GetParentWindowContext()->CanExecuteScripts();
+  } else {
+    // Otherwise, we're the root of the tree, and we haven't explicitly disabled
+    // script. Allow.
+    mCanExecuteScripts = true;
+  }
+
+  if (old != mCanExecuteScripts) {
+    for (WindowContext* wc : GetWindowContexts()) {
+      wc->RecomputeCanExecuteScripts();
+    }
+  }
+}
+
 bool BrowsingContext::InactiveForSuspend() const {
   if (!StaticPrefs::dom_suspend_inactive_enabled()) {
     return false;
@@ -2615,9 +2693,8 @@ bool BrowsingContext::InactiveForSuspend() const {
 }
 
 bool BrowsingContext::CanSet(FieldIndex<IDX_TouchEventsOverrideInternal>,
-                             dom::TouchEventsOverride, ContentParent*) {
-  // TODO: Bug 1688948 - Should only be set in the parent process.
-  return true;
+                             dom::TouchEventsOverride, ContentParent* aSource) {
+  return XRE_IsParentProcess() && !aSource;
 }
 
 void BrowsingContext::DidSet(FieldIndex<IDX_PrefersColorSchemeOverride>,
@@ -2873,11 +2950,6 @@ mozilla::dom::TouchEventsOverride BrowsingContext::TouchEventsOverride() const {
   }
 
   return mozilla::dom::TouchEventsOverride::None;
-}
-
-void BrowsingContext::SetTouchEventsOverride(dom::TouchEventsOverride aOverride,
-                                             ErrorResult& aRv) {
-  SetTouchEventsOverrideInternal(aOverride, aRv);
 }
 
 // We map `watchedByDevTools` WebIDL attribute to `watchedByDevToolsInternal`
@@ -3200,6 +3272,17 @@ void BrowsingContext::AddDeprioritizedLoadRunner(nsIRunnable* aRunner) {
   NS_DispatchToCurrentThreadQueue(
       runner.forget(), StaticPrefs::page_load_deprioritization_period(),
       EventQueuePriority::Idle);
+}
+
+bool BrowsingContext::GetOffsetPath(nsTArray<uint32_t>& aPath) const {
+  for (const BrowsingContext* current = this; current && current->GetParent();
+       current = current->GetParent()) {
+    if (current->CreatedDynamically()) {
+      return false;
+    }
+    aPath.AppendElement(current->ChildOffset());
+  }
+  return true;
 }
 
 void BrowsingContext::GetHistoryID(JSContext* aCx,

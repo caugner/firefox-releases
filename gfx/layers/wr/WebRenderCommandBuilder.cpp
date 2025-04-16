@@ -259,6 +259,12 @@ static bool IsContainerLayerItem(nsDisplayItem* aItem) {
 static bool DetectContainerLayerPropertiesBoundsChange(
     nsDisplayItem* aItem, BlobItemData* aData,
     nsDisplayItemGeometry& aGeometry) {
+  if (aItem->GetType() == DisplayItemType::TYPE_FILTER) {
+    // Filters get clipped to the BuildingRect since they can
+    // have huge bounds outside of the visible area.
+    aGeometry.mBounds = aGeometry.mBounds.Intersect(aItem->GetBuildingRect());
+  }
+
   return !aGeometry.mBounds.IsEqualEdges(aData->mGeometry->mBounds);
 }
 
@@ -717,8 +723,8 @@ struct DIGroup {
   void PushImage(wr::DisplayListBuilder& aBuilder,
                  const LayoutDeviceRect& bounds) {
     wr::LayoutRect dest = wr::ToLayoutRect(bounds);
-    GP("PushImage: %f %f %f %f\n", dest.origin.x, dest.origin.y,
-       dest.size.width, dest.size.height);
+    GP("PushImage: %f %f %f %f\n", dest.min.x, dest.min.y, dest.max.x,
+       dest.max.y);
     gfx::SamplingFilter sampleFilter = gfx::SamplingFilter::
         LINEAR;  // nsLayoutUtils::GetSamplingFilterForFrame(aItem->Frame());
     bool backfaceHidden = false;
@@ -1008,8 +1014,10 @@ void Grouper::PaintContainerItem(DIGroup* aGroup, nsDisplayItem* aItem,
       // outside the invalid rect.
       if (aDirty) {
         auto filterItem = static_cast<nsDisplayFilters*>(aItem);
-        filterItem->SetPaintRect(
-            filterItem->GetClippedBounds(mDisplayListBuilder));
+
+        nsRegion visible(aItem->GetClippedBounds(mDisplayListBuilder));
+        visible.And(visible, aItem->GetBuildingRect());
+        aItem->SetPaintRect(visible.GetBounds());
 
         filterItem->Paint(mDisplayListBuilder, aContext);
         TakeExternalSurfaces(aRecorder, aData->mExternalSurfaces, aRootManager,
@@ -1750,8 +1758,7 @@ void WebRenderCommandBuilder::CreateWebRenderCommandsFromDisplayList(
       // merge the deferred transforms, but need to force a new
       // WebRenderLayerScrollData item to flush the old deferred transform, so
       // that we can then start deferring the new one.
-      if (!forceNewLayerData &&
-          item->GetType() == DisplayItemType::TYPE_TRANSFORM &&
+      if (!forceNewLayerData && item->CreatesStackingContextHelper() &&
           aSc.GetDeferredTransformItem() &&
           (*aSc.GetDeferredTransformItem())->GetActiveScrolledRoot() != asr) {
         forceNewLayerData = true;
@@ -2428,7 +2435,7 @@ Maybe<wr::ImageMask> WebRenderCommandBuilder::BuildWrMaskImage(
       LayerIntRect::FromUnknownRect(
           aMaskItem->GetBuildingRect().ScaleToOutsidePixels(
               scale.width, scale.height, appUnitsPerDevPixel))
-          .Intersect(itemRect);
+          .SafeIntersect(itemRect);
 
   if (visibleRect.IsEmpty()) {
     return Nothing();
@@ -2448,6 +2455,10 @@ Maybe<wr::ImageMask> WebRenderCommandBuilder::BuildWrMaskImage(
       maskOffset != maskData->mMaskOffset || !sameScale ||
       aMaskItem->ShouldHandleOpacity() != maskData->mShouldHandleOpacity) {
     IntSize size = itemRect.Size().ToUnknownSize();
+
+    if (!Factory::AllowedSurfaceSize(size)) {
+      return Nothing();
+    }
 
     std::vector<RefPtr<ScaledFont>> fonts;
     bool validFonts = true;

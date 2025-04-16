@@ -586,8 +586,6 @@ static bool IsFontSizeInflationContainer(nsIFrame* aFrame,
                    aFrame->IsBrFrame() ||
                    aFrame->IsFrameOfType(nsIFrame::eMathML),
                "line participants must not be containers");
-  NS_ASSERTION(!aFrame->IsBulletFrame() || isInline,
-               "bullets should not be containers");
   return !isInline;
 }
 
@@ -939,10 +937,8 @@ void nsIFrame::DestroyFrom(nsIFrame* aDestructRoot,
   presShell->FreeFrame(id, this);
 }
 
-nsresult nsIFrame::GetOffsets(int32_t& aStart, int32_t& aEnd) const {
-  aStart = 0;
-  aEnd = 0;
-  return NS_OK;
+std::pair<int32_t, int32_t> nsIFrame::GetOffsets() const {
+  return std::make_pair(0, 0);
 }
 
 static void CompareLayers(
@@ -1809,12 +1805,11 @@ bool nsIFrame::HasPerspective(const nsStyleDisplay* aStyleDisplay) const {
   if (!IsTransformed()) {
     return false;
   }
-  nsIFrame* containingBlock =
-      GetContainingBlock(SKIP_SCROLLED_FRAME, aStyleDisplay);
-  if (!containingBlock) {
+  nsIFrame* parent = GetClosestFlattenedTreeAncestorPrimaryFrame();
+  if (!parent) {
     return false;
   }
-  return containingBlock->ChildrenHavePerspective();
+  return parent->ChildrenHavePerspective();
 }
 
 nsRect nsIFrame::GetContentRectRelativeToSelf() const {
@@ -2332,7 +2327,7 @@ template <typename SizeOrMaxSize>
 static inline bool IsIntrinsicKeyword(const SizeOrMaxSize& aSize) {
   // All keywords other than auto/none/-moz-available depend on intrinsic sizes.
   return aSize.IsMaxContent() || aSize.IsMinContent() ||
-         aSize.IsMozFitContent();
+         aSize.IsMozFitContent() || aSize.IsFitContentFunction();
 }
 
 bool nsIFrame::CanBeDynamicReflowRoot() const {
@@ -2780,7 +2775,7 @@ static void DisplayDebugBorders(nsDisplayListBuilder* aBuilder,
 
 static bool IsScrollFrameActive(nsDisplayListBuilder* aBuilder,
                                 nsIScrollableFrame* aScrollableFrame) {
-  return aScrollableFrame && aScrollableFrame->IsScrollingActive(aBuilder);
+  return aScrollableFrame && aScrollableFrame->IsScrollingActive();
 }
 
 /**
@@ -4970,10 +4965,6 @@ NS_IMETHODIMP nsIFrame::HandleDrag(nsPresContext* aPresContext,
 
   NS_ENSURE_ARG_POINTER(aEventStatus);
 
-  if (*aEventStatus == nsEventStatus_eConsumeNoDefault) {
-    return NS_OK;
-  }
-
   RefPtr<nsFrameSelection> frameselection = GetFrameSelection();
   if (!frameselection) {
     return NS_OK;
@@ -5216,8 +5207,7 @@ static FrameContentRange GetRangeForFrame(const nsIFrame* aFrame) {
 
   LayoutFrameType type = aFrame->Type();
   if (type == LayoutFrameType::Text) {
-    int32_t offset, offsetEnd;
-    aFrame->GetOffsets(offset, offsetEnd);
+    auto [offset, offsetEnd] = aFrame->GetOffsets();
     return FrameContentRange(content, offset, offsetEnd);
   }
 
@@ -6310,7 +6300,7 @@ nsIFrame::SizeComputationResult nsIFrame::ComputeSize(
     // This means we successfully applied aspect-ratio and now need to check
     // if we need to apply the implied minimum size:
     // https://drafts.csswg.org/css-sizing-4/#aspect-ratio-minimum
-    MOZ_ASSERT(!IsFrameOfType(eReplaced),
+    MOZ_ASSERT(!IsFrameOfType(eReplacedSizing),
                "aspect-ratio minimums should not apply to replaced elements");
     // The inline size computed by aspect-ratio shouldn't less than the content
     // size.
@@ -6531,8 +6521,8 @@ nsIFrame::ISizeComputationResult nsIFrame::ComputeISizeValue(
     gfxContext* aRenderingContext, const WritingMode aWM,
     const LogicalSize& aContainingBlockSize,
     const LogicalSize& aContentEdgeToBoxSizing, nscoord aBoxSizingToMarginEdge,
-    ExtremumLength aSize, const StyleSizeOverrides& aSizeOverrides,
-    ComputeSizeFlags aFlags) {
+    ExtremumLength aSize, Maybe<nscoord> aAvailableISizeOverride,
+    const StyleSizeOverrides& aSizeOverrides, ComputeSizeFlags aFlags) {
   // If 'this' is a container for font size inflation, then shrink
   // wrapping inside of it should not apply font size inflation.
   AutoMaybeDisableFontInflation an(this);
@@ -6568,6 +6558,7 @@ nsIFrame::ISizeComputationResult nsIFrame::ComputeISizeValue(
       return {result, intrinsicSizeFromAspectRatio
                           ? AspectRatioUsage::ToComputeISize
                           : AspectRatioUsage::None};
+    case ExtremumLength::FitContentFunction:
     case ExtremumLength::MozFitContent: {
       nscoord pref = NS_UNCONSTRAINEDSIZE;
       nscoord min = 0;
@@ -6579,9 +6570,13 @@ nsIFrame::ISizeComputationResult nsIFrame::ComputeISizeValue(
         pref = GetPrefISize(aRenderingContext);
         min = GetMinISize(aRenderingContext);
       }
-      nscoord fill =
-          aContainingBlockSize.ISize(aWM) -
-          (aBoxSizingToMarginEdge + aContentEdgeToBoxSizing.ISize(aWM));
+
+      nscoord fill = aAvailableISizeOverride
+                         ? *aAvailableISizeOverride
+                         : aContainingBlockSize.ISize(aWM) -
+                               (aBoxSizingToMarginEdge +
+                                aContentEdgeToBoxSizing.ISize(aWM));
+
       if (MOZ_UNLIKELY(
               aFlags.contains(ComputeSizeFlag::IClampMarginBoxMinSize))) {
         min = std::min(min, fill);
@@ -7013,7 +7008,7 @@ Matrix4x4Flagged nsIFrame::GetTransformMatrix(ViewportType aViewportType,
     // The offset from a zoomed content root to its parent (e.g. from
     // a canvas frame to a scroll frame) is in layout coordinates, so
     // apply it before applying any layout-to-visual transform.
-    *aOutAncestor = nsLayoutUtils::GetCrossDocParentFrame(this);
+    *aOutAncestor = nsLayoutUtils::GetCrossDocParentFrameInProcess(this);
     nsPoint delta = GetOffsetToCrossDoc(*aOutAncestor);
     /* Combine the raw transform with a translation to our parent. */
     result.PostTranslate(NSAppUnitsToFloatPixels(delta.x, scaleFactor),
@@ -7083,7 +7078,7 @@ Matrix4x4Flagged nsIFrame::GetTransformMatrix(ViewportType aViewportType,
     }
   }
 
-  *aOutAncestor = nsLayoutUtils::GetCrossDocParentFrame(this);
+  *aOutAncestor = nsLayoutUtils::GetCrossDocParentFrameInProcess(this);
 
   /* Otherwise, we're not transformed.  In that case, we'll walk up the frame
    * tree until we either hit the root frame or something that may be
@@ -7108,7 +7103,8 @@ Matrix4x4Flagged nsIFrame::GetTransformMatrix(ViewportType aViewportType,
   while (*aOutAncestor != aStopAtAncestor.mFrame &&
          !shouldStopAt(current, *aOutAncestor, aFlags)) {
     /* If no parent, stop iterating.  Otherwise, update the ancestor. */
-    nsIFrame* parent = nsLayoutUtils::GetCrossDocParentFrame(*aOutAncestor);
+    nsIFrame* parent =
+        nsLayoutUtils::GetCrossDocParentFrameInProcess(*aOutAncestor);
     if (!parent) break;
 
     current = *aOutAncestor;
@@ -7747,6 +7743,33 @@ bool nsIFrame::IsPercentageResolvedAgainstZero(
   return ((sizeHasPercent || aStyleMaxSize.HasPercent()) &&
           IsFrameOfType(nsIFrame::eReplacedSizing)) ||
          (sizeHasPercent && FormControlShrinksForPercentSize(this));
+}
+
+// Summary of the Cyclic-Percentage Intrinsic Size Contribution Rules:
+//
+// Element Type         |       Replaced           |        Non-replaced
+// Contribution Type    | min-content  max-content | min-content  max-content
+// ---------------------------------------------------------------------------
+// min size             | zero         zero        | zero         zero
+// max & preferred size | zero         initial     | initial      initial
+//
+// https://drafts.csswg.org/css-sizing-3/#cyclic-percentage-contribution
+bool nsIFrame::IsPercentageResolvedAgainstZero(const LengthPercentage& aSize,
+                                               SizeProperty aProperty) const {
+  // Early return to avoid calling the virtual function, IsFrameOfType().
+  if (aProperty == SizeProperty::MinSize) {
+    return true;
+  }
+
+  const bool hasPercentOnReplaced =
+      aSize.HasPercent() && IsFrameOfType(nsIFrame::eReplacedSizing);
+  if (aProperty == SizeProperty::MaxSize) {
+    return hasPercentOnReplaced;
+  }
+
+  MOZ_ASSERT(aProperty == SizeProperty::Size);
+  return hasPercentOnReplaced ||
+         (aSize.HasPercent() && FormControlShrinksForPercentSize(this));
 }
 
 bool nsIFrame::IsBlockWrapper() const {
@@ -8446,8 +8469,7 @@ static nsContentAndOffset FindLineBreakInText(nsIFrame* aFrame,
     return result;
   }
 
-  int32_t startOffset, endOffset;
-  aFrame->GetOffsets(startOffset, endOffset);
+  int32_t endOffset = aFrame->GetOffsets().second;
   result.mContent = aFrame->GetContent();
   result.mOffset = endOffset - (aDirection == eDirPrevious ? 0 : 1);
   return result;
@@ -8664,8 +8686,7 @@ nsresult nsIFrame::PeekOffsetForCharacter(nsPeekOffsetStruct* aPos,
     // selection, this doesn't matter.
     if (peekSearchState == FOUND && current.mMovedOverNonSelectableText &&
         (!aPos->mExtend || current.mHasSelectableFrame)) {
-      int32_t start, end;
-      current.mFrame->GetOffsets(start, end);
+      auto [start, end] = current.mFrame->GetOffsets();
       current.mOffset = aPos->mDirection == eDirNext ? 0 : end - start;
     }
   }
@@ -9809,8 +9830,9 @@ void nsIFrame::RecomputePerspectiveChildrenOverflow(
           boundsOverflow.SetAllTo(bounds);
           child->FinishAndStoreOverflow(boundsOverflow, bounds.Size());
         }
-      } else if (child->GetContainingBlock(SKIP_SCROLLED_FRAME) ==
-                 aStartFrame) {
+      } else if (child->GetContent() == aStartFrame->GetContent() ||
+                 child->GetClosestFlattenedTreeAncestorPrimaryFrame() ==
+                     aStartFrame) {
         // If a frame is using perspective, then the size used to compute
         // perspective-origin is the size of the frame belonging to its parent
         // style. We must find any descendant frames using our size
@@ -12081,7 +12103,6 @@ DR_FrameTypeInfo* DR_State::GetFrameTypeInfo(char* aFrameName) {
 void DR_State::InitFrameTypeTable() {
   AddFrameTypeInfo(LayoutFrameType::Block, "block", "block");
   AddFrameTypeInfo(LayoutFrameType::Br, "br", "br");
-  AddFrameTypeInfo(LayoutFrameType::Bullet, "bullet", "bullet");
   AddFrameTypeInfo(LayoutFrameType::ColorControl, "color", "colorControl");
   AddFrameTypeInfo(LayoutFrameType::GfxButtonControl, "button",
                    "gfxButtonControl");

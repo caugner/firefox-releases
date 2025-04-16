@@ -59,17 +59,7 @@ NS_INTERFACE_MAP_BEGIN(Http3Session)
   NS_INTERFACE_MAP_ENTRY_CONCRETE(Http3Session)
 NS_INTERFACE_MAP_END
 
-Http3Session::Http3Session()
-    : mState(INITIALIZING),
-      mAuthenticationStarted(false),
-      mCleanShutdown(false),
-      mGoawayReceived(false),
-      mShouldClose(false),
-      mIsClosedByNeqo(false),
-      mError(NS_OK),
-      mSocketError(NS_OK),
-      mBeforeConnectedError(false),
-      mTimerActive(false) {
+Http3Session::Http3Session() {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
   LOG(("Http3Session::Http3Session [this=%p]", this));
 
@@ -360,7 +350,7 @@ nsresult Http3Session::ProcessEvents() {
 
   // We need an array to pick up header data or a resumption token.
   nsTArray<uint8_t> data;
-  Http3Event event;
+  Http3Event event{};
   event.tag = Http3Event::Tag::NoEvent;
 
   nsresult rv = mHttp3Connection->GetEvent(&event, data);
@@ -383,7 +373,7 @@ nsresult Http3Session::ProcessEvents() {
               ("Http3Session::ProcessEvents - HeaderReady - stream not found "
                "stream_id=0x%" PRIx64 " [this=%p].",
                id, this));
-          continue;
+          break;
         }
 
         stream->SetResponseHeaders(data, event.header_ready.fin);
@@ -745,9 +735,8 @@ bool Http3Session::AddStream(nsAHttpTransaction* aHttpTransaction,
         mCannotDo0RTTStreams.AppendElement(stream);
       }
       return true;
-    } else {
-      m0RTTStreams.AppendElement(stream);
     }
+    m0RTTStreams.AppendElement(stream);
   }
 
   if (!mFirstHttpTransaction && !IsConnected()) {
@@ -1753,13 +1742,16 @@ void Http3Session::CloseConnectionTelemetry(CloseError& aError, bool aClosing) {
       key = "app"_ns;
       value = GetAppErrorCodeForTelemetry(aError.app_error._0);
       break;
+    case CloseError::Tag::EchRetry:
+      key = "transport_crypto_alert"_ns;
+      value = 121;
   }
 
   key.Append(aClosing ? "_closing"_ns : "_closed"_ns);
 
   Telemetry::Accumulate(Telemetry::HTTP3_CONNECTION_CLOSE_CODE_3, key, value);
 
-  Http3Stats stats;
+  Http3Stats stats{};
   mHttp3Connection->GetStats(&stats);
 
   if (stats.packets_tx > 0) {

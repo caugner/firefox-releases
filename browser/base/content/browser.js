@@ -27,7 +27,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   BrowserUtils: "resource://gre/modules/BrowserUtils.jsm",
   BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
   CFRPageActions: "resource://activity-stream/lib/CFRPageActions.jsm",
-  CharsetMenu: "resource://gre/modules/CharsetMenu.jsm",
   Color: "resource://gre/modules/Color.jsm",
   ContextualIdentityService:
     "resource://gre/modules/ContextualIdentityService.jsm",
@@ -394,33 +393,22 @@ XPCOMUtils.defineLazyGetter(this, "gHighPriorityNotificationBox", () => {
   return new MozElements.NotificationBox(element => {
     element.classList.add("global-notificationbox");
     element.setAttribute("notificationside", "top");
-    element.toggleAttribute("prepend-notifications", gProton);
-    if (gProton) {
-      // With Proton enabled all notification boxes are at the top, built into the browser chrome.
-      let tabNotifications = document.getElementById("tab-notification-deck");
-      // With Proton enabled, notification messages use the CSS box model. When using
-      // negative margins on those notification messages to animate them in or out,
-      // if the ancestry of that node is all using the XUL box model, strange glitches
-      // arise. We sidestep this by containing the global notification box within a
-      // <div> that has CSS block layout.
-      let outer = document.createElement("div");
-      outer.appendChild(element);
-      gNavToolbox.insertBefore(outer, tabNotifications);
-    } else {
-      document.getElementById("appcontent").prepend(element);
-    }
+    element.setAttribute("prepend-notifications", true);
+    // Notification messages use the CSS box model. When using
+    // negative margins on those notification messages to animate them in or out,
+    // if the ancestry of that node is all using the XUL box model, strange glitches
+    // arise. We sidestep this by containing the global notification box within a
+    // <div> that has CSS block layout.
+    let outer = document.createElement("div");
+    outer.appendChild(element);
+    let tabNotifications = document.getElementById("tab-notification-deck");
+    gNavToolbox.insertBefore(outer, tabNotifications);
   });
 });
 
 // Regular notification bars shown at the bottom of the window.
 XPCOMUtils.defineLazyGetter(this, "gNotificationBox", () => {
-  return gProton
-    ? gHighPriorityNotificationBox
-    : new MozElements.NotificationBox(element => {
-        element.classList.add("global-notificationbox");
-        element.setAttribute("notificationside", "bottom");
-        document.getElementById("browser-bottombox").appendChild(element);
-      });
+  return gHighPriorityNotificationBox;
 });
 
 XPCOMUtils.defineLazyGetter(this, "InlineSpellCheckerUI", () => {
@@ -547,22 +535,6 @@ XPCOMUtils.defineLazyPreferenceGetter(
   false
 );
 
-/* Work around the pref callback being run after the document has been unlinked.
-   See bug 1543537. */
-var docWeak = Cu.getWeakReference(document);
-XPCOMUtils.defineLazyPreferenceGetter(
-  this,
-  "gProton",
-  "browser.proton.enabled",
-  false,
-  (pref, oldValue, newValue) => {
-    let doc = docWeak.get();
-    if (doc) {
-      doc.documentElement.toggleAttribute("proton", newValue);
-    }
-  }
-);
-
 /* Temporary pref while the dust settles around the updated tooltip design
    for tabs and bookmarks toolbar. This will eventually be removed and
    browser.proton.enabled will be used instead. */
@@ -570,14 +542,6 @@ XPCOMUtils.defineLazyPreferenceGetter(
   this,
   "gProtonPlacesTooltip",
   "browser.proton.places-tooltip.enabled",
-  false
-);
-
-/* Temporary pref while the Proton doorhangers work stablizes. */
-XPCOMUtils.defineLazyPreferenceGetter(
-  this,
-  "gProtonDoorhangers",
-  "browser.proton.doorhangers.enabled",
   false
 );
 
@@ -1701,8 +1665,6 @@ var gBrowserInit = {
       document.documentElement.setAttribute("icon", "main-window");
     }
 
-    document.documentElement.toggleAttribute("proton", gProton);
-
     // Call this after we set attributes that might change toolbars' computed
     // text color.
     ToolbarIconColor.init();
@@ -2188,7 +2150,8 @@ var gBrowserInit = {
 
       if (
         (isBlankPageURL(uriToLoad) && !aboutWelcomeSkipUrlBarFocus) ||
-        uriToLoad == "about:privatebrowsing"
+        uriToLoad == "about:privatebrowsing" ||
+        this.getTabToAdopt()?.isEmpty
       ) {
         gURLBar.select();
         shouldRemoveFocusedAttribute = false;
@@ -4920,24 +4883,6 @@ function updateUserContextUIIndicator() {
   hbox.hidden = false;
 }
 
-/**
- * Makes the Character Encoding menu enabled or disabled as appropriate.
- * To be called when the View menu or the app menu is opened.
- */
-function updateCharacterEncodingMenuState() {
-  let charsetMenu = document.getElementById("charsetMenu");
-  // gBrowser is null on Mac when the menubar shows in the context of
-  // non-browser windows. The above elements may be null depending on
-  // what parts of the menubar are present. E.g. no app menu on Mac.
-  if (gBrowser && gBrowser.selectedBrowser.mayEnableCharacterEncodingMenu) {
-    if (charsetMenu) {
-      charsetMenu.removeAttribute("disabled");
-    }
-  } else if (charsetMenu) {
-    charsetMenu.setAttribute("disabled", "true");
-  }
-}
-
 var XULBrowserWindow = {
   // Stored Status, Link and Loading values
   status: "",
@@ -4984,6 +4929,12 @@ var XULBrowserWindow = {
       document.getElementById("context-viewsource"),
       document.getElementById("View:PageSource"),
     ]);
+  },
+  get _menuItemForRepairTextEncoding() {
+    delete this._menuItemForRepairTextEncoding;
+    return (this._menuItemForRepairTextEncoding = document.getElementById(
+      "repair-text-encoding"
+    ));
   },
 
   setDefaultStatus(status) {
@@ -5133,6 +5084,18 @@ var XULBrowserWindow = {
         }
 
         this._updateElementsForContentType();
+
+        // Update Override Text Encoding state.
+        // Can't cache the button, because the presence of the element in the DOM
+        // may change over time.
+        let button = document.getElementById("characterencoding-button");
+        if (browser.mayEnableCharacterEncodingMenu) {
+          this._menuItemForRepairTextEncoding.removeAttribute("disabled");
+          button?.removeAttribute("disabled");
+        } else {
+          this._menuItemForRepairTextEncoding.setAttribute("disabled", "true");
+          button?.setAttribute("disabled", "true");
+        }
       }
 
       this.isBusy = false;
@@ -5223,7 +5186,7 @@ var XULBrowserWindow = {
     // About pages other than about:reader are not currently supported by
     // screenshots (see Bug 1620992).
     Services.obs.notifyObservers(
-      null,
+      window,
       "toggle-screenshot-disable",
       aLocationURI.scheme == "about" &&
         !aLocationURI.spec.startsWith("about:reader")
@@ -5249,6 +5212,15 @@ var XULBrowserWindow = {
     gTabletModePageCounter.inc();
 
     this._updateElementsForContentType();
+
+    // Unconditionally disable the Text Encoding button during load to
+    // keep the UI calm when navigating from one modern page to another and
+    // the toolbar button is visible.
+    // Can't cache the button, because the presence of the element in the DOM
+    // may change over time.
+    let button = document.getElementById("characterencoding-button");
+    this._menuItemForRepairTextEncoding.setAttribute("disabled", "true");
+    button?.setAttribute("disabled", "true");
 
     // Try not to instantiate gCustomizeMode as much as possible,
     // so don't use CustomizeMode.jsm to check for URI or customizing.
@@ -7087,35 +7059,9 @@ function handleDroppedLink(
   }
 }
 
-function BrowserSetForcedCharacterSet(aCharset) {
-  if (aCharset) {
-    if (aCharset == "Japanese") {
-      aCharset = "Shift_JIS";
-    }
-    gBrowser.selectedBrowser.characterSet = aCharset;
-    // Save the forced character-set
-    PlacesUIUtils.setCharsetForPage(
-      gBrowser.currentURI,
-      aCharset,
-      window
-    ).catch(Cu.reportError);
-  }
-  BrowserCharsetReload();
-}
-
-function BrowserCharsetReload() {
+function BrowserForceEncodingDetection() {
+  gBrowser.selectedBrowser.forceEncodingDetection();
   BrowserReloadWithFlags(Ci.nsIWebNavigation.LOAD_FLAGS_CHARSET_CHANGE);
-}
-
-function UpdateCurrentCharset(target) {
-  let selectedCharset = CharsetMenu.foldCharset(
-    gBrowser.selectedBrowser.characterSet,
-    gBrowser.selectedBrowser.charsetAutodetected
-  );
-  for (let menuItem of target.getElementsByTagName("menuitem")) {
-    let isSelected = menuItem.getAttribute("charset") === selectedCharset;
-    menuItem.setAttribute("checked", isSelected);
-  }
 }
 
 var ToolbarContextMenu = {
@@ -7513,7 +7459,7 @@ var IndexedDBPromptHelper = {
           Ci.nsIPermissionManager.ALLOW_ACTION
         );
       },
-      disableHighlight: gProtonDoorhangers,
+      disableHighlight: true,
     };
 
     var secondaryActions = [
@@ -7612,7 +7558,7 @@ var CanvasPermissionPromptHelper = {
           state && state.checkboxChecked
         );
       },
-      disableHighlight: gProtonDoorhangers,
+      disableHighlight: true,
     };
 
     let secondaryActions = [
@@ -7786,9 +7732,7 @@ var WebAuthnPromptHelper = {
       }
     };
 
-    if (gProtonDoorhangers) {
-      mainAction.disableHighlight = true;
-    }
+    mainAction.disableHighlight = true;
 
     this._tid = tid;
     this._current = PopupNotifications.show(
@@ -8392,13 +8336,12 @@ function switchToTabHavingURI(aURI, aOpenNew, aOpenParams = {}) {
 
   // This will switch to the tab in aWindow having aURI, if present.
   function switchIfURIInWindow(aWindow) {
-    // Only switch to the tab if neither the source nor the destination window
-    // are private and they are not in permanent private browsing mode
+    // We can switch tab only if if both the source and destination windows have
+    // the same private-browsing status.
     if (
       !kPrivateBrowsingWhitelist.has(aURI.spec) &&
-      (PrivateBrowsingUtils.isWindowPrivate(window) ||
-        PrivateBrowsingUtils.isWindowPrivate(aWindow)) &&
-      !PrivateBrowsingUtils.permanentPrivateBrowsing
+      PrivateBrowsingUtils.isWindowPrivate(window) !==
+        PrivateBrowsingUtils.isWindowPrivate(aWindow)
     ) {
       return false;
     }
@@ -8999,7 +8942,9 @@ class TabDialogBox {
    * Set to true to keep the dialog open for same origin navigation.
    * @param {Number} [aOptions.modalType] - The modal type to create the dialog for.
    * By default, we show the dialog for tab prompts.
-   * @returns {Promise} - Resolves once the dialog has been closed.
+   * @returns {Object} [result] Returns an object { closedPromise, dialog }.
+   * @returns {Promise} [result.closedPromise] Resolves once the dialog has been closed.
+   * @returns {SubDialog} [result.dialog] A reference to the opened SubDialog.
    */
   open(
     aURL,
@@ -9013,54 +8958,55 @@ class TabDialogBox {
     } = {},
     ...aParams
   ) {
-    return new Promise(resolve => {
-      // Get the dialog manager to open the prompt with.
-      let dialogManager =
-        modalType === Ci.nsIPrompt.MODAL_TYPE_CONTENT
-          ? this.getContentDialogManager()
-          : this._tabDialogManager;
-      let hasDialogs =
-        this._tabDialogManager.hasDialogs ||
-        this._contentDialogManager?.hasDialogs;
+    let resolveClosed;
+    let closedPromise = new Promise(resolve => (resolveClosed = resolve));
+    // Get the dialog manager to open the prompt with.
+    let dialogManager =
+      modalType === Ci.nsIPrompt.MODAL_TYPE_CONTENT
+        ? this.getContentDialogManager()
+        : this._tabDialogManager;
+    let hasDialogs =
+      this._tabDialogManager.hasDialogs ||
+      this._contentDialogManager?.hasDialogs;
 
+    if (!hasDialogs) {
+      this._onFirstDialogOpen();
+    }
+
+    let closingCallback = event => {
       if (!hasDialogs) {
-        this._onFirstDialogOpen();
+        this._onLastDialogClose();
       }
 
-      let closingCallback = event => {
-        if (!hasDialogs) {
-          this._onLastDialogClose();
-        }
-
-        if (allowFocusCheckbox && !event.detail?.abort) {
-          this.maybeSetAllowTabSwitchPermission(event.target);
-        }
-      };
-
-      if (modalType == Ci.nsIPrompt.MODAL_TYPE_CONTENT) {
-        sizeTo = "limitheight";
+      if (allowFocusCheckbox && !event.detail?.abort) {
+        this.maybeSetAllowTabSwitchPermission(event.target);
       }
+    };
 
-      // Open dialog and resolve once it has been closed
-      let dialog = dialogManager.open(
-        aURL,
-        {
-          features,
-          allowDuplicateDialogs,
-          sizeTo,
-          closingCallback,
-          closedCallback: resolve,
-        },
-        ...aParams
-      );
+    if (modalType == Ci.nsIPrompt.MODAL_TYPE_CONTENT) {
+      sizeTo = "limitheight";
+    }
 
-      // Marking the dialog externally, instead of passing it as an option.
-      // The SubDialog(Manager) does not care about navigation.
-      // dialog can be null here if allowDuplicateDialogs = false.
-      if (dialog) {
-        dialog._keepOpenSameOriginNav = keepOpenSameOriginNav;
-      }
-    });
+    // Open dialog and resolve once it has been closed
+    let dialog = dialogManager.open(
+      aURL,
+      {
+        features,
+        allowDuplicateDialogs,
+        sizeTo,
+        closingCallback,
+        closedCallback: resolveClosed,
+      },
+      ...aParams
+    );
+
+    // Marking the dialog externally, instead of passing it as an option.
+    // The SubDialog(Manager) does not care about navigation.
+    // dialog can be null here if allowDuplicateDialogs = false.
+    if (dialog) {
+      dialog._keepOpenSameOriginNav = keepOpenSameOriginNav;
+    }
+    return { closedPromise, dialog };
   }
 
   _onFirstDialogOpen() {

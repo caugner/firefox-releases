@@ -180,6 +180,7 @@ void moz_container_wayland_init(MozContainerWayland* container) {
   container->opaque_region_subtract_corners = false;
   container->opaque_region_used = false;
   container->surface_needs_clear = true;
+  container->container_remapped = true;
   container->subsurface_dx = 0;
   container->subsurface_dy = 0;
   container->before_first_size_alloc = true;
@@ -282,6 +283,8 @@ static void moz_container_wayland_unmap_internal(MozContainer* container) {
   MozContainerWayland* wl_container = &container->wl_container;
   MutexAutoLock lock(*wl_container->container_lock);
 
+  LOGWAYLAND(("%s [%p]\n", __FUNCTION__, (void*)container));
+
   if (wl_container->opaque_region_used) {
     moz_gdk_wayland_window_remove_frame_callback_surface_locked(container);
   }
@@ -295,8 +298,7 @@ static void moz_container_wayland_unmap_internal(MozContainer* container) {
   wl_container->surface_needs_clear = true;
   wl_container->ready_to_draw = false;
   wl_container->buffer_scale = 1;
-
-  LOGWAYLAND(("%s [%p]\n", __FUNCTION__, (void*)container));
+  wl_container->container_remapped = true;
 }
 
 static gboolean moz_container_wayland_map_event(GtkWidget* widget,
@@ -538,9 +540,10 @@ static bool moz_container_wayland_surface_create_locked(
 }
 
 struct wl_surface* moz_container_wayland_surface_lock(MozContainer* container) {
-  LOGWAYLAND(("%s [%p] surface %p ready_to_draw %d\n", __FUNCTION__,
-              (void*)container, (void*)container->wl_container.surface,
-              container->wl_container.ready_to_draw));
+  // Temporary disabled to avoid log noise
+  //  LOGWAYLAND(("%s [%p] surface %p ready_to_draw %d\n", __FUNCTION__,
+  //              (void*)container, (void*)container->wl_container.surface,
+  //              container->wl_container.ready_to_draw));
   if (!container->wl_container.surface ||
       !container->wl_container.ready_to_draw) {
     return nullptr;
@@ -554,8 +557,9 @@ struct wl_surface* moz_container_wayland_surface_lock(MozContainer* container) {
 
 void moz_container_wayland_surface_unlock(MozContainer* container,
                                           struct wl_surface** surface) {
-  LOGWAYLAND(("%s [%p] surface %p\n", __FUNCTION__, (void*)container,
-              (void*)container->wl_container.surface));
+  // Temporary disabled to avoid log noise
+  //  LOGWAYLAND(("%s [%p] surface %p\n", __FUNCTION__, (void*)container,
+  //              (void*)container->wl_container.surface));
   if (*surface) {
     container->wl_container.container_lock->Unlock();
     *surface = nullptr;
@@ -592,6 +596,12 @@ gboolean moz_container_wayland_has_egl_window(MozContainer* container) {
 gboolean moz_container_wayland_surface_needs_clear(MozContainer* container) {
   int ret = container->wl_container.surface_needs_clear;
   container->wl_container.surface_needs_clear = false;
+  return ret;
+}
+
+gboolean moz_container_wayland_get_and_reset_remapped(MozContainer* container) {
+  int ret = container->wl_container.container_remapped;
+  container->wl_container.container_remapped = false;
   return ret;
 }
 

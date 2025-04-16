@@ -41,12 +41,6 @@
   "Accessibility filtering children of leaf nodes plaintext contenteditable plain text field with role should not have children (accessibility.spec.ts)": [
     "SKIP"
   ],
-  "Accessibility filtering children of leaf nodes plaintext contenteditable plain text field without role should not have content (accessibility.spec.ts)": [
-    "SKIP"
-  ],
-  "Accessibility filtering children of leaf nodes plaintext contenteditable plain text field with tabindex and without role should not have content (accessibility.spec.ts)": [
-    "SKIP"
-  ],
   "Accessibility filtering children of leaf nodes root option should work a button (accessibility.spec.ts)": [
     "SKIP"
   ],
@@ -156,7 +150,7 @@
     "PASS"
   ],
   "Page.click should double click the button (click.spec.ts)": [
-    "PASS"
+    "FAIL", "PASS"
   ],
   "Page.click should click a partially obscured button (click.spec.ts)": [
     "PASS"
@@ -171,13 +165,13 @@
     "PASS"
   ],
   "Page.click should click the button inside an iframe (click.spec.ts)": [
-    "PASS"
+    "FAIL", "PASS"
   ],
   "Page.click should click the button with fixed position inside an iframe (click.spec.ts)": [
     "SKIP"
   ],
   "Page.click should click the button with deviceScaleFactor set (click.spec.ts)": [
-    "PASS"
+    "FAIL", "PASS"
   ],
   "Cookie specs Page.cookies should return no cookies in pristine browser context (cookies.spec.ts)": [
     "PASS"
@@ -385,6 +379,9 @@
   ],
   "Emulation Page.emulateVisionDeficiency should throw for invalid vision deficiencies (emulation.spec.ts)": [
     "PASS"
+  ],
+  "Emulation Page.emulateNetworkConditions should change navigator.connection.effectiveType (emulation.spec.ts)": [
+    "FAIL"
   ],
   "Evaluation specs Page.evaluate should work (evaluation.spec.ts)": [
     "PASS"
@@ -896,6 +893,9 @@
   "Launcher specs Puppeteer Puppeteer.launch should take fullPage screenshots when defaultViewport is null (launcher.spec.ts)": [
     "PASS"
   ],
+  "Launcher specs Puppeteer Puppeteer.launch should launch Chrome properly with --no-startup-window and waitForInitialPage=false (launcher.spec.ts)": [
+    "SKIP"
+  ],
   "Launcher specs Puppeteer Puppeteer.launch should be able to launch Chrome (launcher.spec.ts)": [
     "SKIP"
   ],
@@ -912,6 +912,9 @@
     "PASS"
   ],
   "Launcher specs Puppeteer Puppeteer.connect should support ignoreHTTPSErrors option (launcher.spec.ts)": [
+    "PASS"
+  ],
+  "Launcher specs Puppeteer Puppeteer.connect should support targetFilter option (launcher.spec.ts)": [
     "PASS"
   ],
   "Launcher specs Puppeteer Puppeteer.connect should be able to reconnect to a disconnected browser (launcher.spec.ts)": [
@@ -1175,6 +1178,9 @@
   "network Network Events Page.Events.Request (network.spec.ts)": [
     "FAIL", "PASS"
   ],
+  "network Network Events Page.Events.RequestServedFromCache (network.spec.ts)": [
+    "FAIL"
+  ],
   "network Network Events Page.Events.Response (network.spec.ts)": [
     "PASS", "FAIL"
   ],
@@ -1212,6 +1218,9 @@
     "FAIL"
   ],
   "network Page.authenticate should allow disable authentication (network.spec.ts)": [
+    "FAIL"
+  ],
+  "network Page.authenticate should not disable caching (network.spec.ts)": [
     "FAIL"
   ],
   "Page Page.close should reject all promises when page is closed (page.spec.ts)": [
@@ -1277,7 +1286,7 @@
   "Page BrowserContext.overridePermissions should trigger permission onchange (page.spec.ts)": [
     "FAIL"
   ],
-  "Page BrowserContext.overridePermissions should isolate permissions between browser contexs (page.spec.ts)": [
+  "Page BrowserContext.overridePermissions should isolate permissions between browser contexts (page.spec.ts)": [
     "FAIL"
   ],
   "Page Page.setGeolocation should work (page.spec.ts)": [
@@ -1290,9 +1299,6 @@
     "FAIL"
   ],
   "Page Page.setOfflineMode should emulate navigator.onLine (page.spec.ts)": [
-    "FAIL"
-  ],
-  "Page Page.emulateNetworkConditions should change navigator.connection.effectiveType (page.spec.ts)": [
     "FAIL"
   ],
   "Page ExecutionContext.queryObjects should work (page.spec.ts)": [
@@ -1580,7 +1586,7 @@
   "Page Page.browser should return the correct browser instance (page.spec.ts)": [
     "PASS"
   ],
-  "Page Page.browserContext should return the correct browser instance (page.spec.ts)": [
+  "Page Page.browserContext should return the correct browser context instance (page.spec.ts)": [
     "PASS"
   ],
   "querySelector Page.$eval should work (queryselector.spec.ts)": [
@@ -1770,6 +1776,15 @@
     "PASS"
   ],
   "request interception Page.setRequestInterception should work with file URLs (requestinterception.spec.ts)": [
+    "FAIL"
+  ],
+  "request interception Page.setRequestInterception should not cache if cache disabled (requestinterception.spec.ts)": [
+    "FAIL"
+  ],
+  "request interception Page.setRequestInterception should cache if cache enabled (requestinterception.spec.ts)": [
+    "FAIL"
+  ],
+  "request interception Page.setRequestInterception should load fonts if cache enabled (requestinterception.spec.ts)": [
     "FAIL"
   ],
   "request interception Request.continue should work (requestinterception.spec.ts)": [

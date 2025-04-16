@@ -53,8 +53,10 @@ add_task(function makeResultBuckets_true() {
             { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_EXTENSION },
             { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_SEARCH_TIP },
             { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_OMNIBOX },
-            { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_UNIFIED_COMPLETE },
+            { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_ENGINE_ALIAS },
+            { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_BOOKMARK_KEYWORD },
             { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_AUTOFILL },
+            { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_PRELOADED },
             { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_TOKEN_ALIAS_ENGINE },
             { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_FALLBACK },
           ],
@@ -62,7 +64,7 @@ add_task(function makeResultBuckets_true() {
         // extensions using the omnibox API
         {
           group: UrlbarUtils.RESULT_GROUP.OMNIBOX,
-          maxResultCount: UrlbarUtils.MAX_OMNIBOX_RESULT_COUNT - 1,
+          availableSpan: UrlbarUtils.MAX_OMNIBOX_RESULT_COUNT - 1,
         },
         // main bucket
         {
@@ -71,18 +73,21 @@ add_task(function makeResultBuckets_true() {
             // suggestions
             {
               flex: 2,
-              flexChildren: true,
               children: [
                 {
-                  flex: 2,
-                  group: UrlbarUtils.RESULT_GROUP.FORM_HISTORY,
+                  flexChildren: true,
+                  children: [
+                    {
+                      flex: 2,
+                      group: UrlbarUtils.RESULT_GROUP.FORM_HISTORY,
+                    },
+                    {
+                      flex: 4,
+                      group: UrlbarUtils.RESULT_GROUP.REMOTE_SUGGESTION,
+                    },
+                  ],
                 },
                 {
-                  flex: 4,
-                  group: UrlbarUtils.RESULT_GROUP.REMOTE_SUGGESTION,
-                },
-                {
-                  flex: 0,
                   group: UrlbarUtils.RESULT_GROUP.TAIL_SUGGESTION,
                 },
               ],
@@ -90,7 +95,36 @@ add_task(function makeResultBuckets_true() {
             // general
             {
               flex: 1,
-              group: UrlbarUtils.RESULT_GROUP.GENERAL,
+              children: [
+                {
+                  availableSpan: 3,
+                  group: UrlbarUtils.RESULT_GROUP.INPUT_HISTORY,
+                },
+                {
+                  flexChildren: true,
+                  children: [
+                    {
+                      flex: 1,
+                      group: UrlbarUtils.RESULT_GROUP.REMOTE_TAB,
+                    },
+                    {
+                      flex: 2,
+                      group: UrlbarUtils.RESULT_GROUP.GENERAL,
+                    },
+                    {
+                      flex: 2,
+                      group: UrlbarUtils.RESULT_GROUP.ABOUT_PAGES,
+                    },
+                    {
+                      flex: 1,
+                      group: UrlbarUtils.RESULT_GROUP.PRELOADED,
+                    },
+                  ],
+                },
+                {
+                  group: UrlbarUtils.RESULT_GROUP.INPUT_HISTORY,
+                },
+              ],
             },
           ],
         },
@@ -114,8 +148,10 @@ add_task(function makeResultBuckets_false() {
             { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_EXTENSION },
             { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_SEARCH_TIP },
             { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_OMNIBOX },
-            { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_UNIFIED_COMPLETE },
+            { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_ENGINE_ALIAS },
+            { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_BOOKMARK_KEYWORD },
             { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_AUTOFILL },
+            { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_PRELOADED },
             { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_TOKEN_ALIAS_ENGINE },
             { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_FALLBACK },
           ],
@@ -123,7 +159,7 @@ add_task(function makeResultBuckets_false() {
         // extensions using the omnibox API
         {
           group: UrlbarUtils.RESULT_GROUP.OMNIBOX,
-          maxResultCount: UrlbarUtils.MAX_OMNIBOX_RESULT_COUNT - 1,
+          availableSpan: UrlbarUtils.MAX_OMNIBOX_RESULT_COUNT - 1,
         },
         // main bucket
         {
@@ -132,23 +168,55 @@ add_task(function makeResultBuckets_false() {
             // general
             {
               flex: 2,
-              group: UrlbarUtils.RESULT_GROUP.GENERAL,
+              children: [
+                {
+                  availableSpan: 3,
+                  group: UrlbarUtils.RESULT_GROUP.INPUT_HISTORY,
+                },
+                {
+                  flexChildren: true,
+                  children: [
+                    {
+                      flex: 1,
+                      group: UrlbarUtils.RESULT_GROUP.REMOTE_TAB,
+                    },
+                    {
+                      flex: 2,
+                      group: UrlbarUtils.RESULT_GROUP.GENERAL,
+                    },
+                    {
+                      flex: 2,
+                      group: UrlbarUtils.RESULT_GROUP.ABOUT_PAGES,
+                    },
+                    {
+                      flex: 1,
+                      group: UrlbarUtils.RESULT_GROUP.PRELOADED,
+                    },
+                  ],
+                },
+                {
+                  group: UrlbarUtils.RESULT_GROUP.INPUT_HISTORY,
+                },
+              ],
             },
             // suggestions
             {
               flex: 1,
-              flexChildren: true,
               children: [
                 {
-                  flex: 2,
-                  group: UrlbarUtils.RESULT_GROUP.FORM_HISTORY,
+                  flexChildren: true,
+                  children: [
+                    {
+                      flex: 2,
+                      group: UrlbarUtils.RESULT_GROUP.FORM_HISTORY,
+                    },
+                    {
+                      flex: 4,
+                      group: UrlbarUtils.RESULT_GROUP.REMOTE_SUGGESTION,
+                    },
+                  ],
                 },
                 {
-                  flex: 4,
-                  group: UrlbarUtils.RESULT_GROUP.REMOTE_SUGGESTION,
-                },
-                {
-                  flex: 0,
                   group: UrlbarUtils.RESULT_GROUP.TAIL_SUGGESTION,
                 },
               ],
@@ -160,8 +228,8 @@ add_task(function makeResultBuckets_false() {
   );
 });
 
-// Tests interaction between showSearchSuggestionsFirst and resultBuckets.
-add_task(function showSearchSuggestionsFirst_resultBuckets() {
+// Tests interaction between showSearchSuggestionsFirst and resultGroups.
+add_task(function showSearchSuggestionsFirst_resultGroups() {
   // Check initial values.
   Assert.equal(
     UrlbarPrefs.get("showSearchSuggestionsFirst"),
@@ -169,45 +237,45 @@ add_task(function showSearchSuggestionsFirst_resultBuckets() {
     "showSearchSuggestionsFirst is true initially"
   );
   Assert.equal(
-    Services.prefs.getCharPref("browser.urlbar.resultBuckets", ""),
+    Services.prefs.getCharPref("browser.urlbar.resultGroups", ""),
     "",
-    "resultBuckets is empty initially"
+    "resultGroups is empty initially"
   );
 
   // Set showSearchSuggestionsFirst = false.
   UrlbarPrefs.set("showSearchSuggestionsFirst", false);
   Assert.ok(
-    Services.prefs.getCharPref("browser.urlbar.resultBuckets", ""),
-    "resultBuckets should exist after setting showSearchSuggestionsFirst"
+    Services.prefs.getCharPref("browser.urlbar.resultGroups", ""),
+    "resultGroups should exist after setting showSearchSuggestionsFirst"
   );
   Assert.deepEqual(
-    JSON.parse(Services.prefs.getCharPref("browser.urlbar.resultBuckets")),
+    JSON.parse(Services.prefs.getCharPref("browser.urlbar.resultGroups")),
     UrlbarPrefs.makeResultBuckets({ showSearchSuggestionsFirst: false }),
-    "resultBuckets is updated after setting showSearchSuggestionsFirst = false"
+    "resultGroups is updated after setting showSearchSuggestionsFirst = false"
   );
 
   // Set showSearchSuggestionsFirst = true.
   UrlbarPrefs.set("showSearchSuggestionsFirst", true);
   Assert.deepEqual(
-    JSON.parse(Services.prefs.getCharPref("browser.urlbar.resultBuckets")),
+    JSON.parse(Services.prefs.getCharPref("browser.urlbar.resultGroups")),
     UrlbarPrefs.makeResultBuckets({ showSearchSuggestionsFirst: true }),
-    "resultBuckets is updated after setting showSearchSuggestionsFirst = true"
+    "resultGroups is updated after setting showSearchSuggestionsFirst = true"
   );
 
   // Set showSearchSuggestionsFirst = false again so we can clear it next.
   UrlbarPrefs.set("showSearchSuggestionsFirst", false);
   Assert.deepEqual(
-    JSON.parse(Services.prefs.getCharPref("browser.urlbar.resultBuckets")),
+    JSON.parse(Services.prefs.getCharPref("browser.urlbar.resultGroups")),
     UrlbarPrefs.makeResultBuckets({ showSearchSuggestionsFirst: false }),
-    "resultBuckets is updated after setting showSearchSuggestionsFirst = false"
+    "resultGroups is updated after setting showSearchSuggestionsFirst = false"
   );
 
   // Clear showSearchSuggestionsFirst.
   Services.prefs.clearUserPref("browser.urlbar.showSearchSuggestionsFirst");
   Assert.deepEqual(
-    JSON.parse(Services.prefs.getCharPref("browser.urlbar.resultBuckets")),
+    JSON.parse(Services.prefs.getCharPref("browser.urlbar.resultGroups")),
     UrlbarPrefs.makeResultBuckets({ showSearchSuggestionsFirst: true }),
-    "resultBuckets is updated immediately after clearing showSearchSuggestionsFirst"
+    "resultGroups is updated immediately after clearing showSearchSuggestionsFirst"
   );
   Assert.equal(
     UrlbarPrefs.get("showSearchSuggestionsFirst"),
@@ -215,21 +283,21 @@ add_task(function showSearchSuggestionsFirst_resultBuckets() {
     "showSearchSuggestionsFirst defaults to true after clearing it"
   );
   Assert.deepEqual(
-    JSON.parse(Services.prefs.getCharPref("browser.urlbar.resultBuckets")),
+    JSON.parse(Services.prefs.getCharPref("browser.urlbar.resultGroups")),
     UrlbarPrefs.makeResultBuckets({ showSearchSuggestionsFirst: true }),
-    "resultBuckets remains correct after getting showSearchSuggestionsFirst"
+    "resultGroups remains correct after getting showSearchSuggestionsFirst"
   );
 });
 
 // Tests UrlbarPrefs.initializeShowSearchSuggestionsFirstPref() and the
 // interaction between matchBuckets, showSearchSuggestionsFirst, and
-// resultBuckets.  It's a little complex, but the flow is:
+// resultGroups.  It's a little complex, but the flow is:
 //
 // 1. The old matchBuckets pref has some value
 // 2. UrlbarPrefs.initializeShowSearchSuggestionsFirstPref() is called to
 //    translate matchBuckets into the newer showSearchSuggestionsFirst pref
-// 3. The update to showSearchSuggestionsFirst causes the new resultBuckets pref
-//    to be set
+// 3. The update to showSearchSuggestionsFirst causes the new resultGroups
+//    pref to be set
 add_task(function initializeShowSearchSuggestionsFirstPref() {
   // Each value in `tests`: [matchBuckets, expectedShowSearchSuggestionsFirst]
   let tests = [
@@ -271,18 +339,18 @@ add_task(function initializeShowSearchSuggestionsFirstPref() {
     // Call initializeShowSearchSuggestionsFirstPref.
     UrlbarPrefs.initializeShowSearchSuggestionsFirstPref();
 
-    // Both showSearchSuggestionsFirst and resultBuckets should be updated.
+    // Both showSearchSuggestionsFirst and resultGroups should be updated.
     Assert.equal(
       Services.prefs.getBoolPref("browser.urlbar.showSearchSuggestionsFirst"),
       expectedValue,
       "showSearchSuggestionsFirst has the expected value"
     );
     Assert.deepEqual(
-      JSON.parse(Services.prefs.getCharPref("browser.urlbar.resultBuckets")),
+      JSON.parse(Services.prefs.getCharPref("browser.urlbar.resultGroups")),
       UrlbarPrefs.makeResultBuckets({
         showSearchSuggestionsFirst: expectedValue,
       }),
-      "resultBuckets should be updated with the appropriate default"
+      "resultGroups should be updated with the appropriate default"
     );
   }
 

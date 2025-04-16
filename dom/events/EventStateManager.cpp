@@ -6,6 +6,7 @@
 
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/EditorBase.h"
 #include "mozilla/EventDispatcher.h"
 #include "mozilla/EventForwards.h"
 #include "mozilla/EventStateManager.h"
@@ -111,6 +112,7 @@
 #include "mozilla/Services.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/HTMLLabelElement.h"
+#include "mozilla/dom/Record.h"
 #include "mozilla/dom/Selection.h"
 
 #include "mozilla/Preferences.h"
@@ -136,6 +138,10 @@ static nsITimerCallback* gUserInteractionTimerCallback = nullptr;
 static const double kCursorLoadingTimeout = 1000;  // ms
 static AutoWeakFrame gLastCursorSourceFrame;
 static TimeStamp gLastCursorUpdateTime;
+static TimeStamp gTypingStartTime;
+static TimeStamp gTypingEndTime;
+static int32_t gTypingInteractionKeyPresses = 0;
+static dom::InteractionData gTypingInteraction = {};
 
 static inline int32_t RoundDown(double aDouble) {
   return (aDouble > 0) ? static_cast<int32_t>(floor(aDouble))
@@ -467,6 +473,41 @@ static bool IsKeyboardEventUserActivity(WidgetEvent* aEvent) {
       return false;
     default:
       return true;
+  }
+}
+
+static void OnTypingInteractionEnded() {
+  // We don't consider a single keystroke to be typing.
+  if (gTypingInteractionKeyPresses > 1) {
+    gTypingInteraction.mInteractionCount += gTypingInteractionKeyPresses;
+    gTypingInteraction.mInteractionTimeInMilliseconds += static_cast<uint32_t>(
+        (gTypingEndTime - gTypingStartTime).ToMilliseconds());
+  }
+
+  gTypingInteractionKeyPresses = 0;
+  gTypingStartTime = TimeStamp();
+  gTypingEndTime = TimeStamp();
+}
+
+static void HandleKeyUpInteraction(WidgetKeyboardEvent* aKeyEvent) {
+  if (IsKeyboardEventUserActivity(aKeyEvent)) {
+    TimeStamp now = TimeStamp::Now();
+    if (gTypingEndTime.IsNull()) {
+      gTypingEndTime = now;
+    }
+    TimeDuration delay = now - gTypingEndTime;
+    // Has it been too long since the last keystroke to be considered typing?
+    if (gTypingInteractionKeyPresses > 0 &&
+        delay >
+            TimeDuration::FromMilliseconds(
+                StaticPrefs::browser_places_interactions_typing_timeout_ms())) {
+      OnTypingInteractionEnded();
+    }
+    gTypingInteractionKeyPresses++;
+    if (gTypingStartTime.IsNull()) {
+      gTypingStartTime = now;
+    }
+    gTypingEndTime = now;
   }
 }
 
@@ -1469,7 +1510,11 @@ void EventStateManager::DispatchCrossProcessEvent(WidgetEvent* aEvent,
       return;
     }
     case eKeyboardEventClass: {
-      remote->SendRealKeyEvent(*aEvent->AsKeyboardEvent());
+      auto* keyboardEvent = aEvent->AsKeyboardEvent();
+      if (aEvent->mMessage == eKeyUp) {
+        HandleKeyUpInteraction(keyboardEvent);
+      }
+      remote->SendRealKeyEvent(*keyboardEvent);
       return;
     }
     case eWheelEventClass: {
@@ -1728,7 +1773,7 @@ void EventStateManager::FireContextClick() {
       if (formCtrl) {
         allowedToDispatch =
             formCtrl->IsTextControl(/*aExcludePassword*/ false) ||
-            formCtrl->ControlType() == NS_FORM_INPUT_FILE;
+            formCtrl->ControlType() == FormControlType::InputFile;
       } else if (mGestureDownContent->IsAnyOfHTMLElements(
                      nsGkAtoms::embed, nsGkAtoms::object, nsGkAtoms::label)) {
         allowedToDispatch = false;
@@ -5269,7 +5314,7 @@ nsresult EventStateManager::DispatchClickEvents(
 
 nsresult EventStateManager::HandleMiddleClickPaste(
     PresShell* aPresShell, WidgetMouseEvent* aMouseEvent,
-    nsEventStatus* aStatus, TextEditor* aTextEditor) {
+    nsEventStatus* aStatus, EditorBase* aEditorBase) {
   MOZ_ASSERT(aPresShell);
   MOZ_ASSERT(aMouseEvent);
   MOZ_ASSERT((aMouseEvent->mMessage == eMouseAuxClick &&
@@ -5287,8 +5332,8 @@ nsresult EventStateManager::HandleMiddleClickPaste(
   aMouseEvent->mFlags.mMultipleActionsPrevented = true;
 
   RefPtr<Selection> selection;
-  if (aTextEditor) {
-    selection = aTextEditor->GetSelection();
+  if (aEditorBase) {
+    selection = aEditorBase->GetSelection();
     if (NS_WARN_IF(!selection)) {
       return NS_ERROR_FAILURE;
     }
@@ -5329,12 +5374,12 @@ nsresult EventStateManager::HandleMiddleClickPaste(
 
   // Although we've fired "paste" event, there is no editor to accept the
   // clipboard content.
-  if (!aTextEditor) {
+  if (!aEditorBase) {
     return NS_OK;
   }
 
   // Check if the editor is still the good target to paste.
-  if (aTextEditor->Destroyed() || aTextEditor->IsReadonly()) {
+  if (aEditorBase->Destroyed() || aEditorBase->IsReadonly()) {
     // XXX Should we consume the event when the editor is readonly and/or
     //     disabled?
     return NS_OK;
@@ -5349,7 +5394,7 @@ nsresult EventStateManager::HandleMiddleClickPaste(
   WidgetMouseEvent mouseEvent(*aMouseEvent);
   mouseEvent.mOriginalTarget = range->GetStartContainer();
   if (NS_WARN_IF(!mouseEvent.mOriginalTarget) ||
-      !aTextEditor->IsAcceptableInputEvent(&mouseEvent)) {
+      !aEditorBase->IsAcceptableInputEvent(&mouseEvent)) {
     return NS_OK;
   }
 
@@ -5357,15 +5402,26 @@ nsresult EventStateManager::HandleMiddleClickPaste(
   // quotation.  Otherwise, paste it as is.
   if (aMouseEvent->IsControl()) {
     DebugOnly<nsresult> rv =
-        aTextEditor->PasteAsQuotationAsAction(clipboardType, false);
+        aEditorBase->PasteAsQuotationAsAction(clipboardType, false);
     NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "Failed to paste as quotation");
   } else {
-    DebugOnly<nsresult> rv = aTextEditor->PasteAsAction(clipboardType, false);
+    DebugOnly<nsresult> rv = aEditorBase->PasteAsAction(clipboardType, false);
     NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "Failed to paste");
   }
   *aStatus = nsEventStatus_eConsumeNoDefault;
 
   return NS_OK;
+}
+
+void EventStateManager::ConsumeInteractionData(
+    Record<nsString, dom::InteractionData>& aInteractions) {
+  OnTypingInteractionEnded();
+
+  aInteractions.Entries().Clear();
+  auto newEntry = aInteractions.Entries().AppendElement();
+  newEntry->mKey = u"Typing"_ns;
+  newEntry->mValue = gTypingInteraction;
+  gTypingInteraction = {};
 }
 
 nsIFrame* EventStateManager::GetEventTarget() {
@@ -5950,7 +6006,7 @@ nsresult EventStateManager::DoContentCommandInsertTextEvent(
 
   // If there is no active editor in this process, we should treat the command
   // is disabled.
-  RefPtr<TextEditor> activeEditor =
+  RefPtr<EditorBase> activeEditor =
       nsContentUtils::GetActiveEditor(mPresContext);
   if (!activeEditor) {
     aEvent->mSucceeded = true;

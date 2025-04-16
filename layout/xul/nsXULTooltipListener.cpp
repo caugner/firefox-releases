@@ -234,7 +234,7 @@ NS_IMETHODIMP
 nsXULTooltipListener::HandleEvent(Event* aEvent) {
   nsAutoString type;
   aEvent->GetType(type);
-  if (type.EqualsLiteral("DOMMouseScroll") || type.EqualsLiteral("mousedown") ||
+  if (type.EqualsLiteral("wheel") || type.EqualsLiteral("mousedown") ||
       type.EqualsLiteral("mouseup") || type.EqualsLiteral("dragstart")) {
     HideTooltip();
     return NS_OK;
@@ -399,7 +399,7 @@ nsresult nsXULTooltipListener::ShowTooltip() {
       currentTooltip->AddSystemEventListener(u"popuphiding"_ns, this, false,
                                              false);
 
-      // listen for mousedown, mouseup, keydown, and DOMMouseScroll events at
+      // listen for mousedown, mouseup, keydown, and mouse events at
       // document level
       Document* doc = sourceNode->GetComposedDoc();
       if (doc) {
@@ -408,7 +408,7 @@ nsresult nsXULTooltipListener::ShowTooltip() {
         // applications.  If we don't specify the aWantsUntrusted of
         // AddSystemEventListener(), the event target sets it to TRUE if the
         // target is in content.
-        doc->AddSystemEventListener(u"DOMMouseScroll"_ns, this, true);
+        doc->AddSystemEventListener(u"wheel"_ns, this, true);
         doc->AddSystemEventListener(u"mousedown"_ns, this, true);
         doc->AddSystemEventListener(u"mouseup"_ns, this, true);
 #ifndef XP_WIN
@@ -438,15 +438,6 @@ static void SetTitletipLabel(XULTreeElement* aTree, Element* aTooltip,
   }
 }
 #endif
-
-static bool IsInTree(const Element& aTarget) {
-  for (nsIContent* p = aTarget.GetParent(); p; p = p->GetParent()) {
-    if (p->IsAnyOfXULElements(nsGkAtoms::tree, nsGkAtoms::treechildren)) {
-      return true;
-    }
-  }
-  return false;
-}
 
 void nsXULTooltipListener::LaunchTooltip() {
   RefPtr<Element> currentTooltip = do_QueryReferent(mCurrentTooltip);
@@ -491,25 +482,7 @@ void nsXULTooltipListener::LaunchTooltip() {
     return;
   }
 
-  nsAutoString position;
-  if (!IsInTree(*target)) {
-    nsAutoString closest;
-    currentTooltip->GetAttr(nsGkAtoms::anchortoclosest, closest);
-    if (!closest.IsEmpty()) {
-      if (auto* closestTarget =
-              target->Closest(NS_ConvertUTF16toUTF8(closest), IgnoreErrors())) {
-        target = closestTarget;
-      }
-    }
-    currentTooltip->GetAttr(nsGkAtoms::position, position);
-  }
-
-  if (position.IsEmpty()) {
-    pm->ShowTooltipAtScreen(currentTooltip, target, mMouseScreenX,
-                            mMouseScreenY);
-  } else {
-    pm->ShowTooltipAtPosition(currentTooltip, target, position);
-  }
+  pm->ShowTooltipAtScreen(currentTooltip, target, mMouseScreenX, mMouseScreenY);
 #endif
 }
 
@@ -666,7 +639,7 @@ nsresult nsXULTooltipListener::DestroyTooltip() {
     nsCOMPtr<Document> doc = currentTooltip->GetComposedDoc();
     if (doc) {
       // remove the mousedown and keydown listener from document
-      doc->RemoveSystemEventListener(u"DOMMouseScroll"_ns, this, true);
+      doc->RemoveSystemEventListener(u"wheel"_ns, this, true);
       doc->RemoveSystemEventListener(u"mousedown"_ns, this, true);
       doc->RemoveSystemEventListener(u"mouseup"_ns, this, true);
 #ifndef XP_WIN

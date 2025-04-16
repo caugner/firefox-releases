@@ -20,9 +20,8 @@ class BrowsingContextTargetFront extends TargetMixin(
 
     // For targets which support the Watcher and configuration actor, the status
     // for the `javascriptEnabled` setting will be available on the configuration
-    // front, and the target will only be used to read the initial value.
-    // For other targets, _javascriptEnabled will be updated everytime
-    // `reconfigure` is called.
+    // front, and the target will only be used to read the initial value from older
+    // servers.
     // Note: this property is marked as private but is accessed by the
     // TargetCommand to provide the "isJavascriptEnabled" wrapper. It should NOT be
     // used anywhere else.
@@ -121,8 +120,13 @@ class BrowsingContextTargetFront extends TargetMixin(
       const response = await super.attach();
 
       this.targetForm.threadActor = response.threadActor;
-      this._javascriptEnabled = response.javascriptEnabled;
       this.traits = response.traits || {};
+
+      // @backward-compat { version 91 } See trait definition. All references to
+      // _javascriptEnabled can be removed when cleaning this up.
+      if (!this.traits.javascriptEnabledHandledInParent) {
+        this._javascriptEnabled = response.javascriptEnabled;
+      }
 
       // xpcshell tests from devtools/server/tests/xpcshell/ are implementing
       // fake BrowsingContextTargetActor which do not expose any console actor.
@@ -136,7 +140,10 @@ class BrowsingContextTargetFront extends TargetMixin(
   async reconfigure({ options }) {
     const response = await super.reconfigure({ options });
 
-    if (typeof options.javascriptEnabled != "undefined") {
+    if (
+      !this.traits.javascriptEnabledHandledInParent &&
+      typeof options.javascriptEnabled != "undefined"
+    ) {
       this._javascriptEnabled = options.javascriptEnabled;
     }
 

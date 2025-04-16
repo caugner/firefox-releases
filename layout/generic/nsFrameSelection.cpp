@@ -80,14 +80,12 @@ static NS_DEFINE_CID(kFrameTraversalCID, NS_FRAMETRAVERSAL_CID);
 #include "mozilla/dom/SelectionBinding.h"
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/Telemetry.h"
-#include "mozilla/layers/ScrollInputMethods.h"
 
 #include "nsFocusManager.h"
 #include "nsPIDOMWindow.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
-using mozilla::layers::ScrollInputMethod;
 
 static LazyLogModule sFrameSelectionLog("FrameSelection");
 
@@ -372,23 +370,15 @@ nsFrameSelection::nsFrameSelection(PresShell* aPresShell, nsIContent* aLimiter,
   // This should only ever be initialized on the main thread, so we are OK here.
   MOZ_ASSERT(NS_IsMainThread());
 
+  int8_t index = GetIndexFromSelectionType(SelectionType::eNormal);
+
   mAccessibleCaretEnabled = aAccessibleCaretEnabled;
   if (mAccessibleCaretEnabled) {
-    int8_t index = GetIndexFromSelectionType(SelectionType::eNormal);
     mDomSelections[index]->MaybeNotifyAccessibleCaretEventHub(aPresShell);
   }
 
-  bool plaintextControl = (aLimiter != nullptr);
-  bool initSelectEvents =
-      plaintextControl ? StaticPrefs::dom_select_events_textcontrols_enabled()
-                       : StaticPrefs::dom_select_events_enabled();
-
-  Document* doc = aPresShell->GetDocument();
-  if (initSelectEvents || (doc && doc->NodePrincipal()->IsSystemPrincipal())) {
-    int8_t index = GetIndexFromSelectionType(SelectionType::eNormal);
-    if (mDomSelections[index]) {
-      mDomSelections[index]->EnableSelectionChangeEvent();
-    }
+  if (mDomSelections[index]) {
+    mDomSelections[index]->EnableSelectionChangeEvent();
   }
 }
 
@@ -771,7 +761,7 @@ nsresult nsFrameSelection::MoveCaret(nsDirection aDirection,
     const nsRange* anchorFocusRange = sel->GetAnchorFocusRange();
     if (anchorFocusRange) {
       RefPtr<nsINode> node;
-      int32_t offset;
+      uint32_t offset;
       if (visualMovement && nsBidiPresUtils::IsReversedDirectionFrame(frame)) {
         direction = nsDirection(1 - direction);
       }
@@ -807,7 +797,7 @@ nsresult nsFrameSelection::MoveCaret(nsDirection aDirection,
       // hint to ASSOCIATE_BEFORE to indicate that we want the caret displayed
       // at the end of this frame, not at the beginning of the next one.
       theFrame = pos.mResultFrame;
-      theFrame->GetOffsets(frameStart, frameEnd);
+      std::tie(frameStart, frameEnd) = theFrame->GetOffsets();
       currentOffset = pos.mContentOffset;
       if (frameEnd == currentOffset && !(frameStart == 0 && frameEnd == 0))
         tHint = CARET_ASSOCIATE_BEFORE;
@@ -822,7 +812,7 @@ nsresult nsFrameSelection::MoveCaret(nsDirection aDirection,
                                        tHint, &currentOffset);
       if (!theFrame) return NS_ERROR_FAILURE;
 
-      theFrame->GetOffsets(frameStart, frameEnd);
+      std::tie(frameStart, frameEnd) = theFrame->GetOffsets();
     }
 
     if (context->BidiEnabled()) {
@@ -935,25 +925,26 @@ nsPrevNextBidiLevels nsFrameSelection::GetPrevNextBidiLevels(
   // Get the level of the frames on each side
   nsIFrame* currentFrame;
   int32_t currentOffset;
-  int32_t frameStart, frameEnd;
   nsDirection direction;
 
-  nsPrevNextBidiLevels levels;
+  nsPrevNextBidiLevels levels{};
   levels.SetData(nullptr, nullptr, 0, 0);
 
-  currentFrame =
-      GetFrameForNodeOffset(aNode, aContentOffset, aHint, &currentOffset);
-  if (!currentFrame) return levels;
+  currentFrame = GetFrameForNodeOffset(
+      aNode, static_cast<int32_t>(aContentOffset), aHint, &currentOffset);
+  if (!currentFrame) {
+    return levels;
+  }
 
-  currentFrame->GetOffsets(frameStart, frameEnd);
+  auto [frameStart, frameEnd] = currentFrame->GetOffsets();
 
-  if (0 == frameStart && 0 == frameEnd)
+  if (0 == frameStart && 0 == frameEnd) {
     direction = eDirPrevious;
-  else if (frameStart == currentOffset)
+  } else if (frameStart == currentOffset) {
     direction = eDirPrevious;
-  else if (frameEnd == currentOffset)
+  } else if (frameEnd == currentOffset) {
     direction = eDirNext;
-  else {
+  } else {
     // we are neither at the beginning nor at the end of the frame, so we have
     // no worries
     nsBidiLevel currentLevel = currentFrame->GetEmbeddingLevel();
@@ -1607,6 +1598,28 @@ static bool IsDisplayContents(const nsIContent* aContent) {
   return aContent->IsElement() && aContent->AsElement()->IsDisplayContents();
 }
 
+bool nsFrameSelection::AdjustFrameForLineStart(nsIFrame*& aFrame,
+                                               int32_t& aFrameOffset) {
+  if (!aFrame->HasSignificantTerminalNewline()) {
+    return false;
+  }
+
+  auto [start, end] = aFrame->GetOffsets();
+  if (aFrameOffset != end) {
+    return false;
+  }
+
+  nsIFrame* nextSibling = aFrame->GetNextSibling();
+  if (!nextSibling) {
+    return false;
+  }
+
+  aFrame = nextSibling;
+  std::tie(start, end) = aFrame->GetOffsets();
+  aFrameOffset = start;
+  return true;
+}
+
 // static
 nsIFrame* nsFrameSelection::GetFrameForNodeOffset(nsIContent* aNode,
                                                   int32_t aOffset,
@@ -1915,10 +1928,6 @@ nsresult nsFrameSelection::PageMove(bool aForward, bool aExtend,
 
   // Then, scroll the given frame one page.
   if (scrollableFrame) {
-    mozilla::Telemetry::Accumulate(
-        mozilla::Telemetry::SCROLL_INPUT_METHODS,
-        (uint32_t)ScrollInputMethod::MainThreadScrollPage);
-
     // If we'll call ScrollSelectionIntoView later and selection wasn't
     // changed and we scroll outside of selection limiter, we shouldn't use
     // smooth scroll here because nsIScrollableFrame uses normal runnable,
@@ -2140,7 +2149,8 @@ nsresult nsFrameSelection::NotifySelectionListeners(
   int8_t index = GetIndexFromSelectionType(aSelectionType);
   if (index >= 0 && mDomSelections[index]) {
     RefPtr<Selection> selection = mDomSelections[index];
-    return selection->NotifySelectionListeners();
+    selection->NotifySelectionListeners();
+    return NS_OK;
   }
   return NS_ERROR_FAILURE;
 }

@@ -204,6 +204,9 @@ class PresShell final : public nsStubDocumentObserver,
   // clears that capture.
   static void ClearMouseCapture(nsIFrame* aFrame);
 
+  // Clear the capture content if it exists in this process.
+  static void ClearMouseCapture();
+
 #ifdef ACCESSIBILITY
   /**
    * Return the document accessible for this PresShell if there is one.
@@ -881,9 +884,8 @@ class PresShell final : public nsStubDocumentObserver,
     return mObservesMutationsForPrint;
   }
 
-  nsresult SetIsActive(bool aIsActive);
-
-  bool IsActive() { return mIsActive; }
+  void ActivenessMaybeChanged();
+  bool IsActive() const { return mIsActive; }
 
   /**
    * Keep track of how many times this presshell has been rendered to
@@ -1692,6 +1694,10 @@ class PresShell final : public nsStubDocumentObserver,
  private:
   ~PresShell();
 
+  void SetIsActive(bool aIsActive);
+  bool ShouldBeActive() const;
+
+
   /**
    * Refresh observer management.
    */
@@ -1936,8 +1942,7 @@ class PresShell final : public nsStubDocumentObserver,
   };
   MOZ_CAN_RUN_SCRIPT void ProcessSynthMouseMoveEvent(bool aFromScroll);
 
-  void QueryIsActive();
-  nsresult UpdateImageLockingState();
+  void UpdateImageLockingState();
 
   already_AddRefed<PresShell> GetParentPresShellForEventHandling();
 

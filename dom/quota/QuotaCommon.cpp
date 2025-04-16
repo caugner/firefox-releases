@@ -17,6 +17,7 @@
 #include "mozilla/TelemetryComms.h"
 #include "mozilla/TelemetryEventEnums.h"
 #include "mozilla/TextUtils.h"
+#include "mozilla/dom/quota/ScopedLogExtraInfo.h"
 #include "nsIConsoleService.h"
 #include "nsIFile.h"
 #include "nsServiceManagerUtils.h"
@@ -172,7 +173,7 @@ Result<nsIFileKind, nsresult> GetDirEntryKind(nsIFile& aFile) {
   // just want to log NS_ERROR_FILE_NOT_FOUND,
   // NS_ERROR_FILE_TARGET_DOES_NOT_EXIST and NS_ERROR_FILE_FS_CORRUPTED results
   // and not spam the reports.
-  QM_TRY_RETURN(QM_OR_ELSE_LOG_IF(
+  QM_TRY_RETURN(QM_OR_ELSE_LOG_VERBOSE_IF(
       MOZ_TO_RESULT_INVOKE(aFile, IsDirectory).map([](const bool isDirectory) {
         return isDirectory ? nsIFileKind::ExistsAsDirectory
                            : nsIFileKind::ExistsAsFile;
@@ -240,75 +241,6 @@ template Result<SingleStepSuccessType<SingleStepResult::ReturnNullIfNoResult>,
                 nsresult>
 CreateAndExecuteSingleStepStatement<SingleStepResult::ReturnNullIfNoResult>(
     mozIStorageConnection& aConnection, const nsACString& aStatementString);
-
-#ifdef QM_SCOPED_LOG_EXTRA_INFO_ENABLED
-MOZ_THREAD_LOCAL(const nsACString*) ScopedLogExtraInfo::sQueryValue;
-MOZ_THREAD_LOCAL(const nsACString*) ScopedLogExtraInfo::sContextValue;
-
-/* static */
-auto ScopedLogExtraInfo::FindSlot(const char* aTag) {
-  // XXX For now, don't use a real map but just allow the known tag values.
-
-  if (aTag == kTagQuery) {
-    return &sQueryValue;
-  }
-
-  if (aTag == kTagContext) {
-    return &sContextValue;
-  }
-
-  MOZ_CRASH("Unknown tag!");
-}
-
-ScopedLogExtraInfo::~ScopedLogExtraInfo() {
-  if (mTag) {
-    MOZ_ASSERT(&mCurrentValue == FindSlot(mTag)->get(),
-               "Bad scoping of ScopedLogExtraInfo, must not be interleaved!");
-
-    FindSlot(mTag)->set(mPreviousValue);
-  }
-}
-
-ScopedLogExtraInfo::ScopedLogExtraInfo(ScopedLogExtraInfo&& aOther)
-    : mTag(aOther.mTag),
-      mPreviousValue(aOther.mPreviousValue),
-      mCurrentValue(std::move(aOther.mCurrentValue)) {
-  aOther.mTag = nullptr;
-  FindSlot(mTag)->set(&mCurrentValue);
-}
-
-/* static */ ScopedLogExtraInfo::ScopedLogExtraInfoMap
-ScopedLogExtraInfo::GetExtraInfoMap() {
-  // This could be done in a cheaper way, but this is never called on a hot
-  // path, so we anticipate using a real map inside here to make use simpler for
-  // the caller(s).
-
-  ScopedLogExtraInfoMap map;
-  if (XRE_IsParentProcess()) {
-    if (sQueryValue.get()) {
-      map.emplace(kTagQuery, sQueryValue.get());
-    }
-
-    if (sContextValue.get()) {
-      map.emplace(kTagContext, sContextValue.get());
-    }
-  }
-  return map;
-}
-
-/* static */ void ScopedLogExtraInfo::Initialize() {
-  MOZ_ALWAYS_TRUE(sQueryValue.init());
-  MOZ_ALWAYS_TRUE(sContextValue.init());
-}
-
-void ScopedLogExtraInfo::AddInfo() {
-  auto* slot = FindSlot(mTag);
-  MOZ_ASSERT(slot);
-  mPreviousValue = slot->get();
-
-  slot->set(&mCurrentValue);
-}
-#endif
 
 namespace detail {
 
@@ -416,9 +348,9 @@ void LogError(const nsACString& aExpr, const Maybe<nsresult> aMaybeRv,
 {
   // TODO: Add MOZ_LOG support, bug 1711661.
 
-  // We have to ignore failures with the Log severity until we have support for
-  // MOZ_LOG.
-  if (aSeverity == Severity::Log) {
+  // We have to ignore failures with the Verbose severity until we have support
+  // for MOZ_LOG.
+  if (aSeverity == Severity::Verbose) {
     return;
   }
 
@@ -441,8 +373,8 @@ void LogError(const nsACString& aExpr, const Maybe<nsresult> aMaybeRv,
         return "WARNING"_ns;
       case Severity::Note:
         return "NOTE"_ns;
-      case Severity::Log:
-        return "LOG"_ns;
+      case Severity::Verbose:
+        return "VERBOSE"_ns;
     }
     MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE("Bad severity value!");
   }();

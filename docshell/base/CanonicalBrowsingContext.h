@@ -11,6 +11,7 @@
 #include "mozilla/dom/MediaControlKeySource.h"
 #include "mozilla/dom/BrowsingContextWebProgress.h"
 #include "mozilla/dom/Promise.h"
+#include "mozilla/dom/SessionHistoryEntry.h"
 #include "mozilla/dom/SessionStoreRestoreData.h"
 #include "mozilla/dom/SessionStoreUtils.h"
 #include "mozilla/dom/ipc/IdType.h"
@@ -47,7 +48,6 @@ class FeaturePolicy;
 struct LoadURIOptions;
 class MediaController;
 struct LoadingSessionHistoryInfo;
-class SessionHistoryEntry;
 class SSCacheCopy;
 class WindowGlobalParent;
 
@@ -58,6 +58,7 @@ struct RemotenessChangeOptions {
   bool mReplaceBrowsingContext = false;
   uint64_t mSpecificGroupId = 0;
   bool mTryUseBFCache = false;
+  RefPtr<SessionHistoryEntry> mActiveSessionHistoryEntry;
 };
 
 // CanonicalBrowsingContext is a BrowsingContext living in the parent
@@ -66,8 +67,8 @@ struct RemotenessChangeOptions {
 class CanonicalBrowsingContext final : public BrowsingContext {
  public:
   NS_DECL_ISUPPORTS_INHERITED
-  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(CanonicalBrowsingContext,
-                                           BrowsingContext)
+  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_INHERITED(
+      CanonicalBrowsingContext, BrowsingContext)
 
   static already_AddRefed<CanonicalBrowsingContext> Get(uint64_t aId);
   static CanonicalBrowsingContext* Cast(BrowsingContext* aContext);
@@ -322,9 +323,24 @@ class CanonicalBrowsingContext final : public BrowsingContext {
     mPriorityActive = aIsActive;
   }
 
+  void SetTouchEventsOverride(dom::TouchEventsOverride, ErrorResult& aRv);
+
+  bool IsReplaced() const { return mIsReplaced; }
+
+  const JS::Heap<JS::Value>& PermanentKey() { return mPermanentKey; }
+  void ClearPermanentKey() { mPermanentKey.setNull(); }
+  void MaybeSetPermanentKey(Element* aEmbedder);
+
  protected:
   // Called when the browsing context is being discarded.
   void CanonicalDiscard();
+
+  // Called when the browsing context is being attached.
+  void CanonicalAttach();
+
+  // Called when the browsing context private mode is changed after
+  // being attached, but before being discarded.
+  void AdjustPrivateBrowsingCount(bool aPrivateBrowsing);
 
   using Type = BrowsingContext::Type;
   CanonicalBrowsingContext(WindowContext* aParentWindow,
@@ -337,7 +353,7 @@ class CanonicalBrowsingContext final : public BrowsingContext {
  private:
   friend class BrowsingContext;
 
-  ~CanonicalBrowsingContext() = default;
+  virtual ~CanonicalBrowsingContext();
 
   class PendingRemotenessChange {
    public:
@@ -475,6 +491,10 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   bool mPriorityActive = false;
 
   nsCOMPtr<nsITimer> mSessionStoreSessionStorageUpdateTimer;
+
+  bool mIsReplaced = false;
+
+  JS::Heap<JS::Value> mPermanentKey;
 };
 
 }  // namespace dom

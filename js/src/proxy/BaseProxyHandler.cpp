@@ -256,7 +256,7 @@ bool BaseProxyHandler::getOwnEnumerablePropertyKeys(
   for (size_t j = 0, len = props.length(); j < len; j++) {
     MOZ_ASSERT(i <= j);
     id = props[j];
-    if (JSID_IS_SYMBOL(id)) {
+    if (id.isSymbol()) {
       continue;
     }
 
@@ -397,7 +397,7 @@ bool BaseProxyHandler::isCallable(JSObject* obj) const { return false; }
 
 bool BaseProxyHandler::isConstructor(JSObject* obj) const { return false; }
 
-JS_FRIEND_API void js::NukeNonCCWProxy(JSContext* cx, HandleObject proxy) {
+JS_PUBLIC_API void js::NukeNonCCWProxy(JSContext* cx, HandleObject proxy) {
   MOZ_ASSERT(proxy->is<ProxyObject>());
   MOZ_ASSERT(!proxy->is<CrossCompartmentWrapperObject>());
 
@@ -412,7 +412,7 @@ JS_FRIEND_API void js::NukeNonCCWProxy(JSContext* cx, HandleObject proxy) {
   MOZ_ASSERT(IsDeadProxyObject(proxy));
 }
 
-JS_FRIEND_API void js::NukeRemovedCrossCompartmentWrapper(JSContext* cx,
+JS_PUBLIC_API void js::NukeRemovedCrossCompartmentWrapper(JSContext* cx,
                                                           JSObject* wrapper) {
   MOZ_ASSERT(wrapper->is<CrossCompartmentWrapperObject>());
 

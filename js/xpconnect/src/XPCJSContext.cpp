@@ -41,6 +41,7 @@
 #include "jsapi.h"
 #include "js/ArrayBuffer.h"
 #include "js/ContextOptions.h"
+#include "js/HelperThreadAPI.h"
 #include "js/Initialization.h"
 #include "js/MemoryMetrics.h"
 #include "js/OffThreadScriptCompilation.h"
@@ -909,6 +910,10 @@ static void LoadStartupJSPrefs(XPCJSContext* xpccx) {
 
   JS::SetLargeArrayBuffersEnabled(
       StaticPrefs::javascript_options_large_arraybuffers_DoNotUseDirectly());
+
+  JS::SetSiteBasedPretenuringEnabled(
+      StaticPrefs::
+          javascript_options_site_based_pretenuring_DoNotUseDirectly());
 }
 
 static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
@@ -983,9 +988,13 @@ static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
   bool ergnomicBrandChecksEnabled = Preferences::GetBool(
       JS_OPTIONS_DOT_STR "experimental.ergonomic_brand_checks");
 
+  bool classStaticBlocksEnabled = false;
 #ifdef NIGHTLY_BUILD
   sIteratorHelpersEnabled =
       Preferences::GetBool(JS_OPTIONS_DOT_STR "experimental.iterator_helpers");
+
+  classStaticBlocksEnabled = Preferences::GetBool(
+      JS_OPTIONS_DOT_STR "experimental.class_static_blocks");
 #endif
 
 #ifdef JS_GC_ZEAL
@@ -1031,6 +1040,7 @@ static void ReloadPrefsCallback(const char* pref, void* aXpccx) {
       .setDumpStackOnDebuggeeWouldRun(dumpStackOnDebuggeeWouldRun)
       .setPrivateClassFields(privateFieldsEnabled)
       .setPrivateClassMethods(privateMethodsEnabled)
+      .setClassStaticBlocks(classStaticBlocksEnabled)
       .setErgnomicBrandChecks(ergnomicBrandChecksEnabled)
       .setTopLevelAwait(topLevelAwaitEnabled);
 
@@ -1157,24 +1167,19 @@ CycleCollectedJSRuntime* XPCJSContext::CreateRuntime(JSContext* aCx) {
 class HelperThreadTaskHandler : public Task {
  public:
   bool Run() override {
-    mOffThreadTask->runTask();
-    mOffThreadTask.reset();
+    JS::RunHelperThreadTask();
     return true;
   }
-  explicit HelperThreadTaskHandler(js::UniquePtr<RunnableTask> task)
-      // TODO: priority should be updated in Bug 1703185.
-      : Task(false, EventQueuePriority::Normal),
-        mOffThreadTask(std::move(task)) {}
+  explicit HelperThreadTaskHandler() : Task(false, EventQueuePriority::Normal) {
+    // Bug 1703185: Currently all tasks are run at the same priority.
+  }
 
  private:
   ~HelperThreadTaskHandler() = default;
-  js::UniquePtr<RunnableTask> mOffThreadTask;
 };
 
-bool DispatchOffThreadTask(js::UniquePtr<RunnableTask> task) {
-  TaskController::Get()->AddTask(
-      MakeAndAddRef<HelperThreadTaskHandler>(std::move(task)));
-  return true;
+static void DispatchOffThreadTask() {
+  TaskController::Get()->AddTask(MakeAndAddRef<HelperThreadTaskHandler>());
 }
 
 static bool CreateSelfHostedSharedMemory(JSContext* aCx,
@@ -1188,7 +1193,11 @@ static bool CreateSelfHostedSharedMemory(JSContext* aCx,
 }
 
 nsresult XPCJSContext::Initialize() {
-  SetHelperThreadTaskCallback(&DispatchOffThreadTask);
+  if (StaticPrefs::javascript_options_external_thread_pool_DoNotUseDirectly()) {
+    size_t threadCount = TaskController::GetPoolThreadCount();
+    size_t stackSize = TaskController::GetThreadStackSize();
+    SetHelperThreadTaskCallback(&DispatchOffThreadTask, threadCount, stackSize);
+  }
 
   nsresult rv =
       CycleCollectedJSContext::Initialize(nullptr, JS::DefaultHeapMaxBytes);

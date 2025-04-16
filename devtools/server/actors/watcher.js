@@ -156,12 +156,16 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
           [Resources.TYPES.PLATFORM_MESSAGE]: true,
           [Resources.TYPES.NETWORK_EVENT]: hasBrowserElement,
           [Resources.TYPES.NETWORK_EVENT_STACKTRACE]: hasBrowserElement,
+          [Resources.TYPES.REFLOW]: true,
           [Resources.TYPES.STYLESHEET]: hasBrowserElement,
           [Resources.TYPES.SOURCE]: hasBrowserElement,
           [Resources.TYPES.THREAD_STATE]: hasBrowserElement,
           [Resources.TYPES.SERVER_SENT_EVENT]: hasBrowserElement,
           [Resources.TYPES.WEBSOCKET]: hasBrowserElement,
         },
+        // @backward-compat { version 91 } DOCUMENT_EVENT's will-navigate start being notified,
+        //                                 to replace target actor's will-navigate event
+        supportsDocumentEventWillNavigate: true,
       },
     };
   },
@@ -281,17 +285,19 @@ exports.WatcherActor = protocol.ActorClassWithSpec(watcherSpec, {
   /**
    * Try to retrieve a parent process TargetActor:
    * - either when debugging a parent process page (when browserElement is set to the page's tab),
-   * - or when debugging the main process (when browserElement is null).
+   * - or when debugging the main process (when browserElement is null), including xpcshell tests
    *
    * See comment in `watchResources`, this will handle targets which are ignored by Frame and Process
    * target helpers. (and only those which are ignored)
    */
   _getTargetActorInParentProcess() {
-    return this.browserElement
-      ? // Note: if any, the BrowsingContextTargetActor returned here is created for a parent process
-        // page and lives in the parent process.
-        TargetActorRegistry.getTargetActor(this.browserId)
-      : TargetActorRegistry.getParentProcessTargetActor();
+    if (this.browserElement) {
+      // Note: if any, the BrowsingContextTargetActor returned here is created for a parent process
+      // page and lives in the parent process.
+      return TargetActorRegistry.getTargetActor(this.browserId);
+    }
+
+    return TargetActorRegistry.getParentProcessTargetActor();
   },
 
   /**

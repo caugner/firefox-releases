@@ -348,6 +348,12 @@ definitions:
           properties:
             description:
               type: string
+            type:
+              type: string
+              enum:
+                - string
+                - boolean
+                - quantity
           required:
             - description
         maxProperties: 10
@@ -561,18 +567,6 @@ additionalProperties:
                 `custom_distribution`, `memory_distribution`, `quantity`,
                 `boolean`, `string` and `labeled_counter`.
               maxLength: 0
-      -
-        if:
-          properties:
-            type:
-              enum:
-                - custom_distribution
-        then:
-          required:
-            - gecko_datapoint
-          description: |
-            `custom_distribution` is only allowed for Gecko
-            metrics.
       -
         if:
           properties:

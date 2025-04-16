@@ -207,7 +207,6 @@ nsStyleFont::nsStyleFont(const nsStyleFont& aSrc)
       mFontSizeFactor(aSrc.mFontSizeFactor),
       mFontSizeOffset(aSrc.mFontSizeOffset),
       mFontSizeKeyword(aSrc.mFontSizeKeyword),
-      mGenericID(aSrc.mGenericID),
       mMathDepth(aSrc.mMathDepth),
       mMathVariant(aSrc.mMathVariant),
       mMathStyle(aSrc.mMathStyle),
@@ -228,7 +227,6 @@ nsStyleFont::nsStyleFont(const Document& aDocument)
       mFontSizeFactor(1.0),
       mFontSizeOffset{0},
       mFontSizeKeyword(StyleFontSizeKeyword::Medium),
-      mGenericID(StyleGenericFontFamily::None),
       mMathDepth(0),
       mMathVariant(NS_MATHML_MATHVARIANT_NONE),
       mMathStyle(NS_STYLE_MATH_STYLE_NORMAL),
@@ -275,7 +273,7 @@ nsChangeHint nsStyleFont::CalcDifference(const nsStyleFont& aNewData) const {
   }
 
   // XXX Should any of these cause a non-nsChangeHint_NeutralChange change?
-  if (mGenericID != aNewData.mGenericID || mMathDepth != aNewData.mMathDepth ||
+  if (mMathDepth != aNewData.mMathDepth ||
       mScriptUnconstrainedSize != aNewData.mScriptUnconstrainedSize ||
       mScriptMinSize != aNewData.mScriptMinSize ||
       mScriptSizeMultiplier != aNewData.mScriptSizeMultiplier) {
@@ -535,8 +533,7 @@ nsChangeHint nsStyleBorder::CalcDifference(
 }
 
 nsStyleOutline::nsStyleOutline(const Document& aDocument)
-    : mOutlineRadius(ZeroBorderRadius()),
-      mOutlineWidth(kMediumBorderWidth),
+    : mOutlineWidth(kMediumBorderWidth),
       mOutlineOffset({0.0f}),
       mOutlineColor(StyleColor::CurrentColor()),
       mOutlineStyle(StyleOutlineStyle::BorderStyle(StyleBorderStyle::None)),
@@ -546,8 +543,7 @@ nsStyleOutline::nsStyleOutline(const Document& aDocument)
 }
 
 nsStyleOutline::nsStyleOutline(const nsStyleOutline& aSrc)
-    : mOutlineRadius(aSrc.mOutlineRadius),
-      mOutlineWidth(aSrc.mOutlineWidth),
+    : mOutlineWidth(aSrc.mOutlineWidth),
       mOutlineOffset(aSrc.mOutlineOffset),
       mOutlineColor(aSrc.mOutlineColor),
       mOutlineStyle(aSrc.mOutlineStyle),
@@ -565,8 +561,7 @@ nsChangeHint nsStyleOutline::CalcDifference(
   }
 
   if (mOutlineStyle != aNewData.mOutlineStyle ||
-      mOutlineColor != aNewData.mOutlineColor ||
-      mOutlineRadius != aNewData.mOutlineRadius) {
+      mOutlineColor != aNewData.mOutlineColor) {
     if (mActualOutlineWidth > 0) {
       return nsChangeHint_RepaintFrame;
     }
@@ -631,11 +626,10 @@ nsChangeHint nsStyleList::CalcDifference(
   // relies on that when the display value changes from something else
   // to list-item, that change itself would cause ReconstructFrame.
   if (aOldDisplay.IsListItem()) {
-    if (mListStylePosition != aNewData.mListStylePosition) {
+    if (mListStylePosition != aNewData.mListStylePosition ||
+        mCounterStyle != aNewData.mCounterStyle ||
+        mListStyleImage != aNewData.mListStyleImage) {
       return nsChangeHint_ReconstructFrame;
-    }
-    if (mCounterStyle != aNewData.mCounterStyle) {
-      return NS_STYLE_HINT_REFLOW;
     }
   } else if (mListStylePosition != aNewData.mListStylePosition ||
              mCounterStyle != aNewData.mCounterStyle) {
@@ -935,7 +929,8 @@ nsStyleSVGReset::nsStyleSVGReset(const Document& aDocument)
       mStopOpacity(1.0f),
       mFloodOpacity(1.0f),
       mVectorEffect(StyleVectorEffect::None),
-      mMaskType(StyleMaskType::Luminance) {
+      mMaskType(StyleMaskType::Luminance),
+      mD(StyleDProperty::None()) {
   MOZ_COUNT_CTOR(nsStyleSVGReset);
 }
 
@@ -957,7 +952,8 @@ nsStyleSVGReset::nsStyleSVGReset(const nsStyleSVGReset& aSource)
       mStopOpacity(aSource.mStopOpacity),
       mFloodOpacity(aSource.mFloodOpacity),
       mVectorEffect(aSource.mVectorEffect),
-      mMaskType(aSource.mMaskType) {
+      mMaskType(aSource.mMaskType),
+      mD(aSource.mD) {
   MOZ_COUNT_CTOR(nsStyleSVGReset);
 }
 
@@ -1002,7 +998,7 @@ nsChangeHint nsStyleSVGReset::CalcDifference(
 
   if (mX != aNewData.mX || mY != aNewData.mY || mCx != aNewData.mCx ||
       mCy != aNewData.mCy || mR != aNewData.mR || mRx != aNewData.mRx ||
-      mRy != aNewData.mRy) {
+      mRy != aNewData.mRy || mD != aNewData.mD) {
     hint |= nsChangeHint_InvalidateRenderingObservers | nsChangeHint_NeedReflow;
   }
 
@@ -1024,7 +1020,7 @@ nsChangeHint nsStyleSVGReset::CalcDifference(
              mLightingColor != aNewData.mLightingColor ||
              mStopOpacity != aNewData.mStopOpacity ||
              mFloodOpacity != aNewData.mFloodOpacity ||
-             mMaskType != aNewData.mMaskType) {
+             mMaskType != aNewData.mMaskType || mD != aNewData.mD) {
     hint |= nsChangeHint_RepaintFrame;
   }
 
@@ -2910,7 +2906,7 @@ nsStyleText::nsStyleText(const Document& aDocument)
       mTextEmphasisColor(StyleColor::CurrentColor()),
       mWebkitTextFillColor(StyleColor::CurrentColor()),
       mWebkitTextStrokeColor(StyleColor::CurrentColor()),
-      mMozTabSize(
+      mTabSize(
           StyleNonNegativeLengthOrNumber::Number(NS_STYLE_TABSIZE_INITIAL)),
       mWordSpacing(LengthPercentage::Zero()),
       mLetterSpacing({0.}),
@@ -2950,7 +2946,7 @@ nsStyleText::nsStyleText(const nsStyleText& aSource)
       mTextEmphasisColor(aSource.mTextEmphasisColor),
       mWebkitTextFillColor(aSource.mWebkitTextFillColor),
       mWebkitTextStrokeColor(aSource.mWebkitTextStrokeColor),
-      mMozTabSize(aSource.mMozTabSize),
+      mTabSize(aSource.mTabSize),
       mWordSpacing(aSource.mWordSpacing),
       mLetterSpacing(aSource.mLetterSpacing),
       mLineHeight(aSource.mLineHeight),
@@ -2994,7 +2990,7 @@ nsChangeHint nsStyleText::CalcDifference(const nsStyleText& aNewData) const {
       (mTextIndent != aNewData.mTextIndent) ||
       (mTextJustify != aNewData.mTextJustify) ||
       (mWordSpacing != aNewData.mWordSpacing) ||
-      (mMozTabSize != aNewData.mMozTabSize)) {
+      (mTabSize != aNewData.mTabSize)) {
     return NS_STYLE_HINT_REFLOW;
   }
 

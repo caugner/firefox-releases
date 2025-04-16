@@ -82,7 +82,7 @@
 
 #include "nsIExternalProtocolHandler.h"
 #include "BrowserChild.h"
-#include "URIUtils.h"
+#include "mozilla/ipc/URIUtils.h"
 
 #include "mozilla/dom/MediaDevices.h"
 #include "MediaManager.h"
@@ -967,15 +967,6 @@ void Navigator::CheckProtocolHandlerAllowed(const nsAString& aScheme,
     return;
   }
 
-  // Check to make sure this isn't already handled internally (we don't
-  // want to let them take over, say "chrome"). In theory, the checks above
-  // should have already taken care of this.
-  nsCOMPtr<nsIExternalProtocolHandler> externalHandler =
-      do_QueryInterface(handler);
-  MOZ_RELEASE_ASSERT(
-      externalHandler,
-      "We should never allow overriding a builtin protocol handler");
-
   // check if we have prefs set saying not to add this.
   bool defaultExternal =
       Preferences::GetBool("network.protocol-handler.external-default");
@@ -985,6 +976,15 @@ void Navigator::CheckProtocolHandlerAllowed(const nsAString& aScheme,
     raisePermissionDeniedScheme();
     return;
   }
+
+  // Check to make sure this isn't already handled internally (we don't
+  // want to let them take over, say "chrome"). In theory, the checks above
+  // should have already taken care of this.
+  nsCOMPtr<nsIExternalProtocolHandler> externalHandler =
+      do_QueryInterface(handler);
+  MOZ_RELEASE_ASSERT(
+      externalHandler,
+      "We should never allow overriding a builtin protocol handler");
 }
 
 void Navigator::RegisterProtocolHandler(const nsAString& aScheme,
@@ -1491,27 +1491,6 @@ void Navigator::GetGamepads(nsTArray<RefPtr<Gamepad>>& aGamepads,
   NS_ENSURE_TRUE_VOID(mWindow->GetDocShell());
   nsGlobalWindowInner* win = nsGlobalWindowInner::Cast(mWindow);
 
-  // As we are moving this API to secure contexts, we are going to temporarily
-  // show a console warning to developers.
-  if (!mGamepadSecureContextWarningShown && !win->IsSecureContext()) {
-    mGamepadSecureContextWarningShown = true;
-    auto msg =
-        u"The Gamepad API will only be available in "
-        "secure contexts (e.g., https). Please see "
-        "https://hacks.mozilla.org/2020/07/securing-gamepad-api/ for more "
-        "info."_ns;
-    nsContentUtils::ReportToConsoleNonLocalized(
-        msg, nsIScriptError::warningFlag, "DOM"_ns, win->GetExtantDoc());
-  }
-
-#ifdef EARLY_BETA_OR_EARLIER
-  if (!win->IsSecureContext()) {
-    return;
-  }
-#endif
-
-#ifdef NIGHTLY_BUILD
-  // We will move this into Beta in Firefox 82
   if (!FeaturePolicyUtils::IsFeatureAllowed(win->GetExtantDoc(),
                                             u"gamepad"_ns)) {
     aRv.ThrowSecurityError(
@@ -1519,7 +1498,6 @@ void Navigator::GetGamepads(nsTArray<RefPtr<Gamepad>>& aGamepads,
         "getGamepads() from this context.");
     return;
   }
-#endif
 
   win->SetHasGamepadEventListener(true);
   win->GetGamepads(aGamepads);

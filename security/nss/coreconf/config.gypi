@@ -99,6 +99,7 @@
     'disable_arm_hw_aes%': 0,
     'disable_arm_hw_sha1%': 0,
     'disable_arm_hw_sha2%': 0,
+    'disable_intel_hw_sha%': 0,
     'disable_tests%': 0,
     'disable_chachapoly%': 0,
     'disable_deprecated_seed%': 0,
@@ -209,7 +210,7 @@
           },
         },
       }],
-      [ 'target_arch=="arm64" or target_arch=="aarch64" or target_arch=="sparc64" or target_arch=="ppc64" or target_arch=="ppc64le" or target_arch=="s390x" or target_arch=="mips64" or target_arch=="e2k"', {
+      [ 'target_arch=="arm64" or target_arch=="aarch64" or target_arch=="sparc64" or target_arch=="ppc64" or target_arch=="ppc64le" or target_arch=="s390x" or target_arch=="mips64" or target_arch=="e2k" or target_arch=="riscv64"', {
         'defines': [
           'NSS_USE_64',
         ],

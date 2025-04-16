@@ -139,6 +139,7 @@
 #include "nsIPrompt.h"
 #include "nsIPromptCollection.h"
 #include "nsIPromptFactory.h"
+#include "nsIPublicKeyPinningService.h"
 #include "nsIReflowObserver.h"
 #include "nsIScriptChannel.h"
 #include "nsIScriptObjectPrincipal.h"
@@ -234,7 +235,7 @@
 #include "mozilla/NullPrincipal.h"
 #include "Navigator.h"
 #include "prenv.h"
-#include "URIUtils.h"
+#include "mozilla/ipc/URIUtils.h"
 #include "sslerr.h"
 #include "mozpkix/pkix.h"
 #include "NSSErrorsService.h"
@@ -272,9 +273,6 @@ static NS_DEFINE_CID(kAppShellCID, NS_APPSHELL_CID);
 // Number of documents currently loading
 static int32_t gNumberOfDocumentsLoading = 0;
 
-// Global count of docshells with the private attribute set
-static uint32_t gNumberOfPrivateDocShells = 0;
-
 static mozilla::LazyLogModule gCharsetMenuLog("CharsetMenu");
 
 #define LOGCHARSETMENU(args) \
@@ -303,33 +301,6 @@ static void FavorPerformanceHint(bool aPerfOverStarvation) {
         aPerfOverStarvation,
         Preferences::GetUint("docshell.event_starvation_delay_hint",
                              NS_EVENT_STARVATION_DELAY_HINT));
-  }
-}
-
-static void IncreasePrivateDocShellCount() {
-  gNumberOfPrivateDocShells++;
-  if (gNumberOfPrivateDocShells > 1 || !XRE_IsContentProcess()) {
-    return;
-  }
-
-  mozilla::dom::ContentChild* cc = mozilla::dom::ContentChild::GetSingleton();
-  cc->SendPrivateDocShellsExist(true);
-}
-
-static void DecreasePrivateDocShellCount() {
-  MOZ_ASSERT(gNumberOfPrivateDocShells > 0);
-  gNumberOfPrivateDocShells--;
-  if (!gNumberOfPrivateDocShells) {
-    if (XRE_IsContentProcess()) {
-      dom::ContentChild* cc = dom::ContentChild::GetSingleton();
-      cc->SendPrivateDocShellsExist(false);
-      return;
-    }
-
-    nsCOMPtr<nsIObserverService> obsvc = services::GetObserverService();
-    if (obsvc) {
-      obsvc->NotifyObservers(nullptr, "last-pb-context-exited", nullptr);
-    }
   }
 }
 
@@ -369,7 +340,6 @@ nsDocShell::nsDocShell(BrowsingContext* aBrowsingContext,
     : nsDocLoader(true),
       mContentWindowID(aContentWindowID),
       mBrowsingContext(aBrowsingContext),
-      mForcedCharset(nullptr),
       mParentCharset(nullptr),
       mTreeOwner(nullptr),
       mScrollbarPref(ScrollbarPreference::Auto),
@@ -392,7 +362,6 @@ nsDocShell::nsDocShell(BrowsingContext* aBrowsingContext,
 #endif
       mInitialized(false),
       mAllowSubframes(true),
-      mAllowJavascript(true),
       mAllowMetaRedirects(true),
       mAllowImages(true),
       mAllowMedia(true),
@@ -406,14 +375,12 @@ nsDocShell::nsDocShell(BrowsingContext* aBrowsingContext,
       mDeviceSizeIsPageSize(false),
       mWindowDraggingAllowed(false),
       mInFrameSwap(false),
-      mCanExecuteScripts(false),
       mFiredUnloadEvent(false),
       mEODForCurrentDocument(false),
       mURIResultedInDocument(false),
       mIsBeingDestroyed(false),
       mIsExecutingOnLoadHandler(false),
       mSavingOldViewer(false),
-      mAffectPrivateSessionLifetime(true),
       mInvisible(false),
       mHasLoadedNonBlankURI(false),
       mBlankTiming(false),
@@ -523,12 +490,11 @@ already_AddRefed<nsDocShell> nsDocShell::Create(
   // Create our ContentListener
   ds->mContentListener = new nsDSURIContentListener(ds);
 
-  // If parent intercept is not enabled then we must forward to
-  // the network controller from docshell.  We also enable if we're
-  // in the parent process in order to support non-e10s configurations.
+  // We enable if we're in the parent process in order to support non-e10s
+  // configurations.
   // Note: This check is duplicated in SharedWorkerInterfaceRequestor's
   // constructor.
-  if (!ServiceWorkerParentInterceptEnabled() || XRE_IsParentProcess()) {
+  if (XRE_IsParentProcess()) {
     ds->mInterceptController = new ServiceWorkerInterceptController();
   }
 
@@ -1529,7 +1495,7 @@ nsDocShell::GetCharset(nsACString& aCharset) {
 }
 
 NS_IMETHODIMP
-nsDocShell::GatherCharsetMenuTelemetry() {
+nsDocShell::ForceEncodingDetection() {
   nsCOMPtr<nsIContentViewer> viewer;
   GetContentViewer(getter_AddRefs(viewer));
   if (!viewer) {
@@ -1541,15 +1507,11 @@ nsDocShell::GatherCharsetMenuTelemetry() {
     return NS_OK;
   }
 
-  if (mForcedAutodetection) {
-    LOGCHARSETMENU(("ENCODING_OVERRIDE_USED_AUTOMATIC"));
-    Telemetry::ScalarSet(Telemetry::ScalarID::ENCODING_OVERRIDE_USED_AUTOMATIC,
-                         true);
-  } else {
-    LOGCHARSETMENU(("ENCODING_OVERRIDE_USED_MANUAL"));
-    Telemetry::ScalarSet(Telemetry::ScalarID::ENCODING_OVERRIDE_USED_MANUAL,
-                         true);
-  }
+  mForcedAutodetection = true;
+
+  LOGCHARSETMENU(("ENCODING_OVERRIDE_USED_AUTOMATIC"));
+  Telemetry::ScalarSet(Telemetry::ScalarID::ENCODING_OVERRIDE_USED_AUTOMATIC,
+                       true);
 
   nsIURI* url = doc->GetOriginalURI();
   bool isFileURL = url && SchemeIsFile(url);
@@ -1562,28 +1524,6 @@ nsDocShell::GatherCharsetMenuTelemetry() {
       LOGCHARSETMENU(("AutoOverridden"));
       Telemetry::AccumulateCategorical(
           Telemetry::LABELS_ENCODING_OVERRIDE_SITUATION_2::AutoOverridden);
-      break;
-    case kCharsetFromUserForced:
-    case kCharsetFromUserForcedJapaneseAutoDetection:
-      LOGCHARSETMENU(("ManuallyOverridden"));
-      Telemetry::AccumulateCategorical(
-          Telemetry::LABELS_ENCODING_OVERRIDE_SITUATION_2::ManuallyOverridden);
-      break;
-    case kCharsetFromTopLevelDomain:
-      if (encoding == WINDOWS_1252_ENCODING) {
-        LOGCHARSETMENU(("UnlabeledInLk"));
-        Telemetry::AccumulateCategorical(
-            Telemetry::LABELS_ENCODING_OVERRIDE_SITUATION_2::UnlabeledInLk);
-      } else {
-        LOGCHARSETMENU(("UnlabeledJp"));
-        Telemetry::AccumulateCategorical(
-            Telemetry::LABELS_ENCODING_OVERRIDE_SITUATION_2::UnlabeledJp);
-      }
-      break;
-    case kCharsetFromFinalJapaneseAutoDetection:
-      LOGCHARSETMENU(("UnlabeledJp"));
-      Telemetry::AccumulateCategorical(
-          Telemetry::LABELS_ENCODING_OVERRIDE_SITUATION_2::UnlabeledJp);
       break;
     case kCharsetFromInitialAutoDetectionASCII:
       // Deliberately no final version
@@ -1659,31 +1599,6 @@ nsDocShell::GatherCharsetMenuTelemetry() {
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsDocShell::SetCharset(const nsACString& aCharset) {
-  mForcedAutodetection = false;
-  if (aCharset.IsEmpty()) {
-    mForcedCharset = nullptr;
-    return NS_OK;
-  }
-  if (aCharset.EqualsLiteral("_autodetect_all")) {
-    mForcedCharset = WINDOWS_1252_ENCODING;
-    mForcedAutodetection = true;
-    return NS_OK;
-  }
-  const Encoding* encoding = Encoding::ForLabel(aCharset);
-  if (!encoding) {
-    // Reject unknown labels
-    return NS_ERROR_INVALID_ARG;
-  }
-  if (!encoding->IsAsciiCompatible() && encoding != ISO_2022_JP_ENCODING) {
-    // Reject XSS hazards
-    return NS_ERROR_INVALID_ARG;
-  }
-  mForcedCharset = encoding;
-  return NS_OK;
-}
-
 void nsDocShell::SetParentCharset(const Encoding*& aCharset,
                                   int32_t aCharsetSource,
                                   nsIPrincipal* aPrincipal) {
@@ -1750,14 +1665,6 @@ nsDocShell::SetAllowPlugins(bool aAllowPlugins) {
 }
 
 NS_IMETHODIMP
-nsDocShell::GetAllowJavascript(bool* aAllowJavascript) {
-  NS_ENSURE_ARG_POINTER(aAllowJavascript);
-
-  *aAllowJavascript = mAllowJavascript;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsDocShell::GetCssErrorReportingEnabled(bool* aEnabled) {
   MOZ_ASSERT(aEnabled);
   *aEnabled = mCSSErrorReportingEnabled;
@@ -1771,13 +1678,6 @@ nsDocShell::SetCssErrorReportingEnabled(bool aEnabled) {
 }
 
 NS_IMETHODIMP
-nsDocShell::SetAllowJavascript(bool aAllowJavascript) {
-  mAllowJavascript = aAllowJavascript;
-  RecomputeCanExecuteScripts();
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 nsDocShell::GetUsePrivateBrowsing(bool* aUsePrivateBrowsing) {
   NS_ENSURE_ARG_POINTER(aUsePrivateBrowsing);
   return mBrowsingContext->GetUsePrivateBrowsing(aUsePrivateBrowsing);
@@ -1785,14 +1685,6 @@ nsDocShell::GetUsePrivateBrowsing(bool* aUsePrivateBrowsing) {
 
 void nsDocShell::NotifyPrivateBrowsingChanged() {
   MOZ_ASSERT(!mIsBeingDestroyed);
-
-  if (mAffectPrivateSessionLifetime) {
-    if (UsePrivateBrowsing()) {
-      IncreasePrivateDocShellCount();
-    } else {
-      DecreasePrivateDocShellCount();
-    }
-  }
 
   nsTObserverArray<nsWeakPtr>::ForwardIterator iter(mPrivacyObservers);
   while (iter.HasMore()) {
@@ -1844,35 +1736,6 @@ nsDocShell::GetUseRemoteSubframes(bool* aUseRemoteSubframes) {
 NS_IMETHODIMP
 nsDocShell::SetRemoteSubframes(bool aUseRemoteSubframes) {
   return mBrowsingContext->SetRemoteSubframes(aUseRemoteSubframes);
-}
-
-NS_IMETHODIMP
-nsDocShell::SetAffectPrivateSessionLifetime(bool aAffectLifetime) {
-  MOZ_ASSERT(!mIsBeingDestroyed);
-
-  bool change = aAffectLifetime != mAffectPrivateSessionLifetime;
-  if (change && UsePrivateBrowsing()) {
-    if (aAffectLifetime) {
-      IncreasePrivateDocShellCount();
-    } else {
-      DecreasePrivateDocShellCount();
-    }
-  }
-  mAffectPrivateSessionLifetime = aAffectLifetime;
-
-  for (auto* child : mChildList.ForwardRange()) {
-    nsCOMPtr<nsIDocShell> shell = do_QueryObject(child);
-    if (shell) {
-      shell->SetAffectPrivateSessionLifetime(aAffectLifetime);
-    }
-  }
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDocShell::GetAffectPrivateSessionLifetime(bool* aAffectLifetime) {
-  *aAffectLifetime = mAffectPrivateSessionLifetime;
-  return NS_OK;
 }
 
 NS_IMETHODIMP
@@ -2056,30 +1919,6 @@ nsDocShell::GetMayEnableCharacterEncodingMenu(
   }
 
   *aMayEnableCharacterEncodingMenu = true;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDocShell::GetCharsetAutodetected(bool* aCharsetAutodetected) {
-  *aCharsetAutodetected = false;
-  if (!mContentViewer) {
-    return NS_OK;
-  }
-  Document* doc = mContentViewer->GetDocument();
-  if (!doc) {
-    return NS_OK;
-  }
-  int32_t source = doc->GetDocumentCharacterSetSource();
-
-  if ((source >= kCharsetFromInitialAutoDetectionASCII &&
-       source <= kCharsetFromFinalAutoDetectionFile) ||
-      source == kCharsetFromUserForcedJapaneseAutoDetection ||
-      source == kCharsetFromPendingUserForcedAutoDetection ||
-      source == kCharsetFromInitialUserForcedAutoDetection ||
-      source == kCharsetFromFinalUserForcedAutoDetection) {
-    *aCharsetAutodetected = true;
-  }
-
   return NS_OK;
 }
 
@@ -2653,50 +2492,6 @@ Maybe<ClientInfo> nsDocShell::GetInitialClientInfo() const {
   return innerWindow->GetClientInfo();
 }
 
-void nsDocShell::RecomputeCanExecuteScripts() {
-  bool old = mCanExecuteScripts;
-  RefPtr<nsDocShell> parent = GetInProcessParentDocshell();
-
-  // If we have no tree owner, that means that we've been detached from the
-  // docshell tree (this is distinct from having no parent docshell, which
-  // is the case for root docshells). It would be nice to simply disallow
-  // script in detached docshells, but bug 986542 demonstrates that this
-  // behavior breaks at least one website.
-  //
-  // So instead, we use our previous value, unless mAllowJavascript has been
-  // explicitly set to false.
-  if (!mTreeOwner) {
-    mCanExecuteScripts = mCanExecuteScripts && mAllowJavascript;
-    // If scripting has been explicitly disabled on our docshell, we're done.
-  } else if (!mAllowJavascript) {
-    mCanExecuteScripts = false;
-    // If we have a parent, inherit.
-  } else if (parent) {
-    mCanExecuteScripts = parent->mCanExecuteScripts;
-    // Otherwise, we're the root of the tree, and we haven't explicitly disabled
-    // script. Allow.
-  } else {
-    mCanExecuteScripts = true;
-  }
-
-  // Inform our active DOM window.
-  //
-  // This will pass the outer, which will be in the scope of the active inner.
-  if (mScriptGlobal && mScriptGlobal->GetGlobalJSObject()) {
-    xpc::Scriptability& scriptability =
-        xpc::Scriptability::Get(mScriptGlobal->GetGlobalJSObject());
-    scriptability.SetDocShellAllowsScript(mCanExecuteScripts);
-  }
-
-  // If our value has changed, our children might be affected. Recompute their
-  // value as well.
-  if (old != mCanExecuteScripts) {
-    for (auto* child : mChildList.ForwardRange()) {
-      static_cast<nsDocShell*>(child)->RecomputeCanExecuteScripts();
-    }
-  }
-}
-
 nsresult nsDocShell::SetDocLoaderParent(nsDocLoader* aParent) {
   bool wasFrame = IsFrame();
 
@@ -2717,10 +2512,6 @@ nsresult nsDocShell::SetDocLoaderParent(nsDocLoader* aParent) {
   nsCOMPtr<nsIDocShell> parentAsDocShell(do_QueryInterface(parent));
 
   if (parentAsDocShell) {
-    if (mAllowJavascript &&
-        NS_SUCCEEDED(parentAsDocShell->GetAllowJavascript(&value))) {
-      SetAllowJavascript(value);
-    }
     if (mAllowMetaRedirects &&
         NS_SUCCEEDED(parentAsDocShell->GetAllowMetaRedirects(&value))) {
       SetAllowMetaRedirects(value);
@@ -2742,8 +2533,6 @@ nsresult nsDocShell::SetDocLoaderParent(nsDocLoader* aParent) {
       value = false;
     }
     SetAllowDNSPrefetch(mAllowDNSPrefetch && value);
-    SetAffectPrivateSessionLifetime(
-        parentAsDocShell->GetAffectPrivateSessionLifetime());
 
     // We don't need to inherit metaViewportOverride, because the viewport
     // is only relevant for the outermost nsDocShell, not for any iframes
@@ -2754,9 +2543,6 @@ nsresult nsDocShell::SetDocLoaderParent(nsDocLoader* aParent) {
   if (parentURIListener) {
     mContentListener->SetParentContentListener(parentURIListener);
   }
-
-  // Our parent has changed. Recompute scriptability.
-  RecomputeCanExecuteScripts();
 
   // Inform windows when they're being removed from their parent.
   if (!aParent) {
@@ -2981,16 +2767,6 @@ nsDocShell::SetTreeOwner(nsIDocShellTreeOwner* aTreeOwner) {
       mBrowserChild = do_GetWeakReference(newBrowserChild);
     }
   }
-
-  // Our tree owner has changed. Recompute scriptability.
-  //
-  // Note that this is near-redundant with the recomputation in
-  // SetDocLoaderParent(), but not so for the root DocShell, where the call to
-  // SetTreeOwner() happens after the initial AddDocLoaderAsChildOfRoot(),
-  // and we never set another parent. Given that this is neither expensive nor
-  // performance-critical, let's be safe and unconditionally recompute this
-  // state whenever dependent state changes.
-  RecomputeCanExecuteScripts();
 
   return NS_OK;
 }
@@ -3715,21 +3491,18 @@ nsDocShell::DisplayLoadError(nsresult aError, nsIURI* aURI,
         nsCOMPtr<nsISiteSecurityService> sss =
             do_GetService(NS_SSSERVICE_CONTRACTID, &rv);
         NS_ENSURE_SUCCESS(rv, rv);
-        rv = sss->IsSecureURI(nsISiteSecurityService::HEADER_HSTS, aURI, flags,
-                              attrsForHSTS, nullptr, nullptr, &isStsHost);
-        NS_ENSURE_SUCCESS(rv, rv);
-        rv = sss->IsSecureURI(nsISiteSecurityService::STATIC_PINNING, aURI,
-                              flags, GetOriginAttributes(), nullptr, nullptr,
-                              &isPinnedHost);
+        rv = sss->IsSecureURI(aURI, flags, attrsForHSTS, nullptr, nullptr,
+                              &isStsHost);
         NS_ENSURE_SUCCESS(rv, rv);
       } else {
         mozilla::dom::ContentChild* cc =
             mozilla::dom::ContentChild::GetSingleton();
-        cc->SendIsSecureURI(nsISiteSecurityService::HEADER_HSTS, aURI, flags,
-                            attrsForHSTS, &isStsHost);
-        cc->SendIsSecureURI(nsISiteSecurityService::STATIC_PINNING, aURI, flags,
-                            GetOriginAttributes(), &isPinnedHost);
+        cc->SendIsSecureURI(aURI, flags, attrsForHSTS, &isStsHost);
       }
+      nsCOMPtr<nsIPublicKeyPinningService> pkps =
+          do_GetService(NS_PKPSERVICE_CONTRACTID, &rv);
+      NS_ENSURE_SUCCESS(rv, rv);
+      rv = pkps->HostHasPins(aURI, &isPinnedHost);
 
       if (Preferences::GetBool("browser.xul.error_pages.expert_bad_cert",
                                false)) {
@@ -4670,7 +4443,7 @@ nsDocShell::Destroy() {
     GetSessionHistory()->EvictLocalContentViewers();
   }
 
-  if (mWillChangeProcess) {
+  if (mWillChangeProcess && !mBrowsingContext->IsDiscarded()) {
     mBrowsingContext->PrepareForProcessChange();
   }
 
@@ -4683,10 +4456,6 @@ nsDocShell::Destroy() {
   // Cancel any timers that were set for this docshell; this is needed
   // to break the cycle between us and the timers.
   CancelRefreshURITimers();
-
-  if (UsePrivateBrowsing() && mAffectPrivateSessionLifetime) {
-    DecreasePrivateDocShellCount();
-  }
 
   return NS_OK;
 }
@@ -4952,9 +4721,9 @@ nsDocShell::GetVisibility(bool* aVisibility) {
 }
 
 void nsDocShell::ActivenessMaybeChanged() {
-  bool isActive = mBrowsingContext->IsActive();
+  const bool isActive = mBrowsingContext->IsActive();
   if (RefPtr<PresShell> presShell = GetPresShell()) {
-    presShell->SetIsActive(isActive);
+    presShell->ActivenessMaybeChanged();
   }
 
   // Tell the window about it
@@ -5107,29 +4876,31 @@ nsDocShell::SetTitle(const nsAString& aTitle) {
 
   // Update SessionHistory with the document's title.
   if (mLoadType != LOAD_BYPASS_HISTORY && mLoadType != LOAD_ERROR_PAGE) {
-    SetTitleOnHistoryEntry();
+    SetTitleOnHistoryEntry(true);
   }
 
   return NS_OK;
 }
 
-void nsDocShell::SetTitleOnHistoryEntry() {
+void nsDocShell::SetTitleOnHistoryEntry(bool aUpdateEntryInSessionHistory) {
   if (mOSHE) {
     mOSHE->SetTitle(mTitle);
   }
 
   if (mActiveEntry && mBrowsingContext) {
     mActiveEntry->SetTitle(mTitle);
-    if (XRE_IsParentProcess()) {
-      SessionHistoryEntry* entry =
-          mBrowsingContext->Canonical()->GetActiveSessionHistoryEntry();
-      if (entry) {
-        entry->SetTitle(mTitle);
+    if (aUpdateEntryInSessionHistory) {
+      if (XRE_IsParentProcess()) {
+        SessionHistoryEntry* entry =
+            mBrowsingContext->Canonical()->GetActiveSessionHistoryEntry();
+        if (entry) {
+          entry->SetTitle(mTitle);
+        }
+      } else {
+        mozilla::Unused
+            << ContentChild::GetSingleton()->SendSessionHistoryEntryTitle(
+                   mBrowsingContext, mTitle);
       }
-    } else {
-      mozilla::Unused
-          << ContentChild::GetSingleton()->SendSessionHistoryEntryTitle(
-                 mBrowsingContext, mTitle);
     }
   }
 }
@@ -6703,7 +6474,8 @@ nsresult nsDocShell::CreateAboutBlankContentViewer(
     return NS_ERROR_FAILURE;
   }
 
-  if (!mBrowsingContext->AncestorsAreCurrent()) {
+  if (!mBrowsingContext->AncestorsAreCurrent() ||
+      mBrowsingContext->IsInBFCache()) {
     mBrowsingContext->RemoveRootFromBFCacheSync();
     return NS_ERROR_NOT_AVAILABLE;
   }
@@ -7659,9 +7431,6 @@ nsresult nsDocShell::RestoreFromHistory() {
 
     // Make sure to not clobber the state of the child.  Since AddChild
     // always clobbers it, save it off first.
-    bool allowJavascript;
-    childShell->GetAllowJavascript(&allowJavascript);
-
     bool allowRedirects;
     childShell->GetAllowMetaRedirects(&allowRedirects);
 
@@ -7685,7 +7454,6 @@ nsresult nsDocShell::RestoreFromHistory() {
     // child inherits our mPrivateBrowsingId, which is what we want.
     AddChild(childItem);
 
-    childShell->SetAllowJavascript(allowJavascript);
     childShell->SetAllowMetaRedirects(allowRedirects);
     childShell->SetAllowSubframes(allowSubframes);
     childShell->SetAllowImages(allowImages);
@@ -7861,7 +7629,8 @@ nsresult nsDocShell::CreateContentViewer(const nsACString& aContentType,
     return NS_ERROR_DOCSHELL_DYING;
   }
 
-  if (!mBrowsingContext->AncestorsAreCurrent()) {
+  if (!mBrowsingContext->AncestorsAreCurrent() ||
+      mBrowsingContext->IsInBFCache()) {
     mBrowsingContext->RemoveRootFromBFCacheSync();
     return NS_ERROR_NOT_AVAILABLE;
   }
@@ -8223,7 +7992,7 @@ nsresult nsDocShell::SetupNewViewer(nsIContentViewer* aNewViewer,
   }
 
   nscolor bgcolor = NS_RGBA(0, 0, 0, 0);
-  bool isActive = false;
+  bool isUnderHiddenEmbedderElement = false;
   // Ensure that the content viewer is destroyed *after* the GC - bug 71515
   nsCOMPtr<nsIContentViewer> contentViewer = mContentViewer;
   if (contentViewer) {
@@ -8235,7 +8004,7 @@ nsresult nsDocShell::SetupNewViewer(nsIContentViewer* aNewViewer,
     // presentation shell, so we can use it for the next document.
     if (PresShell* presShell = contentViewer->GetPresShell()) {
       bgcolor = presShell->GetCanvasBackground();
-      isActive = presShell->IsActive();
+      isUnderHiddenEmbedderElement = presShell->IsUnderHiddenEmbedderElement();
     }
 
     contentViewer->Close(mSavingOldViewer ? mOSHE.get() : nullptr);
@@ -8280,8 +8049,9 @@ nsresult nsDocShell::SetupNewViewer(nsIContentViewer* aNewViewer,
   // pres shell. This improves page load continuity.
   if (RefPtr<PresShell> presShell = mContentViewer->GetPresShell()) {
     presShell->SetCanvasBackground(bgcolor);
-    if (isActive) {
-      presShell->SetIsActive(isActive);
+    presShell->ActivenessMaybeChanged();
+    if (isUnderHiddenEmbedderElement) {
+      presShell->SetIsUnderHiddenEmbedderElement(isUnderHiddenEmbedderElement);
     }
   }
 
@@ -8874,6 +8644,11 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
           ("nsDocShell::HandleSameDocumentNavigation %p %s -> %s", this,
            mCurrentURI->GetSpecOrDefault().get(),
            aLoadState->URI()->GetSpecOrDefault().get()));
+
+  RefPtr<Document> doc = GetDocument();
+  NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
+  doc->DoNotifyPossibleTitleChange();
+
   nsCOMPtr<nsIURI> currentURI = mCurrentURI;
 
   // Save the position of the scrollers.
@@ -8911,8 +8686,6 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
   }
 
   // Set the doc's URI according to the new history entry's URI.
-  RefPtr<Document> doc = GetDocument();
-  NS_ENSURE_TRUE(doc, NS_ERROR_FAILURE);
   doc->SetDocumentURI(aLoadState->URI());
 
   /* This is a anchor traversal within the same page.
@@ -9063,10 +8836,10 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
      * SH menus in go/back/forward buttons won't be empty for this.
      * Note, this happens on mOSHE (and mActiveEntry in the future) because of
      * the code above.
-     * XXX HandleSameDocumentNavigation needs to be made work with
-     *     session-history-in-parent, and then this might not be needed.
+     * Note, when session history lives in the parent process, this does not
+     * update the title there.
      */
-    SetTitleOnHistoryEntry();
+    SetTitleOnHistoryEntry(false);
   } else {
     if (aLoadState->LoadIsFromSessionHistory()) {
       MOZ_LOG(
@@ -9083,7 +8856,9 @@ nsresult nsDocShell::HandleSameDocumentNavigation(
 
       // Set the title for the SH entry for this target url so that
       // SH menus in go/back/forward buttons won't be empty for this.
-      SetTitleOnHistoryEntry();
+      // Note, when session history lives in the parent process, this does not
+      // update the title there.
+      SetTitleOnHistoryEntry(false);
     } else {
       Maybe<bool> scrollRestorationIsManual;
       if (mActiveEntry) {
@@ -9875,6 +9650,8 @@ nsIPrincipal* nsDocShell::GetInheritedPrincipal(
     aLoadInfo->SetIsFormSubmission(true);
   }
 
+  aLoadInfo->SetUnstrippedURI(aLoadState->GetUnstrippedURI());
+
   nsCOMPtr<nsIChannel> channel;
   aRv = CreateRealChannelForDocument(getter_AddRefs(channel), aLoadState->URI(),
                                      aLoadInfo, aCallbacks, aLoadFlags, srcdoc,
@@ -10449,8 +10226,18 @@ nsresult nsDocShell::DoURILoad(nsDocShellLoadState* aLoadState,
   nsLoadFlags loadFlags = aLoadState->CalculateChannelLoadFlags(
       mBrowsingContext, Some(uriModified), Some(isXFOError));
 
+  // Get the unstripped URI from the current document channel. The unstripped
+  // URI will be preserved if it's a reload.
+  nsCOMPtr<nsIURI> currentUnstrippedURI;
+  nsCOMPtr<nsIChannel> docChannel = GetCurrentDocChannel();
+  if (docChannel) {
+    nsCOMPtr<nsILoadInfo> docLoadInfo = docChannel->LoadInfo();
+    docLoadInfo->GetUnstrippedURI(getter_AddRefs(currentUnstrippedURI));
+  }
+
   // Strip the target query parameters before creating the channel.
-  aLoadState->MaybeStripTrackerQueryStrings(mBrowsingContext);
+  aLoadState->MaybeStripTrackerQueryStrings(mBrowsingContext,
+                                            currentUnstrippedURI);
 
   nsCOMPtr<nsIChannel> channel;
   if (DocumentChannel::CanUseDocumentChannel(aLoadState->URI())) {
@@ -11293,6 +11080,9 @@ nsresult nsDocShell::UpdateURLAndHistory(Document* aDocument, nsIURI* aNewURI,
   // Implements
   // https://html.spec.whatwg.org/multipage/history.html#url-and-history-update-steps
 
+  // If we have a pending title change, handle it before creating a new entry.
+  aDocument->DoNotifyPossibleTitleChange();
+
   // Step 2, if aReplace is false: Create a new entry in the session
   // history. This will erase all SHEntries after the new entry and make this
   // entry the current one.  This operation may modify mOSHE, which we need
@@ -12099,7 +11889,7 @@ nsDocShell::GetEditor(nsIEditor** aEditor) {
 
 NS_IMETHODIMP
 nsDocShell::SetEditor(nsIEditor* aEditor) {
-  HTMLEditor* htmlEditor = aEditor ? aEditor->AsHTMLEditor() : nullptr;
+  HTMLEditor* htmlEditor = aEditor ? aEditor->GetAsHTMLEditor() : nullptr;
   // If TextEditor comes, throw an error.
   if (aEditor && !htmlEditor) {
     return NS_ERROR_INVALID_ARG;
@@ -13070,12 +12860,6 @@ NS_IMETHODIMP nsDocShell::ExitPrintPreview() {
 #else
   return NS_OK;
 #endif
-}
-
-NS_IMETHODIMP
-nsDocShell::GetCanExecuteScripts(bool* aResult) {
-  *aResult = mCanExecuteScripts;
-  return NS_OK;
 }
 
 /* [infallible] */

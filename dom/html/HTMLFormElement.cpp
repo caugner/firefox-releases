@@ -9,6 +9,7 @@
 #include <utility>
 
 #include "jsapi.h"
+#include "mozilla/AutoRestore.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/BinarySearch.h"
 #include "mozilla/Components.h"
@@ -49,6 +50,7 @@
 #include "mozilla/Telemetry.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_prompts.h"
+#include "mozilla/StaticPrefs_signon.h"
 #include "nsIFormSubmitObserver.h"
 #include "nsIObserverService.h"
 #include "nsCategoryManagerUtils.h"
@@ -159,6 +161,8 @@ NS_IMPL_ISUPPORTS_CYCLE_COLLECTION_INHERITED(HTMLFormElement,
 void HTMLFormElement::AsyncEventRunning(AsyncEventDispatcher* aEvent) {
   if (mFormPasswordEventDispatcher == aEvent) {
     mFormPasswordEventDispatcher = nullptr;
+  } else if (mFormPossibleUsernameEventDispatcher == aEvent) {
+    mFormPossibleUsernameEventDispatcher = nullptr;
   }
 }
 
@@ -1182,6 +1186,22 @@ void HTMLFormElement::PostPasswordEvent() {
   mFormPasswordEventDispatcher->PostDOMEvent();
 }
 
+void HTMLFormElement::PostPossibleUsernameEvent() {
+  if (!StaticPrefs::signon_usernameOnlyForm_enabled()) {
+    return;
+  }
+
+  // Don't fire another event if we have a pending event.
+  if (mFormPossibleUsernameEventDispatcher) {
+    return;
+  }
+
+  mFormPossibleUsernameEventDispatcher =
+      new AsyncEventDispatcher(this, u"DOMFormHasPossibleUsername"_ns,
+                               CanBubble::eYes, ChromeOnlyDispatch::eYes);
+  mFormPossibleUsernameEventDispatcher->PostDOMEvent();
+}
+
 namespace {
 
 struct FormComparator {
@@ -1254,11 +1274,16 @@ nsresult HTMLFormElement::AddElement(nsGenericHTMLFormElement* aChild,
   AssertDocumentOrder(controlList, this);
 #endif
 
-  int32_t type = aChild->ControlType();
+  auto type = aChild->ControlType();
 
   // If it is a password control, inform the password manager.
-  if (type == NS_FORM_INPUT_PASSWORD) {
+  if (type == FormControlType::InputPassword) {
     PostPasswordEvent();
+    // If the type is email or text, it is a username compatible input,
+    // inform the password manager.
+  } else if (type == FormControlType::InputEmail ||
+             type == FormControlType::InputText) {
+    PostPossibleUsernameEvent();
   }
 
   // Default submit element handling
@@ -1320,7 +1345,7 @@ nsresult HTMLFormElement::AddElement(nsGenericHTMLFormElement* aChild,
   // Notify the radio button it's been added to a group
   // This has to be done _after_ UpdateValidity() call to prevent the element
   // being count twice.
-  if (type == NS_FORM_INPUT_RADIO) {
+  if (type == FormControlType::InputRadio) {
     RefPtr<HTMLInputElement> radio = static_cast<HTMLInputElement*>(aChild);
     radio->AddedToRadioGroup();
   }
@@ -1341,7 +1366,7 @@ nsresult HTMLFormElement::RemoveElement(nsGenericHTMLFormElement* aChild,
   // Remove it from the radio group if it's a radio button
   //
   nsresult rv = NS_OK;
-  if (aChild->ControlType() == NS_FORM_INPUT_RADIO) {
+  if (aChild->ControlType() == FormControlType::InputRadio) {
     RefPtr<HTMLInputElement> radio = static_cast<HTMLInputElement*>(aChild);
     radio->WillRemoveFromRadioGroup();
   }

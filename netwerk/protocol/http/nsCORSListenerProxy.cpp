@@ -152,7 +152,7 @@ class nsPreflightCache {
 
     void PurgeExpired(TimeStamp now);
     bool CheckRequest(const nsCString& aMethod,
-                      const nsTArray<nsCString>& aCustomHeaders);
+                      const nsTArray<nsCString>& aHeaders);
 
     nsCString mKey;
     nsTArray<TokenTime> mMethods;
@@ -282,7 +282,7 @@ nsPreflightCache::CacheEntry* nsPreflightCache::GetEntry(
     // Try to kick out all the expired entries.
     TimeStamp now = TimeStamp::NowLoRes();
     for (auto iter = mTable.Iter(); !iter.Done(); iter.Next()) {
-      auto entry = iter.UserData();
+      auto* entry = iter.UserData();
       entry->PurgeExpired(now);
 
       if (entry->mHeaders.IsEmpty() && entry->mMethods.IsEmpty()) {
@@ -448,7 +448,7 @@ class CheckOriginHeader final : public nsIHttpHeaderVisitor {
  public:
   NS_DECL_ISUPPORTS
 
-  CheckOriginHeader() : mHeaderCount(0) {}
+  CheckOriginHeader() = default;
 
   NS_IMETHOD
   VisitHeader(const nsACString& aHeader, const nsACString& aValue) override {
@@ -463,7 +463,7 @@ class CheckOriginHeader final : public nsIHttpHeaderVisitor {
   }
 
  private:
-  uint32_t mHeaderCount;
+  uint32_t mHeaderCount{0};
 
   ~CheckOriginHeader() = default;
 };

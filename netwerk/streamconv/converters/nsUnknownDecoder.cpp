@@ -75,8 +75,9 @@ nsUnknownDecoder::ConvertedStreamListener::OnStopRequest(nsIRequest* request,
   return NS_OK;
 }
 
-nsUnknownDecoder::nsUnknownDecoder()
-    : mBuffer(nullptr),
+nsUnknownDecoder::nsUnknownDecoder(nsIStreamListener* aListener)
+    : mNextListener(aListener),
+      mBuffer(nullptr),
       mBufferLen(0),
       mRequireHTMLsuffix(false),
       mMutex("nsUnknownDecoder"),
@@ -84,8 +85,9 @@ nsUnknownDecoder::nsUnknownDecoder()
   nsCOMPtr<nsIPrefBranch> prefs = do_GetService(NS_PREFSERVICE_CONTRACTID);
   if (prefs) {
     bool val;
-    if (NS_SUCCEEDED(prefs->GetBoolPref("security.requireHTMLsuffix", &val)))
+    if (NS_SUCCEEDED(prefs->GetBoolPref("security.requireHTMLsuffix", &val))) {
       mRequireHTMLsuffix = val;
+    }
   }
 }
 

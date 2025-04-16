@@ -229,6 +229,9 @@ with Files("MutationEvent.webidl"):
 with Files("NativeOSFileInternals.webidl"):
     BUG_COMPONENT = ("Toolkit", "OS.File")
 
+with Files("NavigationPreloadManager.webidl"):
+    BUG_COMPONENT = ("Core", "DOM: Service Workers")
+
 with Files("Net*"):
     BUG_COMPONENT = ("Core", "Networking")
 
@@ -376,6 +379,9 @@ with Files("WindowOrWorkerGlobalScope.webidl"):
 with Files("Worker*"):
     BUG_COMPONENT = ("Core", "DOM: Workers")
 
+with Files("Extension*"):
+    BUG_COMPONENT = ("WebExtensions", "General")
+
 GENERATED_WEBIDL_FILES = [
     "CSS2Properties.webidl",
 ]
@@ -521,6 +527,7 @@ WEBIDL_FILES = [
     "EventTarget.webidl",
     "ExtendableEvent.webidl",
     "ExtendableMessageEvent.webidl",
+    "External.webidl",
     "FailedCertSecurityInfo.webidl",
     "FakePluginTagInit.webidl",
     "FeaturePolicy.webidl",
@@ -720,6 +727,7 @@ WEBIDL_FILES = [
     "MutationObserver.webidl",
     "NamedNodeMap.webidl",
     "NativeOSFileInternals.webidl",
+    "NavigationPreloadManager.webidl",
     "Navigator.webidl",
     "NetErrorInfo.webidl",
     "NetworkInformation.webidl",
@@ -1044,6 +1052,15 @@ WEBIDL_FILES += [
     "StyleSheetApplicableStateChangeEvent.webidl",
 ]
 
+# WebExtensions API.
+WEBIDL_FILES += [
+    "ExtensionBrowser.webidl",
+    "ExtensionEventManager.webidl",
+    # ExtensionMockAPI is not a real WebExtensions API, and it is only enabled in tests.
+    "ExtensionMockAPI.webidl",
+    "ExtensionPort.webidl",
+]
+
 # We only expose our prefable test interfaces in debug builds, just to be on
 # the safe side.
 if CONFIG["MOZ_DEBUG"] and CONFIG["ENABLE_TESTS"]:
@@ -1126,11 +1143,6 @@ if CONFIG["MOZ_WEBSPEECH"]:
         "SpeechRecognitionEvent.webidl",
         "SpeechSynthesisErrorEvent.webidl",
         "SpeechSynthesisEvent.webidl",
-    ]
-
-if CONFIG["MOZ_BUILD_APP"] in ["browser", "comm/mail", "mobile/android", "xulrunner"]:
-    WEBIDL_FILES += [
-        "External.webidl",
     ]
 
 if CONFIG["ACCESSIBILITY"]:

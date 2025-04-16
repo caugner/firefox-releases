@@ -30,11 +30,11 @@
 #include "mozilla/TimeStamp.h"
 #include "mozilla/DebugOnly.h"
 #include "mozilla/Services.h"
+#include "mozilla/StoragePrincipalHelper.h"
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/Telemetry.h"
 
-namespace mozilla {
-namespace net {
+namespace mozilla::net {
 
 namespace {
 
@@ -50,7 +50,7 @@ void AppendMemoryStorageTag(nsAutoCString& key) {
 // Not defining as static or class member of CacheStorageService since
 // it would otherwise need to include CacheEntry.h and that then would
 // need to be exported to make nsNetModule.cpp compilable.
-typedef nsClassHashtable<nsCStringHashKey, CacheEntryTable> GlobalEntryTables;
+using GlobalEntryTables = nsClassHashtable<nsCStringHashKey, CacheEntryTable>;
 
 /**
  * Keeps tables of entries.  There is one entries table for each distinct load
@@ -316,8 +316,9 @@ class WalkMemoryCacheRunnable : public WalkCacheRunnable {
   }
 
   virtual ~WalkMemoryCacheRunnable() {
-    if (mCallback)
+    if (mCallback) {
       ProxyReleaseMainThread("WalkMemoryCacheRunnable::mCallback", mCallback);
+    }
   }
 
   virtual void OnEntryInfo(const nsACString& aURISpec,
@@ -835,6 +836,86 @@ static bool RemoveExactEntry(CacheEntryTable* aEntries, nsACString const& aKey,
   return true;
 }
 
+NS_IMETHODIMP CacheStorageService::ClearBaseDomain(
+    const nsAString& aBaseDomain) {
+  if (sGlobalEntryTables) {
+    mozilla::MutexAutoLock lock(mLock);
+
+    if (mShutdown) return NS_ERROR_NOT_AVAILABLE;
+
+    nsCString cBaseDomain = NS_ConvertUTF16toUTF8(aBaseDomain);
+
+    nsTArray<nsCString> keys;
+    for (const auto& globalEntry : *sGlobalEntryTables) {
+      // Match by partitionKey base domain. This should cover most cache entries
+      // because we statically partition the cache. Most first party cache
+      // entries will also have a partitionKey set where the partitionKey base
+      // domain will match the entry URI base domain.
+      const nsACString& key = globalEntry.GetKey();
+      nsCOMPtr<nsILoadContextInfo> info =
+          CacheFileUtils::ParseKey(globalEntry.GetKey());
+
+      if (info &&
+          StoragePrincipalHelper::PartitionKeyHasBaseDomain(
+              info->OriginAttributesPtr()->mPartitionKey, aBaseDomain)) {
+        keys.AppendElement(key);
+        continue;
+      }
+
+      // If we didn't get a partitionKey match, try to match by entry URI. This
+      // requires us to iterate over all entries.
+      CacheEntryTable* table = globalEntry.GetWeak();
+      MOZ_ASSERT(table);
+
+      nsTArray<RefPtr<CacheEntry>> entriesToDelete;
+
+      for (CacheEntry* entry : table->Values()) {
+        nsCOMPtr<nsIURI> uri;
+        nsresult rv = NS_NewURI(getter_AddRefs(uri), entry->GetURI());
+        if (NS_WARN_IF(NS_FAILED(rv))) {
+          continue;
+        }
+
+        nsAutoCString host;
+        rv = uri->GetHost(host);
+        // Some entries may not have valid hosts. We can skip them.
+        if (NS_FAILED(rv) || host.IsEmpty()) {
+          continue;
+        }
+
+        bool hasRootDomain = false;
+        rv = NS_HasRootDomain(host, cBaseDomain, &hasRootDomain);
+        if (NS_WARN_IF(NS_FAILED(rv))) {
+          continue;
+        }
+        if (hasRootDomain) {
+          entriesToDelete.AppendElement(entry);
+        }
+      }
+
+      // Clear individual matched entries.
+      for (RefPtr<CacheEntry>& entry : entriesToDelete) {
+        nsAutoCString entryKey;
+        nsresult rv = entry->HashingKey(entryKey);
+        if (NS_FAILED(rv)) {
+          NS_ERROR("aEntry->HashingKey() failed?");
+          return rv;
+        }
+
+        RemoveExactEntry(table, entryKey, entry, false /* don't overwrite */);
+      }
+    }
+
+    // Clear matched keys.
+    for (uint32_t i = 0; i < keys.Length(); ++i) {
+      DoomStorageEntries(keys[i], nullptr, true, false, nullptr);
+    }
+  }
+
+  return CacheFileIOManager::EvictByContext(nullptr, false /* pinned */, u""_ns,
+                                            aBaseDomain);
+}
+
 nsresult CacheStorageService::ClearOriginInternal(
     const nsAString& aOrigin, const OriginAttributes& aOriginAttributes,
     bool aAnonymous) {
@@ -1097,14 +1178,16 @@ bool CacheStorageService::RemoveEntry(CacheEntry* aEntry,
   }
 
   CacheEntryTable* entries;
-  if (sGlobalEntryTables->Get(aEntry->GetStorageID(), &entries))
+  if (sGlobalEntryTables->Get(aEntry->GetStorageID(), &entries)) {
     RemoveExactEntry(entries, entryKey, aEntry, false /* don't overwrite */);
+  }
 
   nsAutoCString memoryStorageID(aEntry->GetStorageID());
   AppendMemoryStorageTag(memoryStorageID);
 
-  if (sGlobalEntryTables->Get(memoryStorageID, &entries))
+  if (sGlobalEntryTables->Get(memoryStorageID, &entries)) {
     RemoveExactEntry(entries, entryKey, aEntry, false /* don't overwrite */);
+  }
 
   return true;
 }
@@ -1719,8 +1802,9 @@ class CacheEntryDoomByKeyCallback : public CacheFileIOListener,
 };
 
 CacheEntryDoomByKeyCallback::~CacheEntryDoomByKeyCallback() {
-  if (mCallback)
+  if (mCallback) {
     ProxyReleaseMainThread("CacheEntryDoomByKeyCallback::mCallback", mCallback);
+  }
 }
 
 NS_IMETHODIMP CacheEntryDoomByKeyCallback::OnFileDoomed(
@@ -1908,7 +1992,7 @@ nsresult CacheStorageService::DoomStorageEntries(
     CacheEntryTable* diskEntries;
     if (memoryEntries && sGlobalEntryTables->Get(aContextKey, &diskEntries)) {
       for (const auto& memoryEntry : *memoryEntries) {
-        auto entry = memoryEntry.GetData();
+        const auto& entry = memoryEntry.GetData();
         RemoveExactEntry(diskEntries, memoryEntry.GetKey(), entry, false);
       }
     }
@@ -2335,5 +2419,4 @@ CacheStorageService::Flush(nsIObserver* aObserver) {
   return thread->Dispatch(r, CacheIOThread::WRITE);
 }
 
-}  // namespace net
-}  // namespace mozilla
+}  // namespace mozilla::net

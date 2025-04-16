@@ -664,6 +664,13 @@ bool JSXrayTraits::resolveOwnProperty(
         return true;
       }
 
+#if defined(NIGHTLY_BUILD)
+      // The optional .cause property can have any value.
+      if (id == GetJSIDByIndex(cx, XPCJSContext::IDX_CAUSE)) {
+        return getOwnPropertyFromWrapperIfSafe(cx, wrapper, id, desc);
+      }
+#endif
+
       if (key == JSProto_AggregateError &&
           id == GetJSIDByIndex(cx, XPCJSContext::IDX_ERRORS)) {
         return getOwnPropertyFromWrapperIfSafe(cx, wrapper, id, desc);
@@ -835,7 +842,7 @@ bool JSXrayTraits::defineProperty(
 
 static bool MaybeAppend(jsid id, unsigned flags, MutableHandleIdVector props) {
   MOZ_ASSERT(!(flags & JSITER_SYMBOLSONLY));
-  if (!(flags & JSITER_SYMBOLS) && JSID_IS_SYMBOL(id)) {
+  if (!(flags & JSITER_SYMBOLS) && id.isSymbol()) {
     return true;
   }
   return props.append(id);

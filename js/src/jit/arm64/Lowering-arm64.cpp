@@ -273,9 +273,12 @@ void LIRGeneratorARM64::lowerDivI(MDiv* div) {
   define(lir, div);
 }
 
-void LIRGeneratorARM64::lowerNegI(MInstruction* ins, MDefinition* input,
-                                  int32_t inputNo) {
+void LIRGeneratorARM64::lowerNegI(MInstruction* ins, MDefinition* input) {
   define(new (alloc()) LNegI(useRegisterAtStart(input)), ins);
+}
+
+void LIRGeneratorARM64::lowerNegI64(MInstruction* ins, MDefinition* input) {
+  defineInt64(new (alloc()) LNegI64(useInt64RegisterAtStart(input)), ins);
 }
 
 void LIRGeneratorARM64::lowerMulI(MMul* mul, MDefinition* lhs,
@@ -369,6 +372,65 @@ void LIRGenerator::visitPowHalf(MPowHalf* ins) {
   MOZ_ASSERT(input->type() == MIRType::Double);
   LPowHalfD* lir = new (alloc()) LPowHalfD(useRegister(input));
   define(lir, ins);
+}
+
+void LIRGeneratorARM64::lowerWasmSelectI(MWasmSelect* select) {
+  if (select->type() == MIRType::Simd128) {
+    LAllocation t = useRegisterAtStart(select->trueExpr());
+    LAllocation f = useRegister(select->falseExpr());
+    LAllocation c = useRegister(select->condExpr());
+    auto* lir = new (alloc()) LWasmSelect(t, f, c);
+    defineReuseInput(lir, select, LWasmSelect::TrueExprIndex);
+  } else {
+    LAllocation t = useRegisterAtStart(select->trueExpr());
+    LAllocation f = useRegisterAtStart(select->falseExpr());
+    LAllocation c = useRegisterAtStart(select->condExpr());
+    define(new (alloc()) LWasmSelect(t, f, c), select);
+  }
+}
+
+void LIRGeneratorARM64::lowerWasmSelectI64(MWasmSelect* select) {
+  LInt64Allocation t = useInt64RegisterAtStart(select->trueExpr());
+  LInt64Allocation f = useInt64RegisterAtStart(select->falseExpr());
+  LAllocation c = useRegisterAtStart(select->condExpr());
+  defineInt64(new (alloc()) LWasmSelectI64(t, f, c), select);
+}
+
+bool LIRGeneratorARM64::canSpecializeWasmCompareAndSelect(
+    MCompare::CompareType compTy, MIRType insTy) {
+  return (insTy == MIRType::Int32 || insTy == MIRType::Float32 ||
+          insTy == MIRType::Double) &&
+         (compTy == MCompare::Compare_Int32 ||
+          compTy == MCompare::Compare_UInt32 ||
+          compTy == MCompare::Compare_Float32 ||
+          compTy == MCompare::Compare_Double);
+}
+
+void LIRGeneratorARM64::lowerWasmCompareAndSelect(MWasmSelect* ins,
+                                                  MDefinition* lhs,
+                                                  MDefinition* rhs,
+                                                  MCompare::CompareType compTy,
+                                                  JSOp jsop) {
+  MOZ_ASSERT(canSpecializeWasmCompareAndSelect(compTy, ins->type()));
+  LAllocation rhsAlloc;
+  if (compTy == MCompare::Compare_Float32 ||
+      compTy == MCompare::Compare_Double) {
+    rhsAlloc = useRegisterAtStart(rhs);
+  } else if (compTy == MCompare::Compare_Int32 ||
+             compTy == MCompare::Compare_UInt32) {
+    rhsAlloc = useRegisterOrConstantAtStart(rhs);
+  } else {
+    MOZ_CRASH("Unexpected type");
+  }
+  auto* lir = new (alloc())
+      LWasmCompareAndSelect(useRegisterAtStart(lhs), rhsAlloc, compTy, jsop,
+                            useRegisterAtStart(ins->trueExpr()),
+                            useRegisterAtStart(ins->falseExpr()));
+  define(lir, ins);
+}
+
+void LIRGenerator::visitAbs(MAbs* ins) {
+  define(allocateAbs(ins, useRegisterAtStart(ins->input())), ins);
 }
 
 LTableSwitch* LIRGeneratorARM64::newLTableSwitch(const LAllocation& in,
@@ -955,6 +1017,13 @@ void LIRGenerator::visitWasmBinarySimd128(MWasmBinarySimd128* ins) {
   MOZ_CRASH("No SIMD");
 #endif
 }
+
+#ifdef ENABLE_WASM_SIMD
+bool MWasmBitselectSimd128::specializeConstantMaskAsShuffle(
+    int8_t shuffle[16]) {
+  return false;
+}
+#endif
 
 bool MWasmBinarySimd128::specializeForConstantRhs() {
   // Probably many we want to do here

@@ -1097,6 +1097,7 @@ pub struct Device {
     // debug
     inside_frame: bool,
     crash_annotator: Option<Box<dyn CrashAnnotator>>,
+    annotate_draw_call_crashes: bool,
 
     // resources
     resource_override_path: Option<PathBuf>,
@@ -1246,8 +1247,12 @@ impl DrawTarget {
             DrawTarget::Default { ref rect, surface_origin_is_top_left, .. } => {
                 // perform a Y-flip here
                 if !surface_origin_is_top_left {
-                    fb_rect.origin.y = rect.origin.y + rect.size.height - fb_rect.origin.y - fb_rect.size.height;
-                    fb_rect.origin.x += rect.origin.x;
+                    let w = fb_rect.width();
+                    let h = fb_rect.height();
+                    fb_rect.min.x = fb_rect.min.x + rect.min.x;
+                    fb_rect.min.y = rect.max.y - fb_rect.max.y;
+                    fb_rect.max.x = fb_rect.min.x + w;
+                    fb_rect.max.y = fb_rect.min.y + h;
                 }
             }
             DrawTarget::Texture { .. } | DrawTarget::External { .. } | DrawTarget::NativeSurface { .. } => (),
@@ -1286,8 +1291,7 @@ impl DrawTarget {
                 }
             }
             None => {
-                FramebufferIntRect::new(
-                    FramebufferIntPoint::zero(),
+                FramebufferIntRect::from_size(
                     device_size_as_framebuffer_size(dimensions),
                 )
             }
@@ -1663,12 +1667,12 @@ impl Device {
         // from a non-zero offset within a PBO to fail. See bug 1603783.
         let supports_nonzero_pbo_offsets = !is_macos;
 
-        let is_mali = renderer_name.starts_with("Mali");
-
         // On Mali-Gxx and Txxx there is a driver bug when rendering partial updates to
         // offscreen render targets, so we must ensure we render to the entire target.
         // See bug 1663355.
-        let supports_render_target_partial_update = !is_mali;
+        let is_mali_g = renderer_name.starts_with("Mali-G");
+        let is_mali_t = renderer_name.starts_with("Mali-T");
+        let supports_render_target_partial_update = !is_mali_g && !is_mali_t;
 
         let supports_shader_storage_object = match gl.get_type() {
             // see https://www.g-truc.net/post-0734.html
@@ -1688,8 +1692,6 @@ impl Device {
 
         let supports_image_external_essl3 = supports_extension(&extensions, "GL_OES_EGL_image_external_essl3");
 
-        let is_mali_g = renderer_name.starts_with("Mali-G");
-
         let mut requires_batched_texture_uploads = None;
         if is_software_webrender {
             // No benefit to batching texture uploads with swgl.
@@ -1703,7 +1705,6 @@ impl Device {
         // On Mali-Txxx devices we have observed crashes during draw calls when rendering
         // to an alpha target immediately after using glClear to clear regions of it.
         // Using a shader to clear the regions avoids the crash. See bug 1638593.
-        let is_mali_t = renderer_name.starts_with("Mali-T");
         let supports_alpha_target_clears = !is_mali_t;
 
         // On Linux we we have seen uploads to R8 format textures result in
@@ -1725,6 +1726,7 @@ impl Device {
             gl,
             base_gl: None,
             crash_annotator,
+            annotate_draw_call_crashes: false,
             resource_override_path,
             use_optimized_shaders,
             upload_method,
@@ -2129,8 +2131,7 @@ impl Device {
                 (self.default_draw_fbo, rect, false)
             }
             DrawTarget::Texture { dimensions, fbo_id, with_depth, .. } => {
-                let rect = FramebufferIntRect::new(
-                    FramebufferIntPoint::zero(),
+                let rect = FramebufferIntRect::from_size(
                     device_size_as_framebuffer_size(dimensions),
                 );
                 (fbo_id, rect, with_depth)
@@ -2141,7 +2142,7 @@ impl Device {
             DrawTarget::NativeSurface { external_fbo_id, offset, dimensions, .. } => {
                 (
                     FBOId(external_fbo_id),
-                    device_rect_as_framebuffer_rect(&DeviceIntRect::new(offset, dimensions)),
+                    device_rect_as_framebuffer_rect(&DeviceIntRect::from_origin_and_size(offset, dimensions)),
                     true
                 )
             }
@@ -2150,10 +2151,10 @@ impl Device {
         self.depth_available = depth_available;
         self.bind_draw_target_impl(fbo_id);
         self.gl.viewport(
-            rect.origin.x,
-            rect.origin.y,
-            rect.size.width,
-            rect.size.height,
+            rect.min.x,
+            rect.min.y,
+            rect.width(),
+            rect.height(),
         );
     }
 
@@ -2571,9 +2572,9 @@ impl Device {
 
             self.blit_render_target(
                 ReadTarget::from_texture(src_texture),
-                FramebufferIntRect::new(src_offset, size),
+                FramebufferIntRect::from_origin_and_size(src_offset, size),
                 DrawTarget::from_texture(dest_texture, false),
-                FramebufferIntRect::new(dest_offset, size),
+                FramebufferIntRect::from_origin_and_size(dest_offset, size),
                 // In most cases the filter shouldn't matter, as there is no scaling involved
                 // in the blit. We were previously using Linear, but this caused issues when
                 // blitting RGBAF32 textures on Mali, so use Nearest to be safe.
@@ -2727,18 +2728,18 @@ impl Device {
             TextureFilter::Linear | TextureFilter::Trilinear => gl::LINEAR,
         };
 
-        let src_x0 = src_rect.origin.x + self.bound_read_fbo.1.x;
-        let src_y0 = src_rect.origin.y + self.bound_read_fbo.1.y;
+        let src_x0 = src_rect.min.x + self.bound_read_fbo.1.x;
+        let src_y0 = src_rect.min.y + self.bound_read_fbo.1.y;
 
         self.gl.blit_framebuffer(
             src_x0,
             src_y0,
-            src_x0 + src_rect.size.width,
-            src_y0 + src_rect.size.height,
-            dest_rect.origin.x,
-            dest_rect.origin.y,
-            dest_rect.origin.x + dest_rect.size.width,
-            dest_rect.origin.y + dest_rect.size.height,
+            src_x0 + src_rect.width(),
+            src_y0 + src_rect.height(),
+            dest_rect.min.x,
+            dest_rect.min.y,
+            dest_rect.max.x,
+            dest_rect.max.y,
             gl::COLOR_BUFFER_BIT,
             filter,
         );
@@ -2776,8 +2777,8 @@ impl Device {
         debug_assert!(self.inside_frame);
 
         let mut inverted_dest_rect = dest_rect;
-        inverted_dest_rect.origin.y = dest_rect.max_y();
-        inverted_dest_rect.size.height *= -1;
+        inverted_dest_rect.min.y = dest_rect.max.y;
+        inverted_dest_rect.max.y = dest_rect.min.y;
 
         self.blit_render_target(
             src_target,
@@ -2983,7 +2984,7 @@ impl Device {
         format: ImageFormat,
         pbo: &PBO,
     ) {
-        let byte_size = rect.size.area() as usize * format.bytes_per_pixel() as usize;
+        let byte_size = rect.area() as usize * format.bytes_per_pixel() as usize;
 
         assert!(byte_size <= pbo.reserved_size);
 
@@ -2996,10 +2997,10 @@ impl Device {
 
         unsafe {
             self.gl.read_pixels_into_pbo(
-                rect.origin.x as _,
-                rect.origin.y as _,
-                rect.size.width as _,
-                rect.size.height as _,
+                rect.min.x as _,
+                rect.min.y as _,
+                rect.width() as _,
+                rect.height() as _,
                 gl_format.read,
                 gl_format.pixel_type,
             );
@@ -3121,15 +3122,15 @@ impl Device {
     ) {
         let bytes_per_pixel = format.bytes_per_pixel();
         let desc = self.gl_describe_format(format);
-        let size_in_bytes = (bytes_per_pixel * rect.size.width * rect.size.height) as usize;
+        let size_in_bytes = (bytes_per_pixel * rect.area()) as usize;
         assert_eq!(output.len(), size_in_bytes);
 
         self.gl.flush();
         self.gl.read_pixels_into_buffer(
-            rect.origin.x as _,
-            rect.origin.y as _,
-            rect.size.width as _,
-            rect.size.height as _,
+            rect.min.x as _,
+            rect.min.y as _,
+            rect.width() as _,
+            rect.height() as _,
             desc.read,
             desc.pixel_type,
             output,
@@ -3444,11 +3445,15 @@ impl Device {
         #[cfg(debug_assertions)]
         debug_assert!(self.shader_is_ready);
 
-        let _guard = CrashAnnotatorGuard::new(
-            &self.crash_annotator,
-            CrashAnnotation::DrawShader,
-            &self.bound_program_name,
-        );
+        let _guard = if self.annotate_draw_call_crashes {
+            Some(CrashAnnotatorGuard::new(
+                &self.crash_annotator,
+                CrashAnnotation::DrawShader,
+                &self.bound_program_name,
+            ))
+        } else {
+            None
+        };
 
         self.gl.draw_elements(
             gl::TRIANGLES,
@@ -3463,11 +3468,15 @@ impl Device {
         #[cfg(debug_assertions)]
         debug_assert!(self.shader_is_ready);
 
-        let _guard = CrashAnnotatorGuard::new(
-            &self.crash_annotator,
-            CrashAnnotation::DrawShader,
-            &self.bound_program_name,
-        );
+        let _guard = if self.annotate_draw_call_crashes {
+            Some(CrashAnnotatorGuard::new(
+                &self.crash_annotator,
+                CrashAnnotation::DrawShader,
+                &self.bound_program_name,
+            ))
+        } else {
+            None
+        };
 
         self.gl.draw_elements(
             gl::TRIANGLES,
@@ -3482,11 +3491,15 @@ impl Device {
         #[cfg(debug_assertions)]
         debug_assert!(self.shader_is_ready);
 
-        let _guard = CrashAnnotatorGuard::new(
-            &self.crash_annotator,
-            CrashAnnotation::DrawShader,
-            &self.bound_program_name,
-        );
+        let _guard = if self.annotate_draw_call_crashes {
+            Some(CrashAnnotatorGuard::new(
+                &self.crash_annotator,
+                CrashAnnotation::DrawShader,
+                &self.bound_program_name,
+            ))
+        } else {
+            None
+        };
 
         self.gl.draw_arrays(gl::POINTS, first_vertex, vertex_count);
     }
@@ -3496,11 +3509,15 @@ impl Device {
         #[cfg(debug_assertions)]
         debug_assert!(self.shader_is_ready);
 
-        let _guard = CrashAnnotatorGuard::new(
-            &self.crash_annotator,
-            CrashAnnotation::DrawShader,
-            &self.bound_program_name,
-        );
+        let _guard = if self.annotate_draw_call_crashes {
+            Some(CrashAnnotatorGuard::new(
+                &self.crash_annotator,
+                CrashAnnotation::DrawShader,
+                &self.bound_program_name,
+            ))
+        } else {
+            None
+        };
 
         self.gl.draw_arrays(gl::LINES, first_vertex, vertex_count);
     }
@@ -3510,11 +3527,15 @@ impl Device {
         #[cfg(debug_assertions)]
         debug_assert!(self.shader_is_ready);
 
-        let _guard = CrashAnnotatorGuard::new(
-            &self.crash_annotator,
-            CrashAnnotation::DrawShader,
-            &self.bound_program_name,
-        );
+        let _guard = if self.annotate_draw_call_crashes {
+            Some(CrashAnnotatorGuard::new(
+                &self.crash_annotator,
+                CrashAnnotation::DrawShader,
+                &self.bound_program_name,
+            ))
+        } else {
+            None
+        };
 
         self.gl.draw_elements(
             gl::TRIANGLES,
@@ -3529,11 +3550,15 @@ impl Device {
         #[cfg(debug_assertions)]
         debug_assert!(self.shader_is_ready);
 
-        let _guard = CrashAnnotatorGuard::new(
-            &self.crash_annotator,
-            CrashAnnotation::DrawShader,
-            &self.bound_program_name,
-        );
+        let _guard = if self.annotate_draw_call_crashes {
+            Some(CrashAnnotatorGuard::new(
+                &self.crash_annotator,
+                CrashAnnotation::DrawShader,
+                &self.bound_program_name,
+            ))
+        } else {
+            None
+        };
 
         self.gl.draw_elements_instanced(
             gl::TRIANGLES,
@@ -3601,10 +3626,10 @@ impl Device {
                 Some(rect) => {
                     self.gl.enable(gl::SCISSOR_TEST);
                     self.gl.scissor(
-                        rect.origin.x,
-                        rect.origin.y,
-                        rect.size.width,
-                        rect.size.height,
+                        rect.min.x,
+                        rect.min.y,
+                        rect.width(),
+                        rect.height(),
                     );
                     self.gl.clear(clear_bits);
                     self.gl.disable(gl::SCISSOR_TEST);
@@ -3641,10 +3666,10 @@ impl Device {
 
     pub fn set_scissor_rect(&self, rect: FramebufferIntRect) {
         self.gl.scissor(
-            rect.origin.x,
-            rect.origin.y,
-            rect.size.width,
-            rect.size.height,
+            rect.min.x,
+            rect.min.y,
+            rect.width(),
+            rect.height(),
         );
     }
 
@@ -3929,18 +3954,27 @@ impl Device {
     }
 
     /// Generates a memory report for the resources managed by the device layer.
-    pub fn report_memory(&self, size_op_funs: &MallocSizeOfOps) -> MemoryReport {
+    pub fn report_memory(&self, size_op_funs: &MallocSizeOfOps, swgl: *mut c_void) -> MemoryReport {
         let mut report = MemoryReport::default();
-        for dim in self.depth_targets.keys() {
-            report.depth_target_textures += depth_target_size_in_bytes(dim);
-        }
+        report.depth_target_textures += self.depth_targets_memory();
+
         #[cfg(feature = "sw_compositor")]
-        {
-            report.swgl += swgl::Context::report_memory(size_op_funs.size_of_op);
+        if !swgl.is_null() {
+            report.swgl += swgl::Context::from(swgl).report_memory(size_op_funs.size_of_op);
         }
-        // unconditionally use size_op_funs
+        // unconditionally use swgl stuff
         let _ = size_op_funs;
+        let _ = swgl;
         report
+    }
+
+    pub fn depth_targets_memory(&self) -> usize {
+        let mut total = 0;
+        for dim in self.depth_targets.keys() {
+            total += depth_target_size_in_bytes(dim);
+        }
+
+        total
     }
 }
 
@@ -4444,7 +4478,7 @@ impl<'a> TextureUploader<'a> {
         // Textures dimensions may have been clamped by the hardware. Crop the
         // upload region to match.
         let cropped = rect.intersection(
-            &DeviceIntRect::new(DeviceIntPoint::zero(), texture.get_dimensions())
+            &DeviceIntRect::from_size(texture.get_dimensions())
         );
         if cfg!(debug_assertions) && cropped.map_or(true, |r| r != rect) {
             warn!("Cropping texture upload {:?} to {:?}", rect, cropped);
@@ -4455,13 +4489,13 @@ impl<'a> TextureUploader<'a> {
         };
 
         let bytes_pp = texture.format.bytes_per_pixel() as usize;
-        let width_bytes = rect.size.width as usize * bytes_pp;
+        let width_bytes = rect.width() as usize * bytes_pp;
 
         let src_stride = stride.map_or(width_bytes, |stride| {
             assert!(stride >= 0);
             stride as usize
         });
-        let src_size = (rect.size.height as usize - 1) * src_stride + width_bytes;
+        let src_size = (rect.height() as usize - 1) * src_stride + width_bytes;
         assert!(src_size <= len * mem::size_of::<T>());
 
         match device.upload_method {
@@ -4482,10 +4516,10 @@ impl<'a> TextureUploader<'a> {
                     texture,
                 });
 
-                width_bytes * rect.size.height as usize
+                width_bytes * rect.height() as usize
             }
             UploadMethod::PixelBuffer(_) => {
-                let mut staging_buffer = match self.stage(device, texture.format, rect.size) {
+                let mut staging_buffer = match self.stage(device, texture.format, rect.size()) {
                     Ok(staging_buffer) => staging_buffer,
                     Err(_) => return 0,
                 };
@@ -4501,7 +4535,7 @@ impl<'a> TextureUploader<'a> {
                     } else {
                         // copy the data line-by-line in to the buffer so
                         // that it has an optimal stride
-                        for y in 0..rect.size.height as usize {
+                        for y in 0..rect.height() as usize {
                             let src_start = y * src_stride;
                             let src_end = src_start + width_bytes;
                             let dst_start = y * staging_buffer.get_stride();
@@ -4571,8 +4605,8 @@ impl<'a> TextureUploader<'a> {
             );
         }
 
-        let pos = chunk.rect.origin;
-        let size = chunk.rect.size;
+        let pos = chunk.rect.min;
+        let size = chunk.rect.size();
 
         match chunk.texture.target {
             gl::TEXTURE_2D | gl::TEXTURE_RECTANGLE | gl::TEXTURE_EXTERNAL_OES => {

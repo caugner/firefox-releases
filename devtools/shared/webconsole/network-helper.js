@@ -96,9 +96,6 @@ loader.lazyGetter(this, "certDecoder", () => {
   return { parse, pemToDER };
 });
 
-// The cache used in the `nsIURL` function.
-const gNSURLStore = new Map();
-
 // "Lax", "Strict" and "None" are special values of the SameSite cookie
 // attribute that should not be translated.
 const COOKIE_SAMESITE = {
@@ -685,6 +682,9 @@ var NetworkHelper = {
         const sss = Cc["@mozilla.org/ssservice;1"].getService(
           Ci.nsISiteSecurityService
         );
+        const pkps = Cc[
+          "@mozilla.org/security/publickeypinningservice;1"
+        ].getService(Ci.nsIPublicKeyPinningService);
 
         // SiteSecurityService uses different storage if the channel is
         // private. Thus we must give isSecureURI correct flags or we
@@ -699,8 +699,8 @@ var NetworkHelper = {
           uri = Services.io.newURI("https://" + host);
         }
 
-        info.hsts = sss.isSecureURI(sss.HEADER_HSTS, uri, flags);
-        info.hpkp = sss.isSecureURI(sss.STATIC_PINNING, uri, flags);
+        info.hsts = sss.isSecureURI(uri, flags);
+        info.hpkp = pkps.hostHasPins(uri);
       } else {
         DevToolsUtils.reportException(
           "NetworkHelper.parseSecurityInfo",
@@ -883,19 +883,6 @@ var NetworkHelper = {
       });
 
     return paramsArray;
-  },
-
-  /**
-   * Helper for getting an nsIURL instance out of a string.
-   */
-  nsIURL: function(url, store = gNSURLStore) {
-    if (store.has(url)) {
-      return store.get(url);
-    }
-
-    const uri = Services.io.newURI(url).QueryInterface(Ci.nsIURL);
-    store.set(url, uri);
-    return uri;
   },
 };
 

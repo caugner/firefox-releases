@@ -25,7 +25,7 @@ PER_INSTANCE in int aBlurSourceTaskAddress;
 PER_INSTANCE in int aBlurDirection;
 
 struct BlurTask {
-    RectWithSize task_rect;
+    RectWithEndpoint task_rect;
     float blur_radius;
     vec2 blur_region;
 };
@@ -68,9 +68,9 @@ void calculate_gauss_coefficients(float sigma) {
 
 void main(void) {
     BlurTask blur_task = fetch_blur_task(aBlurRenderTaskAddress);
-    RectWithSize src_rect = fetch_render_task_rect(aBlurSourceTaskAddress);
+    RectWithEndpoint src_rect = fetch_render_task_rect(aBlurSourceTaskAddress);
 
-    RectWithSize target_rect = blur_task.task_rect;
+    RectWithEndpoint target_rect = blur_task.task_rect;
 
     vec2 texture_size = vec2(TEX_SIZE(sColor0).xy);
 
@@ -103,10 +103,10 @@ void main(void) {
                    src_rect.p0 + blur_task.blur_region - vec2(0.5));
     vUvRect /= texture_size.xyxy;
 
-    vec2 pos = target_rect.p0 + target_rect.size * aPosition.xy;
+    vec2 pos = mix(target_rect.p0, target_rect.p1, aPosition.xy);
 
     vec2 uv0 = src_rect.p0 / texture_size;
-    vec2 uv1 = (src_rect.p0 + src_rect.size) / texture_size;
+    vec2 uv1 = src_rect.p1 / texture_size;
     vUv = mix(uv0, uv1, aPosition.xy);
 
     gl_Position = uTransform * vec4(pos, 0.0, 1.0);
@@ -154,8 +154,12 @@ void main(void) {
     //
     // for some t. So we can let `t = k1/(k0 + k1)` and effectively evaluate
     // Equation 1 with a single texture lookup.
-
-    for (int i = 1; i <= vSupport; i += 2) {
+    //
+    // Clamp loop condition variable to a statically known value to workaround
+    // driver bug on Adreno 3xx. vSupport should not exceed 300 anyway, due to
+    // the max blur radius being 100. See bug 1720841 for details.
+    int support = min(vSupport, 300);
+    for (int i = 1; i <= support; i += 2) {
         gauss_coefficient.xy *= gauss_coefficient.yz;
 
         float gauss_coefficient_subtotal = gauss_coefficient.x;

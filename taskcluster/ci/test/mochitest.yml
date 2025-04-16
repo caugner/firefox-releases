@@ -12,8 +12,8 @@ job-defaults:
             default: null
     variants:
         by-test-platform:
-            linux.*64/debug: ['fission']
-            linux.*64-qr/debug: ['webrender-sw', 'fission']
+            linux.*64/debug: ['fission', 'wayland']
+            linux.*64-qr/debug: ['webrender-sw', 'fission', 'wayland']
             android-em-7.0-x86_64-qr/debug: ['webrender-sw', 'fission']
             default: ['fission']
     tier:
@@ -60,7 +60,7 @@ mochitest-plain:
             default: virtual
     variants:
         by-test-platform:
-            linux1804-64-qr/debug: ['webrender-sw', 'fission', 'fission-xorigin']
+            linux1804-64-qr/debug: ['webrender-sw', 'fission', 'fission-xorigin', 'wayland']
             android-em-7.0-x86_64-qr/debug: ['webrender-sw', 'fission', 'fission-xorigin']
             default: ['fission', 'fission-xorigin']
     run-on-projects:
@@ -70,11 +70,11 @@ mochitest-plain:
                     (linux.*64|macosx.*64|windows10-64)-qr/debug: ['autoland', 'mozilla-central']
                     (linux.*64|macosx.*64|windows10-64)-qr/opt: ['autoland']
                     (linux.*64|macosx.*64|windows10-64)-shippable-qr/opt: ['autoland', 'mozilla-central']
-                    linux.*64-asan/opt: ['autoland', 'mozilla-central']
+                    linux.*64-(asan|tsan)/opt: ['autoland', 'mozilla-central']
                     default: []
             fission-xorigin:
                 by-test-platform:
-                    linux.*64/debug: ['mozilla-central']
+                    (linux.*64|macosx.*64|windows10-64)(-shippable)?-qr/(opt|debug): ['trunk']
                     default: []
             default:
                 by-test-platform:
@@ -133,17 +133,17 @@ mochitest-browser-chrome:
     loopback-video: true
     variants:
         by-test-platform:
-            linux.*64(-shippable)?/opt: ['fission', 'a11y-checks']
-            linux.*64-qr/debug: ['webrender-sw', 'fission']
+            linux.*64(-shippable)?/opt: ['fission', 'a11y-checks', 'wayland']
+            linux.*64-qr/debug: ['webrender-sw', 'fission', 'wayland']
             windows10-64-qr/debug: ['webrender-sw', 'fission']
             default: ['fission']
     run-on-projects:
         by-variant:
             fission:
                 by-test-platform:
-                    linux.*64(-qr)?/debug: ['trunk']
-                    linux.*64-shippable(-qr)?/opt: ['mozilla-central']
-                    windows10-64-shippable(-qr)?/opt: ['mozilla-central']
+                    linux.*64-asan/opt: ['trunk']
+                    linux.*64(-shippable)?/(opt|debug): ['trunk']
+                    (windows10-64|macosx.*64)(-shippable)?-qr/(opt|debug): ['trunk']
                     default: []
             default:
                 by-test-platform:
@@ -166,20 +166,16 @@ mochitest-browser-chrome:
             linux.*64-tsan/opt: 32
             macosx.*64/debug: 16
             windows10-64-ccov.*/.*: 14
-            windows10.*-asan/opt: 9
-            windows10-32/debug: 12
+            windows10.*-asan-qr/opt: 9
+            windows10-32-qr/debug: 12
             default: 7
     max-run-time:
         by-test-platform:
             linux.*64-ccov.*/.*: 9000
-            windows7-32/debug: 5400
-            windows10-64/debug: 5400
-            macosx.*64(-qr)?/debug: 5400
             windows10-64-ccov.*/.*: 10800
             macosx.*64-ccov.*/.*: 10800
-            linux.*/debug: 5400
-            windows10-64-qr/debug: 5400
             linux.*64-tsan/opt: 9000
+            .*/debug: 5400
             default: 3600
     mozharness:
         mochitest-flavor: browser
@@ -277,15 +273,15 @@ mochitest-devtools-chrome:
     loopback-video: true
     variants:
         by-test-platform:
-            linux.*64(-shippable)?/opt: ['fission', 'a11y-checks']
-            linux.*64-qr/debug: ['webrender-sw', 'fission']
+            linux.*64(-shippable)?/opt: ['fission', 'a11y-checks', 'wayland']
+            linux.*64-qr/debug: ['webrender-sw', 'fission', 'wayland']
             default: ['fission']
     run-on-projects:
         by-variant:
             fission:
                 by-test-platform:
                     linux.*64(-shippable)?/(opt|debug): ['trunk']
-                    windows10-64(-shippable)?/(opt|debug): ['trunk']
+                    windows10-64(-shippable)?-qr/(opt|debug): ['trunk']
                     default: []
             default:
                 by-test-platform:
@@ -295,9 +291,8 @@ mochitest-devtools-chrome:
         by-variant:
             fission:
                 by-test-platform:
-                    linux.*64(-qr)?/debug: 1
-                    linux.*64-shippable(-qr)?/opt: 1
-                    windows10-64-shippable(-qr)?/opt: 1
+                    linux.*64(-shippable)?(-qr)?/(opt|debug): 1
+                    windows10-64(-shippable)?(-qr)?/(opt|debug): 1
                     default: 2
             default: default
     max-run-time:
@@ -430,22 +425,51 @@ mochitest-media:
                     (linux.*64|windows10-64)-shippable-qr/opt: ['mozilla-central']
                     linux.*64-asan-qr/opt: ['autoland', 'mozilla-central']
                     linux.*64-tsan/opt: ['autoland', 'mozilla-central']
+                    (linux|windows10-64|macos)(?!.*-qr).*: []
                     default: []
-            default:
+            socketprocess:
                 by-test-platform:
                     .*-tsan/opt: ['trunk']
+                    windows10-64-asan-qr/opt: ['trunk']
                     android-hw-.*(?<!-shippable)(-qr)?/opt: ['autoland']
-                    android-hw-.*-api-16(-qr)?/(?:debug)?: ['trunk', 'mozilla-beta', 'mozilla-release']
+                    android-hw-.*-arm7.*/(?:debug)?: ['trunk', 'mozilla-beta', 'mozilla-release']
                     android-em-7.0-x86_64/debug-isolated-process: []
-                    android-hw-.*-api-16-shippable(-qr)?/opt: ['trunk', 'mozilla-beta', 'mozilla-release']
-                    windows10-aarch64/.*: ['mozilla-central', 'mozilla-beta', 'mozilla-release']
+                    windows10-aarch64-qr/.*: ['mozilla-central', 'mozilla-beta', 'mozilla-release']
+                    (linux|windows10-64|macos)(?!.*-qr).*: []
+                    default: built-projects
+            noqr: built-projects
+            webgl-ipc:
+                by-test-platform:
+                    .*-tsan/opt: ['trunk']
+                    windows10-64-asan-qr/opt: ['trunk']
+                    (linux.*64|windows10-64)(-shippable)?-qr/(opt|debug): ['trunk']
+                    (linux|windows10-64|macos)(?!.*-qr).*: []
+                    default: built-projects
+            default:
+                by-test-platform:
+                    android-hw-.*/opt: []
+                    android-hw-.*-arm7.*/(?:debug)?: ['trunk', 'mozilla-beta', 'mozilla-release']
+                    android-em-7.0-x86_64/debug-isolated-process: []
+                    .*-tsan/opt: ['trunk']
+                    linux.*(asan|ccov)/opt: []
+                    .*(ccov/|asan/|-32).*: built-projects
+                    (android|linux|windows10-64|macos)(?!.*-qr).*: []
+                    windows10-aarch64-qr/.*: ['mozilla-central', 'mozilla-beta', 'mozilla-release']
                     default: built-projects
     variants:
         by-test-platform:
-            .*-ccov.*/.*: []
-            android-em-7.0-x86_64-qr/debug: ['webrender-sw', 'socketprocess']
+            android-em-7.0-x86_64-qr/debug: ['webrender-sw', 'socketprocess', 'fission', 'noqr']
+            android-em.*-qr.*: ['fission', 'fission-webgl-ipc', 'webgl-ipc', 'noqr']
+            android-em-7.*: ['fission']
+            android-.*/opt: []
             android.*: ['socketprocess']
-            linux.*64-qr/debug: ['webrender-sw', 'fission', 'fission-webgl-ipc']
+            .*-ccov-qr.*/.*: ['noqr']
+            .*tsan.*: ['fission', 'fission-webgl-ipc', 'socketprocess', 'webgl-ipc']
+            windows10-64-asan-qr/opt: ['fission', 'fission-webgl-ipc', 'socketprocess', 'webgl-ipc']
+            windows10-aarch64-qr/.*: []
+            (linux|windows10-64|macos)(?!.*-qr).*: []
+            linux1804-64-qr/debug: ['webrender-sw', 'fission', 'fission-webgl-ipc', 'socketprocess', 'wayland', 'noqr']
+            (?!android-hw).*-qr.*: ['fission', 'fission-webgl-ipc', 'socketprocess', 'webgl-ipc', 'noqr']
             default: ['fission', 'fission-webgl-ipc', 'socketprocess', 'webgl-ipc']
     loopback-video: true
     instance-size:
@@ -457,7 +481,7 @@ mochitest-media:
             android-em-7.*: 1
             windows10-64.*: 1
             macosx.*64.*/.*: 2
-            windows10-aarch64/.*: 1
+            windows10-aarch64-qr/.*: 1
             windows.*32-shippable/.*: 2
             linux1804-64(-shippable|-devedition|-.*qr)/opt: 2
             linux.*64-tsan/opt: 4
@@ -483,7 +507,7 @@ mochitest-media:
                 by-test-platform:
                     android-em.*: 1
                     android-em-7.0-x86_64/debug-isolated-process: 3
-                    windows10-aarch64.*: 2
+                    windows10-aarch64-qr.*: 2
                     android-hw.*: 1
                     macosx1100.*: 2
                     default: default
@@ -581,9 +605,9 @@ mochitest-webgl1-core:
         by-test-platform:
             .*-ccov.*/.*: []
             android.*: []
-            linux.*64-qr/debug: ['fission', 'webrender-sw', 'webgl-ipc']
-            (linux.*64|macosx.*64|windows10-64)(-shippable)?-qr/(debug|opt): ['fission', 'webgl-ipc']
-            linux.*64-asan-qr/opt: ['fission', 'webgl-ipc']
+            linux.*64-qr/debug: ['fission', 'fission-webgl-ipc', 'webrender-sw', 'webgl-ipc', 'wayland']
+            (linux.*64|macosx.*64|windows10-64)(-shippable)?-qr/(debug|opt): ['fission', 'fission-webgl-ipc', 'webgl-ipc']
+            linux.*64-asan-qr/opt: ['fission', 'fission-webgl-ipc', 'webgl-ipc']
             default: ['webgl-ipc']
     e10s: true
     test-manifest-loader: null  # don't load tests in the taskgraph
@@ -618,10 +642,11 @@ mochitest-webgl1-ext:
         by-test-platform:
             .*-ccov.*/.*: []
             android.*: []
-            linux.*64-qr/debug: ['fission', 'webrender-sw', 'webgl-ipc']
-            linux.*64(-shippable)?-qr/opt: ['fission', 'webgl-ipc']
-            windows10-64-shippable-qr/(opt|debug): ['fission', 'webgl-ipc']
-            windows10-64-qr/(opt|debug): ['fission']
+            linux.*64-qr/debug: ['fission', 'fission-webgl-ipc', 'webrender-sw', 'webgl-ipc', 'wayland']
+            linux.*64(-shippable)?-qr/opt: ['fission', 'fission-webgl-ipc', 'webgl-ipc', 'wayland']
+            linux.*64-asan/opt: ['fission-webgl-ipc', 'webgl-ipc']
+            windows10-64-shippable-qr/(opt|debug): ['fission', 'fission-webgl-ipc', 'webgl-ipc']
+            windows10-64-qr/(opt|debug): ['fission', 'fission-webgl-ipc']
             default: ['webgl-ipc']
     chunks:
         by-test-platform:
@@ -658,9 +683,9 @@ mochitest-webgl2-core:
         by-test-platform:
             .*-ccov.*/.*: []
             android.*: []
-            linux.*64-qr/debug: ['fission', 'webrender-sw', 'webgl-ipc']
-            linux.*64(-shippable)?(-asan)?-qr/opt: ['fission', 'webgl-ipc']
-            windows10-64(-shippable)?-qr/(opt|debug): ['fission', 'webgl-ipc']
+            linux.*64-qr/debug: ['fission', 'fission-webgl-ipc', 'webrender-sw', 'webgl-ipc', 'wayland']
+            linux.*64(-shippable)?(-asan)?-qr/opt: ['fission', 'fission-webgl-ipc', 'webgl-ipc', 'wayland']
+            windows10-64(-shippable)?-qr/(opt|debug): ['fission', 'fission-webgl-ipc', 'webgl-ipc']
             default: ['webgl-ipc']
     chunks:
         by-test-platform:
@@ -695,9 +720,9 @@ mochitest-webgl2-ext:
         by-test-platform:
             .*-ccov.*/.*: []
             android.*: []
-            linux.*64-qr/debug: ['fission', 'webrender-sw', 'webgl-ipc']
-            linux.*64(-shippable)?-(qr|asan)?/opt: ['fission', 'webgl-ipc']
-            windows10-64(-shippable)?/(opt|debug): ['fission', 'webgl-ipc']
+            linux.*64-qr/debug: ['fission', 'fission-webgl-ipc', 'webrender-sw', 'webgl-ipc', 'wayland']
+            linux.*64(-shippable)?-(qr|asan)?/opt: ['fission', 'fission-webgl-ipc', 'webgl-ipc', 'wayland']
+            windows10-64(-shippable)?-qr/(opt|debug): ['fission', 'fission-webgl-ipc', 'webgl-ipc']
             default: ['webgl-ipc']
     chunks: 4
     e10s: true
@@ -726,7 +751,7 @@ mochitest-webgl2-deqp:
         by-test-platform:
             .*-ccov.*/.*: []
             android.*: []
-            linux.*64-qr/debug: ['webrender-sw', 'webgl-ipc']
+            linux.*64-qr/debug: ['webrender-sw', 'webgl-ipc', 'wayland']
             default: ['webgl-ipc']
     chunks: 4
     e10s: true

@@ -45,15 +45,19 @@ RLBoxHunspell::RLBoxHunspell(const nsAutoCString& affpath,
   // fails as the I/O redirection involves querying meta-data of file
   // descriptors. This querying fails in some environments.
   const bool allow_stdio = false;
-  mSandbox.create_sandbox(mozilla::ipc::GetSandboxedHunspellPath().get(),
+  mSandbox.create_sandbox(mozilla::ipc::GetSandboxedRLBoxPath().get(),
                           external_loads_exist, allow_stdio);
 #else
   mSandbox.create_sandbox();
 #endif
 
   // Add the aff and dict files to allow list
-  mozHunspellCallbacks::AllowFile(affpath);
-  mozHunspellCallbacks::AllowFile(dpath);
+  if (!affpath.IsEmpty()) {
+    mozHunspellCallbacks::AllowFile(affpath);
+  }
+  if (!dpath.IsEmpty()) {
+    mozHunspellCallbacks::AllowFile(dpath);
+  }
 
   // Register callbacks
   mCreateFilemgr =

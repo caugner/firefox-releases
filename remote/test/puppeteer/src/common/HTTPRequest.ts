@@ -40,7 +40,10 @@ export interface ContinueRequestOverrides {
  */
 export interface ResponseForRequest {
   status: number;
-  headers: Record<string, string>;
+  /**
+   * Optional response headers. All values are converted to strings.
+   */
+  headers: Record<string, unknown>;
   contentType: string;
   body: string | Buffer;
 }
@@ -188,14 +191,16 @@ export class HTTPRequest {
   }
 
   /**
-   * @returns the response for this request, if a response has been received.
+   * @returns A matching `HTTPResponse` object, or null if the response has not
+   * been received yet.
    */
   response(): HTTPResponse | null {
     return this._response;
   }
 
   /**
-   * @returns the frame that initiated the request.
+   * @returns the frame that initiated the request, or null if navigating to
+   * error pages.
    */
   frame(): Frame | null {
     return this._frame;
@@ -209,6 +214,7 @@ export class HTTPRequest {
   }
 
   /**
+   * A `redirectChain` is a chain of requests initiated to fetch a resource.
    * @remarks
    *
    * `redirectChain` is shared between all the requests of the same chain.
@@ -346,7 +352,7 @@ export class HTTPRequest {
    *
    * @param response - the response to fulfill the request with.
    */
-  async respond(response: ResponseForRequest): Promise<void> {
+  async respond(response: Partial<ResponseForRequest>): Promise<void> {
     // Mocking responses for dataURL requests is not currently supported.
     if (this._url.startsWith('data:')) return;
     assert(this._allowInterception, 'Request Interception is not enabled!');
@@ -361,7 +367,9 @@ export class HTTPRequest {
     const responseHeaders: Record<string, string> = {};
     if (response.headers) {
       for (const header of Object.keys(response.headers))
-        responseHeaders[header.toLowerCase()] = response.headers[header];
+        responseHeaders[header.toLowerCase()] = String(
+          response.headers[header]
+        );
     }
     if (response.contentType)
       responseHeaders['content-type'] = response.contentType;

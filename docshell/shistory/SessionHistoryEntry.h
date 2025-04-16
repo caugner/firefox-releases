@@ -7,6 +7,7 @@
 #ifndef mozilla_dom_SessionHistoryEntry_h
 #define mozilla_dom_SessionHistoryEntry_h
 
+#include "mozilla/Maybe.h"
 #include "mozilla/UniquePtr.h"
 #include "nsILayoutHistoryState.h"
 #include "nsISHEntry.h"
@@ -160,12 +161,11 @@ class SessionHistoryInfo {
   int32_t mScrollPositionX = 0;
   int32_t mScrollPositionY = 0;
   RefPtr<nsStructuredCloneContainer> mStateData;
-  nsString mSrcdocData;
+  Maybe<nsString> mSrcdocData;
   nsCOMPtr<nsIURI> mBaseURI;
 
   bool mLoadReplace = false;
   bool mURIWasModified = false;
-  bool mIsSrcdocEntry = false;
   bool mScrollRestorationIsManual = false;
   bool mPersist = true;
   bool mHasUserInteraction = false;
@@ -213,7 +213,9 @@ class SessionHistoryInfo {
 struct LoadingSessionHistoryInfo {
   LoadingSessionHistoryInfo() = default;
   explicit LoadingSessionHistoryInfo(SessionHistoryEntry* aEntry);
-  LoadingSessionHistoryInfo(SessionHistoryEntry* aEntry, uint64_t aLoadId);
+  // Initializes mInfo using aEntry and otherwise copies the values from aInfo.
+  LoadingSessionHistoryInfo(SessionHistoryEntry* aEntry,
+                            LoadingSessionHistoryInfo* aInfo);
 
   already_AddRefed<nsDocShellLoadState> CreateLoadInfo() const;
 
@@ -234,6 +236,13 @@ struct LoadingSessionHistoryInfo {
   // If we're loading from the current active entry we want to treat it as not
   // a same-document navigation (see nsDocShell::IsSameDocumentNavigation).
   bool mLoadingCurrentActiveEntry = false;
+  // If mForceMaybeResetName.isSome() is true then the parent process has
+  // determined whether the BC's name should be cleared and stored in session
+  // history (see https://html.spec.whatwg.org/#history-traversal step 4.2).
+  // This is used when we're replacing the BC for BFCache in the parent. In
+  // other cases mForceMaybeResetName.isSome() will be false and the child
+  // process should be able to make that determination itself.
+  Maybe<bool> mForceMaybeResetName;
 };
 
 // HistoryEntryCounterForBrowsingContext is used to count the number of entries

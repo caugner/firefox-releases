@@ -21,6 +21,7 @@ import mozprocess
 import mozproxy.utils as mpu
 import mozversion
 import six
+
 from mozprofile import create_profile
 from mozproxy import get_playback
 
@@ -193,7 +194,7 @@ class Perftest(object):
 
         # For the post startup delay, we want to max it to 1s when using the
         # conditioned profiles.
-        if self.config.get("conditioned_profile") and not self.run_local:
+        if self.config.get("conditioned_profile"):
             self.post_startup_delay = min(post_startup_delay, POST_DELAY_CONDPROF)
         else:
             # if running debug-mode reduce the pause after browser startup
@@ -227,17 +228,80 @@ class Perftest(object):
     def conditioned_profile_copy(self):
         """Returns a copy of the original conditioned profile that was created."""
         condprof_copy = os.path.join(self._get_temp_dir(), "profile")
-        shutil.copytree(self.conditioned_profile_dir, condprof_copy)
+        shutil.copytree(
+            self.conditioned_profile_dir,
+            condprof_copy,
+            ignore=shutil.ignore_patterns("lock"),
+        )
         LOG.info("Created a conditioned-profile copy: %s" % condprof_copy)
         return condprof_copy
 
-    def get_conditioned_profile(self):
+    def build_conditioned_profile(self):
+        # Late import so python-test doesn't import it
+        import asyncio
+        from condprof.runner import Runner
+
+        # The following import patchs an issue with invalid
+        # content-type, see bug 1655869
+        from condprof import patch  # noqa
+
+        if not getattr(self, "browsertime"):
+            raise Exception(
+                "Building conditioned profiles within a test is only supported "
+                "when using Browsertime."
+            )
+
+        geckodriver = getattr(self, "browsertime_geckodriver", None)
+        if not geckodriver:
+            geckodriver = (
+                sys.platform.startswith("win") and "geckodriver.exe" or "geckodriver"
+            )
+
+        scenario = self.config.get("conditioned_profile")
+        runner = Runner(
+            profile=None,
+            firefox=self.config.get("binary"),
+            geckodriver=geckodriver,
+            archive=None,
+            device_name=self.config.get("device_name"),
+            strict=True,
+            visible=True,
+            force_new=True,
+            skip_logs=True,
+        )
+
+        if self.config.get("is_release_build", False):
+            # Enable non-local connections for building the conditioned profile
+            self.enable_non_local_connections()
+
+        if scenario == "settled-youtube":
+            runner.prepare(scenario, "youtube")
+
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(runner.one_run(scenario, "youtube"))
+        else:
+            runner.prepare(scenario, "default")
+
+            loop = asyncio.get_event_loop()
+            loop.run_until_complete(runner.one_run(scenario, "default"))
+
+        if self.config.get("is_release_build", False):
+            self.disable_non_local_connections()
+
+        self.conditioned_profile_dir = runner.env.profile
+        return self.conditioned_profile_copy
+
+    def get_conditioned_profile(self, binary=None):
         """Downloads a platform-specific conditioned profile, using the
         condprofile client API; returns a self.conditioned_profile_dir"""
         if self.conditioned_profile_dir:
             # We already have a directory, so provide a copy that
             # will get deleted after it's done with
             return self.conditioned_profile_copy
+
+        # Build the conditioned profile before the test
+        if not self.config.get("conditioned_profile").startswith("artifact:"):
+            return self.build_conditioned_profile()
 
         # create a temp file to help ensure uniqueness
         temp_download_dir = self._get_temp_dir()
@@ -271,7 +335,9 @@ class Perftest(object):
         alternate_repo = "mozilla-central" if repo != "mozilla-central" else "try"
         LOG.info("Getting profile from project %s" % repo)
 
-        profile_scenario = self.config.get("conditioned_profile")
+        profile_scenario = self.config.get("conditioned_profile").replace(
+            "artifact:", ""
+        )
         try:
             cond_prof_target_dir = get_profile(
                 temp_download_dir, platform, profile_scenario, repo=repo
@@ -528,6 +594,18 @@ class Perftest(object):
             LOG.critical("Profiling ignored because MOZ_UPLOAD_DIR was not set")
         else:
             self.gecko_profiler = GeckoProfile(upload_dir, self.config, test)
+
+    def disable_non_local_connections(self):
+        # For Firefox we need to set MOZ_DISABLE_NONLOCAL_CONNECTIONS=1 env var before startup
+        # when testing release builds from mozilla-beta/release. This is because of restrictions
+        # on release builds that require webextensions to be signed unless this env var is set
+        LOG.info("setting MOZ_DISABLE_NONLOCAL_CONNECTIONS=1")
+        os.environ["MOZ_DISABLE_NONLOCAL_CONNECTIONS"] = "1"
+
+    def enable_non_local_connections(self):
+        # pageload tests need to be able to access non-local connections via mitmproxy
+        LOG.info("setting MOZ_DISABLE_NONLOCAL_CONNECTIONS=0")
+        os.environ["MOZ_DISABLE_NONLOCAL_CONNECTIONS"] = "0"
 
 
 class PerftestAndroid(Perftest):

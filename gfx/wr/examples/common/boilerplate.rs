@@ -52,14 +52,14 @@ pub trait HandyDandyRectBuilder {
 // values to build a f32 LayoutRect
 impl HandyDandyRectBuilder for (i32, i32) {
     fn to(&self, x2: i32, y2: i32) -> LayoutRect {
-        LayoutRect::new(
+        LayoutRect::from_origin_and_size(
             LayoutPoint::new(self.0 as f32, self.1 as f32),
             LayoutSize::new((x2 - self.0) as f32, (y2 - self.1) as f32),
         )
     }
 
     fn by(&self, w: i32, h: i32) -> LayoutRect {
-        LayoutRect::new(
+        LayoutRect::from_origin_and_size(
             LayoutPoint::new(self.0 as f32, self.1 as f32),
             LayoutSize::new(w as f32, h as f32),
         )
@@ -162,7 +162,7 @@ pub fn main_wrapper<E: Example>(
     let opts = webrender::RendererOptions {
         resource_override_path: res_path,
         precache_flags: E::PRECACHE_SHADER_FLAGS,
-        clear_color: Some(ColorF::new(0.3, 0.0, 0.0, 1.0)),
+        clear_color: ColorF::new(0.3, 0.0, 0.0, 1.0),
         debug_flags,
         //allow_texture_swizzling: false,
         ..options.unwrap_or(webrender::RendererOptions::default())

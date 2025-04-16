@@ -253,21 +253,19 @@ function clearCurrentNodeSelection(inspector) {
 
 /**
  * Right click on a node in the test page and click on the inspect menu item.
- * @param {TestActor}
  * @param {String} selector The selector for the node to click on in the page.
  * @return {Promise} Resolves to the inspector when it has opened and is updated
  */
-var clickOnInspectMenuItem = async function(testActor, selector) {
+var clickOnInspectMenuItem = async function(selector) {
   info("Showing the contextual menu on node " + selector);
   const contentAreaContextMenu = document.querySelector(
     "#contentAreaContextMenu"
   );
   const contextOpened = once(contentAreaContextMenu, "popupshown");
 
-  await testActor.synthesizeMouse({
-    selector: selector,
-    center: true,
-    options: { type: "contextmenu", button: 2 },
+  await safeSynthesizeMouseEventAtCenterInContentPage(selector, {
+    type: "contextmenu",
+    button: 2,
   });
 
   await contextOpened;
@@ -568,16 +566,16 @@ async function poll(check, desc, attempts = 10, timeBetweenAttempts = 200) {
 /**
  * Encapsulate some common operations for highlighter's tests, to have
  * the tests cleaner, without exposing directly `inspector`, `highlighter`, and
- * `testActor` if not needed.
+ * `highlighterTestFront` if not needed.
  *
  * @param  {String}
  *    The highlighter's type
  * @return
- *    A generator function that takes an object with `inspector` and `testActor`
+ *    A generator function that takes an object with `inspector` and `highlighterTestFront`
  *    properties. (see `openInspector`)
  */
 const getHighlighterHelperFor = type =>
-  async function({ inspector, testActor }) {
+  async function({ inspector, highlighterTestFront }) {
     const front = inspector.inspectorFront;
     const highlighter = await front.getHighlighterByType(type);
 
@@ -633,7 +631,7 @@ const getHighlighterHelperFor = type =>
 
       isElementHidden: async function(id) {
         return (
-          (await testActor.getHighlighterNodeAttribute(
+          (await highlighterTestFront.getHighlighterNodeAttribute(
             prefix + id,
             "hidden",
             highlighter
@@ -642,14 +640,14 @@ const getHighlighterHelperFor = type =>
       },
 
       getElementTextContent: async function(id) {
-        return testActor.getHighlighterNodeTextContent(
+        return highlighterTestFront.getHighlighterNodeTextContent(
           prefix + id,
           highlighter
         );
       },
 
       getElementAttribute: async function(id, name) {
-        return testActor.getHighlighterNodeAttribute(
+        return highlighterTestFront.getHighlighterNodeAttribute(
           prefix + id,
           name,
           highlighter
@@ -658,7 +656,7 @@ const getHighlighterHelperFor = type =>
 
       waitForElementAttributeSet: async function(id, name) {
         await poll(async function() {
-          const value = await testActor.getHighlighterNodeAttribute(
+          const value = await highlighterTestFront.getHighlighterNodeAttribute(
             prefix + id,
             name,
             highlighter
@@ -669,7 +667,7 @@ const getHighlighterHelperFor = type =>
 
       waitForElementAttributeRemoved: async function(id, name) {
         await poll(async function() {
-          const value = await testActor.getHighlighterNodeAttribute(
+          const value = await highlighterTestFront.getHighlighterNodeAttribute(
             prefix + id,
             name,
             highlighter
@@ -678,13 +676,25 @@ const getHighlighterHelperFor = type =>
         }, `Waiting for element ${id} to have attribute ${name} removed`);
       },
 
-      synthesizeMouse: async function(options) {
-        options = Object.assign({ selector: ":root" }, options);
-        await testActor.synthesizeMouse(options);
+      synthesizeMouse: async function({
+        selector = ":root",
+        center,
+        x,
+        y,
+        options,
+      } = {}) {
+        if (center === true) {
+          await safeSynthesizeMouseEventAtCenterInContentPage(
+            selector,
+            options
+          );
+        } else {
+          await safeSynthesizeMouseEventInContentPage(selector, x, y, options);
+        }
       },
 
       // This object will synthesize any "mouse" prefixed event to the
-      // `testActor`, using the name of method called as suffix for the
+      // `highlighterTestFront`, using the name of method called as suffix for the
       // event's name.
       // If no x, y coords are given, the previous ones are used.
       //
@@ -699,19 +709,12 @@ const getHighlighterHelperFor = type =>
             async function(x = prevX, y = prevY, selector = ":root") {
               prevX = x;
               prevY = y;
-              await testActor.synthesizeMouse({
-                selector,
-                x,
-                y,
-                options: { type: "mouse" + name },
+              await safeSynthesizeMouseEventInContentPage(selector, x, y, {
+                type: "mouse" + name,
               });
             },
         }
       ),
-
-      reflow: async function() {
-        await testActor.reflow();
-      },
 
       finalize: async function() {
         highlightedNode = null;
@@ -1331,32 +1334,25 @@ function waitForNMutations(inspector, type, count) {
  * Move the mouse on the content page at the x,y position and check the color displayed
  * in the eyedropper label.
  *
- * @param {TestActorFront} testActorFront
- * @param {String} inspectorActorID: The inspector actorID we'll use to retrieve the eyedropper
+ * @param {HighlighterTestFront} highlighterTestFront
  * @param {Number} x
  * @param {Number} y
  * @param {String} expectedColor: Hexa string of the expected color
  * @param {String} assertionDescription
  */
 async function checkEyeDropperColorAt(
-  testActorFront,
-  inspectorActorID,
+  highlighterTestFront,
   x,
   y,
   expectedColor,
   assertionDescription
 ) {
   info(`Move mouse to ${x},${y}`);
-  await testActorFront.synthesizeMouse({
-    selector: ":root",
-    x,
-    y,
-    options: { type: "mousemove" },
+  await safeSynthesizeMouseEventInContentPage(":root", x, y, {
+    type: "mousemove",
   });
 
-  const colorValue = await testActorFront.getEyeDropperColorValue(
-    inspectorActorID
-  );
+  const colorValue = await highlighterTestFront.getEyeDropperColorValue();
   is(colorValue, expectedColor, assertionDescription);
 }
 
@@ -1395,5 +1391,82 @@ async function deleteNodeWithContextMenu(node, inspector) {
   if (inspector.breadcrumbs.indexOf(node) > -1) {
     info("Crumbs haven't seen deletion. Waiting for breadcrumbs-updated.");
     await inspector.once("breadcrumbs-updated");
+  }
+}
+
+/**
+ * Forces the content page to reflow and waits for the next repaint.
+ */
+function reflowContentPage() {
+  return SpecialPowers.spawn(gBrowser.selectedBrowser, [], async function() {
+    return new Promise(resolve => {
+      content.document.documentElement.offsetWidth;
+      content.requestAnimationFrame(resolve);
+    });
+  });
+}
+
+/**
+ * Get all box-model regions' adjusted boxquads for the given element
+ * @param {String|Array} selector The node selector to target a given element
+ * @return {Promise<Object>} A promise that resolves with an object with each property of
+ *         a box-model region, each of them being an object with the p1/p2/p3/p4 properties.
+ */
+async function getAllAdjustedQuadsForContentPageElement(selector) {
+  return SpecialPowers.spawn(
+    gBrowser.selectedBrowser,
+    [selector],
+    _selector => {
+      const { require } = ChromeUtils.import(
+        "resource://devtools/shared/Loader.jsm"
+      );
+      const { getAdjustedQuads } = require("devtools/shared/layout/utils");
+
+      let document = content.document;
+      if (Array.isArray(_selector)) {
+        while (_selector.length > 1) {
+          const str = _selector.shift();
+          const iframe = document.querySelector(str);
+          document = iframe.contentWindow.document;
+        }
+        _selector = _selector.shift();
+      }
+      const node = document.querySelector(_selector);
+
+      const regions = {};
+      for (const boxType of ["content", "padding", "border", "margin"]) {
+        regions[boxType] = getAdjustedQuads(content, node, boxType);
+      }
+
+      return regions;
+    }
+  );
+}
+
+/**
+ * Assert that the box-model highlighter's current position corresponds to the
+ * given node boxquads.
+ *
+ * @param {HighlighterTestFront} highlighterTestFront
+ * @param {String} selector The node selector to get the boxQuads from
+ */
+async function isNodeCorrectlyHighlighted(highlighterTestFront, selector) {
+  const boxModel = await highlighterTestFront.getBoxModelStatus();
+  const regions = await getAllAdjustedQuadsForContentPageElement(selector);
+
+  for (const boxType of ["content", "padding", "border", "margin"]) {
+    const [quad] = regions[boxType];
+    for (const point in boxModel[boxType].points) {
+      is(
+        boxModel[boxType].points[point].x,
+        quad[point].x,
+        `${selector} ${boxType} point ${point} x coordinate is correct`
+      );
+      is(
+        boxModel[boxType].points[point].y,
+        quad[point].y,
+        `${selector} ${boxType} point ${point} y coordinate is correct`
+      );
+    }
   }
 }

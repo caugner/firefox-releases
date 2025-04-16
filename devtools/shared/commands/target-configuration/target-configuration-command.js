@@ -61,49 +61,29 @@ class TargetConfigurationCommand {
   }
 
   async isJavascriptEnabled() {
-    if (
-      this._hasTargetWatcherSupport() &&
-      // `javascriptEnabled` is first read by the target and then forwarded by
-      // the toolbox to the TargetConfigurationCommand, so it might be undefined at this
-      // point.
-      typeof this.configuration.javascriptEnabled !== "undefined"
-    ) {
-      return this.configuration.javascriptEnabled;
+    // If we don't have target watcher support, we can't get this value, so just
+    // fall back to true. Only content tab targets can update javascriptEnabled
+    // and all should have watcher support.
+    if (!this._hasTargetWatcherSupport()) {
+      return true;
     }
 
-    // If the TargetConfigurationActor does not know the value yet, or if the target don't
-    // support the Watcher + configuration actor, fallback on the initial value cached by
-    // the target front.
-    return this._commands.targetCommand.targetFront._javascriptEnabled;
-  }
+    // @backward-compat { version 91 } Old servers handled javascriptEnabled in
+    //                  the content process.
+    const { targetFront } = this._commands.targetCommand;
+    if (!targetFront.traits.javascriptEnabledHandledInParent) {
+      // If available, read the value in the configuration.
+      if (typeof this.configuration.javascriptEnabled !== "undefined") {
+        return this.configuration.javascriptEnabled;
+      }
 
-  /**
-   * Enable or disable touch events simulation
-   *
-   * @param {String|null} flag: The value to set for the touchEventsOverride flag.
-   *                      Pass null to reset the flag to its original value.
-   * @returns {Boolean} Returns true if the page needs to be reloaded (so the page can
-   *                    acknowledge the new state).
-   */
-  async setTouchEventsOverride(flag) {
-    // We need to set the flag on the parent process
-    await this.updateConfiguration({
-      touchEventsOverride: flag,
-    });
+      // If the TargetConfigurationActor does not know the value yet, fallback
+      // on the initial value cached by the target front.
+      return targetFront._javascriptEnabled;
+    }
 
-    // And start the touch simulation within the content process.
-    // Note that this only handle current top-level document. When Fission is enabled, this
-    // doesn't enable touch simulation in remote iframes (See Bug 1704028).
-    // This also does not handle further navigation to a different origin (aka target switch),
-    // which should be fixed in Bug 1704029.
-    const responsiveFront = await this._commands.targetCommand.targetFront.getFront(
-      "responsive"
-    );
-    const reloadNeeded = await responsiveFront.toggleTouchSimulator({
-      enable: flag === "enabled",
-    });
-
-    return reloadNeeded;
+    const front = await this.getFront();
+    return front.isJavascriptEnabled();
   }
 
   /**

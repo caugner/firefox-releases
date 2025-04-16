@@ -21,7 +21,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   RecentlyClosedTabsAndWindowsMenuUtils:
     "resource:///modules/sessionstore/RecentlyClosedTabsAndWindowsMenuUtils.jsm",
   ShortcutUtils: "resource://gre/modules/ShortcutUtils.jsm",
-  CharsetMenu: "resource://gre/modules/CharsetMenu.jsm",
   PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
   Sanitizer: "resource:///modules/Sanitizer.jsm",
   SessionStore: "resource:///modules/sessionstore/SessionStore.jsm",
@@ -51,6 +50,13 @@ XPCOMUtils.defineLazyPreferenceGetter(
   this,
   "screenshotsDisabled",
   kPrefScreenshots,
+  false
+);
+
+XPCOMUtils.defineLazyPreferenceGetter(
+  this,
+  "SCREENSHOT_BROWSER_COMPONENT",
+  "screenshots.browser.component.enabled",
   false
 );
 
@@ -117,17 +123,6 @@ const CustomizableWidgets = [
       let panelview = event.target;
       let document = panelview.ownerDocument;
       let window = document.defaultView;
-
-      // While we support this panel for both Proton and non-Proton versions
-      // of the AppMenu, we only want to show icons for the non-Proton
-      // version. When Proton ships and we remove the non-Proton variant,
-      // we can remove the subviewbutton-iconic classes from the markup.
-      if (window.PanelUI.protonAppMenuEnabled) {
-        let toolbarbuttons = panelview.querySelectorAll("toolbarbutton");
-        for (let toolbarbutton of toolbarbuttons) {
-          toolbarbutton.classList.remove("subviewbutton-iconic");
-        }
-      }
 
       PanelMultiView.getViewNode(
         document,
@@ -200,14 +195,15 @@ const CustomizableWidgets = [
       let panelview = event.target;
       let document = event.target.ownerDocument;
       let window = document.defaultView;
-      let viewType =
-        panelview.id == this.recentlyClosedTabsPanel ? "Tabs" : "Windows";
 
       this._panelMenuView.clearAllContents(panelview);
 
-      let utils = RecentlyClosedTabsAndWindowsMenuUtils;
-      let method = `get${viewType}Fragment`;
-      let fragment = utils[method](window, "toolbarbutton", true);
+      let getFragment =
+        panelview.id == this.recentlyClosedTabsPanel
+          ? RecentlyClosedTabsAndWindowsMenuUtils.getTabsFragment
+          : RecentlyClosedTabsAndWindowsMenuUtils.getWindowsFragment;
+
+      let fragment = getFragment(window, "toolbarbutton", true);
       let elementCount = fragment.childElementCount;
       this._panelMenuView._setEmptyPopupStatus(panelview, !elementCount);
       if (!elementCount) {
@@ -225,10 +221,7 @@ const CustomizableWidgets = [
         element.classList.add("subviewbutton");
         if (element.classList.contains("restoreallitem")) {
           footer = element;
-          element.classList.add(
-            "subviewbutton-iconic",
-            "panel-subview-footer-button"
-          );
+          element.classList.add("panel-subview-footer-button");
         } else {
           element.classList.add("subviewbutton-iconic", "bookmark-item");
         }
@@ -438,174 +431,9 @@ const CustomizableWidgets = [
   },
   {
     id: "characterencoding-button",
-    label: "characterencoding-button2.label",
-    type: "view",
-    viewId: "PanelUI-characterEncodingView",
-    tooltiptext: "characterencoding-button2.tooltiptext",
-    maybeDisableMenu(aDocument) {
-      let window = aDocument.defaultView;
-      return !(
-        window.gBrowser &&
-        window.gBrowser.selectedBrowser.mayEnableCharacterEncodingMenu
-      );
-    },
-    populateList(aDocument, aContainerId, aSection) {
-      let containerElem = aDocument.getElementById(aContainerId);
-
-      containerElem.addEventListener("command", this.onCommand);
-
-      let list = this.charsetInfo[aSection];
-
-      for (let item of list) {
-        let elem = aDocument.createXULElement("toolbarbutton");
-        elem.setAttribute("label", item.label);
-        elem.setAttribute("type", "checkbox");
-        elem.section = aSection;
-        elem.value = item.value;
-        elem.setAttribute("class", "subviewbutton");
-        containerElem.appendChild(elem);
-      }
-    },
-    updateCurrentCharset(aDocument) {
-      let currentCharset =
-        aDocument.defaultView.gBrowser.selectedBrowser.characterSet;
-      let {
-        charsetAutodetected,
-      } = aDocument.defaultView.gBrowser.selectedBrowser;
-      currentCharset = CharsetMenu.foldCharset(
-        currentCharset,
-        charsetAutodetected
-      );
-
-      let pinnedContainer = aDocument.getElementById(
-        "PanelUI-characterEncodingView-pinned"
-      );
-      let charsetContainer = aDocument.getElementById(
-        "PanelUI-characterEncodingView-charsets"
-      );
-      let elements = [
-        ...pinnedContainer.children,
-        ...charsetContainer.children,
-      ];
-
-      this._updateElements(elements, currentCharset);
-    },
-    _updateElements(aElements, aCurrentItem) {
-      if (!aElements.length) {
-        return;
-      }
-      let disabled = this.maybeDisableMenu(aElements[0].ownerDocument);
-      for (let elem of aElements) {
-        if (disabled) {
-          elem.setAttribute("disabled", "true");
-        } else {
-          elem.removeAttribute("disabled");
-        }
-        if (elem.value.toLowerCase() == aCurrentItem.toLowerCase()) {
-          elem.setAttribute("checked", "true");
-        } else {
-          elem.removeAttribute("checked");
-        }
-      }
-    },
-    onViewShowing(aEvent) {
-      if (!this._inited) {
-        this.onInit();
-      }
-      let document = aEvent.target.ownerDocument;
-
-      if (
-        !document.getElementById("PanelUI-characterEncodingView-pinned")
-          .firstChild
-      ) {
-        this.populateList(
-          document,
-          "PanelUI-characterEncodingView-pinned",
-          "pinnedCharsets"
-        );
-        this.populateList(
-          document,
-          "PanelUI-characterEncodingView-charsets",
-          "otherCharsets"
-        );
-      }
-
-      this.updateCurrentCharset(document);
-    },
+    l10nId: "repair-text-encoding-button",
     onCommand(aEvent) {
-      let node = aEvent.target;
-      if (!node.hasAttribute || !node.section) {
-        return;
-      }
-
-      let window = node.ownerGlobal;
-      let value = node.value;
-
-      window.BrowserSetForcedCharacterSet(value);
-    },
-    onCreated(aNode) {
-      let document = aNode.ownerDocument;
-
-      let updateButton = () => {
-        if (this.maybeDisableMenu(document)) {
-          aNode.setAttribute("disabled", "true");
-        } else {
-          aNode.removeAttribute("disabled");
-        }
-      };
-
-      let getPanel = () => {
-        let { PanelUI } = document.ownerGlobal;
-        return PanelUI.overflowPanel;
-      };
-
-      if (
-        CustomizableUI.getAreaType(this.currentArea) ==
-        CustomizableUI.TYPE_MENU_PANEL
-      ) {
-        getPanel().addEventListener("popupshowing", updateButton);
-      }
-
-      let listener = {
-        onWidgetAdded: (aWidgetId, aArea) => {
-          if (aWidgetId != this.id) {
-            return;
-          }
-          if (
-            CustomizableUI.getAreaType(aArea) == CustomizableUI.TYPE_MENU_PANEL
-          ) {
-            getPanel().addEventListener("popupshowing", updateButton);
-          }
-        },
-        onWidgetRemoved: (aWidgetId, aPrevArea) => {
-          if (aWidgetId != this.id) {
-            return;
-          }
-          aNode.removeAttribute("disabled");
-          if (
-            CustomizableUI.getAreaType(aPrevArea) ==
-            CustomizableUI.TYPE_MENU_PANEL
-          ) {
-            getPanel().removeEventListener("popupshowing", updateButton);
-          }
-        },
-        onWidgetInstanceRemoved: (aWidgetId, aDoc) => {
-          if (aWidgetId != this.id || aDoc != document) {
-            return;
-          }
-
-          CustomizableUI.removeListener(listener);
-          getPanel().removeEventListener("popupshowing", updateButton);
-        },
-      };
-      CustomizableUI.addListener(listener);
-      this.onInit();
-    },
-    onInit() {
-      this._inited = true;
-      if (!this.charsetInfo) {
-        this.charsetInfo = CharsetMenu.getData();
-      }
+      aEvent.view.BrowserForceEncodingDetection();
     },
   },
   {
@@ -628,18 +456,6 @@ if (Services.prefs.getBoolPref("identity.fxaccounts.enabled")) {
     onViewShowing(aEvent) {
       let panelview = aEvent.target;
       let doc = panelview.ownerDocument;
-      let window = doc.defaultView;
-
-      // While we support this panel for both Proton and non-Proton versions
-      // of the AppMenu, we only want to show icons for the non-Proton
-      // version. When Proton ships and we remove the non-Proton variant,
-      // we can remove the subviewbutton-iconic classes from the markup.
-      if (window.PanelUI.protonAppMenuEnabled) {
-        let toolbarbuttons = panelview.querySelectorAll("toolbarbutton");
-        for (let toolbarbutton of toolbarbuttons) {
-          toolbarbutton.classList.remove("subviewbutton-iconic");
-        }
-      }
 
       let syncNowBtn = panelview.querySelector(".syncnow-label");
       let l10nId = syncNowBtn.getAttribute(
@@ -668,20 +484,28 @@ if (!screenshotsDisabled) {
     id: "screenshot-button",
     l10nId: "screenshot-toolbarbutton",
     onCommand(aEvent) {
-      Services.obs.notifyObservers(null, "menuitem-screenshot");
+      if (!SCREENSHOT_BROWSER_COMPONENT) {
+        Services.obs.notifyObservers(null, "menuitem-screenshot-extension");
+      }
     },
     onCreated(aNode) {
-      this.screenshotNode = aNode;
-      this.screenshotNode.ownerGlobal.MozXULElement.insertFTLIfNeeded(
+      aNode.ownerGlobal.MozXULElement.insertFTLIfNeeded(
         "browser/screenshots.ftl"
       );
       Services.obs.addObserver(this, "toggle-screenshot-disable");
     },
     observe(subj, topic, data) {
+      let document = subj.document;
+      let button = document.getElementById("screenshot-button");
+
+      if (!button) {
+        return;
+      }
+
       if (data == "true") {
-        this.screenshotNode.setAttribute("disabled", "true");
+        button.setAttribute("disabled", "true");
       } else {
-        this.screenshotNode.removeAttribute("disabled");
+        button.removeAttribute("disabled");
       }
     },
   });

@@ -161,6 +161,9 @@ pref("xpinstall.whitelist.add", "https://addons.mozilla.org");
 pref("extensions.langpacks.signatures.required", true);
 pref("xpinstall.signatures.required", true);
 
+// Use blocklist v2 until blocklist v3 is enabled on Android - bug 1639050
+pref("extensions.blocklist.useMLBF", false);
+
 // Disable add-ons that are not installed by the user in all scopes by default (See the SCOPE
 // constants in AddonManager.jsm for values to use here, and Bug 1405528 for a rationale).
 pref("extensions.autoDisableScopes", 15);
@@ -219,10 +222,6 @@ pref("accessibility.typeaheadfind.linksonly", false);
 pref("accessibility.typeaheadfind.casesensitive", 0);
 pref("accessibility.browsewithcaret_shortcut.enabled", false);
 pref("findbar.matchdiacritics", 0);
-
-// Whether the character encoding menu is under the main Firefox button. This
-// preference is a string so that localizers can alter it.
-pref("browser.menu.showCharacterEncoding", "chrome://browser/locale/browser.properties");
 
 // SSL error page behaviour
 pref("browser.ssl_override_behavior", 2);
@@ -394,9 +393,6 @@ pref("apz.overscroll.enabled", true);
 pref("apz.second_tap_tolerance", "0.3");
 pref("apz.touch_move_tolerance", "0.03");
 pref("apz.touch_start_tolerance", "0.06");
-
-// Enable the Visual Viewport API
-pref("dom.visualviewport.enabled", true);
 
 pref("layers.progressive-paint", true);
 pref("layers.low-precision-buffer", true);

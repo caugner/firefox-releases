@@ -1499,16 +1499,23 @@ void nsPresContext::ContentLanguageChanged() {
                                RestyleHint::RecascadeSubtree());
 }
 
-bool nsPresContext::RegisterManagedPostRefreshObserver(
-    mozilla::ManagedPostRefreshObserver* aObserver) {
+void nsPresContext::RegisterManagedPostRefreshObserver(
+    ManagedPostRefreshObserver* aObserver) {
+  if (MOZ_UNLIKELY(!mPresShell)) {
+    // If we're detached from our pres shell already, refuse to keep observer
+    // around, as that'd create a cycle.
+    RefPtr<ManagedPostRefreshObserver> obs = aObserver;
+    obs->Cancel();
+    return;
+  }
+
   RefreshDriver()->AddPostRefreshObserver(
       static_cast<nsAPostRefreshObserver*>(aObserver));
   mManagedPostRefreshObservers.AppendElement(aObserver);
-  return true;
 }
 
 void nsPresContext::UnregisterManagedPostRefreshObserver(
-    mozilla::ManagedPostRefreshObserver* aObserver) {
+    ManagedPostRefreshObserver* aObserver) {
   RefreshDriver()->RemovePostRefreshObserver(
       static_cast<nsAPostRefreshObserver*>(aObserver));
   DebugOnly<bool> removed =
@@ -1688,7 +1695,7 @@ void nsPresContext::SetPrintSettings(nsIPrintSettings* aPrintSettings) {
     return;
   }
 
-  // set the presentation context to the value in the print settings
+  // Set the presentation context to the value in the print settings.
   mDrawColorBackground = mPrintSettings->GetPrintBGColors();
   mDrawImageBackground = mPrintSettings->GetPrintBGImages();
 
@@ -2570,7 +2577,7 @@ void nsPresContext::SetVisibleArea(const nsRect& r) {
       AdjustSizeForViewportUnits();
     }
     // Visible area does not affect media queries when paginated.
-    if (!IsPaginated()) {
+    if (!IsRootPaginatedDocument()) {
       MediaFeatureValuesChanged(
           {mozilla::MediaFeatureChangeReason::ViewportChange},
           MediaFeatureChangePropagation::JustThisDocument);

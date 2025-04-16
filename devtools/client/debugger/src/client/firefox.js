@@ -8,32 +8,58 @@ import {
   createPause,
   prepareSourcePayload,
 } from "./firefox/create";
-import { features, prefs } from "../utils/prefs";
+import { features } from "../utils/prefs";
 
 import { recordEvent } from "../utils/telemetry";
 import sourceQueue from "../utils/source-queue";
 
 let actions;
+let commands;
 let targetCommand;
 let resourceCommand;
 
-export async function onConnect(commands, _resourceCommand, _actions, store) {
+export async function onConnect(_commands, _resourceCommand, _actions, store) {
   actions = _actions;
-  targetCommand = commands.targetCommand;
+  commands = _commands;
+  targetCommand = _commands.targetCommand;
   resourceCommand = _resourceCommand;
 
   setupCommands(commands);
   setupCreate({ store });
+
   sourceQueue.initialize(actions);
+
+  const { descriptorFront } = commands;
   const { targetFront } = targetCommand;
-  if (targetFront.isBrowsingContext || targetFront.isParentProcess) {
+  if (
+    targetFront.isBrowsingContext ||
+    descriptorFront.isParentProcessDescriptor
+  ) {
     targetCommand.listenForWorkers = true;
-    if (targetFront.localTab && features.windowlessServiceWorkers) {
+    if (descriptorFront.isLocalTab && features.windowlessServiceWorkers) {
       targetCommand.listenForServiceWorkers = true;
       targetCommand.destroyServiceWorkersOnNavigation = true;
     }
     await targetCommand.startListening();
   }
+  // `pauseWorkersUntilAttach` is one option set when the debugger panel is opened rather that from the toolbox.
+  // The reason is to support early breakpoints in workers, which will force the workers to pause
+  // and later on (when TargetMixin.attachThread is called) resume worker execution, after passing the breakpoints.
+  // We only observe workers when the debugger panel is opened (see the few lines before and listenForWorkers = true).
+  // So if we were passing `pauseWorkersUntilAttach=true` from the toolbox code, workers would freeze as we would not watch
+  // for their targets and not resume them.
+  const options = { pauseWorkersUntilAttach: true };
+  await commands.threadConfigurationCommand.updateConfiguration(options);
+
+  // We should probably only pass descriptor informations from here
+  // so only pass if that's a WebExtension toolbox.
+  // And let actions.willNavigate/NAVIGATE pass the current/selected thread
+  // from onTargetAvailable
+  await actions.connect(
+    targetFront.url,
+    targetFront.threadFront.actor,
+    targetFront.isWebExtension
+  );
 
   await targetCommand.watchTargets(
     targetCommand.ALL_TYPES,
@@ -82,7 +108,7 @@ export function onDisconnect() {
 }
 
 async function onTargetAvailable({ targetFront, isTargetSwitching }) {
-  const isBrowserToolbox = targetCommand.targetFront.isParentProcess;
+  const isBrowserToolbox = commands.descriptorFront.isParentProcessDescriptor;
   const isNonTopLevelFrameTarget =
     !targetFront.isTopLevel &&
     targetFront.targetType === targetCommand.TYPES.FRAME;
@@ -100,29 +126,12 @@ async function onTargetAvailable({ targetFront, isTargetSwitching }) {
     return;
   }
 
-  if (isTargetSwitching) {
-    // Simulate navigation actions when target switching.
-    // The will-navigate event will be missed when using target switching,
-    // however `navigate` corresponds more or less to the load event, so it
-    // should still be received on the new target.
-    actions.willNavigate({ url: targetFront.url });
-  }
-
   // At this point, we expect the target and its thread to be attached.
   const { threadFront } = targetFront;
   if (!threadFront) {
     console.error("The thread for", targetFront, "isn't attached.");
     return;
   }
-
-  targetFront.on("will-navigate", actions.willNavigate);
-
-  await threadFront.reconfigure({
-    observeAsmJS: true,
-    pauseWorkersUntilAttach: true,
-    skipBreakpoints: prefs.skipPausing,
-    logEventBreakpoints: prefs.logEventBreakpoints,
-  });
 
   // Retrieve possible event listener breakpoints
   actions.getEventListenerBreakpointTypes().catch(e => console.error(e));
@@ -131,19 +140,10 @@ async function onTargetAvailable({ targetFront, isTargetSwitching }) {
   // they are active once attached.
   actions.addEventListenerBreakpoints([]).catch(e => console.error(e));
 
-  await actions.connect(
-    targetFront.url,
-    threadFront.actor,
-    targetFront.isWebExtension
-  );
-
   await actions.addTarget(targetFront);
 }
 
 function onTargetDestroyed({ targetFront }) {
-  if (targetFront.isTopLevel) {
-    targetFront.off("will-navigate", actions.willNavigate);
-  }
   actions.removeTarget(targetFront);
 }
 
@@ -167,17 +167,22 @@ async function onBreakpointAvailable(breakpoints) {
     const threadFront = await resource.targetFront.getFront("thread");
     if (resource.state == "paused") {
       const pause = await createPause(threadFront.actor, resource);
-      actions.paused(pause);
+      await actions.paused(pause);
       recordEvent("pause", { reason: resource.why.type });
     } else if (resource.state == "resumed") {
-      actions.resumed(threadFront.actorID);
+      await actions.resumed(threadFront.actorID);
     }
   }
 }
 
 function onDocumentEventAvailable(events) {
   for (const event of events) {
-    if (event.name == "dom-complete") {
+    // Only consider top level document, and ignore remote iframes top document
+    if (!event.targetFront.isTopLevel) continue;
+
+    if (event.name == "will-navigate") {
+      actions.willNavigate({ url: event.newURI });
+    } else if (event.name == "dom-complete") {
       actions.navigated();
     }
   }

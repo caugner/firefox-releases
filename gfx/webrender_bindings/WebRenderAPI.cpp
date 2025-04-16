@@ -100,6 +100,8 @@ class NewRenderer : public RendererEvent {
       return;
     }
 
+    compositor->MakeCurrent();
+
     *mBackend = compositor->BackendType();
     *mCompositor = compositor->CompositorType();
     *mUseANGLE = compositor->UseANGLE();
@@ -168,7 +170,8 @@ class NewRenderer : public RendererEvent {
             &wrRenderer, mMaxTextureSize, &errorMessage,
             StaticPrefs::gfx_webrender_enable_gpu_markers_AtStartup(),
             panic_on_gl_error, picTileWidth, picTileHeight,
-            gfx::gfxVars::WebRenderRequiresHardwareDriver())) {
+            gfx::gfxVars::WebRenderRequiresHardwareDriver(),
+            StaticPrefs::gfx_webrender_low_quality_pinch_zoom_AtStartup())) {
       // wr_window_new puts a message into gfxCriticalNote if it returns false
       MOZ_ASSERT(errorMessage);
       mError->AssignASCII(errorMessage);
@@ -306,10 +309,10 @@ bool TransactionBuilder::IsRenderedFrameInvalidated() const {
 void TransactionBuilder::SetDocumentView(
     const LayoutDeviceIntRect& aDocumentRect) {
   wr::DeviceIntRect wrDocRect;
-  wrDocRect.origin.x = aDocumentRect.x;
-  wrDocRect.origin.y = aDocumentRect.y;
-  wrDocRect.size.width = aDocumentRect.width;
-  wrDocRect.size.height = aDocumentRect.height;
+  wrDocRect.min.x = aDocumentRect.x;
+  wrDocRect.min.y = aDocumentRect.y;
+  wrDocRect.max.x = aDocumentRect.x + aDocumentRect.width;
+  wrDocRect.max.y = aDocumentRect.y + aDocumentRect.height;
   wr_transaction_set_document_view(mTxn, &wrDocRect);
 }
 
@@ -1056,31 +1059,6 @@ wr::WrClipChainId DisplayListBuilder::DefineClipChain(
   return wr::WrClipChainId{clipchainId};
 }
 
-wr::WrClipId DisplayListBuilder::DefineClip(
-    const Maybe<wr::WrSpaceAndClip>& aParent, const wr::LayoutRect& aClipRect,
-    const nsTArray<wr::ComplexClipRegion>* aComplex) {
-  CancelGroup();
-
-  WrClipId clipId;
-  if (aParent) {
-    clipId = wr_dp_define_clip_with_parent_clip(
-        mWrState, aParent.ptr(), aClipRect,
-        aComplex ? aComplex->Elements() : nullptr,
-        aComplex ? aComplex->Length() : 0);
-  } else {
-    clipId = wr_dp_define_clip_with_parent_clip_chain(
-        mWrState, &mCurrentSpaceAndClipChain, aClipRect,
-        aComplex ? aComplex->Elements() : nullptr,
-        aComplex ? aComplex->Length() : 0);
-  }
-
-  WRDL_LOG("DefineClip id=%zu p=%s r=%s complex=%zu\n", mWrState, clipId.id,
-           aParent ? ToString(aParent->clip.id).c_str() : "(nil)",
-           ToString(aClipRect).c_str(), aComplex ? aComplex->Length() : 0);
-
-  return clipId;
-}
-
 wr::WrClipId DisplayListBuilder::DefineImageMaskClip(
     const wr::ImageMask& aMask, const nsTArray<wr::LayoutPoint>& aPoints,
     wr::FillRule aFillRule) {
@@ -1094,20 +1072,31 @@ wr::WrClipId DisplayListBuilder::DefineImageMaskClip(
 }
 
 wr::WrClipId DisplayListBuilder::DefineRoundedRectClip(
-    const wr::ComplexClipRegion& aComplex) {
+    Maybe<wr::WrSpatialId> aSpace, const wr::ComplexClipRegion& aComplex) {
   CancelGroup();
 
-  WrClipId clipId = wr_dp_define_rounded_rect_clip_with_parent_clip_chain(
-      mWrState, &mCurrentSpaceAndClipChain, aComplex);
+  WrClipId clipId;
+  if (aSpace) {
+    clipId = wr_dp_define_rounded_rect_clip(mWrState, *aSpace, aComplex);
+  } else {
+    clipId = wr_dp_define_rounded_rect_clip_with_parent_clip_chain(
+        mWrState, &mCurrentSpaceAndClipChain, aComplex);
+  }
 
   return clipId;
 }
 
-wr::WrClipId DisplayListBuilder::DefineRectClip(wr::LayoutRect aClipRect) {
+wr::WrClipId DisplayListBuilder::DefineRectClip(Maybe<wr::WrSpatialId> aSpace,
+                                                wr::LayoutRect aClipRect) {
   CancelGroup();
 
-  WrClipId clipId = wr_dp_define_rect_clip_with_parent_clip_chain(
-      mWrState, &mCurrentSpaceAndClipChain, aClipRect);
+  WrClipId clipId;
+  if (aSpace) {
+    clipId = wr_dp_define_rect_clip(mWrState, *aSpace, aClipRect);
+  } else {
+    clipId = wr_dp_define_rect_clip_with_parent_clip_chain(
+        mWrState, &mCurrentSpaceAndClipChain, aClipRect);
+  }
 
   return clipId;
 }
@@ -1207,8 +1196,8 @@ void DisplayListBuilder::PushRoundedRect(const wr::LayoutRect& aBounds,
   // Made the borders thicker than one half the width/height, to avoid
   // little white dots at the center at some magnifications.
   wr::BorderSide side = {aColor, wr::BorderStyle::Solid};
-  float h = aBounds.size.width * 0.6f;
-  float v = aBounds.size.height * 0.6f;
+  float h = aBounds.width() * 0.6f;
+  float v = aBounds.height() * 0.6f;
   wr::LayoutSideOffsets widths = {v, h, v, h};
   wr::BorderRadius radii = {{h, v}, {h, v}, {h, v}, {h, v}};
 
@@ -1267,7 +1256,7 @@ void DisplayListBuilder::PushBackdropFilter(
   WRDL_LOG("PushBackdropFilter b=%s c=%s\n", mWrState,
            ToString(aBounds).c_str(), ToString(clip).c_str());
 
-  auto clipId = DefineRoundedRectClip(aRegion);
+  auto clipId = DefineRoundedRectClip(Nothing(), aRegion);
   auto spaceAndClip = WrSpaceAndClip{mCurrentSpaceAndClipChain.space, clipId};
 
   wr_dp_push_backdrop_filter_with_parent_clip(
@@ -1504,7 +1493,7 @@ void DisplayListBuilder::SuspendClipLeafMerging() {
     mSuspendedClipChainLeaf = mClipChainLeaf;
     mSuspendedSpaceAndClipChain = Some(mCurrentSpaceAndClipChain);
 
-    auto clipId = DefineRectClip(*mClipChainLeaf);
+    auto clipId = DefineRectClip(Nothing(), *mClipChainLeaf);
     auto clipChainId = DefineClipChain({clipId}, true);
 
     mCurrentSpaceAndClipChain.clip_chain = clipChainId.id;

@@ -44,6 +44,7 @@
 #include "MediaStreamWindowCapturer.h"
 #include "MediaTrack.h"
 #include "MediaTrackList.h"
+#include "Navigator.h"
 #include "TimeRanges.h"
 #include "VideoFrameContainer.h"
 #include "VideoOutput.h"
@@ -75,6 +76,7 @@
 #include "mozilla/dom/HTMLSourceElement.h"
 #include "mozilla/dom/HTMLVideoElement.h"
 #include "mozilla/dom/MediaControlUtils.h"
+#include "mozilla/dom/MediaDevices.h"
 #include "mozilla/dom/MediaEncryptedEvent.h"
 #include "mozilla/dom/MediaErrorBinding.h"
 #include "mozilla/dom/MediaSource.h"
@@ -160,6 +162,7 @@ using namespace mozilla::dom::HTMLMediaElement_Binding;
 namespace mozilla::dom {
 
 using AudibleState = AudioChannelService::AudibleState;
+using SinkInfoPromise = MediaDevices::SinkInfoPromise;
 
 // Number of milliseconds between progress events as defined by spec
 static const uint32_t PROGRESS_MS = 350;
@@ -1178,6 +1181,8 @@ void ImplCycleCollectionTraverse(nsCycleCollectionTraversalCallback& aCallback,
                               "mFinishWhenEndedLoadingSrc", aFlags);
   ImplCycleCollectionTraverse(aCallback, aField.mFinishWhenEndedAttrStream,
                               "mFinishWhenEndedAttrStream", aFlags);
+  ImplCycleCollectionTraverse(aCallback, aField.mFinishWhenEndedMediaSource,
+                              "mFinishWhenEndedMediaSource", aFlags);
 }
 
 void ImplCycleCollectionUnlink(HTMLMediaElement::OutputMediaStream& aField) {
@@ -1185,6 +1190,7 @@ void ImplCycleCollectionUnlink(HTMLMediaElement::OutputMediaStream& aField) {
   ImplCycleCollectionUnlink(aField.mLiveTracks);
   ImplCycleCollectionUnlink(aField.mFinishWhenEndedLoadingSrc);
   ImplCycleCollectionUnlink(aField.mFinishWhenEndedAttrStream);
+  ImplCycleCollectionUnlink(aField.mFinishWhenEndedMediaSource);
 }
 
 NS_IMPL_ADDREF_INHERITED(HTMLMediaElement::MediaElementTrackSource,
@@ -3640,7 +3646,8 @@ void HTMLMediaElement::UpdateOutputTrackSources() {
     }
 
     if (!mOutputStreams[i].mFinishWhenEndedLoadingSrc &&
-        !mOutputStreams[i].mFinishWhenEndedAttrStream) {
+        !mOutputStreams[i].mFinishWhenEndedAttrStream &&
+        !mOutputStreams[i].mFinishWhenEndedMediaSource) {
       // This finish-when-ended stream has not seen any source loaded yet.
       // Update the loading src if it's time.
       if (!IsPlaybackEnded()) {
@@ -3648,6 +3655,8 @@ void HTMLMediaElement::UpdateOutputTrackSources() {
           mOutputStreams[i].mFinishWhenEndedLoadingSrc = mLoadingSrc;
         } else if (mSrcAttrStream) {
           mOutputStreams[i].mFinishWhenEndedAttrStream = mSrcAttrStream;
+        } else if (mSrcMediaSource) {
+          mOutputStreams[i].mFinishWhenEndedMediaSource = mSrcMediaSource;
         }
       }
       continue;
@@ -3661,6 +3670,10 @@ void HTMLMediaElement::UpdateOutputTrackSources() {
     }
     if (!IsPlaybackEnded() &&
         mSrcAttrStream == mOutputStreams[i].mFinishWhenEndedAttrStream) {
+      continue;
+    }
+    if (!IsPlaybackEnded() &&
+        mSrcMediaSource == mOutputStreams[i].mFinishWhenEndedMediaSource) {
       continue;
     }
     LOG(LogLevel::Debug,
@@ -3809,8 +3822,12 @@ already_AddRefed<DOMMediaStream> HTMLMediaElement::CaptureStreamInternal(
     if (mSrcAttrStream) {
       out->mFinishWhenEndedAttrStream = mSrcAttrStream;
     }
+    if (mSrcMediaSource) {
+      out->mFinishWhenEndedMediaSource = mSrcMediaSource;
+    }
     MOZ_ASSERT(out->mFinishWhenEndedLoadingSrc ||
-               out->mFinishWhenEndedAttrStream);
+               out->mFinishWhenEndedAttrStream ||
+               out->mFinishWhenEndedMediaSource);
   }
 
   if (aStreamCaptureType == StreamCaptureType::CAPTURE_AUDIO) {
@@ -7479,9 +7496,13 @@ already_AddRefed<Promise> HTMLMediaElement::SetSinkId(const nsAString& aSinkId,
     return promise.forget();
   }
 
+  RefPtr<MediaDevices> mediaDevices = win->Navigator()->GetMediaDevices(aRv);
+  if (aRv.Failed()) {
+    return nullptr;
+  }
+
   nsString sinkId(aSinkId);
-  MediaManager::Get()
-      ->GetSinkDevice(win, sinkId)
+  mediaDevices->GetSinkDevice(sinkId)
       ->Then(
           mAbstractMainThread, __func__,
           [self = RefPtr<HTMLMediaElement>(this),
@@ -7539,9 +7560,6 @@ already_AddRefed<Promise> HTMLMediaElement::SetSinkId(const nsAString& aSinkId,
                          "The object can not be found here.");
                      break;
                    }
-                   case NS_ERROR_DOM_MEDIA_NOT_ALLOWED_ERR:
-                     promise->MaybeReject(NS_ERROR_DOM_NOT_ALLOWED_ERR);
-                     break;
                    default:
                      MOZ_ASSERT_UNREACHABLE("Invalid error.");
                  }

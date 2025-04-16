@@ -232,6 +232,8 @@ struct JSRuntime {
    */
   JSRuntime* const parentRuntime;
 
+  bool isMainRuntime() const { return !parentRuntime; }
+
 #ifdef DEBUG
   /* The number of child runtimes that have this runtime as their parent. */
   mozilla::Atomic<size_t> childRuntimeCount;
@@ -924,13 +926,13 @@ struct JSRuntime {
    *
    * The function must be called outside the GC lock.
    */
-  JS_FRIEND_API void* onOutOfMemory(js::AllocFunction allocator,
+  JS_PUBLIC_API void* onOutOfMemory(js::AllocFunction allocator,
                                     arena_id_t arena, size_t nbytes,
                                     void* reallocPtr = nullptr,
                                     JSContext* maybecx = nullptr);
 
   /*  onOutOfMemory but can call OnLargeAllocationFailure. */
-  JS_FRIEND_API void* onOutOfMemoryCanGC(js::AllocFunction allocator,
+  JS_PUBLIC_API void* onOutOfMemoryCanGC(js::AllocFunction allocator,
                                          arena_id_t arena, size_t nbytes,
                                          void* reallocPtr = nullptr);
 
@@ -1180,11 +1182,6 @@ extern mozilla::Atomic<JS::LargeAllocationFailureCallback>
 extern mozilla::Atomic<JS::BuildIdOp> GetBuildId;
 
 extern JS::FilenameValidationCallback gFilenameValidationCallback;
-
-// This callback is set by js::SetHelperThreadTaskCallback and may be null.
-// See comment in jsapi.h.
-// Returns false if the thread pool fails to dispatch.
-extern bool (*HelperThreadTaskCallback)(js::UniquePtr<js::RunnableTask>);
 
 } /* namespace js */
 

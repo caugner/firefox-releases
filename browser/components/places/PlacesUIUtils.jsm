@@ -251,6 +251,8 @@ var PlacesUIUtils = {
   _bookmarkToolbarTelemetryListening: false,
   LAST_USED_FOLDERS_META_KEY: "bookmarks/lastusedfolders",
 
+  lastContextMenuTriggerNode: null,
+
   getFormattedString: function PUIU_getFormattedString(key, params) {
     return bundle.formatStringFromName(key, params);
   },
@@ -324,10 +326,7 @@ var PlacesUIUtils = {
       aParentWindow = Services.wm.getMostRecentWindow(null);
     }
 
-    if (
-      Services.prefs.getBoolPref("browser.proton.modals.enabled", false) &&
-      aParentWindow.gDialogBox
-    ) {
+    if (aParentWindow.gDialogBox) {
       await aParentWindow.gDialogBox.open(dialogURL, aInfo);
     } else {
       aParentWindow.openDialog(dialogURL, "", features, aInfo);
@@ -464,13 +463,7 @@ var PlacesUIUtils = {
   getControllerForCommand(win, command) {
     // A context menu may be built for non-focusable views.  Thus, we first try
     // to look for a view associated with document.popupNode
-    let popupNode;
-    try {
-      popupNode = win.document.popupNode;
-    } catch (e) {
-      // The document went away (bug 797307).
-      return null;
-    }
+    let popupNode = PlacesUIUtils.lastContextMenuTriggerNode;
     if (popupNode) {
       let isManaged = !!popupNode.closest("#managed-bookmarks");
       if (isManaged) {
@@ -1397,19 +1390,14 @@ var PlacesUIUtils = {
       return true;
     }
 
+    PlacesUIUtils.lastContextMenuTriggerNode = menupopup.triggerNode;
+
     let isManaged = !!menupopup.triggerNode.closest("#managed-bookmarks");
     if (isManaged) {
       this.managedPlacesContextShowing(event);
       return true;
     }
-    let document = menupopup.ownerDocument;
-    // TODO: Ideally, we want to simply use menupopup.triggerNode instead of
-    // document.popupNode here, but document.popupNode will be refferred while
-    // building the context menu, set menupopup.triggerNode to document.popupNode
-    // for now. So, if we make not refer to document.popupNode in Places in
-    // bug 1706004, need to modify here as well.
-    document.popupNode = menupopup.triggerNode;
-    menupopup._view = this.getViewForNode(document.popupNode);
+    menupopup._view = this.getViewForNode(menupopup.triggerNode);
     if (!menupopup._view) {
       // This can happen if we try to invoke the context menu on
       // an uninitialized places toolbar. Just bail out:
@@ -1417,7 +1405,7 @@ var PlacesUIUtils = {
       return false;
     }
     if (!this.openInTabClosesMenu) {
-      document
+      menupopup.ownerDocument
         .getElementById("placesContext_open:newtab")
         .setAttribute("closemenu", "single");
     }
@@ -1429,6 +1417,8 @@ var PlacesUIUtils = {
     if (menupopup._view) {
       menupopup._view.destroyContextMenu();
     }
+
+    PlacesUIUtils.lastContextMenuTriggerNode = null;
   },
 
   openSelectionInTabs(event) {
@@ -1439,8 +1429,9 @@ var PlacesUIUtils = {
     if (isManaged) {
       controller = this.managedBookmarksController;
     } else {
-      let document = event.target.ownerDocument;
-      controller = PlacesUIUtils.getViewForNode(document.popupNode).controller;
+      controller = PlacesUIUtils.getViewForNode(
+        PlacesUIUtils.lastContextMenuTriggerNode
+      ).controller;
     }
     controller.openSelectionInTabs(event);
   },

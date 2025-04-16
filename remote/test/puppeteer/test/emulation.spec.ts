@@ -19,6 +19,8 @@ import {
   getTestState,
   setupTestBrowserHooks,
   setupTestPageAndContextHooks,
+  itFailsFirefox,
+  describeFailsFirefox,
 } from './mocha-utils'; // eslint-disable-line import/extensions
 
 describe('Emulation', () => {
@@ -382,6 +384,28 @@ describe('Emulation', () => {
         .emulateVisionDeficiency('invalid')
         .catch((error_) => (error = error_));
       expect(error.message).toBe('Unsupported vision deficiency: invalid');
+    });
+  });
+
+  describe('Page.emulateNetworkConditions', function () {
+    it('should change navigator.connection.effectiveType', async () => {
+      const { page, puppeteer } = getTestState();
+
+      const slow3G = puppeteer.networkConditions['Slow 3G'];
+      const fast3G = puppeteer.networkConditions['Fast 3G'];
+
+      expect(
+        await page.evaluate('window.navigator.connection.effectiveType')
+      ).toBe('4g');
+      await page.emulateNetworkConditions(fast3G);
+      expect(
+        await page.evaluate('window.navigator.connection.effectiveType')
+      ).toBe('3g');
+      await page.emulateNetworkConditions(slow3G);
+      expect(
+        await page.evaluate('window.navigator.connection.effectiveType')
+      ).toBe('2g');
+      await page.emulateNetworkConditions(null);
     });
   });
 });

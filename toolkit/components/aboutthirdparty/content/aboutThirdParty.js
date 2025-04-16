@@ -7,6 +7,9 @@
 const { AppConstants } = ChromeUtils.import(
   "resource://gre/modules/AppConstants.jsm"
 );
+const { ProcessType } = ChromeUtils.import(
+  "resource://gre/modules/ProcessType.jsm"
+);
 const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 
 let AboutThirdParty = null;
@@ -125,7 +128,7 @@ function onClickOpenDir(event) {
 
 function onClickExpand(event) {
   const iconUp = "chrome://global/skin/icons/arrow-up-12.svg";
-  const iconDown = "chrome://global/skin/icons/arrow-dropdown-12.svg";
+  const iconDown = "chrome://global/skin/icons/arrow-down-12.svg";
 
   const card = event.target.closest(".card");
   const button = event.target.closest("button");
@@ -205,10 +208,11 @@ function copyDataToClipboard(aData) {
 }
 
 function correctProcessTypeForFluent(type) {
-  // Convert a process type returned from XRE_GeckoProcessTypeToString()
-  // into a keyword defined in processTypes.ftl
-  const fluentType = type == "tab" ? "web" : type;
-  return "process-type-" + fluentType;
+  // GetProcessTypeString() in UntrustedModulesDataSerializer.cpp converted
+  // the "default" process type to "browser" to send as telemetry.  We revert
+  // it to pass to ProcessType API.
+  const geckoType = type == "browser" ? "default" : type;
+  return ProcessType.fluentNameFromProcessTypeString(geckoType);
 }
 
 function visualizeData(aData) {

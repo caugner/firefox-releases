@@ -180,7 +180,7 @@ size_t nvPair::SizeOfIncludingThis(MallocSizeOf aMallocSizeOf) const {
   return aMallocSizeOf(this) + SizeOfExcludingThis(aMallocSizeOf);
 }
 
-nvFIFO::nvFIFO() : mByteCount(0), mTable() { InitializeStaticHeaders(); }
+nvFIFO::nvFIFO() { InitializeStaticHeaders(); }
 
 nvFIFO::~nvFIFO() { Clear(); }
 
@@ -231,14 +231,7 @@ const nvPair* nvFIFO::operator[](size_t index) const {
   return gStaticHeaders->ObjectAt(index);
 }
 
-Http2BaseCompressor::Http2BaseCompressor()
-    : mOutput(nullptr),
-      mMaxBuffer(kDefaultMaxBuffer),
-      mMaxBufferSetting(kDefaultMaxBuffer),
-      mSetInitialMaxBufferSizeAllowed(true),
-      mPeakSize(0),
-      mPeakCount(0),
-      mDumpTables(false) {
+Http2BaseCompressor::Http2BaseCompressor() {
   mDynamicReporter = new HpackDynamicTableReporter(this);
   RegisterStrongMemoryReporter(mDynamicReporter);
 }
@@ -562,7 +555,8 @@ nsresult Http2Decompressor::OutputHeader(const nsACString& name,
     if (*cPtr == ':') {
       isColonHeader = true;
       break;
-    } else if (*cPtr != ' ' && *cPtr != '\t') {
+    }
+    if (*cPtr != ' ' && *cPtr != '\t') {
       isColonHeader = false;
       break;
     }
@@ -1115,7 +1109,8 @@ nsresult Http2Compressor::EncodeHeaderBlock(
       if (*cPtr == ':') {
         isColonHeader = true;
         break;
-      } else if (*cPtr != ' ' && *cPtr != '\t') {
+      }
+      if (*cPtr != ' ' && *cPtr != '\t') {
         isColonHeader = false;
         break;
       }
@@ -1126,8 +1121,9 @@ nsresult Http2Compressor::EncodeHeaderBlock(
 
     int32_t valueIndex = colonIndex + 1;
 
-    while (valueIndex < crlfIndex && beginBuffer[valueIndex] == ' ')
+    while (valueIndex < crlfIndex && beginBuffer[valueIndex] == ' ') {
       ++valueIndex;
+    }
 
     nsDependentCSubstring value =
         Substring(beginBuffer + valueIndex, beginBuffer + crlfIndex);

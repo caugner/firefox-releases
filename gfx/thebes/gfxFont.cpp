@@ -878,8 +878,8 @@ gfxFont::RoundingFlags gfxFont::GetRoundOffsetsToPixels(
   }
 }
 
-gfxFloat gfxFont::GetGlyphHAdvance(DrawTarget* aDrawTarget, uint16_t aGID) {
-  if (ProvidesGlyphWidths()) {
+gfxFloat gfxFont::GetGlyphAdvance(uint16_t aGID, bool aVertical) {
+  if (!aVertical && ProvidesGlyphWidths()) {
     return GetGlyphWidth(aGID) / 65536.0;
   }
   if (mFUnitsConvFactor < 0.0f) {
@@ -895,7 +895,30 @@ gfxFloat gfxFont::GetGlyphHAdvance(DrawTarget* aDrawTarget, uint16_t aGID) {
   if (!shaper->Initialize()) {
     return 0;
   }
-  return shaper->GetGlyphHAdvance(aGID) / 65536.0;
+  return (aVertical ? shaper->GetGlyphVAdvance(aGID)
+                    : shaper->GetGlyphHAdvance(aGID)) /
+         65536.0;
+}
+
+gfxFloat gfxFont::GetCharAdvance(uint32_t aUnicode, bool aVertical) {
+  uint32_t gid = 0;
+  if (ProvidesGetGlyph()) {
+    gid = GetGlyph(aUnicode, 0);
+  } else {
+    if (!mHarfBuzzShaper) {
+      mHarfBuzzShaper = MakeUnique<gfxHarfBuzzShaper>(this);
+    }
+    gfxHarfBuzzShaper* shaper =
+        static_cast<gfxHarfBuzzShaper*>(mHarfBuzzShaper.get());
+    if (!shaper->Initialize()) {
+      return -1.0;
+    }
+    gid = shaper->GetNominalGlyph(aUnicode);
+  }
+  if (!gid) {
+    return -1.0;
+  }
+  return GetGlyphAdvance(gid, aVertical);
 }
 
 static void CollectLookupsByFeature(hb_face_t* aFace, hb_tag_t aTableTag,
@@ -2543,8 +2566,7 @@ gfxFont::RunMetrics gfxFont::Measure(const gfxTextRun* aTextRun,
   gfxGlyphExtents* extents =
       ((aBoundingBoxType == LOOSE_INK_EXTENTS && !needsGlyphExtents &&
         !aTextRun->HasDetailedGlyphs()) ||
-       (MOZ_UNLIKELY(GetStyle()->sizeAdjust == 0.0)) ||
-       (MOZ_UNLIKELY(GetStyle()->size == 0)))
+       MOZ_UNLIKELY(GetStyle()->AdjustedSizeMustBeZero()))
           ? nullptr
           : GetOrCreateGlyphExtents(aTextRun->GetAppUnitsPerDevUnit());
   double x = 0;
@@ -3665,8 +3687,7 @@ void gfxFont::SanitizeMetrics(gfxFont::Metrics* aMetrics,
   // Even if this font size is zero, this font is created with non-zero size.
   // However, for layout and others, we should return the metrics of zero size
   // font.
-  if (mStyle.size == 0.0 || mStyle.sizeAdjust == 0.0 ||
-      mFontEntry->mSizeAdjust == 0.0) {
+  if (mStyle.AdjustedSizeMustBeZero()) {
     memset(aMetrics, 0, sizeof(gfxFont::Metrics));
     return;
   }
@@ -3996,7 +4017,7 @@ void gfxFont::RemoveGlyphChangeObserver(GlyphChangeObserver* aObserver) {
 
 gfxFontStyle::gfxFontStyle()
     : size(DEFAULT_PIXEL_FONT_SIZE),
-      sizeAdjust(-1.0f),
+      sizeAdjust(0.0f),
       baselineOffset(0.0f),
       languageOverride(NO_FONT_LANGUAGE_OVERRIDE),
       fontSmoothingBackgroundColor(NS_RGBA(0, 0, 0, 0)),
@@ -4005,6 +4026,7 @@ gfxFontStyle::gfxFontStyle()
       style(FontSlantStyle::Normal()),
       variantCaps(NS_FONT_VARIANT_CAPS_NORMAL),
       variantSubSuper(NS_FONT_VARIANT_POSITION_NORMAL),
+      sizeAdjustBasis(uint8_t(FontSizeAdjust::Tag::None)),
       systemFont(true),
       printerFont(false),
       useGrayscaleAntialiasing(false),
@@ -4014,12 +4036,11 @@ gfxFontStyle::gfxFontStyle()
 
 gfxFontStyle::gfxFontStyle(FontSlantStyle aStyle, FontWeight aWeight,
                            FontStretch aStretch, gfxFloat aSize,
-                           float aSizeAdjust, bool aSystemFont,
+                           const FontSizeAdjust& aSizeAdjust, bool aSystemFont,
                            bool aPrinterFont, bool aAllowWeightSynthesis,
                            bool aAllowStyleSynthesis,
                            uint32_t aLanguageOverride)
     : size(aSize),
-      sizeAdjust(aSizeAdjust),
       baselineOffset(0.0f),
       languageOverride(aLanguageOverride),
       fontSmoothingBackgroundColor(NS_RGBA(0, 0, 0, 0)),
@@ -4035,7 +4056,34 @@ gfxFontStyle::gfxFontStyle(FontSlantStyle aStyle, FontWeight aWeight,
       allowSyntheticStyle(aAllowStyleSynthesis),
       noFallbackVariantFeatures(true) {
   MOZ_ASSERT(!mozilla::IsNaN(size));
+
+  switch (aSizeAdjust.tag) {
+    case FontSizeAdjust::Tag::None:
+      sizeAdjust = 0.0f;
+      break;
+    case FontSizeAdjust::Tag::ExHeight:
+      sizeAdjust = aSizeAdjust.AsExHeight();
+      break;
+    case FontSizeAdjust::Tag::CapHeight:
+      sizeAdjust = aSizeAdjust.AsCapHeight();
+      break;
+    case FontSizeAdjust::Tag::ChWidth:
+      sizeAdjust = aSizeAdjust.AsChWidth();
+      break;
+    case FontSizeAdjust::Tag::IcWidth:
+      sizeAdjust = aSizeAdjust.AsIcWidth();
+      break;
+    case FontSizeAdjust::Tag::IcHeight:
+      sizeAdjust = aSizeAdjust.AsIcHeight();
+      break;
+  }
   MOZ_ASSERT(!mozilla::IsNaN(sizeAdjust));
+
+  sizeAdjustBasis = uint8_t(aSizeAdjust.tag);
+  // sizeAdjustBasis is currently a small bitfield, so let's assert that the
+  // tag value was not truncated.
+  MOZ_ASSERT(FontSizeAdjust::Tag(sizeAdjustBasis) == aSizeAdjust.tag,
+             "gfxFontStyle.sizeAdjustBasis too small?");
 
   if (weight > FontWeight(1000)) {
     weight = FontWeight(1000);
@@ -4046,7 +4094,8 @@ gfxFontStyle::gfxFontStyle(FontSlantStyle aStyle, FontWeight aWeight,
 
   if (size >= FONT_MAX_SIZE) {
     size = FONT_MAX_SIZE;
-    sizeAdjust = -1.0f;
+    sizeAdjust = 0.0f;
+    sizeAdjustBasis = uint8_t(FontSizeAdjust::Tag::None);
   } else if (size < 0.0) {
     NS_WARNING("negative font size");
     size = 0.0;
@@ -4108,29 +4157,3 @@ bool gfxFont::TryGetMathTable() {
 
   return !!mMathTable;
 }
-
-/* static */
-void SharedFontList::Initialize() {
-  sEmpty = new SharedFontList();
-
-  for (auto i : IntegerRange(ArrayLength(sSingleGenerics))) {
-    auto type = static_cast<StyleGenericFontFamily>(i);
-    if (type != StyleGenericFontFamily::None) {
-      sSingleGenerics[i] = new SharedFontList(type);
-    }
-  }
-}
-
-/* static */
-void SharedFontList::Shutdown() {
-  sEmpty = nullptr;
-
-  for (auto& sharedFontList : sSingleGenerics) {
-    sharedFontList = nullptr;
-  }
-}
-
-StaticRefPtr<SharedFontList> SharedFontList::sEmpty;
-
-StaticRefPtr<SharedFontList>
-    SharedFontList::sSingleGenerics[size_t(StyleGenericFontFamily::MozEmoji)];

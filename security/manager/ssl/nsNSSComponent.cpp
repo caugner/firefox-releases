@@ -20,6 +20,7 @@
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Casting.h"
+#include "mozilla/EndianUtils.h"
 #include "mozilla/PodOperations.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ProfilerLabels.h"
@@ -1292,16 +1293,6 @@ void SetValidationOptionsCommon() {
   PublicSSLState()->SetSignedCertTimestampsEnabled(sctsEnabled);
   PrivateSSLState()->SetSignedCertTimestampsEnabled(sctsEnabled);
 
-  CertVerifier::PinningMode pinningMode =
-      static_cast<CertVerifier::PinningMode>(
-          Preferences::GetInt("security.cert_pinning.enforcement_level",
-                              CertVerifier::pinningDisabled));
-  if (pinningMode > CertVerifier::pinningEnforceTestMode) {
-    pinningMode = CertVerifier::pinningDisabled;
-  }
-  PublicSSLState()->SetPinningMode(pinningMode);
-  PrivateSSLState()->SetPinningMode(pinningMode);
-
   BRNameMatchingPolicy::Mode nameMatchingMode =
       static_cast<BRNameMatchingPolicy::Mode>(Preferences::GetInt(
           "security.pki.name_matching_mode",
@@ -1508,8 +1499,7 @@ void nsNSSComponent::setValidationOptions(
                                  softTimeout, hardTimeout, proofOfLock);
 
   mDefaultCertVerifier = new SharedCertVerifier(
-      odc, osc, softTimeout, hardTimeout, certShortLifetimeInDays,
-      PublicSSLState()->PinningMode(), sha1Mode,
+      odc, osc, softTimeout, hardTimeout, certShortLifetimeInDays, sha1Mode,
       PublicSSLState()->NameMatchingMode(), netscapeStepUpPolicy, ctMode,
       crliteMode, crliteCTMergeDelaySeconds, mEnterpriseCerts);
 }
@@ -1527,8 +1517,8 @@ void nsNSSComponent::UpdateCertVerifierWithEnterpriseRoots() {
       oldCertVerifier->mOCSPStrict ? CertVerifier::ocspStrict
                                    : CertVerifier::ocspRelaxed,
       oldCertVerifier->mOCSPTimeoutSoft, oldCertVerifier->mOCSPTimeoutHard,
-      oldCertVerifier->mCertShortLifetimeInDays, oldCertVerifier->mPinningMode,
-      oldCertVerifier->mSHA1Mode, oldCertVerifier->mNameMatchingMode,
+      oldCertVerifier->mCertShortLifetimeInDays, oldCertVerifier->mSHA1Mode,
+      oldCertVerifier->mNameMatchingMode,
       oldCertVerifier->mNetscapeStepUpPolicy, oldCertVerifier->mCTMode,
       oldCertVerifier->mCRLiteMode, oldCertVerifier->mCRLiteCTMergeDelaySeconds,
       mEnterpriseCerts);
@@ -2284,8 +2274,6 @@ nsNSSComponent::Observe(nsISupports* aSubject, const char* aTopic,
                prefName.EqualsLiteral("security.ssl.enable_ocsp_must_staple") ||
                prefName.EqualsLiteral(
                    "security.pki.certificate_transparency.mode") ||
-               prefName.EqualsLiteral(
-                   "security.cert_pinning.enforcement_level") ||
                prefName.EqualsLiteral("security.pki.sha1_enforcement_level") ||
                prefName.EqualsLiteral("security.pki.name_matching_mode") ||
                prefName.EqualsLiteral("security.pki.netscape_step_up_policy") ||
@@ -2371,7 +2359,8 @@ nsresult nsNSSComponent::LogoutAuthenticatedPK11() {
   nsCOMPtr<nsICertOverrideService> icos =
       do_GetService("@mozilla.org/security/certoverride;1");
   if (icos) {
-    icos->ClearValidityOverride("all:temporary-certificates"_ns, 0);
+    icos->ClearValidityOverride("all:temporary-certificates"_ns, 0,
+                                OriginAttributes());
   }
 
   ClearSSLExternalAndInternalSessionCache();
@@ -2698,18 +2687,28 @@ nsresult setPassword(PK11SlotInfo* slot, nsIInterfaceRequestor* ctx) {
   return NS_OK;
 }
 
-// NSS will call this during PKCS12 export to potentially switch the endianness
-// of the characters of `inBuf` to big (network) endian. Since we already did
-// that in nsPKCS12Blob::stringToBigEndianBytes, we just perform a memcpy here.
-extern "C" {
-PRBool pkcs12StringEndiannessConversion(PRBool, unsigned char* inBuf,
-                                        unsigned int inBufLen,
-                                        unsigned char* outBuf, unsigned int,
-                                        unsigned int* outBufLen, PRBool) {
-  *outBufLen = inBufLen;
-  memcpy(outBuf, inBuf, inBufLen);
-  return true;
-}
+static PRBool ConvertBetweenUCS2andASCII(PRBool toUnicode, unsigned char* inBuf,
+                                         unsigned int inBufLen,
+                                         unsigned char* outBuf,
+                                         unsigned int maxOutBufLen,
+                                         unsigned int* outBufLen,
+                                         PRBool swapBytes) {
+  std::unique_ptr<unsigned char[]> inBufDup(new unsigned char[inBufLen]);
+  if (!inBufDup) {
+    return PR_FALSE;
+  }
+  std::memcpy(inBufDup.get(), inBuf, inBufLen * sizeof(unsigned char));
+
+  // If converting Unicode to ASCII, swap bytes before conversion as neccessary.
+  if (!toUnicode && swapBytes) {
+    if (inBufLen % 2 != 0) {
+      return PR_FALSE;
+    }
+    mozilla::NativeEndian::swapFromLittleEndianInPlace(
+        reinterpret_cast<char16_t*>(inBufDup.get()), inBufLen / 2);
+  }
+  return PORT_UCS2_UTF8Conversion(toUnicode, inBufDup.get(), inBufLen, outBuf,
+                                  maxOutBufLen, outBufLen);
 }
 
 namespace mozilla {
@@ -2748,7 +2747,7 @@ nsresult InitializeCipherSuite() {
   SEC_PKCS12EnableCipher(PKCS12_AES_CBC_192, 1);
   SEC_PKCS12EnableCipher(PKCS12_AES_CBC_256, 1);
   SEC_PKCS12SetPreferredCipher(PKCS12_DES_EDE3_168, 1);
-  PORT_SetUCS2_ASCIIConversionFunction(pkcs12StringEndiannessConversion);
+  PORT_SetUCS2_ASCIIConversionFunction(ConvertBetweenUCS2andASCII);
 
   // PSM enforces a minimum RSA key size of 1024 bits, which is overridable.
   // NSS has its own minimum, which is not overridable (the default is 1023

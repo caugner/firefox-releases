@@ -313,7 +313,6 @@ inline already_AddRefed<nsIThread> do_GetMainThread() {
 
 //-----------------------------------------------------------------------------
 
-#ifdef MOZILLA_INTERNAL_API
 // Fast access to the current thread.  Will create an nsIThread if one does not
 // exist already!  Do not release the returned pointer!  If you want to use this
 // pointer from some other thread, then you will need to AddRef it.  Otherwise,
@@ -336,7 +335,6 @@ extern nsIThread* NS_GetCurrentThreadNoCreate();
  *   Name of the thread. A C language null-terminated string.
  */
 extern void NS_SetCurrentThreadName(const char* aName);
-#endif
 
 //-----------------------------------------------------------------------------
 
@@ -1942,28 +1940,6 @@ typedef LogTaskBase<PresShell> LogPresShellObserver;
 typedef LogTaskBase<dom::FrameRequestCallback> LogFrameRequestCallback;
 // If you add new types don't forget to add:
 // `template class LogTaskBase<YourType>;` to nsThreadUtils.cpp
-
-class DelayedRunnable : public mozilla::Runnable, public nsITimerCallback {
- public:
-  DelayedRunnable(already_AddRefed<nsIEventTarget> aTarget,
-                  already_AddRefed<nsIRunnable> aRunnable, uint32_t aDelay);
-
-  NS_DECL_ISUPPORTS_INHERITED
-  NS_DECL_NSIRUNNABLE
-  NS_DECL_NSITIMERCALLBACK
-
-  nsresult Init();
-
- private:
-  ~DelayedRunnable() = default;
-  nsresult DoRun();
-
-  const nsCOMPtr<nsIEventTarget> mTarget;
-  nsCOMPtr<nsIRunnable> mWrappedRunnable;
-  nsCOMPtr<nsITimer> mTimer;
-  const mozilla::TimeStamp mDelayedFrom;
-  uint32_t mDelay;
-};
 
 }  // namespace mozilla
 

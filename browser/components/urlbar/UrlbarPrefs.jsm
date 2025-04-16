@@ -48,7 +48,7 @@ const PREF_URLBAR_DEFAULTS = new Map([
 
   // Affects the frecency threshold of the autofill algorithm.  The threshold is
   // the mean of all origin frecencies plus one standard deviation multiplied by
-  // this value.  See UnifiedComplete.
+  // this value.  See UrlbarProviderPlaces.
   ["autoFill.stddevMultiplier", [0.0, "float"]],
 
   // Whether using `ctrl` when hitting return/enter in the URL bar
@@ -127,7 +127,7 @@ const PREF_URLBAR_DEFAULTS = new Map([
   //     ),
   //   });
   // The value of this pref is a JSON string of the root bucket.  See below.
-  ["resultBuckets", ""],
+  ["resultGroups", ""],
 
   // If true, we show tail suggestions when available.
   ["richSuggestions.tail", true],
@@ -268,8 +268,7 @@ const PREF_TYPES = new Map([
  *     sum of the `flex` values of all children.  If there are any child buckets
  *     that cannot be completely filled, then the muxer will attempt to overfill
  *     the children that were completely filled, while still respecting their
- *     relative `flex` values.  `flex: 0` is a special value that means the
- *     child will be filled only if its previous siblings remain empty.
+ *     relative `flex` values.
  *   {number} [flex]
  *     The flex value of the bucket.  This should be defined only on buckets
  *     where the parent defines `flexChildren: true`.  See `flexChildren` for a
@@ -294,8 +293,10 @@ function makeResultBuckets({ showSearchSuggestionsFirst }) {
           { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_EXTENSION },
           { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_SEARCH_TIP },
           { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_OMNIBOX },
-          { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_UNIFIED_COMPLETE },
+          { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_ENGINE_ALIAS },
+          { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_BOOKMARK_KEYWORD },
           { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_AUTOFILL },
+          { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_PRELOADED },
           { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_TOKEN_ALIAS_ENGINE },
           { group: UrlbarUtils.RESULT_GROUP.HEURISTIC_FALLBACK },
         ],
@@ -303,7 +304,7 @@ function makeResultBuckets({ showSearchSuggestionsFirst }) {
       // extensions using the omnibox API
       {
         group: UrlbarUtils.RESULT_GROUP.OMNIBOX,
-        maxResultCount: UrlbarUtils.MAX_OMNIBOX_RESULT_COUNT - 1,
+        availableSpan: UrlbarUtils.MAX_OMNIBOX_RESULT_COUNT - 1,
       },
     ],
   };
@@ -314,29 +315,61 @@ function makeResultBuckets({ showSearchSuggestionsFirst }) {
     children: [
       // suggestions
       {
-        flexChildren: true,
         children: [
           {
-            // If maxHistoricalSearchSuggestions == 0, then the muxer forces
-            // maxResultCount to be zero and flex is ignored, per query.
-            flex: 2,
-            group: UrlbarUtils.RESULT_GROUP.FORM_HISTORY,
+            flexChildren: true,
+            children: [
+              {
+                // If `maxHistoricalSearchSuggestions` == 0, the muxer forces
+                // `maxResultCount` to be zero and flex is ignored, per query.
+                flex: 2,
+                group: UrlbarUtils.RESULT_GROUP.FORM_HISTORY,
+              },
+              {
+                flex: 4,
+                group: UrlbarUtils.RESULT_GROUP.REMOTE_SUGGESTION,
+              },
+            ],
           },
           {
-            flex: 4,
-            group: UrlbarUtils.RESULT_GROUP.REMOTE_SUGGESTION,
-          },
-          {
-            // Zero flex means that results will be added to this bucket only if
-            // no results were added to previous sibling buckets.
-            flex: 0,
             group: UrlbarUtils.RESULT_GROUP.TAIL_SUGGESTION,
           },
         ],
       },
       // general
       {
-        group: UrlbarUtils.RESULT_GROUP.GENERAL,
+        children: [
+          {
+            availableSpan: 3,
+            group: UrlbarUtils.RESULT_GROUP.INPUT_HISTORY,
+          },
+          {
+            flexChildren: true,
+            children: [
+              {
+                flex: 1,
+                group: UrlbarUtils.RESULT_GROUP.REMOTE_TAB,
+              },
+              {
+                flex: 2,
+                group: UrlbarUtils.RESULT_GROUP.GENERAL,
+              },
+              {
+                // We show relatively many about-page results because they're
+                // only added for queries starting with "about:".
+                flex: 2,
+                group: UrlbarUtils.RESULT_GROUP.ABOUT_PAGES,
+              },
+              {
+                flex: 1,
+                group: UrlbarUtils.RESULT_GROUP.PRELOADED,
+              },
+            ],
+          },
+          {
+            group: UrlbarUtils.RESULT_GROUP.INPUT_HISTORY,
+          },
+        ],
       },
     ],
   };
@@ -433,6 +466,22 @@ class Preferences {
   }
 
   /**
+   * Sets the value of the resultGroups pref to the current default buckets.
+   * This should be called from BrowserGlue._migrateUI when the default buckets
+   * are modified.
+   */
+  migrateResultBuckets() {
+    this.set(
+      "resultGroups",
+      JSON.stringify(
+        makeResultBuckets({
+          showSearchSuggestionsFirst: this.get("showSearchSuggestionsFirst"),
+        })
+      )
+    );
+  }
+
+  /**
    * Adds a preference observer.  Observers are held weakly.
    *
    * @param {object} observer
@@ -484,7 +533,7 @@ class Preferences {
     switch (pref) {
       case "showSearchSuggestionsFirst":
         this.set(
-          "resultBuckets",
+          "resultGroups",
           JSON.stringify(
             makeResultBuckets({ showSearchSuggestionsFirst: this.get(pref) })
           )
@@ -509,7 +558,7 @@ class Preferences {
 
   get _nimbus() {
     if (!this.__nimbus) {
-      this.__nimbus = NimbusFeatures.urlbar.getValue();
+      this.__nimbus = NimbusFeatures.urlbar.getAllVariables();
     }
     return this.__nimbus;
   }
@@ -552,7 +601,7 @@ class Preferences {
         }
         return val;
       }
-      case "resultBuckets":
+      case "resultGroups":
         try {
           return JSON.parse(this._readPref(pref));
         } catch (ex) {}
@@ -611,7 +660,7 @@ class Preferences {
    *
    * @param {string} name
    *   The name of the desired property in the object returned from
-   *   NimbusFeatures.urlbar.getValue().
+   *   NimbusFeatures.urlbar.getAllVariables().
    * @returns {object}
    *   An object describing the property's value with the following shape (same
    *   as _getPrefDescriptor()):

@@ -48,7 +48,6 @@ XPCOMUtils.defineLazyModuleGetters(this, {
   E10SUtils: "resource://gre/modules/E10SUtils.jsm",
   ExtensionsUI: "resource:///modules/ExtensionsUI.jsm",
   FeatureGate: "resource://featuregates/FeatureGate.jsm",
-  FirefoxMonitor: "resource:///modules/FirefoxMonitor.jsm",
   FxAccounts: "resource://gre/modules/FxAccounts.jsm",
   HomePage: "resource:///modules/HomePage.jsm",
   Integration: "resource://gre/modules/Integration.jsm",
@@ -243,7 +242,7 @@ let JSWINDOWACTORS = {
       moduleURI: "resource:///actors/AboutPluginsChild.jsm",
 
       events: {
-        DOMWindowCreated: { capture: true },
+        DOMDocElementInserted: { capture: true },
       },
     },
 
@@ -258,7 +257,7 @@ let JSWINDOWACTORS = {
       moduleURI: "resource:///actors/AboutPocketChild.jsm",
 
       events: {
-        DOMWindowCreated: { capture: true },
+        DOMDocElementInserted: { capture: true },
       },
     },
 
@@ -277,7 +276,7 @@ let JSWINDOWACTORS = {
       moduleURI: "resource:///actors/AboutPrivateBrowsingChild.jsm",
 
       events: {
-        DOMWindowCreated: { capture: true },
+        DOMDocElementInserted: { capture: true },
       },
     },
 
@@ -292,7 +291,7 @@ let JSWINDOWACTORS = {
       moduleURI: "resource:///actors/AboutProtectionsChild.jsm",
 
       events: {
-        DOMWindowCreated: { capture: true },
+        DOMDocElementInserted: { capture: true },
       },
     },
 
@@ -322,7 +321,7 @@ let JSWINDOWACTORS = {
       moduleURI: "resource:///actors/AboutTabCrashedChild.jsm",
 
       events: {
-        DOMWindowCreated: { capture: true },
+        DOMDocElementInserted: { capture: true },
       },
     },
 
@@ -338,7 +337,7 @@ let JSWINDOWACTORS = {
       events: {
         // This is added so the actor instantiates immediately and makes
         // methods available to the page js on load.
-        DOMWindowCreated: {},
+        DOMDocElementInserted: {},
       },
     },
     matches: ["about:welcome"],
@@ -372,7 +371,7 @@ let JSWINDOWACTORS = {
       moduleURI: "resource:///actors/BrowserTabChild.jsm",
 
       events: {
-        DOMWindowCreated: {},
+        DOMDocElementInserted: {},
         MozAfterPaint: {},
       },
     },
@@ -559,7 +558,7 @@ let JSWINDOWACTORS = {
     child: {
       moduleURI: "resource:///actors/NetErrorChild.jsm",
       events: {
-        DOMWindowCreated: {},
+        DOMDocElementInserted: {},
         click: {},
       },
     },
@@ -695,7 +694,7 @@ let JSWINDOWACTORS = {
       events: {
         // This is added so the actor instantiates immediately and makes
         // methods available to the page js on load.
-        DOMWindowCreated: {},
+        DOMDocElementInserted: {},
       },
     },
     matches: ["about:home*", "about:newtab*", "about:welcome*"],
@@ -1937,6 +1936,7 @@ BrowserGlue.prototype = {
 
     BrowserUsageTelemetry.uninit();
     SearchSERPTelemetry.uninit();
+    Interactions.uninit();
     PageThumbs.uninit();
     NewTabUtils.uninit();
 
@@ -2206,8 +2206,6 @@ BrowserGlue.prototype = {
     if (AppConstants.NIGHTLY_BUILD) {
       this._monitorTranslationsPref();
     }
-
-    FirefoxMonitor.init();
   },
 
   /**
@@ -2375,6 +2373,23 @@ BrowserGlue.prototype = {
               temp
             );
             temp.WinTaskbarJumpList.startup();
+          }
+        },
+      },
+
+      // Report macOS Dock status
+      {
+        condition: AppConstants.platform == "macosx",
+        task: () => {
+          try {
+            Services.telemetry.scalarSet(
+              "os.environment.is_kept_in_dock",
+              Cc["@mozilla.org/widget/macdocksupport;1"].getService(
+                Ci.nsIMacDockSupport
+              ).isAppInDock
+            );
+          } catch (ex) {
+            Cu.reportError(ex);
           }
         },
       },
@@ -3191,7 +3206,7 @@ BrowserGlue.prototype = {
   _migrateUI: function BG__migrateUI() {
     // Use an increasing number to keep track of the current migration state.
     // Completely unrelated to the current Firefox release number.
-    const UI_VERSION = 109;
+    const UI_VERSION = 116;
     const BROWSER_DOCURL = AppConstants.BROWSER_CHROME_URL;
 
     if (!Services.prefs.prefHasUserValue("browser.migration.version")) {
@@ -3647,12 +3662,11 @@ BrowserGlue.prototype = {
 
       if (!userCustomizedWheelMin && !userCustomizedWheelMax) {
         // If the user has an existing profile but hasn't customized the wheel
-        // animation duration, indicate that they need to be migrated to the new
-        // values by setting their "migration complete" percentage to 0.
-        Services.prefs.setIntPref(
-          "general.smoothScroll.mouseWheel.migrationPercent",
-          0
-        );
+        // animation duration, they will now get the new default values. This
+        // condition used to set a migrationPercent pref to 0, so that users
+        // upgrading an older profile would gradually have their wheel animation
+        // speed migrated to the new values. However, that "gradual migration"
+        // was phased out by FF 86, so we don't need to set that pref anymore.
       } else if (userCustomizedWheelMin && !userCustomizedWheelMax) {
         // If they customized just one of the two, save the old value for the
         // other one as well, because the two values go hand-in-hand and we
@@ -3672,8 +3686,8 @@ BrowserGlue.prototype = {
         );
       } else {
         // The last remaining case is if they customized both values, in which
-        // case also we leave the "migration complete" percentage at 100, as no
-        // further migration is needed.
+        // case also don't need to do anything; the user's customized values
+        // will be retained and respected.
       }
     }
 
@@ -3807,6 +3821,18 @@ BrowserGlue.prototype = {
       }
     }
 
+    if (currentUIVersion < 116) {
+      // Update urlbar result groups for the following changes:
+      // 110 (bug 1662167): Add INPUT_HISTORY group
+      // 111 (bug 1677126): Add REMOTE_TABS group
+      // 112 (bug 1712352): Add ABOUT_PAGES group
+      // 113 (bug 1714409): Add HEURISTIC_ENGINE_ALIAS group
+      // 114 (bug 1662172): Add HEURISTIC_BOOKMARK_KEYWORD group
+      // 115 (bug 1713322): Move TAIL_SUGGESTION group and rename properties
+      // 116 (bug 1717509): Remove HEURISTIC_UNIFIED_COMPLETE group
+      UrlbarPrefs.migrateResultBuckets();
+    }
+
     // Update the migration version.
     Services.prefs.setIntPref("browser.migration.version", UI_VERSION);
   },
@@ -3836,15 +3862,18 @@ BrowserGlue.prototype = {
       if (lastVersion === dialogVersion) {
         return "already-shown";
       }
+
+      // Check the default branch as enterprise policies can set prefs there.
+      const defaultPrefs = Services.prefs.getDefaultBranch("");
       if (
-        !Services.prefs.getBoolPref(
+        !defaultPrefs.getBoolPref(
           "browser.messaging-system.whatsNewPanel.enabled",
           true
         )
       ) {
         return "no-whatsNew";
       }
-      if (!Services.prefs.getBoolPref("browser.aboutwelcome.enabled", true)) {
+      if (!defaultPrefs.getBoolPref("browser.aboutwelcome.enabled", true)) {
         return "no-welcome";
       }
       if (!Services.policies.isAllowed("postUpdateCustomPage")) {

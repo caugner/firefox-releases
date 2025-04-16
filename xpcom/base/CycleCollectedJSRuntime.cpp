@@ -971,7 +971,14 @@ void CycleCollectedJSRuntime::TraceGrayJS(JSTracer* aTracer, void* aData) {
   CycleCollectedJSRuntime* self = static_cast<CycleCollectedJSRuntime*>(aData);
 
   // Mark these roots as gray so the CC can walk them later.
-  self->TraceNativeGrayRoots(aTracer, JSHolderMap::HoldersInCollectingZones);
+
+  JSHolderMap::WhichHolders which = JSHolderMap::HoldersInCollectingZones;
+  if (JS::AtomsZoneIsCollecting(self->Runtime())) {
+    // Any holder may point into the atoms zone.
+    which = JSHolderMap::AllHolders;
+  }
+
+  self->TraceNativeGrayRoots(aTracer, which);
 }
 
 /* static */
@@ -993,7 +1000,6 @@ void CycleCollectedJSRuntime::GCSliceCallback(JSContext* aContext,
   CycleCollectedJSRuntime* self = CycleCollectedJSRuntime::Get();
   MOZ_ASSERT(CycleCollectedJSContext::Get()->Context() == aContext);
 
-#ifdef MOZ_GECKO_PROFILER
   if (profiler_thread_is_being_profiled()) {
     if (aProgress == JS::GC_CYCLE_END) {
       struct GCMajorMarker {
@@ -1066,7 +1072,6 @@ void CycleCollectedJSRuntime::GCSliceCallback(JSContext* aContext,
                               aDesc.sliceToJSONProfiler(aContext).get()));
     }
   }
-#endif
 
   if (aProgress == JS::GC_CYCLE_END &&
       JS::dbg::FireOnGarbageCollectionHookRequired(aContext)) {
@@ -1138,10 +1143,8 @@ void CycleCollectedJSRuntime::GCNurseryCollectionCallback(
 
   if (aProgress == JS::GCNurseryProgress::GC_NURSERY_COLLECTION_START) {
     self->mLatestNurseryCollectionStart = TimeStamp::Now();
-  }
-#ifdef MOZ_GECKO_PROFILER
-  else if (aProgress == JS::GCNurseryProgress::GC_NURSERY_COLLECTION_END &&
-           profiler_thread_is_being_profiled()) {
+  } else if (aProgress == JS::GCNurseryProgress::GC_NURSERY_COLLECTION_END &&
+             profiler_thread_is_being_profiled()) {
     struct GCMinorMarker {
       static constexpr mozilla::Span<const char> MarkerTypeName() {
         return mozilla::MakeStringSpan("GCMinor");
@@ -1177,7 +1180,6 @@ void CycleCollectedJSRuntime::GCNurseryCollectionCallback(
         ProfilerString8View::WrapNullTerminatedString(
             JS::MinorGcToJSON(aContext).get()));
   }
-#endif
 
   if (self->mPrevGCNurseryCollectionCallback) {
     self->mPrevGCNurseryCollectionCallback(aContext, aProgress, aReason);
@@ -1268,6 +1270,11 @@ struct CheckZoneTracer : public TraceCallbacks {
       : mClassName(aClassName), mZone(aZone) {}
 
   void checkZone(JS::Zone* aZone, const char* aName) const {
+    if (JS::IsAtomsZone(aZone)) {
+      // Any holder may contain pointers into the atoms zone.
+      return;
+    }
+
     if (!mZone) {
       mZone = aZone;
       return;
@@ -1277,9 +1284,12 @@ struct CheckZoneTracer : public TraceCallbacks {
       return;
     }
 
-    // Most JS holders only contain pointers to GC things in a single zone. In
-    // the future this will allow us to improve GC performance by only tracing
-    // holders in zones that are being collected.
+    // Most JS holders only contain pointers to GC things in a single zone. We
+    // group holders by referent zone where possible, allowing us to improve GC
+    // performance by only tracing holders for zones that are being collected.
+    //
+    // Additionally, pointers from any holder into the atoms zone are allowed
+    // since all holders are traced when we collect the atoms zone.
     //
     // If you added a holder that has pointers into multiple zones please try to
     // remedy this. Some options are:
@@ -1306,7 +1316,7 @@ struct CheckZoneTracer : public TraceCallbacks {
                      void* aClosure) const override {
     jsid id = aPtr->unbarrieredGet();
     if (id.isGCThing()) {
-      checkZone(JS::GetTenuredGCThingZone(id.toGCCellPtr()), aName);
+      MOZ_ASSERT(JS::IsAtomsZone(JS::GetTenuredGCThingZone(id.toGCCellPtr())));
     }
   }
   virtual void Trace(JS::Heap<JSObject*>* aPtr, const char* aName,

@@ -71,12 +71,6 @@
         ],
       });
 
-      let tabTooltip = document.getElementById("tabbrowser-tab-tooltip");
-      if (gProtonPlacesTooltip) {
-        tabTooltip.setAttribute("position", "after_start");
-        tabTooltip.setAttribute("anchortoclosest", "tab");
-      }
-
       // We take over setting the document title, so remove the l10n id to
       // avoid it being re-translated and overwriting document content if
       // we ever switch languages at runtime. After a language change, the
@@ -826,18 +820,13 @@
       if (!browser._notificationBox) {
         browser._notificationBox = new MozElements.NotificationBox(element => {
           element.setAttribute("notificationside", "top");
-          if (gProton) {
-            element.setAttribute(
-              "name",
-              `tab-notification-box-${this._nextNotificationBoxId++}`
-            );
-            // With Proton enabled all notification boxes are at the top, built into the browser chrome.
-            this.getTabNotificationDeck().append(element);
-            if (browser == this.selectedBrowser) {
-              this._updateVisibleNotificationBox(browser);
-            }
-          } else {
-            this.getBrowserContainer(browser).prepend(element);
+          element.setAttribute(
+            "name",
+            `tab-notification-box-${this._nextNotificationBoxId++}`
+          );
+          this.getTabNotificationDeck().append(element);
+          if (browser == this.selectedBrowser) {
+            this._updateVisibleNotificationBox(browser);
           }
         });
       }
@@ -1112,9 +1101,7 @@
 
       this._appendStatusPanel();
 
-      if (gProton) {
-        this._updateVisibleNotificationBox(newBrowser);
-      }
+      this._updateVisibleNotificationBox(newBrowser);
 
       let oldBrowserPopupsBlocked = oldBrowser.popupBlocker.getBlockedPopupCount();
       let newBrowserPopupsBlocked = newBrowser.popupBlocker.getBlockedPopupCount();
@@ -2805,7 +2792,8 @@
             // a switch-to-tab candidate in autocomplete.
             this.UrlbarProviderOpenTabs.registerOpenTab(
               lazyBrowserURI.spec,
-              userContextId
+              userContextId || 0,
+              PrivateBrowsingUtils.isWindowPrivate(window)
             );
             b.registeredOpenURI = lazyBrowserURI;
           }
@@ -3870,7 +3858,8 @@
         let userContextId = browser.getAttribute("usercontextid") || 0;
         this.UrlbarProviderOpenTabs.unregisterOpenTab(
           browser.registeredOpenURI.spec,
-          userContextId
+          userContextId,
+          PrivateBrowsingUtils.isWindowPrivate(window)
         );
         delete browser.registeredOpenURI;
       }
@@ -4246,7 +4235,8 @@
         let userContextId = otherBrowser.getAttribute("usercontextid") || 0;
         this.UrlbarProviderOpenTabs.unregisterOpenTab(
           otherBrowser.registeredOpenURI.spec,
-          userContextId
+          userContextId,
+          PrivateBrowsingUtils.isWindowPrivate(window)
         );
         delete otherBrowser.registeredOpenURI;
       }
@@ -5360,9 +5350,7 @@
 
     createTooltip(event) {
       event.stopPropagation();
-      let tab = document.tooltipNode
-        ? document.tooltipNode.closest("tab")
-        : null;
+      let tab = event.target.triggerNode?.closest("tab");
       if (!tab) {
         event.preventDefault();
         return;
@@ -5379,6 +5367,7 @@
           .replace("#1", pluralCount);
       };
 
+      let alignToTab = true;
       let label;
       const selectedTabs = this.selectedTabs;
       const contextTabInSelection = selectedTabs.includes(tab);
@@ -5386,6 +5375,7 @@
         ? selectedTabs.length
         : 1;
       if (tab.mOverCloseButton) {
+        alignToTab = false;
         label = tab.selected
           ? stringWithShortcut(
               "tabs.closeTabs.tooltip",
@@ -5396,11 +5386,7 @@
               affectedTabsLength,
               gTabBrowserBundle.GetStringFromName("tabs.closeTabs.tooltip")
             ).replace("#1", affectedTabsLength);
-      }
-      // When Picture-in-Picture is open, we repurpose '.tab-icon-sound' as
-      // an inert Picture-in-Picture indicator, so we should display
-      // the default tooltip
-      else if (tab._overPlayingIcon && !tab.pictureinpicture) {
+      } else if (tab._overPlayingIcon) {
         let stringID;
         if (tab.selected) {
           stringID = tab.linkedBrowser.audioMuted
@@ -5425,6 +5411,7 @@
             gTabBrowserBundle.GetStringFromName(stringID)
           ).replace("#1", affectedTabsLength);
         }
+        alignToTab = false;
       } else {
         label = this.getTabTooltip(tab);
       }
@@ -5432,6 +5419,11 @@
       if (!gProtonPlacesTooltip) {
         event.target.setAttribute("label", label);
         return;
+      }
+
+      if (alignToTab) {
+        event.target.setAttribute("position", "after_start");
+        event.target.moveToAnchor(tab, "after_start");
       }
 
       let title = event.target.querySelector(".places-tooltip-title");
@@ -5569,7 +5561,8 @@
           let userContextId = browser.getAttribute("usercontextid") || 0;
           this.UrlbarProviderOpenTabs.unregisterOpenTab(
             browser.registeredOpenURI.spec,
-            userContextId
+            userContextId,
+            PrivateBrowsingUtils.isWindowPrivate(window)
           );
           delete browser.registeredOpenURI;
         }
@@ -6559,20 +6552,16 @@
           let uri = this.mBrowser.registeredOpenURI;
           gBrowser.UrlbarProviderOpenTabs.unregisterOpenTab(
             uri.spec,
-            userContextId
+            userContextId,
+            PrivateBrowsingUtils.isWindowPrivate(window)
           );
           delete this.mBrowser.registeredOpenURI;
         }
-        // Tabs in private windows aren't registered as "Open" so
-        // that they don't appear as switch-to-tab candidates.
-        if (
-          !isBlankPageURL(aLocation.spec) &&
-          (!PrivateBrowsingUtils.isWindowPrivate(window) ||
-            PrivateBrowsingUtils.permanentPrivateBrowsing)
-        ) {
+        if (!isBlankPageURL(aLocation.spec)) {
           gBrowser.UrlbarProviderOpenTabs.registerOpenTab(
             aLocation.spec,
-            userContextId
+            userContextId,
+            PrivateBrowsingUtils.isWindowPrivate(window)
           );
           this.mBrowser.registeredOpenURI = aLocation;
         }
@@ -7174,11 +7163,8 @@ var TabContextMenu = {
   updateShareURLMenuItem() {
     // We only support "share URL" on macOS and on Windows 10:
     if (
-      !gProton ||
-      !(
-        AppConstants.platform == "macosx" ||
-        AppConstants.isPlatformAndVersionAtLeast("win", "6.4")
-      )
+      AppConstants.platform != "macosx" &&
+      !AppConstants.isPlatformAndVersionAtLeast("win", "6.4")
     ) {
       return;
     }

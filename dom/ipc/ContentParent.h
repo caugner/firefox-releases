@@ -716,8 +716,6 @@ class ContentParent final
   bool CheckBrowsingContextEmbedder(CanonicalBrowsingContext* aBC,
                                     const char* aOperation) const;
 
-  void OnChannelConnected(int32_t pid) override;
-
   void ActorDestroy(ActorDestroyReason why) override;
   void ActorDealloc() override;
 
@@ -932,7 +930,10 @@ class ContentParent final
 
   mozilla::ipc::IPCResult RecvCloneDocumentTreeInto(
       const MaybeDiscarded<BrowsingContext>& aSource,
-      const MaybeDiscarded<BrowsingContext>& aTarget);
+      const MaybeDiscarded<BrowsingContext>& aTarget, PrintData&& aPrintData);
+
+  mozilla::ipc::IPCResult RecvUpdateRemotePrintSettings(
+      const MaybeDiscarded<BrowsingContext>& aTarget, PrintData&& aPrintData);
 
   mozilla::ipc::IPCResult RecvConstructPopupBrowser(
       ManagedEndpoint<PBrowserParent>&& actor,
@@ -941,7 +942,7 @@ class ContentParent final
       const uint32_t& chromeFlags);
 
   mozilla::ipc::IPCResult RecvIsSecureURI(
-      const uint32_t& aType, nsIURI* aURI, const uint32_t& aFlags,
+      nsIURI* aURI, const uint32_t& aFlags,
       const OriginAttributes& aOriginAttributes, bool* aIsSecureURI);
 
   mozilla::ipc::IPCResult RecvAccumulateMixedContentHSTS(
@@ -1117,8 +1118,6 @@ class ContentParent final
       const ClonedMessageData* aStack = nullptr);
 
  public:
-  mozilla::ipc::IPCResult RecvPrivateDocShellsExist(const bool& aExist);
-
   mozilla::ipc::IPCResult RecvCommitBrowsingContextTransaction(
       const MaybeDiscarded<BrowsingContext>& aContext,
       BrowsingContext::BaseTransaction&& aTransaction, uint64_t aEpoch);
@@ -1258,7 +1257,8 @@ class ContentParent final
 
   mozilla::ipc::IPCResult RecvAddCertException(
       const nsACString& aSerializedCert, uint32_t aFlags,
-      const nsACString& aHostName, int32_t aPort, bool aIsTemporary,
+      const nsACString& aHostName, int32_t aPort,
+      const OriginAttributes& aOriginAttributes, bool aIsTemporary,
       AddCertExceptionResolver&& aResolver);
 
   mozilla::ipc::IPCResult RecvAutomaticStorageAccessPermissionCanBeGranted(
@@ -1411,6 +1411,9 @@ class ContentParent final
       const MaybeDiscardedBrowsingContext& aContainerContext,
       FeaturePolicy* aContainerFeaturePolicy);
 
+  mozilla::ipc::IPCResult RecvGetSystemIcon(nsIURI* aURI,
+                                            GetSystemIconResolver&& aResolver);
+
  public:
   void SendGetFilesResponseAndForget(const nsID& aID,
                                      const GetFilesResponseResult& aResult);
@@ -1541,6 +1544,7 @@ class ContentParent final
   uint8_t mCalledKillHard : 1;
   uint8_t mCreatedPairedMinidumps : 1;
   uint8_t mShutdownPending : 1;
+  uint8_t mLaunchResolved : 1;
 
   // True if the input event queue on the main thread of the content process is
   // enabled.

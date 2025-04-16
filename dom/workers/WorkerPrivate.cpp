@@ -2147,7 +2147,7 @@ WorkerPrivate::WorkerThreadAccessible::WorkerThreadAccessible(
 namespace {
 
 bool IsNewWorkerSecureContext(const WorkerPrivate* const aParent,
-                              const WorkerType aWorkerType,
+                              const WorkerKind aWorkerKind,
                               const WorkerLoadInfo& aLoadInfo) {
   if (aParent) {
     return aParent->IsSecureContext();
@@ -2159,7 +2159,7 @@ bool IsNewWorkerSecureContext(const WorkerPrivate* const aParent,
     return true;
   }
 
-  if (aWorkerType == WorkerTypeService) {
+  if (aWorkerKind == WorkerKindService) {
     return true;
   }
 
@@ -2178,7 +2178,7 @@ bool IsNewWorkerSecureContext(const WorkerPrivate* const aParent,
 
 WorkerPrivate::WorkerPrivate(
     WorkerPrivate* aParent, const nsAString& aScriptURL, bool aIsChromeWorker,
-    WorkerType aWorkerType, const nsAString& aWorkerName,
+    WorkerKind aWorkerKind, const nsAString& aWorkerName,
     const nsACString& aServiceWorkerScope, WorkerLoadInfo& aLoadInfo,
     nsString&& aId, const nsID& aAgentClusterId,
     const nsILoadInfo::CrossOriginOpenerPolicy aAgentClusterOpenerPolicy)
@@ -2187,7 +2187,7 @@ WorkerPrivate::WorkerPrivate(
       mParent(aParent),
       mScriptURL(aScriptURL),
       mWorkerName(aWorkerName),
-      mWorkerType(aWorkerType),
+      mWorkerKind(aWorkerKind),
       mLoadInfo(std::move(aLoadInfo)),
       mDebugger(nullptr),
       mJSContext(nullptr),
@@ -2214,9 +2214,10 @@ WorkerPrivate::WorkerPrivate(
       mIsChromeWorker(aIsChromeWorker),
       mParentFrozen(false),
       mIsSecureContext(
-          IsNewWorkerSecureContext(mParent, mWorkerType, mLoadInfo)),
+          IsNewWorkerSecureContext(mParent, mWorkerKind, mLoadInfo)),
       mDebuggerRegistered(false),
       mDebuggerReady(true),
+      mExtensionAPIAllowed(false),
       mIsInAutomation(false),
       mId(std::move(aId)),
       mAgentClusterOpenerPolicy(aAgentClusterOpenerPolicy),
@@ -2287,6 +2288,16 @@ WorkerPrivate::WorkerPrivate(
             // their extension process, but never in content scripts in
             // content processes.
             mIsPrivilegedAddonGlobal = true;
+          }
+
+          if (StaticPrefs::
+                  extensions_backgroundServiceWorker_enabled_AtStartup() &&
+              mWorkerKind == WorkerKindService &&
+              policy->IsManifestBackgroundWorker(mScriptURL)) {
+            // Only allows ExtensionAPI for extension service workers
+            // that are declared in the extension manifest json as
+            // the background service worker.
+            mExtensionAPIAllowed = true;
           }
         }
       }
@@ -2370,7 +2381,7 @@ WorkerPrivate::~WorkerPrivate() {
 // static
 already_AddRefed<WorkerPrivate> WorkerPrivate::Constructor(
     JSContext* aCx, const nsAString& aScriptURL, bool aIsChromeWorker,
-    WorkerType aWorkerType, const nsAString& aWorkerName,
+    WorkerKind aWorkerKind, const nsAString& aWorkerName,
     const nsACString& aServiceWorkerScope, WorkerLoadInfo* aLoadInfo,
     ErrorResult& aRv, nsString aId) {
   WorkerPrivate* parent =
@@ -2397,7 +2408,7 @@ already_AddRefed<WorkerPrivate> WorkerPrivate::Constructor(
 
     nsresult rv =
         GetLoadInfo(aCx, nullptr, parent, aScriptURL, aIsChromeWorker,
-                    InheritLoadGroup, aWorkerType, stackLoadInfo.ptr());
+                    InheritLoadGroup, aWorkerKind, stackLoadInfo.ptr());
     aRv.MightThrowJSException();
     if (NS_FAILED(rv)) {
       workerinternals::ReportLoadError(aRv, rv, aScriptURL);
@@ -2434,15 +2445,15 @@ already_AddRefed<WorkerPrivate> WorkerPrivate::Constructor(
       nsILoadInfo::OPENER_POLICY_UNSAFE_NONE;
   nsID agentClusterId;
   if (parent) {
-    MOZ_ASSERT(aWorkerType == WorkerType::WorkerTypeDedicated);
+    MOZ_ASSERT(aWorkerKind == WorkerKind::WorkerKindDedicated);
 
     agentClusterId = parent->AgentClusterId();
     agentClusterCoop = parent->mAgentClusterOpenerPolicy;
   } else {
     AssertIsOnMainThread();
 
-    if (aWorkerType == WorkerType::WorkerTypeService ||
-        aWorkerType == WorkerType::WorkerTypeShared) {
+    if (aWorkerKind == WorkerKind::WorkerKindService ||
+        aWorkerKind == WorkerKind::WorkerKindShared) {
       agentClusterId = aLoadInfo->mAgentClusterId;
     } else if (aLoadInfo->mWindow) {
       Document* doc = aLoadInfo->mWindow->GetExtantDoc();
@@ -2463,7 +2474,7 @@ already_AddRefed<WorkerPrivate> WorkerPrivate::Constructor(
   }
 
   RefPtr<WorkerPrivate> worker =
-      new WorkerPrivate(parent, aScriptURL, aIsChromeWorker, aWorkerType,
+      new WorkerPrivate(parent, aScriptURL, aIsChromeWorker, aWorkerKind,
                         aWorkerName, aServiceWorkerScope, *aLoadInfo,
                         std::move(aId), agentClusterId, agentClusterCoop);
 
@@ -2484,6 +2495,11 @@ already_AddRefed<WorkerPrivate> WorkerPrivate::Constructor(
     return nullptr;
   }
 
+  // From this point on (worker thread has been started) we
+  // must keep ourself alive. We can now only be cleared by
+  // ClearSelfAndParentEventTargetRef().
+  worker->mSelfRef = worker;
+
   worker->EnableDebugger();
 
   MOZ_DIAGNOSTIC_ASSERT(worker->PrincipalIsValid());
@@ -2499,8 +2515,6 @@ already_AddRefed<WorkerPrivate> WorkerPrivate::Constructor(
     aRv.Throw(NS_ERROR_UNEXPECTED);
     return nullptr;
   }
-
-  worker->mSelfRef = worker;
 
   return worker.forget();
 }
@@ -2542,7 +2556,7 @@ nsresult WorkerPrivate::GetLoadInfo(JSContext* aCx, nsPIDOMWindowInner* aWindow,
                                     const nsAString& aScriptURL,
                                     bool aIsChromeWorker,
                                     LoadGroupBehavior aLoadGroupBehavior,
-                                    WorkerType aWorkerType,
+                                    WorkerKind aWorkerKind,
                                     WorkerLoadInfo* aLoadInfo) {
   using namespace mozilla::dom::workerinternals;
 
@@ -2819,7 +2833,7 @@ nsresult WorkerPrivate::GetLoadInfo(JSContext* aCx, nsPIDOMWindowInner* aWindow,
 
     rv = ChannelFromScriptURLMainThread(
         loadInfo.mLoadingPrincipal, document, loadInfo.mLoadGroup, url,
-        clientInfo, ContentPolicyType(aWorkerType), loadInfo.mCookieJarSettings,
+        clientInfo, ContentPolicyType(aWorkerKind), loadInfo.mCookieJarSettings,
         loadInfo.mReferrerInfo, getter_AddRefs(loadInfo.mChannel));
     NS_ENSURE_SUCCESS(rv, rv);
 
@@ -3174,12 +3188,12 @@ nsISerialEventTarget* WorkerPrivate::HybridEventTarget() {
 }
 
 ClientType WorkerPrivate::GetClientType() const {
-  switch (Type()) {
-    case WorkerTypeDedicated:
+  switch (Kind()) {
+    case WorkerKindDedicated:
       return ClientType::Worker;
-    case WorkerTypeShared:
+    case WorkerKindShared:
       return ClientType::Sharedworker;
-    case WorkerTypeService:
+    case WorkerKindService:
       return ClientType::Serviceworker;
     default:
       MOZ_CRASH("unknown worker type!");
@@ -3219,7 +3233,7 @@ UniquePtr<ClientSource> WorkerPrivate::CreateClientSource() {
   // Note, we only have to do this for workers that can be controlled by a
   // service worker.  So avoid the sync overhead here if we are starting a
   // service worker or a chrome worker.
-  if (Type() != WorkerTypeService && !IsChromeWorker()) {
+  if (Kind() != WorkerKindService && !IsChromeWorker()) {
     clientSource->WorkerSyncPing(this);
   }
 
@@ -4091,19 +4105,19 @@ void WorkerPrivate::ReportUseCounters() {
     return;
   }
 
-  const size_t type = Type();
-  switch (type) {
-    case WorkerTypeDedicated:
+  const size_t kind = Kind();
+  switch (kind) {
+    case WorkerKindDedicated:
       Telemetry::Accumulate(Telemetry::DEDICATED_WORKER_DESTROYED, 1);
       break;
-    case WorkerTypeShared:
+    case WorkerKindShared:
       Telemetry::Accumulate(Telemetry::SHARED_WORKER_DESTROYED, 1);
       break;
-    case WorkerTypeService:
+    case WorkerKindService:
       Telemetry::Accumulate(Telemetry::SERVICE_WORKER_DESTROYED, 1);
       break;
     default:
-      MOZ_ASSERT(false, "Unknown worker type");
+      MOZ_ASSERT(false, "Unknown worker kind");
       return;
   }
 
@@ -4124,13 +4138,13 @@ void WorkerPrivate::ReportUseCounters() {
   const size_t count = static_cast<size_t>(UseCounterWorker::Count);
   const size_t factor =
       static_cast<size_t>(Telemetry::HistogramUseCounterWorkerCount) / count;
-  MOZ_ASSERT(factor > type);
+  MOZ_ASSERT(factor > kind);
 
   for (size_t c = 0; c < count; ++c) {
-    // Histograms for worker use counters use the same order as the worker types
-    // , so we can use the worker type to index to corresponding histogram.
+    // Histograms for worker use counters use the same order as the worker kinds
+    // , so we can use the worker kind to index to corresponding histogram.
     Telemetry::HistogramID id = static_cast<Telemetry::HistogramID>(
-        Telemetry::HistogramFirstUseCounterWorker + c * factor + type);
+        Telemetry::HistogramFirstUseCounterWorker + c * factor + kind);
     MOZ_ASSERT(id <= Telemetry::HistogramLastUseCounterWorker);
 
     if (bool value = GetUseCounter(static_cast<UseCounterWorker>(c))) {

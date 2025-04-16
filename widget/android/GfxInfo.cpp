@@ -421,7 +421,7 @@ nsresult GfxInfo::GetFeatureStatusImpl(
   NS_ENSURE_ARG_POINTER(aStatus);
   aSuggestedDriverVersion.SetIsVoid(true);
   *aStatus = nsIGfxInfo::FEATURE_STATUS_UNKNOWN;
-  OperatingSystem os = mOS;
+  OperatingSystem os = OperatingSystem::Android;
   if (aOS) *aOS = os;
 
   if (sShutdownOccurred) {
@@ -595,36 +595,12 @@ nsresult GfxInfo::GetFeatureStatusImpl(
     }
 
     if (aFeature == FEATURE_WEBRENDER) {
-      bool isUnblocked = false;
-      const nsCString& gpu = mGLStrings->Renderer();
-      NS_LossyConvertUTF16toASCII model(mModel);
-
-      // Enable Webrender on all Adreno 3xx, 4xx, 5xx and 6xx GPUs
-      isUnblocked |= gpu.Find("Adreno (TM) 3", /*ignoreCase*/ true) >= 0 ||
-                     gpu.Find("Adreno (TM) 4", /*ignoreCase*/ true) >= 0 ||
-                     gpu.Find("Adreno (TM) 5", /*ignoreCase*/ true) >= 0 ||
-                     gpu.Find("Adreno (TM) 6", /*ignoreCase*/ true) >= 0;
-
-      // Enable Webrender on all Mali-Txxx GPUs
-      isUnblocked |= gpu.Find("Mali-T", /*ignoreCase*/ true) >= 0;
-
-      // Enable Webrender on all Mali-Gxx GPUs...
-      isUnblocked |= gpu.Find("Mali-G", /*ignoreCase*/ true) >= 0 &&
-                     // Excluding G31 due to bug 1689947.
-                     gpu.Find("Mali-G31", /*ignoreCase*/ true) == kNotFound;
-
-      // Enable Webrender on all PowerVR Rogue GPUs
-      isUnblocked |= gpu.Find("PowerVR Rogue", /*ignoreCase*/ true) >= 0;
-
-      // Enable Webrender on all NVIDIA Tegra GPUs
-      isUnblocked |= gpu.Find("NVIDIA Tegra", /*ignoreCase*/ true) >= 0;
-
-      // Enable Webrender on all Intel GPUs with Mesa drivers (chromebooks)
-      isUnblocked |= gpu.Find("Mesa DRI Intel", /*ignoreCase*/ true) >= 0;
-
-      if (!isUnblocked) {
+      const bool isMali4xx =
+          mGLStrings->Renderer().Find("Mali-4", /*ignoreCase*/ true) >= 0;
+      if (isMali4xx) {
+        // Mali 4xx does not support GLES 3.
         *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
-        aFailureId = "FEATURE_FAILURE_WEBRENDER_BLOCKED_DEVICE";
+        aFailureId = "FEATURE_FAILURE_NO_GLES_3";
       } else {
         *aStatus = nsIGfxInfo::FEATURE_ALLOW_QUALIFIED;
       }
@@ -679,19 +655,10 @@ nsresult GfxInfo::GetFeatureStatusImpl(
       return NS_OK;
     }
 
-#ifdef NIGHTLY_BUILD
     if (aFeature == FEATURE_WEBRENDER_SOFTWARE) {
-      const bool isMali4xx =
-          mGLStrings->Renderer().Find("Mali-4", /*ignoreCase*/ true) >= 0;
-      if (isMali4xx) {
-        *aStatus = nsIGfxInfo::FEATURE_ALLOW_ALWAYS;
-      } else {
-        *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
-        aFailureId = "FEATURE_FAILURE_BUG_1703140";
-      }
+      *aStatus = nsIGfxInfo::FEATURE_ALLOW_ALWAYS;
       return NS_OK;
     }
-#endif
   }
 
   if (aFeature == FEATURE_GL_SWIZZLE) {

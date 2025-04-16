@@ -4,15 +4,14 @@
 
 //! Specified values for font properties
 
-#[cfg(feature = "gecko")]
-use crate::gecko_bindings::bindings;
 use crate::parser::{Parse, ParserContext};
 use crate::values::computed::font::{FamilyName, FontFamilyList, FontStyleAngle, SingleFontFamily};
 use crate::values::computed::{font as computed, Length, NonNegativeLength};
 use crate::values::computed::{Angle as ComputedAngle, Percentage as ComputedPercentage};
 use crate::values::computed::{CSSPixelLength, Context, ToComputedValue};
+use crate::values::computed::FontSizeAdjust as ComputedFontSizeAdjust;
 use crate::values::generics::font::VariationValue;
-use crate::values::generics::font::{self as generics, FeatureTagValue, FontSettings, FontTag};
+use crate::values::generics::font::{self as generics, FeatureTagValue, FontSettings, FontTag, GenericFontSizeAdjust};
 use crate::values::generics::NonNegative;
 use crate::values::specified::length::{FontBaseSize, AU_PER_PT, AU_PER_PX};
 use crate::values::specified::{AllowQuirks, Angle, Integer, LengthPercentage};
@@ -21,7 +20,7 @@ use crate::values::CustomIdent;
 use crate::Atom;
 use cssparser::{Parser, Token};
 #[cfg(feature = "gecko")]
-use malloc_size_of::{MallocSizeOf, MallocSizeOfOps};
+use malloc_size_of::{MallocSizeOf, MallocSizeOfOps, MallocUnconditionalSizeOf};
 use std::fmt::{self, Write};
 use style_traits::values::SequenceWriter;
 use style_traits::{CssWriter, KeywordsCollectFn, ParseError};
@@ -663,9 +662,10 @@ impl FontFamily {
     /// Parse a specified font-family value
     pub fn parse_specified<'i, 't>(input: &mut Parser<'i, 't>) -> Result<Self, ParseError<'i>> {
         let values = input.parse_comma_separated(SingleFontFamily::parse)?;
-        Ok(FontFamily::Values(FontFamilyList::new(
-            values.into_boxed_slice(),
-        )))
+        Ok(FontFamily::Values(FontFamilyList {
+            list: crate::ArcSlice::from_iter(values.into_iter()),
+            fallback: computed::GenericFontFamily::None,
+        }))
     }
 }
 
@@ -674,8 +674,8 @@ impl ToComputedValue for FontFamily {
 
     fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
         match *self {
-            FontFamily::Values(ref v) => computed::FontFamily {
-                families: v.clone(),
+            FontFamily::Values(ref list) => computed::FontFamily {
+                families: list.clone(),
                 is_system_font: false,
             },
             FontFamily::System(_) => self.compute_system(context),
@@ -689,18 +689,12 @@ impl ToComputedValue for FontFamily {
 
 #[cfg(feature = "gecko")]
 impl MallocSizeOf for FontFamily {
-    fn size_of(&self, _ops: &mut MallocSizeOfOps) -> usize {
+    fn size_of(&self, ops: &mut MallocSizeOfOps) -> usize {
         match *self {
             FontFamily::Values(ref v) => {
-                // Although a SharedFontList object is refcounted, we always
-                // attribute its size to the specified value, as long as it's
-                // not a value in SharedFontList::sSingleGenerics.
-                if matches!(v, FontFamilyList::SharedFontList(_)) {
-                    let ptr = v.shared_font_list().get();
-                    unsafe { bindings::Gecko_SharedFontList_SizeOfIncludingThis(ptr) }
-                } else {
-                    0
-                }
+                // Although the family list is refcounted, we always attribute
+                // its size to the specified value.
+                v.list.unconditional_size_of(ops)
             },
             FontFamily::System(_) => 0,
         }
@@ -738,16 +732,13 @@ impl Parse for FamilyName {
     }
 }
 
-#[derive(
-    Clone, Copy, Debug, MallocSizeOf, Parse, PartialEq, SpecifiedValueInfo, ToCss, ToShmem,
-)]
 /// Preserve the readability of text when font fallback occurs
+#[derive(
+    Clone, Copy, Debug, MallocSizeOf, PartialEq, SpecifiedValueInfo, ToCss, ToShmem,
+)]
+#[allow(missing_docs)]
 pub enum FontSizeAdjust {
-    /// None variant
-    None,
-    /// Number variant
-    Number(NonNegativeNumber),
-    /// system font
+    Value(GenericFontSizeAdjust<NonNegativeNumber>),
     #[css(skip)]
     System(SystemFont),
 }
@@ -756,34 +747,54 @@ impl FontSizeAdjust {
     #[inline]
     /// Default value of font-size-adjust
     pub fn none() -> Self {
-        FontSizeAdjust::None
+        FontSizeAdjust::Value(GenericFontSizeAdjust::None)
     }
 
     system_font_methods!(FontSizeAdjust, font_size_adjust);
 }
 
+impl Parse for FontSizeAdjust {
+    fn parse<'i, 't>(
+        context: &ParserContext,
+        input: &mut Parser<'i, 't>,
+    ) -> Result<Self, ParseError<'i>> {
+        let location = input.current_source_location();
+        if let Ok(ident) = input.try_parse(|i| i.expect_ident_cloned()) {
+            let basis_enabled = static_prefs::pref!("layout.css.font-size-adjust.basis.enabled");
+            let basis = match_ignore_ascii_case! { &ident,
+                "none" => return Ok(FontSizeAdjust::none()),
+                // Check for size adjustment basis keywords if enabled.
+                "ex-height" if basis_enabled => GenericFontSizeAdjust::ExHeight,
+                "cap-height" if basis_enabled => GenericFontSizeAdjust::CapHeight,
+                "ch-width" if basis_enabled => GenericFontSizeAdjust::ChWidth,
+                "ic-width" if basis_enabled => GenericFontSizeAdjust::IcWidth,
+                "ic-height" if basis_enabled => GenericFontSizeAdjust::IcHeight,
+                // Unknown (or disabled) keyword.
+                _ => return Err(location.new_custom_error(
+                    ::selectors::parser::SelectorParseErrorKind::UnexpectedIdent(ident)
+                )),
+            };
+            let value = NonNegativeNumber::parse(context, input)?;
+            return Ok(FontSizeAdjust::Value(basis(value)));
+        }
+        // Without a basis keyword, the number refers to the 'ex-height' metric.
+        let value = NonNegativeNumber::parse(context, input)?;
+        Ok(FontSizeAdjust::Value(GenericFontSizeAdjust::ExHeight(value)))
+    }
+}
+
 impl ToComputedValue for FontSizeAdjust {
-    type ComputedValue = computed::FontSizeAdjust;
+    type ComputedValue = ComputedFontSizeAdjust;
 
     fn to_computed_value(&self, context: &Context) -> Self::ComputedValue {
         match *self {
-            FontSizeAdjust::None => computed::FontSizeAdjust::None,
-            FontSizeAdjust::Number(ref n) => {
-                // The computed version handles clamping of animated values
-                // itself.
-                computed::FontSizeAdjust::Number(n.to_computed_value(context).0)
-            },
+            FontSizeAdjust::Value(v) => v.to_computed_value(context),
             FontSizeAdjust::System(_) => self.compute_system(context),
         }
     }
 
-    fn from_computed_value(computed: &computed::FontSizeAdjust) -> Self {
-        match *computed {
-            computed::FontSizeAdjust::None => FontSizeAdjust::None,
-            computed::FontSizeAdjust::Number(v) => {
-                FontSizeAdjust::Number(NonNegativeNumber::from_computed_value(&v.into()))
-            },
-        }
+    fn from_computed_value(computed: &ComputedFontSizeAdjust) -> Self {
+        Self::Value(ToComputedValue::from_computed_value(computed))
     }
 }
 
@@ -863,10 +874,10 @@ impl FontSizeKeyword {
         static FONT_SIZE_FACTORS: [i32; 8] = [60, 75, 89, 100, 120, 150, 200, 300];
 
         let ref gecko_font = cx.style().get_font().gecko();
+        let generic = gecko_font.mFont.family.families.single_generic().unwrap_or(computed::GenericFontFamily::None);
         let base_size = unsafe {
             Atom::with(gecko_font.mLanguage.mRawPtr, |atom| {
-                cx.font_metrics_provider
-                    .get_size(atom, gecko_font.mGenericID)
+                cx.font_metrics_provider.get_size(atom, generic)
             })
         };
 
@@ -1970,6 +1981,14 @@ impl FontSynthesis {
         FontSynthesis {
             weight: true,
             style: true,
+        }
+    }
+    #[inline]
+    /// Get the 'none' value of font-synthesis
+    pub fn none() -> Self {
+        FontSynthesis {
+            weight: false,
+            style: false,
         }
     }
 }

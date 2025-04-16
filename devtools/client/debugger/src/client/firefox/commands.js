@@ -245,27 +245,21 @@ async function removeBreakpoint(location) {
   });
 }
 
-function evaluateInFrame(script, options) {
-  return evaluate(script, options);
-}
-
 async function evaluateExpressions(scripts, options) {
   return Promise.all(scripts.map(script => evaluate(script, options)));
 }
 
-async function evaluate(script, { thread, frameId } = {}) {
-  const params = { thread, frameActor: frameId };
+async function evaluate(script, { frameId, threadId } = {}) {
   if (!currentTarget() || !script) {
     return { result: null };
   }
 
-  const target = thread ? lookupTarget(thread) : currentTarget();
-  const consoleFront = await target.getFront("console");
-  if (!consoleFront) {
-    return { result: null };
-  }
+  const selectedTargetFront = threadId ? lookupTarget(threadId) : null;
 
-  return consoleFront.evaluateJSAsync(script, params);
+  return commands.scriptCommand.execute(script, {
+    frameActor: frameId,
+    selectedTargetFront,
+  });
 }
 
 async function autocomplete(input, cursor, frameId) {
@@ -333,15 +327,13 @@ async function blackBox(sourceActor, isBlackBoxed, range) {
   }
 }
 
-function setSkipPausing(shouldSkip) {
-  return forEachThread(thread => thread.skipBreakpoints(shouldSkip));
+async function setSkipPausing(shouldSkip) {
+  await commands.threadConfigurationCommand.updateConfiguration({
+    skipBreakpoints: shouldSkip,
+  });
 }
 
-function interrupt(thread) {
-  return lookupThreadFront(thread).interrupt();
-}
-
-function setEventListenerBreakpoints(ids) {
+async function setEventListenerBreakpoints(ids) {
   return forEachThread(thread => thread.setActiveEventBreakpoints(ids));
 }
 
@@ -371,9 +363,9 @@ function pauseGrip(thread, func) {
 }
 
 async function toggleEventLogging(logEventBreakpoints) {
-  return forEachThread(thread =>
-    thread.toggleEventLogging(logEventBreakpoints)
-  );
+  await commands.threadConfigurationCommand.updateConfiguration({
+    logEventBreakpoints,
+  });
 }
 
 async function addThread(targetFront) {
@@ -436,7 +428,6 @@ const clientCommands = {
   createObjectFront,
   loadObjectProperties,
   releaseActor,
-  interrupt,
   pauseGrip,
   resume,
   stepIn,
@@ -455,7 +446,6 @@ const clientCommands = {
   removeWatchpoint,
   removeBreakpoint,
   evaluate,
-  evaluateInFrame,
   evaluateExpressions,
   getProperties,
   getFrameScopes,

@@ -47,7 +47,6 @@
 #include "vm/EqualityOperations.h"  // js::StrictlyEqual
 #include "vm/FunctionFlags.h"       // js::FunctionFlags
 #include "vm/GeneratorObject.h"
-#include "vm/Instrumentation.h"
 #include "vm/Iteration.h"
 #include "vm/JSAtom.h"
 #include "vm/JSContext.h"
@@ -1777,24 +1776,6 @@ static MOZ_ALWAYS_INLINE bool GreaterThanOrEqualOperation(
 static MOZ_ALWAYS_INLINE bool SetObjectElementOperation(
     JSContext* cx, HandleObject obj, HandleId id, HandleValue value,
     HandleValue receiver, bool strict) {
-  // receiver != obj happens only at super[expr], where we expect to find the
-  // property. People probably aren't building hashtables with |super|
-  // anyway.
-
-  // Set the HadElementsAccess flag on the object if needed. This flag is
-  // used to do more eager dictionary-mode conversion for objects that are
-  // used as hashmaps. Set this flag only for objects with many properties,
-  // to avoid unnecessary Shape changes.
-  if (obj->is<NativeObject>() && JSID_IS_ATOM(id) &&
-      !obj->as<NativeObject>().inDictionaryMode() &&
-      !obj->as<NativeObject>().hadElementsAccess() &&
-      obj->as<NativeObject>().slotSpan() >
-          PropertyTree::MAX_HEIGHT_WITH_ELEMENTS_ACCESS / 3) {
-    if (!NativeObject::setHadElementsAccess(cx, obj.as<NativeObject>())) {
-      return false;
-    }
-  }
-
   ObjectOpResult result;
   return SetProperty(cx, obj, id, value, receiver, result) &&
          result.checkStrictModeError(cx, obj, id, strict);
@@ -2025,6 +2006,24 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
   JS_BEGIN_MACRO                     \
     js::gc::MaybeVerifyBarriers(cx); \
   JS_END_MACRO
+
+// Verify that an uninitialized lexical is followed by a correct check op.
+#ifdef DEBUG
+#  define ASSERT_UNINITIALIZED_ALIASED_LEXICAL(val)                        \
+    JS_BEGIN_MACRO                                                         \
+      if (IsUninitializedLexical(val)) {                                   \
+        JSOp next = JSOp(*GetNextPc(REGS.pc));                             \
+        MOZ_ASSERT(next == JSOp::CheckThis || next == JSOp::CheckReturn || \
+                   next == JSOp::CheckThisReinit ||                        \
+                   next == JSOp::CheckAliasedLexical);                     \
+      }                                                                    \
+    JS_END_MACRO
+#else
+#  define ASSERT_UNINITIALIZED_ALIASED_LEXICAL(val) \
+    JS_BEGIN_MACRO                                  \
+    /* nothing */                                   \
+    JS_END_MACRO
+#endif
 
   gc::MaybeVerifyBarriers(cx, true);
 
@@ -3523,14 +3522,21 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
       EnvironmentCoordinate ec = EnvironmentCoordinate(REGS.pc);
       ReservedRooted<Value> val(
           &rootValue0, REGS.fp()->aliasedEnvironment(ec).aliasedBinding(ec));
-#ifdef DEBUG
-      if (IsUninitializedLexical(val)) {
-        JSOp next = JSOp(*GetNextPc(REGS.pc));
-        MOZ_ASSERT(next == JSOp::CheckThis || next == JSOp::CheckReturn ||
-                   next == JSOp::CheckThisReinit ||
-                   next == JSOp::CheckAliasedLexical);
-      }
-#endif
+
+      ASSERT_UNINITIALIZED_ALIASED_LEXICAL(val);
+
+      PUSH_COPY(val);
+    }
+    END_CASE(GetAliasedVar)
+
+    CASE(GetAliasedDebugVar) {
+      EnvironmentCoordinate ec = EnvironmentCoordinate(REGS.pc);
+      ReservedRooted<Value> val(
+          &rootValue0,
+          REGS.fp()->aliasedEnvironmentMaybeDebug(ec).aliasedBinding(ec));
+
+      ASSERT_UNINITIALIZED_ALIASED_LEXICAL(val);
+
       PUSH_COPY(val);
     }
     END_CASE(GetAliasedVar)
@@ -4389,31 +4395,6 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     CASE(BigInt) { PUSH_BIGINT(script->getBigInt(REGS.pc)); }
     END_CASE(BigInt)
 
-    CASE(InstrumentationActive) {
-      ReservedRooted<Value> rval(&rootValue0);
-      if (!InstrumentationActiveOperation(cx, &rval)) {
-        goto error;
-      }
-      PUSH_COPY(rval);
-    }
-    END_CASE(InstrumentationActive)
-
-    CASE(InstrumentationCallback) {
-      JSObject* obj = InstrumentationCallbackOperation(cx);
-      MOZ_ASSERT(obj);
-      PUSH_OBJECT(*obj);
-    }
-    END_CASE(InstrumentationCallback)
-
-    CASE(InstrumentationScriptId) {
-      ReservedRooted<Value> rval(&rootValue0);
-      if (!InstrumentationScriptIdOperation(cx, script, &rval)) {
-        goto error;
-      }
-      PUSH_COPY(rval);
-    }
-    END_CASE(InstrumentationScriptId)
-
     DEFAULT() {
       char numBuf[12];
       SprintfLiteral(numBuf, "%d", *REGS.pc);
@@ -5042,11 +5023,21 @@ JSObject* js::NewObjectOperationWithTemplate(JSContext* cx,
   return CopyTemplateObject(cx, templateObject.as<PlainObject>(), newKind);
 }
 
-JSObject* js::NewPlainObject(JSContext* cx, HandleShape shape,
-                             gc::AllocKind allocKind,
-                             gc::InitialHeap initialHeap) {
+JSObject* js::NewPlainObjectBaselineFallback(JSContext* cx, HandleShape shape,
+                                             gc::AllocKind allocKind,
+                                             gc::AllocSite* site) {
   MOZ_ASSERT(shape->getObjectClass() == &PlainObject::class_);
-  auto r = NativeObject::create(cx, allocKind, initialHeap, shape);
+  gc::InitialHeap initialHeap = site->initialHeap();
+  auto r = NativeObject::create(cx, allocKind, initialHeap, shape, site);
+  return cx->resultToPtr(r);
+}
+
+JSObject* js::NewPlainObjectOptimizedFallback(JSContext* cx, HandleShape shape,
+                                              gc::AllocKind allocKind,
+                                              gc::InitialHeap initialHeap) {
+  MOZ_ASSERT(shape->getObjectClass() == &PlainObject::class_);
+  gc::AllocSite* site = cx->zone()->optimizedAllocSite();
+  auto r = NativeObject::create(cx, allocKind, initialHeap, shape, site);
   return cx->resultToPtr(r);
 }
 
@@ -5066,6 +5057,35 @@ ArrayObject* js::NewArrayOperation(
     JSContext* cx, uint32_t length,
     NewObjectKind newKind /* = GenericObject */) {
   return NewDenseFullyAllocatedArray(cx, length, nullptr, newKind);
+}
+
+ArrayObject* js::NewArrayObjectBaselineFallback(JSContext* cx, uint32_t length,
+                                                gc::AllocKind allocKind,
+                                                gc::AllocSite* site) {
+  NewObjectKind newKind =
+      site->initialHeap() == gc::TenuredHeap ? TenuredObject : GenericObject;
+  ArrayObject* array =
+      NewDenseFullyAllocatedArray(cx, length, nullptr, newKind, site);
+  // It's important that we allocate an object with the alloc kind we were
+  // expecting so that a new arena gets allocated if the current arena for that
+  // kind is full.
+  MOZ_ASSERT_IF(array && array->isTenured(),
+                array->asTenured().getAllocKind() == allocKind);
+  return array;
+}
+
+ArrayObject* js::NewArrayObjectOptimizedFallback(JSContext* cx, uint32_t length,
+                                                 gc::AllocKind allocKind,
+                                                 NewObjectKind newKind) {
+  gc::AllocSite* site = cx->zone()->optimizedAllocSite();
+  ArrayObject* array =
+      NewDenseFullyAllocatedArray(cx, length, nullptr, newKind, site);
+  // It's important that we allocate an object with the alloc kind we were
+  // expecting so that a new arena gets allocated if the current arena for that
+  // kind is full.
+  MOZ_ASSERT_IF(array && array->isTenured(),
+                array->asTenured().getAllocKind() == allocKind);
+  return array;
 }
 
 void js::ReportRuntimeLexicalError(JSContext* cx, unsigned errorNumber,
@@ -5174,4 +5194,26 @@ bool js::SetPropertySuper(JSContext* cx, HandleObject obj, HandleValue receiver,
   }
 
   return result.checkStrictModeError(cx, obj, id, strict);
+}
+
+bool js::LoadAliasedDebugVar(JSContext* cx, JSObject* env, jsbytecode* pc,
+                             MutableHandleValue result) {
+  EnvironmentCoordinate ec(pc);
+
+  for (unsigned i = ec.hops(); i; i--) {
+    if (env->is<EnvironmentObject>()) {
+      env = &env->as<EnvironmentObject>().enclosingEnvironment();
+    } else {
+      MOZ_ASSERT(env->is<DebugEnvironmentProxy>());
+      env = &env->as<DebugEnvironmentProxy>().enclosingEnvironment();
+    }
+  }
+
+  EnvironmentObject& finalEnv =
+      env->is<EnvironmentObject>()
+          ? env->as<EnvironmentObject>()
+          : env->as<DebugEnvironmentProxy>().environment();
+
+  result.set(finalEnv.aliasedBinding(ec));
+  return true;
 }

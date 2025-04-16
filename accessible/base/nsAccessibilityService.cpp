@@ -6,6 +6,7 @@
 #include "nsAccessibilityService.h"
 
 // NOTE: alphabetically ordered
+#include "AccAttributes.h"
 #include "ApplicationAccessibleWrap.h"
 #include "ARIAGridAccessibleWrap.h"
 #include "ARIAMap.h"
@@ -48,6 +49,7 @@
 #ifdef XP_WIN
 #  include "mozilla/a11y/Compatibility.h"
 #  include "mozilla/dom/ContentChild.h"
+#  include "mozilla/StaticPrefs_accessibility.h"
 #  include "mozilla/StaticPtr.h"
 #endif
 
@@ -1127,11 +1129,10 @@ LocalAccessible* nsAccessibilityService::CreateAccessible(
       }
     } else if (content->IsGeneratedContentContainerForMarker()) {
       if (aContext->IsHTMLListItem()) {
-        const nsStyleList* styleList = frame->StyleList();
-        if (!styleList->mListStyleImage.IsNone() ||
-            !styleList->mCounterStyle.IsNone()) {
-          newAcc = new HTMLListBulletAccessible(content, document);
-        }
+        newAcc = new HTMLListBulletAccessible(content, document);
+      }
+      if (aIsSubtreeHidden) {
+        *aIsSubtreeHidden = true;
       }
     }
   }
@@ -1222,7 +1223,8 @@ bool nsAccessibilityService::Init() {
     MOZ_ASSERT(contentChild);
     // If we were instantiated by the chrome process, GetMsaaID() will return
     // a non-zero value and we may safely continue with initialization.
-    if (!contentChild->GetMsaaID()) {
+    if (!StaticPrefs::accessibility_cache_enabled_AtStartup() &&
+        !contentChild->GetMsaaID()) {
       // Since we were not instantiated by chrome, we need to synchronously
       // obtain a MSAA content process id.
       contentChild->SendGetA11yContentId();
@@ -1445,7 +1447,7 @@ nsAccessibilityService::CreateAccessibleByFrameType(nsIFrame* aFrame,
 }
 
 void nsAccessibilityService::MarkupAttributes(
-    const nsIContent* aContent, nsIPersistentProperties* aAttributes) const {
+    const nsIContent* aContent, AccAttributes* aAttributes) const {
   const mozilla::a11y::MarkupMapInfo* markupMap =
       GetMarkupMapInfoForNode(aContent);
   if (!markupMap) return;
@@ -1459,7 +1461,7 @@ void nsAccessibilityService::MarkupAttributes(
         if (aContent->IsElement() && aContent->AsElement()->AttrValueIs(
                                          kNameSpaceID_None, info->DOMAttrName,
                                          info->DOMAttrValue, eCaseMatters)) {
-          nsAccUtils::SetAccAttr(aAttributes, info->name, info->DOMAttrValue);
+          aAttributes->SetAttribute(info->name, info->DOMAttrValue);
         }
         continue;
       }
@@ -1472,13 +1474,13 @@ void nsAccessibilityService::MarkupAttributes(
       }
 
       if (!value.IsEmpty()) {
-        nsAccUtils::SetAccAttr(aAttributes, info->name, value);
+        aAttributes->SetAttribute(info->name, value);
       }
 
       continue;
     }
 
-    nsAccUtils::SetAccAttr(aAttributes, info->name, info->value);
+    aAttributes->SetAttribute(info->name, info->value);
   }
 }
 

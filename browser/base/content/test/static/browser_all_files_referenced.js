@@ -76,6 +76,13 @@ if (AppConstants.NIGHTLY_BUILD) {
   gExceptionPaths.push("resource://builtin-addons/translations/");
 }
 
+if (AppConstants.NIGHTLY_BUILD) {
+  // This is nightly-only debug tool.
+  gExceptionPaths.push(
+    "chrome://browser/content/places/interactionsViewer.html"
+  );
+}
+
 // Each whitelist entry should have a comment indicating which file is
 // referencing the whitelisted file in a way that the test can't detect, or a
 // bug number to remove or use the file if it is indeed currently unreferenced.
@@ -190,10 +197,10 @@ var whitelist = [
     platforms: ["linux", "macosx"],
   },
   // Bug 1344267
-  { file: "chrome://marionette/content/test.xhtml" },
-  { file: "chrome://marionette/content/test_dialog.properties" },
-  { file: "chrome://marionette/content/test_dialog.xhtml" },
-  { file: "chrome://marionette/content/test_menupopup.xhtml" },
+  { file: "chrome://remote/content/marionette/test.xhtml" },
+  { file: "chrome://remote/content/marionette/test_dialog.properties" },
+  { file: "chrome://remote/content/marionette/test_dialog.xhtml" },
+  { file: "chrome://remote/content/marionette/test_menupopup.xhtml" },
   // Bug 1348559
   { file: "chrome://pippki/content/resetpassword.xhtml" },
   // Bug 1337345
@@ -235,9 +242,6 @@ var whitelist = [
     file:
       "chrome://browser/content/aboutlogins/components/import-details-row.js",
   },
-
-  // services/fxaccounts/RustFxAccount.js
-  { file: "resource://gre/modules/RustFxAccount.js" },
 
   // dom/media/mediacontrol/MediaControlService.cpp
   { file: "resource://gre/localization/en-US/dom/media.ftl" },
@@ -336,7 +340,7 @@ if (!isDevtools) {
 }
 
 if (AppConstants.MOZ_CODE_COVERAGE) {
-  whitelist.add("chrome://marionette/content/PerTestCoverageUtils.jsm");
+  whitelist.add("chrome://remote/content/marionette/PerTestCoverageUtils.jsm");
 }
 
 const gInterestingCategories = new Set([
@@ -403,11 +407,8 @@ function parseManifest(manifestUri) {
         // The webcompat reporter's locale directory may not exist if
         // the addon is preffed-off, and since it's a hack until we
         // get bz1425104 landed, we'll just skip it for now.
-        // Same issue with fxmonitor, which is also pref'd off.
         if (chromeUri === "chrome://report-site-issue/locale/") {
           gChromeMap.set("chrome://report-site-issue/locale/", true);
-        } else if (chromeUri === "chrome://fxmonitor/locale/") {
-          gChromeMap.set("chrome://fxmonitor/locale/", true);
         } else {
           trackChromeUri(chromeUri);
         }

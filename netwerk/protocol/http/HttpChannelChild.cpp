@@ -64,10 +64,6 @@
 #include "ClassifierDummyChannel.h"
 #include "nsIOService.h"
 
-#ifdef MOZ_TASK_TRACER
-#  include "GeckoTaskTracer.h"
-#endif
-
 #include <functional>
 
 using namespace mozilla::dom;
@@ -83,20 +79,6 @@ namespace net {
 HttpChannelChild::HttpChannelChild()
     : HttpAsyncAborter<HttpChannelChild>(this),
       NeckoTargetHolder(nullptr),
-      mBgChildMutex("HttpChannelChild::BgChildMutex"),
-      mEventTargetMutex("HttpChannelChild::EventTargetMutex"),
-      mCacheEntryId(0),
-      mCacheKey(0),
-      mCacheFetchCount(0),
-      mCacheExpirationTime(nsICacheEntry::NO_EXPIRATION_TIME),
-      mDeletingChannelSent(false),
-      mIsFromCache(false),
-      mIsRacing(false),
-      mCacheNeedToReportBytesReadInitialized(false),
-      mNeedToReportBytesRead(true),
-#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
-      mBackgroundChildQueueFinalState(BCKCHILD_UNKNOWN),
-#endif
       mCacheEntryAvailable(false),
       mAltDataCacheEntryAvailable(false),
       mSendResumeAt(false),
@@ -362,9 +344,24 @@ void HttpChannelChild::ProcessOnStartRequest(
   LOG(("HttpChannelChild::ProcessOnStartRequest [this=%p]\n", this));
   MOZ_ASSERT(OnSocketThread());
 
+#ifdef NIGHTLY_BUILD
+  TimeStamp start = TimeStamp::Now();
+#endif
+
   mEventQ->RunOrEnqueue(new NeckoTargetChannelFunctionEvent(
       this, [self = UnsafePtr<HttpChannelChild>(this), aResponseHead,
+#ifdef NIGHTLY_BUILD
+             aUseResponseHead, aRequestHeaders, aArgs, start]() {
+        if (self->mLoadFlags & nsIRequest::LOAD_RECORD_START_REQUEST_DELAY) {
+          TimeDuration delay = TimeStamp::Now() - start;
+          Telemetry::Accumulate(
+              Telemetry::HTTP_PRELOAD_IMAGE_STARTREQUEST_DELAY,
+              static_cast<uint32_t>(delay.ToMilliseconds()));
+        }
+#else
              aUseResponseHead, aRequestHeaders, aArgs]() {
+#endif
+
         self->OnStartRequest(aResponseHead, aUseResponseHead, aRequestHeaders,
                              aArgs);
       }));
@@ -409,8 +406,9 @@ void HttpChannelChild::OnStartRequest(
   MOZ_ASSERT(!aRequestHeaders.HasHeader(nsHttp::Cookie));
   MOZ_ASSERT(!nsHttpResponseHead(aResponseHead).HasHeader(nsHttp::Set_Cookie));
 
-  if (aUseResponseHead && !mCanceled)
+  if (aUseResponseHead && !mCanceled) {
     mResponseHead = MakeUnique<nsHttpResponseHead>(aResponseHead);
+  }
 
   if (!aArgs.securityInfoSerialization().IsEmpty()) {
     [[maybe_unused]] nsresult rv = NS_DeserializeObject(
@@ -879,8 +877,8 @@ void HttpChannelChild::OnStopRequest(
     profiler_add_network_marker(
         mURI, requestMethod, priority, mChannelId, NetworkLoadType::LOAD_STOP,
         mLastStatusReported, TimeStamp::Now(), mTransferSize, kCacheUnknown,
-        mLoadInfo->GetInnerWindowID(), &mTransactionTimings, nullptr,
-        std::move(mSource), Some(nsDependentCString(contentType.get())));
+        mLoadInfo->GetInnerWindowID(), &mTransactionTimings, std::move(mSource),
+        Some(nsDependentCString(contentType.get())));
   }
 #endif
 
@@ -1367,7 +1365,8 @@ void HttpChannelChild::Redirect1Begin(
         mURI, requestMethod, mPriority, mChannelId,
         NetworkLoadType::LOAD_REDIRECT, mLastStatusReported, TimeStamp::Now(),
         0, kCacheUnknown, mLoadInfo->GetInnerWindowID(), &mTransactionTimings,
-        uri, std::move(mSource), Some(nsDependentCString(contentType.get())));
+        std::move(mSource), Some(nsDependentCString(contentType.get())), uri,
+        redirectFlags, channelId);
   }
 #endif
 
@@ -1682,7 +1681,7 @@ HttpChannelChild::CompleteRedirectSetup(nsIStreamListener* aListener) {
     profiler_add_network_marker(
         mURI, requestMethod, mPriority, mChannelId, NetworkLoadType::LOAD_START,
         mChannelCreationTimestamp, mLastStatusReported, 0, kCacheUnknown,
-        mLoadInfo->GetInnerWindowID(), nullptr, nullptr);
+        mLoadInfo->GetInnerWindowID());
   }
 #endif
   StoreIsPending(true);
@@ -1788,10 +1787,11 @@ HttpChannelChild::OnRedirectVerifyCallback(nsresult aResult) {
     targetLoadInfoForwarder.emplace(args);
   }
 
-  if (CanSend())
+  if (CanSend()) {
     SendRedirect2Verify(aResult, *headerTuples, sourceRequestBlockingReason,
                         targetLoadInfoForwarder, loadFlags, referrerInfo,
                         redirectURI, corsPreflightArgs);
+  }
 
   return NS_OK;
 }
@@ -1972,16 +1972,6 @@ nsresult HttpChannelChild::AsyncOpenInternal(nsIStreamListener* aListener) {
     mAsyncOpenTime = TimeStamp::Now();
   }
 
-#ifdef MOZ_TASK_TRACER
-  if (tasktracer::IsStartLogging()) {
-    nsCOMPtr<nsIURI> uri;
-    GetURI(getter_AddRefs(uri));
-    nsAutoCString urispec;
-    uri->GetSpec(urispec);
-    tasktracer::AddLabel("HttpChannelChild::AsyncOpen %s", urispec.get());
-  }
-#endif
-
   // Port checked in parent, but duplicate here so we can return with error
   // immediately
   rv = NS_CheckPortSafety(mURI);
@@ -2018,7 +2008,7 @@ nsresult HttpChannelChild::AsyncOpenInternal(nsIStreamListener* aListener) {
     profiler_add_network_marker(
         mURI, requestMethod, mPriority, mChannelId, NetworkLoadType::LOAD_START,
         mChannelCreationTimestamp, mLastStatusReported, 0, kCacheUnknown,
-        mLoadInfo->GetInnerWindowID(), nullptr, nullptr);
+        mLoadInfo->GetInnerWindowID());
   }
 #endif
   StoreIsPending(true);

@@ -77,7 +77,7 @@
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Telemetry.h"
 
-#include "BackgroundChild.h"
+#include "mozilla/ipc/BackgroundChild.h"
 #include "mozilla/ipc/PBackgroundChild.h"
 #include "VsyncSource.h"
 #include "mozilla/VsyncDispatcher.h"
@@ -1214,11 +1214,9 @@ void nsRefreshDriver::AddRefreshObserver(nsARefreshObserver* aObserver,
   ObserverArray& array = ArrayFor(aFlushType);
   array.AppendElement(ObserverData{
       aObserver, aObserverDescription, TimeStamp::Now(),
-#ifdef MOZ_GECKO_PROFILER
       mPresContext
           ? MarkerInnerWindowIdFromDocShell(mPresContext->GetDocShell())
           : MarkerInnerWindowId::NoId(),
-#endif
       profiler_capture_backtrace(), aFlushType});
   EnsureTimerStarted();
 }
@@ -1317,12 +1315,15 @@ void nsRefreshDriver::DispatchVisualViewportScrollEvents() {
 
 void nsRefreshDriver::AddPostRefreshObserver(
     nsAPostRefreshObserver* aObserver) {
+  MOZ_DIAGNOSTIC_ASSERT(!mPostRefreshObservers.Contains(aObserver));
   mPostRefreshObservers.AppendElement(aObserver);
 }
 
 void nsRefreshDriver::RemovePostRefreshObserver(
     nsAPostRefreshObserver* aObserver) {
-  mPostRefreshObservers.RemoveElement(aObserver);
+  bool removed = mPostRefreshObservers.RemoveElement(aObserver);
+  MOZ_DIAGNOSTIC_ASSERT(removed);
+  Unused << removed;
 }
 
 bool nsRefreshDriver::AddImageRequest(imgIRequest* aRequest) {

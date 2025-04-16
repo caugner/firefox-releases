@@ -57,6 +57,7 @@
 #include "mozilla/DebugOnly.h"
 #include "mozilla/DocLoadingTimelineMarker.h"
 #include "mozilla/DocumentStyleRootIterator.h"
+#include "mozilla/EditorBase.h"
 #include "mozilla/EditorCommands.h"
 #include "mozilla/Encoding.h"
 #include "mozilla/ErrorResult.h"
@@ -340,6 +341,7 @@
 #include "nsIPermission.h"
 #include "nsIPrompt.h"
 #include "nsIPropertyBag2.h"
+#include "nsIPublicKeyPinningService.h"
 #include "nsIReferrerInfo.h"
 #include "nsIRefreshURI.h"
 #include "nsIRequest.h"
@@ -1610,7 +1612,9 @@ already_AddRefed<mozilla::dom::Promise> Document::AddCertException(
 
     ContentChild* cc = ContentChild::GetSingleton();
     MOZ_ASSERT(cc);
-    cc->SendAddCertException(certSerialized, flags, host, port, aIsTemporary)
+    OriginAttributes const& attrs = NodePrincipal()->OriginAttributesRef();
+    cc->SendAddCertException(certSerialized, flags, host, port, attrs,
+                             aIsTemporary)
         ->Then(GetCurrentSerialEventTarget(), __func__,
                [promise](const mozilla::MozPromise<
                          nsresult, mozilla::ipc::ResponseRejectReason,
@@ -1632,8 +1636,9 @@ already_AddRefed<mozilla::dom::Promise> Document::AddCertException(
       return promise.forget();
     }
 
-    rv = overrideService->RememberValidityOverride(host, port, cert, flags,
-                                                   aIsTemporary);
+    OriginAttributes const& attrs = NodePrincipal()->OriginAttributesRef();
+    rv = overrideService->RememberValidityOverride(host, port, attrs, cert,
+                                                   flags, aIsTemporary);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       promise->MaybeReject(rv);
       return promise.forget();
@@ -1886,23 +1891,22 @@ void Document::GetFailedCertSecurityInfo(FailedCertSecurityInfo& aInfo,
   if (XRE_IsContentProcess()) {
     ContentChild* cc = ContentChild::GetSingleton();
     MOZ_ASSERT(cc);
-    cc->SendIsSecureURI(nsISiteSecurityService::HEADER_HSTS, aURI, flags, attrs,
-                        &aInfo.mHasHSTS);
-    cc->SendIsSecureURI(nsISiteSecurityService::STATIC_PINNING, aURI, flags,
-                        attrs, &aInfo.mHasHPKP);
+    cc->SendIsSecureURI(aURI, flags, attrs, &aInfo.mHasHSTS);
   } else {
     nsCOMPtr<nsISiteSecurityService> sss =
         do_GetService(NS_SSSERVICE_CONTRACTID);
     if (NS_WARN_IF(!sss)) {
       return;
     }
-    Unused << NS_WARN_IF(NS_FAILED(
-        sss->IsSecureURI(nsISiteSecurityService::HEADER_HSTS, aURI, flags,
-                         attrs, nullptr, nullptr, &aInfo.mHasHSTS)));
-    Unused << NS_WARN_IF(NS_FAILED(
-        sss->IsSecureURI(nsISiteSecurityService::STATIC_PINNING, aURI, flags,
-                         attrs, nullptr, nullptr, &aInfo.mHasHPKP)));
+    Unused << NS_WARN_IF(NS_FAILED(sss->IsSecureURI(aURI, flags, attrs, nullptr,
+                                                    nullptr, &aInfo.mHasHSTS)));
   }
+  nsCOMPtr<nsIPublicKeyPinningService> pkps =
+      do_GetService(NS_PKPSERVICE_CONTRACTID);
+  if (NS_WARN_IF(!pkps)) {
+    return;
+  }
+  Unused << NS_WARN_IF(NS_FAILED(pkps->HostHasPins(aURI, &aInfo.mHasHPKP)));
 }
 
 bool Document::AllowDeprecatedTls() {
@@ -2425,9 +2429,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(Document)
     }
   }
 
-  if (tmp->mResizeObserverController) {
-    tmp->mResizeObserverController->Traverse(cb);
-  }
   for (size_t i = 0; i < tmp->mMetaViewports.Length(); i++) {
     NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mMetaViewports[i].mElement);
   }
@@ -2584,9 +2585,6 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Document)
 
   tmp->mInUnlinkOrDeletion = false;
 
-  if (tmp->mResizeObserverController) {
-    tmp->mResizeObserverController->Unlink();
-  }
   tmp->mMetaViewports.Clear();
 
   tmp->UnregisterFromMemoryReportingForDataDocument();
@@ -4338,25 +4336,16 @@ bool Document::HasFocus(ErrorResult& rv) const {
     return false;
   }
 
-  // Is there a focused DOMWindow?
-  nsCOMPtr<mozIDOMWindowProxy> focusedWindow;
-  fm->GetFocusedWindow(getter_AddRefs(focusedWindow));
-  if (!focusedWindow) {
+  BrowsingContext* bc = GetBrowsingContext();
+  if (!bc) {
     return false;
   }
 
-  nsPIDOMWindowOuter* piWindow = nsPIDOMWindowOuter::From(focusedWindow);
-
-  // Are we an ancestor of the focused DOMWindow?
-  for (Document* currentDoc = piWindow->GetDoc(); currentDoc;
-       currentDoc = currentDoc->GetInProcessParentDocument()) {
-    if (currentDoc == this) {
-      // Yes, we are an ancestor
-      return true;
-    }
+  if (!fm->IsInActiveWindow(bc)) {
+    return false;
   }
 
-  return false;
+  return fm->IsSameOrAncestor(bc, fm->GetFocusedBrowsingContext());
 }
 
 void Document::GetDesignMode(nsAString& aDesignMode) {
@@ -5080,7 +5069,7 @@ Document::AutoEditorCommandTarget::AutoEditorCommandTarget(
   mHTMLEditor = nullptr;
 }
 
-TextEditor* Document::AutoEditorCommandTarget::GetTargetEditor() const {
+EditorBase* Document::AutoEditorCommandTarget::GetTargetEditor() const {
   using CommandOnTextEditor = InternalCommandData::CommandOnTextEditor;
   switch (mCommandData.mCommandOnTextEditor) {
     case CommandOnTextEditor::Enabled:
@@ -5101,7 +5090,7 @@ bool Document::AutoEditorCommandTarget::IsEditable(Document* aDocument) const {
     // we're editable.
     doc->FlushPendingNotifications(FlushType::Frames);
   }
-  TextEditor* targetEditor = GetTargetEditor();
+  EditorBase* targetEditor = GetTargetEditor();
   if (targetEditor && targetEditor->IsTextEditor()) {
     // FYI: When `disabled` attribute is set, `TextEditor` treats it as
     //      "readonly" too.
@@ -5111,7 +5100,7 @@ bool Document::AutoEditorCommandTarget::IsEditable(Document* aDocument) const {
 }
 
 bool Document::AutoEditorCommandTarget::IsCommandEnabled() const {
-  TextEditor* targetEditor = GetTargetEditor();
+  EditorBase* targetEditor = GetTargetEditor();
   if (!targetEditor) {
     return false;
   }
@@ -5124,7 +5113,7 @@ nsresult Document::AutoEditorCommandTarget::DoCommand(
     nsIPrincipal* aPrincipal) const {
   MOZ_ASSERT(!DoNothing());
   MOZ_ASSERT(mEditorCommand);
-  TextEditor* targetEditor = GetTargetEditor();
+  EditorBase* targetEditor = GetTargetEditor();
   if (!targetEditor) {
     return NS_SUCCESS_DOM_NO_OPERATION;
   }
@@ -5139,7 +5128,7 @@ nsresult Document::AutoEditorCommandTarget::DoCommandParam(
     const ParamType& aParam, nsIPrincipal* aPrincipal) const {
   MOZ_ASSERT(!DoNothing());
   MOZ_ASSERT(mEditorCommand);
-  TextEditor* targetEditor = GetTargetEditor();
+  EditorBase* targetEditor = GetTargetEditor();
   if (!targetEditor) {
     return NS_SUCCESS_DOM_NO_OPERATION;
   }
@@ -5152,7 +5141,7 @@ nsresult Document::AutoEditorCommandTarget::DoCommandParam(
 nsresult Document::AutoEditorCommandTarget::GetCommandStateParams(
     nsCommandParams& aParams) const {
   MOZ_ASSERT(mEditorCommand);
-  TextEditor* targetEditor = GetTargetEditor();
+  EditorBase* targetEditor = GetTargetEditor();
   if (!targetEditor) {
     return NS_OK;
   }
@@ -5738,8 +5727,7 @@ nsresult Document::TurnEditingOff() {
   if (nsFocusManager* fm = nsFocusManager::GetFocusManager()) {
     if (RefPtr<TextControlElement> textControlElement =
             TextControlElement::FromNodeOrNull(fm->GetFocusedElement())) {
-      RefPtr<TextEditor> textEditor = textControlElement->GetTextEditor();
-      if (textEditor) {
+      if (RefPtr<TextEditor> textEditor = textControlElement->GetTextEditor()) {
         textEditor->ReinitializeSelection(*textControlElement);
       }
     }
@@ -6957,14 +6945,15 @@ Element* Document::GetRootElementInternal() const {
   return nullptr;
 }
 
-nsresult Document::InsertChildBefore(nsIContent* aKid, nsIContent* aBeforeThis,
-                                     bool aNotify) {
+void Document::InsertChildBefore(nsIContent* aKid, nsIContent* aBeforeThis,
+                                 bool aNotify, ErrorResult& aRv) {
   if (aKid->IsElement() && GetRootElement()) {
     NS_WARNING("Inserting root element when we already have one");
-    return NS_ERROR_DOM_HIERARCHY_REQUEST_ERR;
+    aRv.ThrowHierarchyRequestError("There is already a root element.");
+    return;
   }
 
-  return nsINode::InsertChildBefore(aKid, aBeforeThis, aNotify);
+  nsINode::InsertChildBefore(aKid, aBeforeThis, aNotify, aRv);
 }
 
 void Document::RemoveChildNode(nsIContent* aKid, bool aNotify) {
@@ -7940,8 +7929,9 @@ static void InsertAnonContentIntoCanvas(AnonymousContent& aAnonContent,
     return;
   }
 
-  nsresult rv = container->AppendChildTo(&aAnonContent.ContentNode(), true);
-  if (NS_FAILED(rv)) {
+  IgnoredErrorResult rv;
+  container->AppendChildTo(&aAnonContent.ContentNode(), true, rv);
+  if (rv.Failed()) {
     return;
   }
 
@@ -8609,6 +8599,10 @@ void Document::SetDomain(const nsAString& aDomain, ErrorResult& rv) {
 
   MOZ_ALWAYS_SUCCEEDS(NodePrincipal()->SetDomain(newURI));
   MOZ_ALWAYS_SUCCEEDS(PartitionedPrincipal()->SetDomain(newURI));
+  WindowGlobalChild* wgc = GetWindowGlobalChild();
+  if (wgc) {
+    wgc->SendSetDocumentDomain(newURI);
+  }
 }
 
 already_AddRefed<nsIURI> Document::CreateInheritingURIForHost(
@@ -8649,6 +8643,21 @@ already_AddRefed<nsIURI> Document::RegistrableDomainSuffixOfInternal(
     return nullptr;
   }
 
+  if (!IsValidDomain(aOrigHost, newURI)) {
+    // Error: illegal domain
+    return nullptr;
+  }
+
+  nsAutoCString domain;
+  if (NS_FAILED(newURI->GetAsciiHost(domain))) {
+    return nullptr;
+  }
+
+  return CreateInheritingURIForHost(domain);
+}
+
+/* static */
+bool Document::IsValidDomain(nsIURI* aOrigHost, nsIURI* aNewURI) {
   // Check new domain - must be a superdomain of the current host
   // For example, a page from foo.bar.com may set domain to bar.com,
   // but not to ar.com, baz.com, or fi.foo.bar.com.
@@ -8657,7 +8666,7 @@ already_AddRefed<nsIURI> Document::RegistrableDomainSuffixOfInternal(
   if (NS_FAILED(aOrigHost->GetAsciiHost(current))) {
     current.Truncate();
   }
-  if (NS_FAILED(newURI->GetAsciiHost(domain))) {
+  if (NS_FAILED(aNewURI->GetAsciiHost(domain))) {
     domain.Truncate();
   }
 
@@ -8669,7 +8678,7 @@ already_AddRefed<nsIURI> Document::RegistrableDomainSuffixOfInternal(
     nsCOMPtr<nsIEffectiveTLDService> tldService =
         do_GetService(NS_EFFECTIVETLDSERVICE_CONTRACTID);
     if (!tldService) {
-      return nullptr;
+      return false;
     }
 
     nsAutoCString currentBaseDomain;
@@ -8681,12 +8690,7 @@ already_AddRefed<nsIURI> Document::RegistrableDomainSuffixOfInternal(
     ok = ok && domain.Length() >= currentBaseDomain.Length();
   }
 
-  if (!ok) {
-    // Error: illegal domain
-    return nullptr;
-  }
-
-  return CreateInheritingURIForHost(domain);
+  return ok;
 }
 
 Element* Document::GetHtmlElement() const {
@@ -8732,9 +8736,14 @@ void Document::SetBody(nsGenericHTMLElement* newBody, ErrorResult& rv) {
   // The body element must be either a body tag or a frameset tag. And we must
   // have a root element to be able to add kids to it.
   if (!newBody ||
-      !newBody->IsAnyOfHTMLElements(nsGkAtoms::body, nsGkAtoms::frameset) ||
-      !root) {
-    rv.Throw(NS_ERROR_DOM_HIERARCHY_REQUEST_ERR);
+      !newBody->IsAnyOfHTMLElements(nsGkAtoms::body, nsGkAtoms::frameset)) {
+    rv.ThrowHierarchyRequestError(
+        "The new body must be either a body tag or frameset tag.");
+    return;
+  }
+
+  if (!root) {
+    rv.ThrowHierarchyRequestError("No root element.");
     return;
   }
 
@@ -8840,7 +8849,8 @@ void Document::SetTitle(const nsAString& aTitle, ErrorResult& aRv) {
       if (!title) {
         return;
       }
-      rootElement->InsertChildBefore(title, rootElement->GetFirstChild(), true);
+      rootElement->InsertChildBefore(title, rootElement->GetFirstChild(), true,
+                                     IgnoreErrors());
     }
   } else if (rootElement->IsHTMLElement()) {
     if (!title) {
@@ -8860,7 +8870,7 @@ void Document::SetTitle(const nsAString& aTitle, ErrorResult& aRv) {
         return;
       }
 
-      head->AppendChildTo(title, true);
+      head->AppendChildTo(title, true, IgnoreErrors());
     }
   } else {
     return;
@@ -8892,7 +8902,11 @@ void Document::NotifyPossibleTitleChange(bool aBoundTitleElement) {
 }
 
 void Document::DoNotifyPossibleTitleChange() {
-  mPendingTitleChangeEvent.Forget();
+  if (!mPendingTitleChangeEvent.IsPending()) {
+    return;
+  }
+  // Make sure the pending runnable method is cleared.
+  mPendingTitleChangeEvent.Revoke();
   mHaveFiredTitleChange = true;
 
   nsAutoString title;
@@ -9828,7 +9842,7 @@ nsINode* Document::AdoptNode(nsINode& aAdoptedNode, ErrorResult& rv) {
     }
     case DOCUMENT_FRAGMENT_NODE: {
       if (adoptedNode->IsShadowRoot()) {
-        rv.Throw(NS_ERROR_DOM_HIERARCHY_REQUEST_ERR);
+        rv.ThrowHierarchyRequestError("The adopted node is a shadow root.");
         return nullptr;
       }
       [[fallthrough]];
@@ -9853,7 +9867,9 @@ nsINode* Document::AdoptNode(nsINode& aAdoptedNode, ErrorResult& rv) {
       while (bc) {
         nsCOMPtr<nsINode> node = bc->GetEmbedderElement();
         if (node && node->IsInclusiveDescendantOf(adoptedNode)) {
-          rv.Throw(NS_ERROR_DOM_HIERARCHY_REQUEST_ERR);
+          rv.ThrowHierarchyRequestError(
+              "Trying to adopt a node into its own contentDocument or a "
+              "descendant contentDocument.");
           return nullptr;
         }
 
@@ -12020,6 +12036,7 @@ void Document::PreLoadImage(nsIURI* aUri, const nsAString& aCrossOriginAttr,
                             ReferrerPolicyEnum aReferrerPolicy, bool aIsImgSet,
                             bool aLinkPreload) {
   nsLoadFlags loadFlags = nsIRequest::LOAD_NORMAL |
+                          nsIRequest::LOAD_RECORD_START_REQUEST_DELAY |
                           nsContentUtils::CORSModeToLoadImageFlags(
                               Element::StringToCORSMode(aCrossOriginAttr));
 
@@ -12048,7 +12065,8 @@ void Document::PreLoadImage(nsIURI* aUri, const nsAString& aCrossOriginAttr,
 void Document::MaybePreLoadImage(nsIURI* aUri,
                                  const nsAString& aCrossOriginAttr,
                                  ReferrerPolicyEnum aReferrerPolicy,
-                                 bool aIsImgSet, bool aLinkPreload) {
+                                 bool aIsImgSet, bool aLinkPreload,
+                                 const TimeStamp& aInitTimestamp) {
   if (aLinkPreload) {
     // Check if the image was already preloaded in this document to avoid
     // duplicate preloading.
@@ -12068,6 +12086,13 @@ void Document::MaybePreLoadImage(nsIURI* aUri,
   if (nsContentUtils::IsImageInCache(aUri, this)) {
     return;
   }
+
+#ifdef NIGHTLY_BUILD
+  Telemetry::Accumulate(
+      Telemetry::DOCUMENT_PRELOAD_IMAGE_ASYNCOPEN_DELAY,
+      static_cast<uint32_t>(
+          (TimeStamp::Now() - aInitTimestamp).ToMilliseconds()));
+#endif
 
   // Image not in cache - trigger preload
   PreLoadImage(aUri, aCrossOriginAttr, aReferrerPolicy, aIsImgSet,
@@ -12815,7 +12840,7 @@ static void CachePrintSelectionRanges(const Document& aSourceDoc,
 
 already_AddRefed<Document> Document::CreateStaticClone(
     nsIDocShell* aCloneContainer, nsIContentViewer* aViewer,
-    bool* aOutHasInProcessPrintCallbacks) {
+    nsIPrintSettings* aPrintSettings, bool* aOutHasInProcessPrintCallbacks) {
   MOZ_ASSERT(!mCreatingStaticClone);
   MOZ_ASSERT(!GetProperty(nsGkAtoms::adoptedsheetclones));
   MOZ_DIAGNOSTIC_ASSERT(aViewer);
@@ -12909,7 +12934,7 @@ already_AddRefed<Document> Document::CreateStaticClone(
     clone.mElement->SetFrameLoader(frameLoader);
 
     nsresult rv = frameLoader->FinishStaticClone(
-        clone.mStaticCloneOf, aOutHasInProcessPrintCallbacks);
+        clone.mStaticCloneOf, aPrintSettings, aOutHasInProcessPrintCallbacks);
     Unused << NS_WARN_IF(NS_FAILED(rv));
   }
 
@@ -13451,64 +13476,6 @@ void Document::InitializeXULBroadcastManager() {
   mXULBroadcastManager = new XULBroadcastManager(this);
 }
 
-static bool NodeHasScopeObject(nsINode* node) {
-  MOZ_ASSERT(node, "Must not be called with null.");
-
-  // Window root occasionally keeps alive a node of a document whose
-  // window is already dead. If in this brief period someone calls
-  // GetPopupNode and we return that node, we can end up creating a
-  // reflector for the node in the wrong global (the current global,
-  // not the document global, because we won't know what the document
-  // global is).  Returning an orphan node like that to JS would be a
-  // bug anyway, so to avoid this, let's do the same check as fetching
-  // GetParentObject() on the document does to determine the scope and
-  // if there is no usable scope object let's report that and return
-  // null from Document::GetPopupNode instead of returning a node that
-  // will get a reflector in the wrong scope.
-  Document* doc = node->OwnerDoc();
-  MOZ_ASSERT(doc, "This should never happen.");
-
-  nsIGlobalObject* global = doc->GetScopeObject();
-  return global ? global->HasJSGlobal() : false;
-}
-
-already_AddRefed<nsPIWindowRoot> Document::GetWindowRoot() {
-  if (!mDocumentContainer) {
-    return nullptr;
-  }
-  // XXX It's unclear why this can't just use GetWindow().
-  nsCOMPtr<nsPIDOMWindowOuter> piWin = mDocumentContainer->GetWindow();
-  return piWin ? piWin->GetTopWindowRoot() : nullptr;
-}
-
-already_AddRefed<nsINode> Document::GetPopupNode() {
-  nsCOMPtr<nsINode> node;
-  nsCOMPtr<nsPIWindowRoot> rootWin = GetWindowRoot();
-  if (rootWin) {
-    node = rootWin->GetPopupNode();  // addref happens here
-  }
-
-  if (!node) {
-    nsXULPopupManager* pm = nsXULPopupManager::GetInstance();
-    if (pm) {
-      node = pm->GetLastTriggerPopupNode(this);
-    }
-  }
-
-  if (node && NodeHasScopeObject(node)) {
-    return node.forget();
-  }
-
-  return nullptr;
-}
-
-void Document::SetPopupNode(nsINode* aNode) {
-  nsCOMPtr<nsPIWindowRoot> rootWin = GetWindowRoot();
-  if (rootWin) {
-    rootWin->SetPopupNode(aNode);
-  }
-}
-
 // Returns the rangeOffset element from the XUL Popup Manager. This is for
 // chrome callers only.
 nsINode* Document::GetPopupRangeParent(ErrorResult& aRv) {
@@ -13530,18 +13497,6 @@ int32_t Document::GetPopupRangeOffset(ErrorResult& aRv) {
   }
 
   return pm->MouseLocationOffset();
-}
-
-already_AddRefed<nsINode> Document::GetTooltipNode() {
-  nsXULPopupManager* pm = nsXULPopupManager::GetInstance();
-  if (pm) {
-    nsCOMPtr<nsINode> node = pm->GetLastTriggerTooltipNode(this);
-    if (node) {
-      return node.forget();
-    }
-  }
-
-  return nullptr;
 }
 
 namespace {

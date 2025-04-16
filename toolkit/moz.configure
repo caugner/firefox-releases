@@ -971,35 +971,6 @@ def skia_pdf(value, skia, target, milestone):
 set_config("MOZ_ENABLE_SKIA_PDF", skia_pdf)
 set_define("MOZ_ENABLE_SKIA_PDF", skia_pdf)
 
-option("--enable-skia-pdf-sfntly", help="Enable SFNTLY font subsetting in Skia PDF")
-
-
-@depends("--enable-skia-pdf-sfntly", skia_pdf)
-def skia_pdf_sfntly(value, skia_pdf):
-    if value.origin == "default":
-        return skia_pdf
-    if value and not skia_pdf:
-        die("Cannot enable SFNTLY subsetting without enabling Skia PDF")
-    if skia_pdf and value:
-        return True
-
-
-set_config("MOZ_ENABLE_SKIA_PDF_SFNTLY", skia_pdf_sfntly)
-set_define("MOZ_ENABLE_SKIA_PDF_SFNTLY", skia_pdf_sfntly)
-
-
-@depends(skia_pdf_sfntly)
-def sfntly_includes(skia_pdf_sfntly):
-    includes = []
-    if skia_pdf_sfntly:
-        includes += [
-            "/gfx/sfntly/cpp/src",
-        ]
-    return includes
-
-
-set_config("SFNTLY_INCLUDES", sfntly_includes)
-
 
 @depends(skia)
 def skia_includes(skia):
@@ -1075,7 +1046,7 @@ add_old_configure_assignment("FT2_CFLAGS", ft2_info.cflags)
 # It also backs ../testing/geckodriver, which is Mozilla's WebDriver
 # implementation.
 #
-# The source of Marionette lives in ../testing/marionette.
+# The source of Marionette lives in ../remote/marionette.
 #
 # For more information, see:
 # https://firefox-source-docs.mozilla.org/testing/marionette/index.html
@@ -1317,6 +1288,24 @@ def proxy_bypass_protection(_):
 set_config("MOZ_PROXY_BYPASS_PROTECTION", proxy_bypass_protection)
 set_define("MOZ_PROXY_BYPASS_PROTECTION", proxy_bypass_protection)
 
+# Proxy direct failover
+# ==============================================================
+
+option(
+    "--disable-proxy-direct-failover",
+    help="Disable direct failover for system requests",
+)
+
+
+@depends_if("--disable-proxy-direct-failover")
+def proxy_direct_failover(value):
+    if value:
+        return True
+
+
+set_config("MOZ_PROXY_DIRECT_FAILOVER", proxy_direct_failover)
+set_define("MOZ_PROXY_DIRECT_FAILOVER", proxy_direct_failover)
+
 # MIDL
 # ==============================================================
 
@@ -1429,12 +1418,17 @@ set_config("ACCESSIBILITY", accessibility)
 set_define("ACCESSIBILITY", accessibility)
 add_old_configure_assignment("ACCESSIBILITY", accessibility)
 
+
 # Addon signing
 # ==============================================================
+@depends(milestone)
+def require_signing(milestone):
+    return milestone.is_release_or_beta and not milestone.is_esr
+
 
 option(
     env="MOZ_REQUIRE_SIGNING",
-    default=milestone.is_release_or_beta,
+    default=require_signing,
     help="Enforce that add-ons are signed by the trusted root",
 )
 
@@ -1460,31 +1454,42 @@ def unsigned_addon_scopes(scopes):
 set_config("MOZ_UNSIGNED_APP_SCOPE", unsigned_addon_scopes.app)
 set_config("MOZ_UNSIGNED_SYSTEM_SCOPE", unsigned_addon_scopes.system)
 
+
 # Addon sideloading
 # ==============================================================
-
-
-@depends(update_channel)
-def addon_sideload_allowed_default(update_channel):
-    if update_channel == "esr":
-        return True
-
-
 option(
     "--allow-addon-sideload",
-    default=addon_sideload_allowed_default,
+    default=milestone.is_esr,
     help="Addon sideloading is allowed",
 )
 
 
-@depends("--allow-addon-sideload")
-def addon_sideload_allowed(value):
-    allowed = bool(value)
-    if allowed:
-        return True
+set_config("MOZ_ALLOW_ADDON_SIDELOAD", True, when="--allow-addon-sideload")
+
+# WebExtensions API WebIDL bindings
+# ==============================================================
 
 
-set_config("MOZ_ALLOW_ADDON_SIDELOAD", addon_sideload_allowed)
+@depends(milestone)
+def extensions_webidl_bindings_default(milestone):
+    # Only enable the webidl bindings for the WebExtensions APIs
+    # in Nightly.
+    return milestone.is_nightly
+
+
+option(
+    "--enable-extensions-webidl-bindings",
+    default=extensions_webidl_bindings_default,
+    help="{Enable|Disable} building experimental WebExtensions WebIDL bindings",
+)
+
+
+@depends("--enable-extensions-webidl-bindings")
+def extensions_webidl_enabled(value):
+    return bool(value)
+
+
+set_config("MOZ_WEBEXT_WEBIDL_ENABLED", extensions_webidl_enabled)
 
 # Launcher process (Windows only)
 # ==============================================================
@@ -1595,14 +1600,6 @@ set_define(
     "MOZ_BUNDLED_FONTS",
     depends_if("--enable-bundled-fonts", when=allow_bundled_fonts)(lambda _: True),
 )
-
-# TaskTracer
-# ==============================================================
-
-option("--enable-tasktracer", help="Enable TaskTracer")
-
-set_define("MOZ_TASK_TRACER", depends_if("--enable-tasktracer")(lambda _: True))
-set_config("MOZ_TASK_TRACER", depends_if("--enable-tasktracer")(lambda _: True))
 
 # Reflow counting
 # ==============================================================
@@ -2216,17 +2213,6 @@ with only_when(requires_wasm_sandboxing & compile_environment):
 
     set_config("WASM_CXXFLAGS", wasm_cxxflags)
 
-    option(
-        env="WASM_LDFLAGS", nargs=1, help="Options to pass when linking wasm modules"
-    )
-
-    @depends("WASM_LDFLAGS")
-    def wasm_ldflags(value):
-        if value:
-            return value
-
-    set_config("WASM_LDFLAGS", wasm_ldflags)
-
     # This function is returning "ldflags" that lucetc will use when invoking
     # the linker, but really lucetc is going to be invoking the compiler, since
     # the compiler handles lots of details for us (like finding the linker in
@@ -2326,20 +2312,6 @@ set_config("MOZ_GLEAN_ANDROID", True, when=glean_android)
 set_define("MOZ_GLEAN_ANDROID", True, when=glean_android)
 
 
-# New Firefox Accounts client implemented in Rust
-# ===============================================
-
-
-@depends(milestone, target)
-def rust_fxa_client(milestone, target):
-    if milestone.is_nightly and target.os != "Android":
-        return True
-
-
-set_config("MOZ_RUST_FXA_CLIENT", True, when=rust_fxa_client)
-set_define("MOZ_RUST_FXA_CLIENT", True, when=rust_fxa_client)
-
-
 # dump_syms
 # ==============================================================
 
@@ -2381,7 +2353,9 @@ check_prog(
 @depends(target, build_project)
 def forkserver_default(target, build_project):
     return build_project == "browser" and (
-        (target.os == "GNU" and target.kernel == "Linux") or target.os == "FreeBSD"
+        (target.os == "GNU" and target.kernel == "Linux")
+        or target.os == "FreeBSD"
+        or target.os == "OpenBSD"
     )
 
 
@@ -2399,6 +2373,7 @@ def forkserver_flag(value, target):
         target.os == "Android"
         or (target.os == "GNU" and target.kernel == "Linux")
         or target.os == "FreeBSD"
+        or target.os == "OpenBSD"
     ):
         return bool(value)
     pass

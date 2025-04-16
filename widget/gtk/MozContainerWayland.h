@@ -12,6 +12,7 @@
 #include <functional>
 #include <vector>
 #include "mozilla/Mutex.h"
+#include "WindowSurface.h"
 
 /*
  * MozContainer
@@ -44,6 +45,7 @@ struct MozContainerWayland {
   gboolean surface_needs_clear;
   gboolean ready_to_draw;
   gboolean before_first_size_alloc;
+  gboolean container_remapped;
   int buffer_scale;
   std::vector<std::function<void(void)>> initial_draw_cbs;
   // mozcontainer is used from Compositor and Rendering threads
@@ -80,5 +82,6 @@ void moz_container_wayland_update_opaque_region(MozContainer* container,
 gboolean moz_container_wayland_can_draw(MozContainer* container);
 double moz_container_wayland_get_scale(MozContainer* container);
 struct wp_viewport* moz_container_wayland_get_viewport(MozContainer* container);
+gboolean moz_container_wayland_get_and_reset_remapped(MozContainer* container);
 
 #endif /* __MOZ_CONTAINER_WAYLAND_H__ */

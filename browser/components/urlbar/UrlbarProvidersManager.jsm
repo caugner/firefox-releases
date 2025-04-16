@@ -33,19 +33,28 @@ XPCOMUtils.defineLazyGetter(this, "logger", () =>
 // List of available local providers, each is implemented in its own jsm module
 // and will track different queries internally by queryContext.
 var localProviderModules = {
-  UrlbarProviderUnifiedComplete:
-    "resource:///modules/UrlbarProviderUnifiedComplete.jsm",
+  UrlbarProviderAboutPages: "resource:///modules/UrlbarProviderAboutPages.jsm",
+  UrlbarProviderAliasEngines:
+    "resource:///modules/UrlbarProviderAliasEngines.jsm",
   UrlbarProviderAutofill: "resource:///modules/UrlbarProviderAutofill.jsm",
+  UrlbarProviderBookmarkKeywords:
+    "resource:///modules/UrlbarProviderBookmarkKeywords.jsm",
   UrlbarProviderCalculator: "resource:///modules/UrlbarProviderCalculator.jsm",
   UrlbarProviderHeuristicFallback:
     "resource:///modules/UrlbarProviderHeuristicFallback.jsm",
+  UrlbarProviderInputHistory:
+    "resource:///modules/UrlbarProviderInputHistory.jsm",
   UrlbarProviderInterventions:
     "resource:///modules/UrlbarProviderInterventions.jsm",
   UrlbarProviderOmnibox: "resource:///modules/UrlbarProviderOmnibox.jsm",
+  UrlbarProviderPlaces: "resource:///modules/UrlbarProviderPlaces.jsm",
+  UrlbarProviderPreloadedSites:
+    "resource:///modules/UrlbarProviderPreloadedSites.jsm",
   UrlbarProviderPrivateSearch:
     "resource:///modules/UrlbarProviderPrivateSearch.jsm",
   UrlbarProviderQuickSuggest:
     "resource:///modules/UrlbarProviderQuickSuggest.jsm",
+  UrlbarProviderRemoteTabs: "resource:///modules/UrlbarProviderRemoteTabs.jsm",
   UrlbarProviderSearchTips: "resource:///modules/UrlbarProviderSearchTips.jsm",
   UrlbarProviderSearchSuggestions:
     "resource:///modules/UrlbarProviderSearchSuggestions.jsm",
@@ -643,7 +652,7 @@ function updateSourcesIfEmpty(context) {
     return false;
   }
   let acceptedSources = [];
-  // There can be only one restrict token about sources.
+  // There can be only one restrict token per query.
   let restrictToken = context.tokens.find(t =>
     [
       UrlbarTokenizer.TYPE.RESTRICT_HISTORY,
@@ -651,9 +660,19 @@ function updateSourcesIfEmpty(context) {
       UrlbarTokenizer.TYPE.RESTRICT_TAG,
       UrlbarTokenizer.TYPE.RESTRICT_OPENPAGE,
       UrlbarTokenizer.TYPE.RESTRICT_SEARCH,
+      UrlbarTokenizer.TYPE.RESTRICT_TITLE,
+      UrlbarTokenizer.TYPE.RESTRICT_URL,
     ].includes(t.type)
   );
-  let restrictTokenType = restrictToken ? restrictToken.type : undefined;
+
+  // RESTRICT_TITLE and RESTRICT_URL do not affect query sources.
+  let restrictTokenType =
+    restrictToken &&
+    restrictToken.type != UrlbarTokenizer.TYPE.RESTRICT_TITLE &&
+    restrictToken.type != UrlbarTokenizer.TYPE.RESTRICT_URL
+      ? restrictToken.type
+      : undefined;
+
   for (let source of Object.values(UrlbarUtils.RESULT_SOURCE)) {
     // Skip sources that the context doesn't care about.
     if (context.sources && !context.sources.includes(source)) {

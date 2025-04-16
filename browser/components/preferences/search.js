@@ -55,15 +55,6 @@ const SEARCH_KEY = "defaultSearch";
 var gEngineView = null;
 
 var gSearchPane = {
-  /**
-   * Initialize autocomplete to ensure prefs are in sync.
-   */
-  _initAutocomplete() {
-    Cc["@mozilla.org/autocomplete/search;1?name=unifiedcomplete"].getService(
-      Ci.mozIPlacesAutoComplete
-    );
-  },
-
   init() {
     gEngineView = new EngineView(new EngineStore());
     document.getElementById("engineList").view = gEngineView;
@@ -93,8 +84,6 @@ var gSearchPane = {
     window.addEventListener("unload", () => {
       Services.obs.removeObserver(this, "browser-search-engine-modified");
     });
-
-    this._initAutocomplete();
 
     let suggestsPref = Preferences.get("browser.search.suggest.enabled");
     let urlbarSuggestsPref = Preferences.get("browser.urlbar.suggest.searches");
@@ -248,7 +237,7 @@ var gSearchPane = {
     let container = document.getElementById("showQuickSuggestContainer");
     let desc = document.getElementById("searchSuggestionsDesc");
 
-    if (!NimbusFeatures.urlbar.getValue().quickSuggestEnabled) {
+    if (!UrlbarPrefs.get("quickSuggestEnabled")) {
       // The experiment is not enabled.  This is the default, so to avoid
       // accidentally messing anything up, only modify the doc if we're being
       // called due to a change in the experiment enabled status.

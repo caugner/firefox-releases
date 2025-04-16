@@ -82,7 +82,7 @@ const ExperimentFakes = {
     }
     store.updateRemoteConfigs(feature.featureId, configuration);
 
-    return feature.ready();
+    return feature.ready().then(() => store._syncToChildren({ flush: true }));
   },
   async enrollWithFeatureConfig(
     featureConfig,

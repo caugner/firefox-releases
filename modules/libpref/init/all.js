@@ -156,11 +156,6 @@ pref("security.webauth.webauthn_enable_softtoken", false);
 pref("security.xfocsp.errorReporting.enabled", true);
 pref("security.xfocsp.errorReporting.automatic", false);
 
-// Impose a maximum age on HPKP headers, to avoid sites getting permanently
-// blacking themselves out by setting a bad pin.  (60 days by default)
-// https://tools.ietf.org/html/rfc7469#section-4.1
-pref("security.cert_pinning.max_max_age_seconds", 5184000);
-
 // 0: Disable CRLite entirely
 // 1: Enable and check revocations via CRLite, but only collect telemetry
 // 2: Enable and enforce revocations via CRLite
@@ -332,6 +327,11 @@ pref("pdfjs.renderInteractiveForms", true);
 
 // Enable JavaScript support in the PDF viewer.
 pref("pdfjs.enableScripting", true);
+
+// Enable XFA form support in the PDF viewer.
+#ifdef EARLY_BETA_OR_EARLIER
+pref("pdfjs.enableXfa", true);
+#endif
 
 // Disable support for MathML
 pref("mathml.disabled",    false);
@@ -793,7 +793,7 @@ pref("toolkit.telemetry.unified", true);
   #if defined(MOZ_TSAN)
     pref("toolkit.asyncshutdown.crash_timeout", 360000); // 6 minutes
   #else
-    pref("toolkit.asyncshutdown.crash_timeout", 180000); // 3 minutes
+    pref("toolkit.asyncshutdown.crash_timeout", 300000); // 5 minutes
   #endif
 #endif // !defined(MOZ_ASAN) && !defined(MOZ_TSAN)
 // Extra logging for AsyncShutdown barriers and phases
@@ -2168,22 +2168,6 @@ pref("security.ssl.enable_ocsp_must_staple", true);
 pref("security.insecure_field_warning.contextual.enabled", false);
 pref("security.insecure_field_warning.ignore_local_ip_address", true);
 
-// Disable pinning checks by default.
-pref("security.cert_pinning.enforcement_level", 0);
-// Do not process hpkp headers rooted by not built in roots by default.
-// This is to prevent accidental pinning from MITM devices and is used
-// for tests.
-pref("security.cert_pinning.process_headers_from_non_builtin_roots", false);
-
-// Controls whether or not HPKP (the HTTP Public Key Pinning header) is enabled.
-// If true, the header is processed and collected HPKP information is consulted
-// when looking for pinning information.
-// If false, the header is not processed and collected HPKP information is not
-// consulted when looking for pinning information. Preloaded pins are not
-// affected by this preference.
-// Default: false
-pref("security.cert_pinning.hpkp.enabled", false);
-
 // Remote settings preferences
 // Note: if you change this, make sure to also review security.onecrl.maximum_staleness_in_seconds
 pref("services.settings.poll_interval", 86400); // 24H
@@ -2209,8 +2193,6 @@ pref("extensions.abuseReport.amoDetailsURL", "https://services.addons.mozilla.or
 
 // Blocklist preferences
 pref("extensions.blocklist.enabled", true);
-pref("extensions.blocklist.useMLBF", false);
-pref("extensions.blocklist.useMLBF.stashes", false);
 // Required blocklist freshness for OneCRL OCSP bypass (default is 30 hours)
 // Note that this needs to exceed the interval at which we update OneCRL data,
 // configured in services.settings.poll_interval .
@@ -2226,9 +2208,7 @@ pref("services.blocklist.bucket", "blocklists");
 pref("services.blocklist.addons.collection", "addons");
 pref("services.blocklist.addons.checked", 0);
 pref("services.blocklist.addons.signer", "remote-settings.content-signature.mozilla.org");
-pref("services.blocklist.addons-mlbf.collection", "addons-bloomfilters");
 pref("services.blocklist.addons-mlbf.checked", 0);
-pref("services.blocklist.addons-mlbf.signer", "remote-settings.content-signature.mozilla.org");
 pref("services.blocklist.plugins.collection", "plugins");
 pref("services.blocklist.plugins.checked", 0);
 pref("services.blocklist.plugins.signer", "remote-settings.content-signature.mozilla.org");
@@ -2492,10 +2472,6 @@ pref("dom.ipc.processCount.webLargeAllocation", 10);
 
 // Disable e10s for Gecko by default. This is overridden in firefox.js.
 pref("browser.tabs.remote.autostart", false);
-
-// Whether certain properties from origin attributes should be included as part
-// of remote types. Only in effect when fission is enabled.
-pref("browser.tabs.remote.useOriginAttributesInRemoteType", true);
 
 // Pref to control whether we put all data: uri's in the default
 // web process when running with fission.
@@ -3637,6 +3613,7 @@ pref("signon.capture.inputChanges.enabled", true);
 pref("signon.formlessCapture.enabled",      true);
 pref("signon.formRemovalCapture.enabled",   true);
 pref("signon.generation.available",               true);
+pref("signon.improvedPasswordRules.enabled", true);
 pref("signon.backup.enabled",               true);
 pref("signon.generation.confidenceThreshold",     "0.75");
 pref("signon.generation.enabled",                 true);
@@ -3735,9 +3712,6 @@ pref("network.psl.onUpdate_notify", false);
 #else
   // Use MLS on Nightly and early Beta.
   pref("geo.provider.network.url", "https://location.services.mozilla.com/v1/geolocate?key=%MOZILLA_API_KEY%");
-  // On Nightly and early Beta, make duplicate location services requests
-  // to google so we can compare results.
-  pref("geo.provider.network.compare.url", "https://www.googleapis.com/geolocation/v1/geolocate?key=%GOOGLE_LOCATION_SERVICE_API_KEY%");
 #endif
 
 // Timeout to wait before sending the location request.
@@ -3957,11 +3931,7 @@ pref("network.connectivity-service.IPv6.url", "http://detectportal.firefox.com/s
 // DNS Trusted Recursive Resolver
 // 0 - default off, 1 - reserved/off, 2 - TRR first, 3 - TRR only, 4 - reserved/off, 5 off by choice
 pref("network.trr.mode", 0);
-// DNS-over-HTTP service to use, must be HTTPS://
-pref("network.trr.uri", "https://mozilla.cloudflare-dns.com/dns-query");
-// List of DNS-over-HTTP resolver service providers. This pref populates the
-// drop-down list in the Network Settings dialog box in about:preferences.
-pref("network.trr.resolvers", "[{ \"name\": \"Cloudflare\", \"url\": \"https://mozilla.cloudflare-dns.com/dns-query\" },{ \"name\": \"NextDNS\", \"url\": \"https://firefox.dns.nextdns.io/\" }]");
+pref("network.trr.uri", "");
 // credentials to pass to DOH end-point
 pref("network.trr.credentials", "");
 pref("network.trr.custom_uri", "");
@@ -4472,8 +4442,15 @@ pref("services.common.log.logger.tokenserverclient", "Debug");
   // Port to start Marionette server on.
   pref("marionette.port", 2828);
 
-  // Sets recommended automation preferences when Marionette is started.
-  pref("marionette.prefs.recommended", true);
+  // Defines the protocols that will be active for the Remote Agent.
+  // 1: WebDriver BiDi
+  // 2: CDP (Chrome DevTools Protocol)
+  // 3: WebDriver BiDi + CDP
+  #if defined(NIGHTLY_BUILD)
+    pref("remote.active-protocols", 3);
+  #else
+    pref("remote.active-protocols", 2);
+  #endif
 
   // Limits remote agent to listen on loopback devices,
   // e.g. 127.0.0.1, localhost, and ::1.
@@ -4489,6 +4466,10 @@ pref("services.common.log.logger.tokenserverclient", "Debug");
   // Certain log messages that are known to be long are truncated. This
   // preference causes them to not be truncated.
   pref("remote.log.truncate", true);
+
+  // Sets recommended automation preferences when Remote Agent or Marionette is
+  // started.
+  pref("remote.prefs.recommended", true);
 #endif
 
 // Enable the JSON View tool (an inspector for application/json documents).
@@ -4591,11 +4572,6 @@ pref("browser.privatebrowsing.autostart", false);
 //preferred external application for a protocol. If a site doesn't have
 // permission we will show a prompt.
 pref("security.external_protocol_requires_permission", true);
-
-// Whether about:support shows a section "Third-Party Modules" or not
-#ifdef XP_WIN
-  pref("browser.enableAboutThirdParty", false);
-#endif
 
 // Preferences for the form autofill toolkit component.
 // The truthy values of "extensions.formautofill.available" are "on" and "detect",

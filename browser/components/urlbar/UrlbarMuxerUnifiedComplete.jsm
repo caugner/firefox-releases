@@ -58,8 +58,15 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
     let state = {
       context,
       resultsByGroup: new Map(),
-      totalResultCount: 0,
+      // This is analogous to `maxResults` except it's the total available
+      // result span instead of the total available result count. We'll add
+      // results until `usedResultSpan` would exceed `availableResultSpan`.
+      availableResultSpan: context.maxResults,
+      // The total span of results that have been added so far.
+      usedResultSpan: 0,
       strippedUrlToTopPrefixAndTitle: new Map(),
+      urlToTabResultType: new Map(),
+      addedRemoteTabUrls: new Set(),
       canShowPrivateSearch: context.results.length > 1,
       canShowTailSuggestions: true,
       // Form history and remote suggestions added so far.  Used for deduping
@@ -96,22 +103,37 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
       this._updateStatePreAdd(result, state);
     }
 
+    // Subtract from `availableResultSpan` the total span of suggestedIndex
+    // results so there will be room for them at the end of the sort.
+    let suggestedIndexResults = state.resultsByGroup.get(
+      UrlbarUtils.RESULT_GROUP.SUGGESTED_INDEX
+    );
+    if (suggestedIndexResults) {
+      let span = suggestedIndexResults.reduce((sum, result) => {
+        if (this._canAddResult(result, state)) {
+          sum += UrlbarUtils.getSpanForResult(result);
+        }
+        return sum;
+      }, 0);
+      state.availableResultSpan = Math.max(state.availableResultSpan - span, 0);
+    }
+
     // Determine the buckets to use for this sort.  In search mode with an
     // engine, show search suggestions first.
     let rootBucket = context.searchMode?.engineName
       ? UrlbarPrefs.makeResultBuckets({ showSearchSuggestionsFirst: true })
-      : UrlbarPrefs.get("resultBuckets");
+      : UrlbarPrefs.get("resultGroups");
     logger.debug(`Buckets: ${rootBucket}`);
 
-    let sortedResults = this._fillBuckets(
+    // Fill the root group.
+    let [sortedResults] = this._fillGroup(
       rootBucket,
-      context.maxResults,
+      { availableSpan: state.availableResultSpan, maxResultCount: Infinity },
       state
     );
 
     this._addSuggestedIndexResults(sortedResults, state);
 
-    this._truncateResults(sortedResults, context.maxResults);
     context.results = sortedResults;
   }
 
@@ -132,6 +154,8 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
       strippedUrlToTopPrefixAndTitle: new Map(
         state.strippedUrlToTopPrefixAndTitle
       ),
+      urlToTabResultType: new Map(state.urlToTabResultType),
+      addedRemoteTabUrls: new Set(state.addedRemoteTabUrls),
       suggestions: new Set(state.suggestions),
     });
     for (let [group, results] of state.resultsByGroup) {
@@ -141,113 +165,134 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
   }
 
   /**
-   * Recursively fills a result bucket.
+   * Recursively fills a result group and its children.
    *
-   * @param {object} bucket
-   *   The result bucket to fill.
-   * @param {number} maxResultCount
-   *   The maximum number of results to include in the bucket.
+   * There are two ways to limit the number of results in a group:
+   *
+   * (1) By max total result span using the `availableSpan` property. The group
+   * will be filled so that the total span of its results does not exceed this
+   * value.
+   *
+   * (2) By max total result count using the `maxResultCount` property. The
+   * group will be filled so that the total number of its results does not
+   * exceed this value.
+   *
+   * Both `availableSpan` and `maxResultCount` may be defined, and the group's
+   * results will be capped to whichever limit is reached first. If either is
+   * not defined, then the group inherits that limit from its parent group.
+   *
+   * In addition to limiting their total number of results, groups can also
+   * control the composition of their child groups by using flex ratios. A group
+   * can define a `flexChildren: true` property, and in that case each of its
+   * children should have a `flex` property. Each child will be filled according
+   * to the ratio of its flex value and the sum of the flex values of all the
+   * children, similar to HTML flexbox. If some children do not fill up but
+   * others do, the filled-up children will be allowed to grow to use up the
+   * unfilled space.
+   *
+   * @param {object} group
+   *   The result group to fill.
+   * @param {object} limits
+   *   An object with optional `availableSpan` and `maxResultCount` properties
+   *   as described above. They will be used as the limits for the group.
    * @param {object} state
    *   The muxer state.
+   * @param {array} [flexDataArray]
+   *   Non-recursive callers should leave this null. See `_updateFlexData` for a
+   *   description.
    * @returns {array}
-   *   A flat array of results in the bucket.
+   *   `[results, usedLimits, hasMoreResults]` -- see `_addResults`.
    */
-  _fillBuckets(bucket, maxResultCount, state) {
-    // If there are no child buckets, then fill the bucket directly.
-    if (!bucket.children) {
-      return this._addResults(bucket.group, maxResultCount, state);
+  _fillGroup(group, limits, state, flexDataArray = null) {
+    // If there are no child groups, fill the group directly.
+    if (!group.children) {
+      return this._addResults(group.group, limits, state);
     }
 
-    // Set up some flex state for the bucket.
+    // If the group has flexed children, update the data we use during flex
+    // calculations.
+    //
+    // Handling flex is complicated so we discuss it briefly. We may do multiple
+    // passes for a group with flexed children in order to try to optimally fill
+    // them. If after one pass some children do not fill up but others do, we'll
+    // do another pass that tries to overfill the filled-up children while still
+    // respecting their flex ratios. We'll continue to do passes until all
+    // children stop filling up or we reach the parent's limits. The way we
+    // overfill children is by increasing their individual limits to make up for
+    // the unused space in their underfilled siblings. Before starting a new
+    // pass, we discard the results from the current pass so the new pass starts
+    // with a clean slate. That means we need to copy the global sort state
+    // (`state`) before modifying it in the current pass so we can use its
+    // original value in the next pass [1].
+    //
+    // [1] Instead of starting each pass with a clean slate in this way, we
+    // could accumulate results with each pass since we only ever add results to
+    // flexed children and never remove them. However, that would subvert muxer
+    // logic related to the global state (deduping, `_canAddResult`) since we
+    // generally assume the muxer adds results in the order they appear.
     let stateCopy;
-    let flexSum = 0;
-    let unfilledChildIndexes = [];
-    let unfilledChildResultCount = 0;
-    if (bucket.flexChildren) {
+    if (group.flexChildren) {
       stateCopy = this._copyState(state);
-      for (let child of bucket.children) {
-        let flex = typeof child.flex == "number" ? child.flex : 0;
-        flexSum += flex;
-      }
+      flexDataArray = this._updateFlexData(group, limits, flexDataArray);
     }
 
-    // Sum of child bucket flex values for children that could be completely
-    // filled.
-    let flexSumFilled = flexSum;
-
-    // Fill each child bucket, collecting all results in `results`.
+    // Fill each child group, collecting all results in the `results` array.
     let results = [];
-    for (
-      let i = 0;
-      i < bucket.children.length && results.length < maxResultCount;
-      i++
-    ) {
-      let child = bucket.children[i];
+    let usedLimits = {};
+    for (let key of Object.keys(limits)) {
+      usedLimits[key] = 0;
+    }
+    let anyChildUnderfilled = false;
+    let anyChildHasMoreResults = false;
+    for (let i = 0; i < group.children.length; i++) {
+      let child = group.children[i];
+      let flexData = flexDataArray?.[i];
 
-      // Compute the child's max result count.
-      let childMaxResultCount;
-      if (bucket.flexChildren) {
-        let flex = typeof child.flex == "number" ? child.flex : 0;
-        childMaxResultCount = Math.round(maxResultCount * (flex / flexSum));
-      } else {
-        childMaxResultCount = Math.min(
-          typeof child.maxResultCount == "number"
-            ? child.maxResultCount
-            : Infinity,
-          // parent max result count - current total of child results
-          maxResultCount - results.length
-        );
+      // Compute the child's limits.
+      let childLimits = {};
+      for (let key of Object.keys(limits)) {
+        childLimits[key] = flexData
+          ? flexData.limits[key]
+          : Math.min(
+              typeof child[key] == "number" ? child[key] : Infinity,
+              limits[key] - usedLimits[key]
+            );
       }
 
-      // Recurse and fill the child bucket.
-      let childResults = this._fillBuckets(child, childMaxResultCount, state);
+      // Recurse and fill the child.
+      let [
+        childResults,
+        childUsedLimits,
+        childHasMoreResults,
+      ] = this._fillGroup(child, childLimits, state);
       results = results.concat(childResults);
+      for (let key of Object.keys(usedLimits)) {
+        usedLimits[key] += childUsedLimits[key];
+      }
+      anyChildHasMoreResults = anyChildHasMoreResults || childHasMoreResults;
 
-      if (bucket.flexChildren && childResults.length < childMaxResultCount) {
-        // The flexed child bucket wasn't completely filled.  We'll try to make
-        // up the difference below by overfilling children that did fill up.
-        let flex = typeof child.flex == "number" ? child.flex : 0;
-        flexSumFilled -= flex;
-        unfilledChildIndexes.push(i);
-        unfilledChildResultCount += childResults.length;
+      if (flexData?.hasMoreResults) {
+        // The child is flexed and we possibly added more results to it.
+        flexData.usedLimits = childUsedLimits;
+        flexData.hasMoreResults = childHasMoreResults;
+        anyChildUnderfilled =
+          anyChildUnderfilled ||
+          (!childHasMoreResults &&
+            [...Object.entries(childLimits)].every(
+              ([key, limit]) => flexData.usedLimits[key] < limit
+            ));
       }
     }
 
-    // If the child buckets are flexed and some didn't fill up, then discard the
-    // results and do one more pass, trying to recursively overfill child
-    // buckets that did fill up while still respecting their flex ratios.
-    if (unfilledChildIndexes.length) {
-      results = [];
-      let remainingResultCount = maxResultCount - unfilledChildResultCount;
-      for (
-        let i = 0;
-        i < bucket.children.length && results.length < maxResultCount;
-        i++
-      ) {
-        let child = bucket.children[i];
-        let childMaxResultCount;
-        if (unfilledChildIndexes.length && i == unfilledChildIndexes[0]) {
-          // This is one of the children that didn't fill up.  Since it didn't
-          // fill up, the max result count to use in this pass isn't important
-          // as long as it's >= the number of results it was able to fill.  We
-          // can't re-use its results from the first pass (even though they're
-          // still correct) because we need to properly update `stateCopy` and
-          // therefore re-fill the child.
-          unfilledChildIndexes.shift();
-          childMaxResultCount = maxResultCount;
-        } else {
-          let flex = typeof child.flex == "number" ? child.flex : 0;
-          childMaxResultCount = flex
-            ? Math.round(remainingResultCount * (flex / flexSumFilled))
-            : remainingResultCount;
-        }
-        let childResults = this._fillBuckets(
-          child,
-          childMaxResultCount,
-          stateCopy
-        );
-        results = results.concat(childResults);
-      }
+    // If the children are flexed and some underfilled but others still have
+    // more results, do another pass.
+    if (anyChildUnderfilled && anyChildHasMoreResults) {
+      [results, usedLimits, anyChildHasMoreResults] = this._fillGroup(
+        group,
+        limits,
+        stateCopy,
+        flexDataArray
+      );
 
       // Update `state` in place so that it's also updated in the caller.
       for (let [key, value] of Object.entries(stateCopy)) {
@@ -255,65 +300,255 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
       }
     }
 
-    return results;
+    return [results, usedLimits, anyChildHasMoreResults];
   }
 
   /**
-   * Adds results to a bucket using results from the bucket's group in
+   * Updates flex-related state used while filling a group.
+   *
+   * @param {object} group
+   *   The result group being filled.
+   * @param {object} limits
+   *   An object defining the group's limits as described in `_fillGroup`.
+   * @param {array} flexDataArray
+   *   An array parallel to `group.children`. The object at index i corresponds
+   *   to the child in `group.children` at index i. Each object maintains some
+   *   flex-related state for its child and is updated during each pass in
+   *   `_fillGroup` for `group`. When this method is called in the first pass,
+   *   this argument should be null, and the method will create and return a new
+   *   `flexDataArray` array that should be used in the remainder of the first
+   *   pass and all subsequent passes.
+   * @returns {array}
+   *   A new `flexDataArray` when called in the first pass, and `flexDataArray`
+   *   itself when called in subsequent passes.
+   */
+  _updateFlexData(group, limits, flexDataArray) {
+    flexDataArray =
+      flexDataArray ||
+      group.children.map((child, index) => {
+        let data = {
+          // The index of the corresponding child in `group.children`.
+          index,
+          // The child's limits.
+          limits: {},
+          // The fractional parts of the child's unrounded limits; see below.
+          limitFractions: {},
+          // The used-up portions of the child's limits.
+          usedLimits: {},
+          // True if `state.resultsByGroup` has more results of the child's
+          // `RESULT_GROUP`. This is not related to the child's limits.
+          hasMoreResults: true,
+          // The child's flex value.
+          flex: typeof child.flex == "number" ? child.flex : 0,
+        };
+        for (let key of Object.keys(limits)) {
+          data.limits[key] = 0;
+          data.limitFractions[key] = 0;
+          data.usedLimits[key] = 0;
+        }
+        return data;
+      });
+
+    // The data objects for children with more results (i.e., that are still
+    // fillable).
+    let fillableDataArray = [];
+
+    // The sum of the flex values of children with more results.
+    let fillableFlexSum = 0;
+
+    for (let data of flexDataArray) {
+      if (data.hasMoreResults) {
+        fillableFlexSum += data.flex;
+        fillableDataArray.push(data);
+      }
+    }
+
+    // Update each limit.
+    for (let [key, limit] of Object.entries(limits)) {
+      // Calculate the group's limit only including children with more results.
+      let fillableLimit = limit;
+      for (let data of flexDataArray) {
+        if (!data.hasMoreResults) {
+          fillableLimit -= data.usedLimits[key];
+        }
+      }
+
+      // Allow for the possibility that some children may have gone over limit.
+      // `fillableLimit` will be negative in that case.
+      fillableLimit = Math.max(fillableLimit, 0);
+
+      // Next we'll compute the limits of children with more results. This value
+      // is the sum of those limits. It may differ from `fillableLimit` due to
+      // the fact that each individual child limit must be an integer.
+      let summedFillableLimit = 0;
+
+      // Compute the limits of children with more results. If there are also
+      // children that don't have more results, then these new limits will be
+      // larger than they were in the previous pass.
+      for (let data of fillableDataArray) {
+        let unroundedLimit = fillableLimit * (data.flex / fillableFlexSum);
+        // `limitFraction` is the fractional part of the unrounded ideal limit.
+        // e.g., for 5.234 it will be 0.234. We use this to minimize the
+        // mathematical error when tweaking limits below.
+        data.limitFractions[key] = unroundedLimit - Math.floor(unroundedLimit);
+        data.limits[key] = Math.round(unroundedLimit);
+        summedFillableLimit += data.limits[key];
+      }
+
+      // As mentioned above, the sum of the individual child limits may not
+      // equal the group's fillable limit. If the sum is smaller, the group will
+      // end up with too few results. If it's larger, the group will have the
+      // correct number of results (since we stop adding results once limits are
+      // reached) but it may end up with a composition that does not reflect the
+      // child flex ratios as accurately as possible.
+      //
+      // In either case, tweak the individual limits so that (1) their sum
+      // equals the group's fillable limit, and (2) the composition respects the
+      // flex ratios with as little mathematical error as possible.
+      if (summedFillableLimit != fillableLimit) {
+        // Collect the flex datas with a non-zero limit fractions. We'll round
+        // them up or down depending on whether the sum is larger or smaller
+        // than the group's fillable limit.
+        let fractionalDataArray = fillableDataArray.filter(
+          data => data.limitFractions[key]
+        );
+
+        let diff;
+        if (summedFillableLimit < fillableLimit) {
+          // The sum is smaller. We'll increment individual limits until the sum
+          // is equal, starting with the child whose limit fraction is closest
+          // to 1 in order to minimize error.
+          diff = 1;
+          fractionalDataArray.sort((a, b) => {
+            // Sort by fraction descending so larger fractions are first.
+            let cmp = b.limitFractions[key] - a.limitFractions[key];
+            // Secondarily sort by index ascending so that children with the
+            // same fraction are incremented in the order they appear, allowing
+            // earlier children to have larger spans.
+            return cmp || a.index - b.index;
+          });
+        } else if (fillableLimit < summedFillableLimit) {
+          // The sum is larger. We'll decrement individual limits until the sum
+          // is equal, starting with the child whose limit fraction is closest
+          // to 0 in order to minimize error.
+          diff = -1;
+          fractionalDataArray.sort((a, b) => {
+            // Sort by fraction ascending so smaller fractions are first.
+            let cmp = a.limitFractions[key] - b.limitFractions[key];
+            // Secondarily sort by index descending so that children with the
+            // same fraction are decremented in reverse order, allowing earlier
+            // children to retain larger spans.
+            return cmp || b.index - a.index;
+          });
+        }
+
+        // Now increment or decrement individual limits until their sum is equal
+        // to the group's fillable limit.
+        while (summedFillableLimit != fillableLimit) {
+          if (!fractionalDataArray.length) {
+            // This shouldn't happen, but don't let it break us.
+            Cu.reportError("fractionalDataArray is empty!");
+            break;
+          }
+          let data = flexDataArray[fractionalDataArray.shift().index];
+          data.limits[key] += diff;
+          summedFillableLimit += diff;
+        }
+      }
+    }
+
+    return flexDataArray;
+  }
+
+  /**
+   * Adds results to a group using the results from its `RESULT_GROUP` in
    * `state.resultsByGroup`.
    *
-   * @param {string} group
-   *   The bucket's group.
-   * @param {number} maxResultCount
-   *   The maximum number of results to add to the bucket.
+   * @param {UrlbarUtils.RESULT_GROUP} groupConst
+   *   The group's `RESULT_GROUP`.
+   * @param {object} limits
+   *   An object defining the group's limits as described in `_fillGroup`.
    * @param {object} state
    *   Global state that we use to make decisions during this sort.
    * @returns {array}
-   *   The added results, empty if no results were added.
+   *   `[results, usedLimits, hasMoreResults]` where:
+   *     * results: A flat array of results in the group, empty if no results
+   *       were added.
+   *     * usedLimits: An object defining the amount of each limit that the
+   *       results use. For each possible limit property (see `_fillGroup`),
+   *       there will be a corresponding property in this object. For example,
+   *       if 3 results are added with a total span of 4, then this object will
+   *       be: { maxResultCount: 3, availableSpan: 4 }
+   *     * hasMoreResults: True if `state.resultsByGroup` has more results of
+   *       the same `RESULT_GROUP`. This is not related to the group's limits.
    */
-  _addResults(group, maxResultCount, state) {
-    // For form history, maxHistoricalSearchSuggestions == 0 implies that the
-    // user has opted out of form history completely, so we override maxResult
-    // count here in that case.  Other values of maxHistoricalSearchSuggestions
-    // are ignored and we use the flex defined on the form history bucket.
+  _addResults(groupConst, limits, state) {
+    // We modify `limits` below. As a defensive measure, don't modify the
+    // caller's object.
+    limits = { ...limits };
+
+    let usedLimits = {};
+    for (let key of Object.keys(limits)) {
+      usedLimits[key] = 0;
+    }
+
+    // For form history, maxHistoricalSearchSuggestions == 0 implies the user
+    // has opted out of form history completely, so we override the max result
+    // count here in that case. Other values of maxHistoricalSearchSuggestions
+    // are ignored and we use the flex defined on the form history group.
     if (
-      group == UrlbarUtils.RESULT_GROUP.FORM_HISTORY &&
+      groupConst == UrlbarUtils.RESULT_GROUP.FORM_HISTORY &&
       !UrlbarPrefs.get("maxHistoricalSearchSuggestions")
     ) {
-      maxResultCount = 0;
+      limits.maxResultCount = 0;
     }
 
     let addQuickSuggest =
       state.quickSuggestResult &&
-      group == UrlbarUtils.RESULT_GROUP.GENERAL &&
+      groupConst == UrlbarUtils.RESULT_GROUP.GENERAL &&
       this._canAddResult(state.quickSuggestResult, state);
     if (addQuickSuggest) {
-      maxResultCount--;
+      let span = UrlbarUtils.getSpanForResult(state.quickSuggestResult);
+      usedLimits.availableSpan += span;
+      usedLimits.maxResultCount++;
+      state.usedResultSpan += span;
     }
 
     let addedResults = [];
-    let groupResults = state.resultsByGroup.get(group);
+    let groupResults = state.resultsByGroup.get(groupConst);
     while (
       groupResults?.length &&
-      addedResults.length < maxResultCount &&
-      state.totalResultCount < state.context.maxResults
+      state.usedResultSpan < state.availableResultSpan &&
+      [...Object.entries(limits)].every(([k, limit]) => usedLimits[k] < limit)
     ) {
-      // We either add or discard results in the order they appear in the
-      // groupResults array, so shift() them off.  That way later buckets with
-      // the same group won't include results that earlier buckets have added or
-      // discarded.
-      let result = groupResults.shift();
+      let result = groupResults[0];
       if (this._canAddResult(result, state)) {
+        let span = UrlbarUtils.getSpanForResult(result);
+        let newUsedSpan = usedLimits.availableSpan + span;
+        if (limits.availableSpan < newUsedSpan) {
+          // Adding the result would exceed the group's available span, so stop
+          // adding results to it. Skip the shift() below so the result can be
+          // added to later groups.
+          break;
+        }
         addedResults.push(result);
-        state.totalResultCount++;
+        usedLimits.availableSpan = newUsedSpan;
+        usedLimits.maxResultCount++;
+        state.usedResultSpan += span;
         this._updateStatePostAdd(result, state);
       }
+
+      // We either add or discard results in the order they appear in
+      // `groupResults`, so shift() them off. That way later groups with the
+      // same `RESULT_GROUP` won't include results that earlier groups have
+      // added or discarded.
+      groupResults.shift();
     }
 
     if (addQuickSuggest) {
       let { quickSuggestResult } = state;
       state.quickSuggestResult = null;
-      // Determine the index within the general bucket to insert the quick
+      // Determine the index within the general group to insert the quick
       // suggest result. There are separate Nimbus variables for the sponsored
       // and non-sponsored types. If `payload.sponsoredText` is defined, then
       // the result is a non-sponsored type; otherwise it's a sponsored type.
@@ -324,19 +559,18 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
           ? "quickSuggestNonSponsoredIndex"
           : "quickSuggestSponsoredIndex"
       );
-      // A negative index means insertion relative to the end of the bucket,
-      // similar to `suggestedIndex`.
+      // A positive index is relative to the start of the group and a negative
+      // index is relative to the end, similar to `suggestedIndex`.
       if (index < 0) {
         index = Math.max(index + addedResults.length + 1, 0);
       } else {
         index = Math.min(index, addedResults.length);
       }
       addedResults.splice(index, 0, quickSuggestResult);
-      state.totalResultCount++;
       this._updateStatePostAdd(quickSuggestResult, state);
     }
 
-    return addedResults;
+    return [addedResults, usedLimits, !!groupResults?.length];
   }
 
   /**
@@ -351,7 +585,7 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
    *   True if the result can be added and false if it should be discarded.
    */
   _canAddResult(result, state) {
-    // We expect UnifiedComplete sent us the highest-ranked www. and non-www
+    // We expect UrlbarProviderPlaces sent us the highest-ranked www. and non-www
     // origins, if any. Now, compare them to each other and to the heuristic
     // result.
     //
@@ -378,15 +612,20 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
         }
       );
       let topPrefixData = state.strippedUrlToTopPrefixAndTitle.get(strippedUrl);
-      // We don't expect completely identical URLs in the results at this point,
-      // so if the prefixes are the same, then we're deduping a result against
+      // If the condition below is not met, we are deduping a result against
       // itself.
-      if (topPrefixData && prefix != topPrefixData.prefix) {
+      if (
+        topPrefixData &&
+        (prefix != topPrefixData.prefix ||
+          result.providerName != topPrefixData.providerName)
+      ) {
         let prefixRank = UrlbarUtils.getPrefixRank(prefix);
         if (
-          prefixRank < topPrefixData.rank &&
-          (prefix.endsWith("www.") == topPrefixData.prefix.endsWith("www.") ||
-            result.payload?.title == topPrefixData.title)
+          (prefixRank < topPrefixData.rank &&
+            (prefix.endsWith("www.") == topPrefixData.prefix.endsWith("www.") ||
+              result.payload?.title == topPrefixData.title)) ||
+          (prefix == topPrefixData.prefix &&
+            result.providerName != topPrefixData.providerName)
         ) {
           return false;
         }
@@ -396,8 +635,8 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
     // Discard results that dupe autofill.
     if (
       state.context.heuristicResult &&
-      state.context.heuristicResult.providerName == "Autofill" &&
-      result.providerName != "Autofill" &&
+      state.context.heuristicResult.autofill &&
+      !result.autofill &&
       state.context.heuristicResult.payload?.url == result.payload.url &&
       state.context.heuristicResult.type == result.type
     ) {
@@ -420,12 +659,16 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
         return false;
       }
 
-      if (!result.payload.satisfiesAutofillThreshold) {
-        // Discard the result if the heuristic result is not autofill.
+      // In cases where the heuristic result is not a URL and we have a
+      // tab-to-search result, the tab-to-search provider determined that the
+      // typed string is similar to an engine domain. We can let the
+      // tab-to-search result through.
+      if (state.context.heuristicResult?.type == UrlbarUtils.RESULT_TYPE.URL) {
+        // Discard the result if the heuristic result is not autofill and we are
+        // not making an exception for a fuzzy match.
         if (
-          !state.context.heuristicResult ||
-          state.context.heuristicResult.type != UrlbarUtils.RESULT_TYPE.URL ||
-          !state.context.heuristicResult.autofill
+          !state.context.heuristicResult.autofill &&
+          !result.payload.satisfiesAutofillThreshold
         ) {
           return false;
         }
@@ -491,6 +734,28 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
       return false;
     }
 
+    // Discard remote tab results that dupes another remote tab or a
+    // switch-to-tab result.
+    if (result.type == UrlbarUtils.RESULT_TYPE.REMOTE_TAB) {
+      if (state.addedRemoteTabUrls.has(result.payload.url)) {
+        return false;
+      }
+      let maybeDupeType = state.urlToTabResultType.get(result.payload.url);
+      if (maybeDupeType == UrlbarUtils.RESULT_TYPE.TAB_SWITCH) {
+        return false;
+      }
+    }
+
+    // Discard history results that dupe either remote or switch-to-tab results.
+    if (
+      !result.heuristic &&
+      result.type == UrlbarUtils.RESULT_TYPE.URL &&
+      result.payload.url &&
+      state.urlToTabResultType.has(result.payload.url)
+    ) {
+      return false;
+    }
+
     // Discard SERPs from browser history that dupe either the heuristic or
     // previously added suggestions.
     if (
@@ -544,7 +809,7 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
     // that there's always at most one heuristic and it's always first, but
     // since result buckets are stored in a pref and can therefore be modified
     // by the user, we perform this check.
-    if (result.heuristic && state.totalResultCount) {
+    if (result.heuristic && state.usedResultSpan) {
       return false;
     }
 
@@ -576,7 +841,11 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
    */
   _updateStatePreAdd(result, state) {
     // Save some state we'll use later to dedupe URL results.
-    if (result.type == UrlbarUtils.RESULT_TYPE.URL && result.payload.url) {
+    if (
+      (result.type == UrlbarUtils.RESULT_TYPE.URL ||
+        result.type == UrlbarUtils.RESULT_TYPE.KEYWORD) &&
+      result.payload.url
+    ) {
       let [strippedUrl, prefix] = UrlbarUtils.stripPrefixAndTrim(
         result.payload.url,
         {
@@ -590,13 +859,25 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
       let topPrefixData = state.strippedUrlToTopPrefixAndTitle.get(strippedUrl);
       let topPrefixRank = topPrefixData ? topPrefixData.rank : -1;
       if (topPrefixRank < prefixRank) {
-        // strippedUrl => { prefix, title, rank }
+        // strippedUrl => { prefix, title, rank, providerName }
         state.strippedUrlToTopPrefixAndTitle.set(strippedUrl, {
           prefix,
           title: result.payload.title,
           rank: prefixRank,
+          providerName: result.providerName,
         });
       }
+    }
+
+    // Save some state we'll use later to dedupe results from open/remote tabs.
+    if (
+      result.payload.url &&
+      (result.type == UrlbarUtils.RESULT_TYPE.TAB_SWITCH ||
+        (result.type == UrlbarUtils.RESULT_TYPE.REMOTE_TAB &&
+          !state.urlToTabResultType.has(result.payload.url)))
+    ) {
+      // url => result type
+      state.urlToTabResultType.set(result.payload.url, result.type);
     }
 
     // If we find results other than the heuristic, "Search in Private
@@ -680,6 +961,13 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
         );
       }
     }
+
+    // Sync will send us duplicate remote tabs if multiple copies of a tab are
+    // open on a synced client. Keep track of which remote tabs we've added to
+    // dedupe these.
+    if (result.type == UrlbarUtils.RESULT_TYPE.REMOTE_TAB) {
+      state.addedRemoteTabUrls.add(result.payload.url);
+    }
   }
 
   /**
@@ -699,76 +987,40 @@ class MuxerUnifiedComplete extends UrlbarMuxer {
       return;
     }
 
-    // First, sort the results by index in ascending order so that insertions of
-    // results with both positive and negative indexes are in ascending order.
-    suggestedIndexResults.sort((a, b) => a.suggestedIndex - b.suggestedIndex);
-
-    // Insert results with positive indexes.  Insertions should happen in
-    // ascending order so that higher-index results are inserted at their
-    // suggested indexes and aren't offset by later lower-index insertions.
-    let negativeIndexSpanCount = 0;
+    // Partition the results into positive- and negative-index arrays. Positive
+    // indexes are relative to the start of the list and negative indexes are
+    // relative to the end.
+    let positive = [];
+    let negative = [];
     for (let result of suggestedIndexResults) {
-      if (result.suggestedIndex < 0) {
-        negativeIndexSpanCount += UrlbarUtils.getSpanForResult(result);
-      } else {
+      let results = result.suggestedIndex < 0 ? negative : positive;
+      results.push(result);
+    }
+
+    // Sort the positive results ascending so that results at the end of the
+    // array don't end up offset by later insertions at the front.
+    positive.sort((a, b) => a.suggestedIndex - b.suggestedIndex);
+
+    // Conversely, sort the negative results descending so that results at the
+    // front of the array don't end up offset by later insertions at the end.
+    negative.sort((a, b) => b.suggestedIndex - a.suggestedIndex);
+
+    // Insert the results. We start with the positive results because we have
+    // tests that assume they're inserted first. In practice it shouldn't matter
+    // because there's no good reason we would ever have a negative result come
+    // before a positive result in the same query. Even if we did, we have to
+    // insert one before the other, and there's no right or wrong order.
+    for (let results of [positive, negative]) {
+      for (let result of results) {
         this._updateStatePreAdd(result, state);
         if (this._canAddResult(result, state)) {
           let index =
-            result.suggestedIndex <= sortedResults.length
-              ? result.suggestedIndex
-              : sortedResults.length;
+            result.suggestedIndex >= 0
+              ? Math.min(result.suggestedIndex, sortedResults.length)
+              : Math.max(result.suggestedIndex + sortedResults.length + 1, 0);
           sortedResults.splice(index, 0, result);
           this._updateStatePostAdd(result, state);
         }
-      }
-    }
-
-    // Before inserting results with negative indexes, truncate the sorted
-    // results so that their total span count is no larger than maxResults minus
-    // the span count of the negative-index results themselves.  If we didn't do
-    // that, the negative-index results could end up getting removed when the
-    // muxer truncates the final results array, which would effectively mean
-    // that we inserted them at the wrong indexes.
-    this._truncateResults(
-      sortedResults,
-      state.context.maxResults - negativeIndexSpanCount
-    );
-
-    // Insert results with negative indexes.
-    if (negativeIndexSpanCount) {
-      for (let result of suggestedIndexResults) {
-        if (result.suggestedIndex >= 0) {
-          break;
-        }
-        this._updateStatePreAdd(result, state);
-        if (this._canAddResult(result, state)) {
-          let index = Math.max(
-            result.suggestedIndex + sortedResults.length + 1,
-            0
-          );
-          sortedResults.splice(index, 0, result);
-          this._updateStatePostAdd(result, state);
-        }
-      }
-    }
-  }
-
-  /**
-   * Truncates the array of results so that their total span count is no larger
-   * than a given number.
-   *
-   * @param {array} sortedResults
-   *   The sorted results produced by the muxer so far.  Updated in place.
-   * @param {number} maxSpanCount
-   *   The max span count.
-   */
-  _truncateResults(sortedResults, maxSpanCount) {
-    let remainingSpanCount = maxSpanCount;
-    for (let i = 0; i < sortedResults.length; i++) {
-      remainingSpanCount -= UrlbarUtils.getSpanForResult(sortedResults[i]);
-      if (remainingSpanCount < 0) {
-        sortedResults.splice(i, sortedResults.length - i);
-        break;
       }
     }
   }

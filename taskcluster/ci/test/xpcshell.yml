@@ -12,6 +12,7 @@ job-defaults:
         by-test-platform:
             android-em-7.*: geckoview-androidTest.apk
             default: null
+    python-3: true
     mozharness:
         script:
             by-test-platform:
@@ -31,11 +32,11 @@ job-defaults:
                     - unittests/win_unittest.py
         requires-signed-builds:
             by-test-platform:
-                windows10-64-asan/opt: false    # No XPCShell on ASAN yet
-                windows10-32-mingwclang/opt: false
-                windows10-32-mingwclang/debug: false
-                windows10-64-mingwclang/opt: false
-                windows10-64-mingwclang/debug: false
+                windows10-64-asan-qr/opt: false    # No XPCShell on ASAN yet
+                windows10-32-mingwclang-qr/opt: false
+                windows10-32-mingwclang-qr/debug: false
+                windows10-64-mingwclang-qr/opt: false
+                windows10-64-mingwclang-qr/debug: false
                 windows.*: true
                 default: false
 
@@ -49,7 +50,7 @@ xpcshell:
                 by-test-platform:
                     .*-tsan/opt: ['trunk']
                     android-em-7.0-x86_64/debug-isolated-process: []
-                    windows10-64-asan/opt: []  # No XPCShell on ASAN yet
+                    windows10-64-asan-qr/opt: []  # No XPCShell on ASAN yet
                     default: built-projects
     chunks:
         by-test-platform:
@@ -63,7 +64,6 @@ xpcshell:
             default: 5
     max-run-time:
         by-test-platform:
-            macosx1014-64(-shippable|-devedition|-asan)?(-qr)?/.*: 5400
             windows.*(-shippable)/opt: 5400
             .*64-ccov(-qr)?/.*: 7200
             .*-tsan/opt: 7200

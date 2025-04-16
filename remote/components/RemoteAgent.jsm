@@ -6,34 +6,55 @@
 
 var EXPORTED_SYMBOLS = ["RemoteAgent", "RemoteAgentFactory"];
 
-const { Services } = ChromeUtils.import("resource://gre/modules/Services.jsm");
 const { XPCOMUtils } = ChromeUtils.import(
   "resource://gre/modules/XPCOMUtils.jsm"
 );
 
 XPCOMUtils.defineLazyModuleGetters(this, {
-  HttpServer: "chrome://remote/content/server/HTTPD.jsm",
-  JSONHandler: "chrome://remote/content/cdp/JSONHandler.jsm",
-  Log: "chrome://remote/content/shared/Log.jsm",
   Preferences: "resource://gre/modules/Preferences.jsm",
-  RecommendedPreferences:
-    "chrome://remote/content/cdp/RecommendedPreferences.jsm",
-  TargetList: "chrome://remote/content/cdp/targets/TargetList.jsm",
+  Services: "resource://gre/modules/Services.jsm",
+
+  CDP: "chrome://remote/content/cdp/CDP.jsm",
+  HttpServer: "chrome://remote/content/server/HTTPD.jsm",
+  Log: "chrome://remote/content/shared/Log.jsm",
+  WebDriverBiDi: "chrome://remote/content/webdriver-bidi/WebDriverBiDi.jsm",
 });
 
 XPCOMUtils.defineLazyGetter(this, "logger", () => Log.get());
 
-const FORCE_LOCAL = "remote.force-local";
+XPCOMUtils.defineLazyGetter(this, "activeProtocols", () => {
+  const protocols = Services.prefs.getIntPref("remote.active-protocols");
+  if (protocols < 1 || protocols > 3) {
+    throw Error(`Invalid remote protocol identifier: ${protocols}`);
+  }
 
+  return protocols;
+});
+
+const WEBDRIVER_BIDI_ACTIVE = 0x1;
+const CDP_ACTIVE = 0x2;
+
+// By default force local connections only
 const LOOPBACKS = ["localhost", "127.0.0.1", "[::1]"];
+const PREF_FORCE_LOCAL = "remote.force-local";
 
 class RemoteAgentClass {
   constructor() {
-    this.alteredPrefs = new Set();
-  }
+    this.server = null;
 
-  get listening() {
-    return !!this.server && !this.server.isStopped();
+    if ((activeProtocols & WEBDRIVER_BIDI_ACTIVE) === WEBDRIVER_BIDI_ACTIVE) {
+      this.webdriverBiDi = new WebDriverBiDi(this);
+      logger.debug("WebDriver BiDi enabled");
+    } else {
+      this.webdriverBiDi = null;
+    }
+
+    if ((activeProtocols & CDP_ACTIVE) === CDP_ACTIVE) {
+      this.cdp = new CDP(this);
+      logger.debug("CDP enabled");
+    } else {
+      this.cdp = null;
+    }
   }
 
   get debuggerAddress() {
@@ -42,6 +63,26 @@ class RemoteAgentClass {
     }
 
     return `${this.host}:${this.port}`;
+  }
+
+  get host() {
+    // Bug 1675471: When using the nsIRemoteAgent interface the HTTPd server's
+    // primary identity ("this.server.identity.primaryHost") is lazily set.
+    return this.server?._host;
+  }
+
+  get listening() {
+    return !!this.server && !this.server.isStopped();
+  }
+
+  get port() {
+    // Bug 1675471: When using the nsIRemoteAgent interface the HTTPd server's
+    // primary identity ("this.server.identity.primaryPort") is lazily set.
+    return this.server?._port;
+  }
+
+  get scheme() {
+    return this.server?.identity.primaryScheme;
   }
 
   listen(url) {
@@ -61,7 +102,7 @@ class RemoteAgentClass {
     }
 
     let { host, port } = url;
-    if (Preferences.get(FORCE_LOCAL) && !LOOPBACKS.includes(host)) {
+    if (Preferences.get(PREF_FORCE_LOCAL) && !LOOPBACKS.includes(host)) {
       throw Components.Exception(
         "Restricted to loopback devices",
         Cr.NS_ERROR_ILLEGAL_VALUE
@@ -73,42 +114,17 @@ class RemoteAgentClass {
       port = -1;
     }
 
-    for (let [k, v] of RecommendedPreferences) {
-      if (!Preferences.isSet(k)) {
-        logger.debug(`Setting recommended pref ${k} to ${v}`);
-        Preferences.set(k, v);
-        this.alteredPrefs.add(k);
-      }
-    }
-
     this.server = new HttpServer();
-    this.server.registerPrefixHandler("/json/", new JSONHandler(this));
-
-    this.targetList = new TargetList();
-    this.targetList.on("target-created", (eventName, target) => {
-      this.server.registerPathHandler(target.path, target);
-    });
-    this.targetList.on("target-destroyed", (eventName, target) => {
-      this.server.registerPathHandler(target.path, null);
-    });
 
     return this.asyncListen(host, port);
   }
 
   async asyncListen(host, port) {
     try {
-      await this.targetList.watchForTargets();
-
-      // Immediatly instantiate the main process target in order
-      // to be accessible via HTTP endpoint on startup
-      const mainTarget = this.targetList.getMainProcessTarget();
-
       this.server._start(port, host);
-      Services.obs.notifyObservers(
-        null,
-        "remote-listening",
-        `DevTools listening on ${mainTarget.wsDebuggerURL}`
-      );
+
+      await this.cdp?.start();
+      await this.webdriverBiDi?.start();
     } catch (e) {
       await this.close();
       logger.error(`Unable to start remote agent: ${e.message}`, e);
@@ -117,17 +133,10 @@ class RemoteAgentClass {
 
   close() {
     try {
-      for (let k of this.alteredPrefs) {
-        logger.debug(`Resetting recommended pref ${k}`);
-        Preferences.reset(k);
-      }
-      this.alteredPrefs.clear();
-
-      // destroy targetList before stopping server,
-      // otherwise the HTTP will fail to stop
-      if (this.targetList) {
-        this.targetList.destructor();
-      }
+      // Stop the CDP support before stopping the server.
+      // Otherwise the HTTP server will fail to stop.
+      this.cdp?.stop();
+      this.webdriverBiDi?.stop();
 
       if (this.listening) {
         return this.server.stop();
@@ -137,37 +146,9 @@ class RemoteAgentClass {
       logger.error("unable to stop listener", e);
     } finally {
       this.server = null;
-      this.targetList = null;
     }
 
     return Promise.resolve();
-  }
-
-  get scheme() {
-    if (!this.server) {
-      return null;
-    }
-    return this.server.identity.primaryScheme;
-  }
-
-  get host() {
-    if (!this.server) {
-      return null;
-    }
-
-    // Bug 1675471: When using the nsIRemoteAgent interface the HTTPd server's
-    // primary identity ("this.server.identity.primaryHost") is lazily set.
-    return this.server._host;
-  }
-
-  get port() {
-    if (!this.server) {
-      return null;
-    }
-
-    // Bug 1675471: When using the nsIRemoteAgent interface the HTTPd server's
-    // primary identity ("this.server.identity.primaryPort") is lazily set.
-    return this.server._port;
   }
 
   // XPCOM

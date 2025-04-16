@@ -35,11 +35,11 @@ codespell:
         - python/mach/docs/
         - python/mozlint/
         - remote/doc/
+        - remote/marionette/doc/
         - security/manager/locales/en-US/
         - services/sync/locales/en-US/
         - taskcluster/docs/
         - testing/geckodriver/doc/
-        - testing/marionette/doc/
         - testing/mozbase/docs/
         - toolkit/components/extensions/docs/
         - toolkit/components/normandy/docs/
@@ -57,6 +57,7 @@ codespell:
         - tools/tryselect/
         - uriloader/docs/
     exclude:
+        - tools/lint/cpp/mingw-headers.txt
         - tools/lint/test/test_codespell.py
     # List of extensions coming from:
     # tools/lint/{flake8,eslint}.yml

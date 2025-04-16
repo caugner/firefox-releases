@@ -21,6 +21,7 @@
 #include "mozilla/dom/LoadURIOptionsBinding.h"
 #include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/StaticPrefs_fission.h"
+#include "mozilla/Telemetry.h"
 #include "mozilla/URLQueryStringStripper.h"
 
 #include "mozilla/OriginAttributes.h"
@@ -86,6 +87,7 @@ nsDocShellLoadState::nsDocShellLoadState(
     mLoadingSessionHistoryInfo = MakeUnique<LoadingSessionHistoryInfo>(
         aLoadState.loadingSessionHistoryInfo().ref());
   }
+  mUnstrippedURI = aLoadState.UnstrippedURI();
 }
 
 nsDocShellLoadState::nsDocShellLoadState(const nsDocShellLoadState& aOther)
@@ -130,7 +132,8 @@ nsDocShellLoadState::nsDocShellLoadState(const nsDocShellLoadState& aOther)
       mCancelContentJSEpoch(aOther.mCancelContentJSEpoch),
       mLoadIdentifier(aOther.mLoadIdentifier),
       mChannelInitialized(aOther.mChannelInitialized),
-      mIsMetaRefresh(aOther.mIsMetaRefresh) {
+      mIsMetaRefresh(aOther.mIsMetaRefresh),
+      mUnstrippedURI(aOther.mUnstrippedURI) {
   if (aOther.mLoadingSessionHistoryInfo) {
     mLoadingSessionHistoryInfo = MakeUnique<LoadingSessionHistoryInfo>(
         *aOther.mLoadingSessionHistoryInfo);
@@ -571,7 +574,7 @@ bool nsDocShellLoadState::LoadIsFromSessionHistory() const {
 }
 
 void nsDocShellLoadState::MaybeStripTrackerQueryStrings(
-    BrowsingContext* aContext) {
+    BrowsingContext* aContext, nsIURI* aCurrentUnstrippedURI) {
   MOZ_ASSERT(aContext);
 
   // We don't need to strip for sub frames because the query string has been
@@ -599,10 +602,34 @@ void nsDocShellLoadState::MaybeStripTrackerQueryStrings(
     return;
   }
 
+  Telemetry::AccumulateCategorical(
+      Telemetry::LABELS_QUERY_STRIPPING_COUNT::Navigation);
+
   nsCOMPtr<nsIURI> strippedURI;
   if (URLQueryStringStripper::Strip(URI(), strippedURI)) {
+    mUnstrippedURI = URI();
     SetURI(strippedURI);
+
+    Telemetry::AccumulateCategorical(
+        Telemetry::LABELS_QUERY_STRIPPING_COUNT::StripForNavigation);
+  } else if (LoadType() & nsIDocShell::LOAD_CMD_RELOAD) {
+    // Preserve the Unstripped URI if it's a reload. By doing this, we can
+    // restore the stripped query parameters once the ETP has been toggled to
+    // off.
+    mUnstrippedURI = aCurrentUnstrippedURI;
   }
+
+#ifdef DEBUG
+  // Make sure that unstripped URI is the same as URI() but only the query
+  // string could be different.
+  if (mUnstrippedURI) {
+    nsCOMPtr<nsIURI> uri;
+    URLQueryStringStripper::Strip(mUnstrippedURI, uri);
+    bool equals = false;
+    Unused << URI()->Equals(uri, &equals);
+    MOZ_ASSERT(equals);
+  }
+#endif
 }
 
 const nsString& nsDocShellLoadState::Target() const { return mTarget; }
@@ -1018,5 +1045,8 @@ DocShellLoadStateInit nsDocShellLoadState::Serialize() {
   if (mLoadingSessionHistoryInfo) {
     loadState.loadingSessionHistoryInfo().emplace(*mLoadingSessionHistoryInfo);
   }
+  loadState.UnstrippedURI() = mUnstrippedURI;
   return loadState;
 }
+
+nsIURI* nsDocShellLoadState::GetUnstrippedURI() const { return mUnstrippedURI; }

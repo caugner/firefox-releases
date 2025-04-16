@@ -296,7 +296,7 @@ extern "C" {
         locked_y: *mut LockedTexture,
         locked_u: *mut LockedTexture,
         locked_v: *mut LockedTexture,
-        color_space: YUVColorSpace,
+        color_space: YuvRangedColorSpace,
         color_depth: GLuint,
         src_x: GLint,
         src_y: GLint,
@@ -316,7 +316,7 @@ extern "C" {
     fn ReferenceContext(ctx: *mut c_void);
     fn DestroyContext(ctx: *mut c_void);
     fn MakeCurrent(ctx: *mut c_void);
-    fn ReportMemory(size_of_op: unsafe extern "C" fn(ptr: *const c_void) -> usize) -> usize;
+    fn ReportMemory(ctx: *mut c_void, size_of_op: unsafe extern "C" fn(ptr: *const c_void) -> usize) -> usize;
 }
 
 #[derive(Clone, Copy)]
@@ -451,8 +451,8 @@ impl Context {
         }
     }
 
-    pub fn report_memory(size_of_op: unsafe extern "C" fn(ptr: *const c_void) -> usize) -> usize {
-        unsafe { ReportMemory(size_of_op) }
+    pub fn report_memory(&self, size_of_op: unsafe extern "C" fn(ptr: *const c_void) -> usize) -> usize {
+        unsafe { ReportMemory(self.0, size_of_op) }
     }
 }
 
@@ -2295,12 +2295,15 @@ pub struct LockedResource(*mut LockedTexture);
 unsafe impl Send for LockedResource {}
 unsafe impl Sync for LockedResource {}
 
-#[repr(C)]
-pub enum YUVColorSpace {
-    Rec601 = 0,
-    Rec709,
-    Rec2020,
-    Identity,
+#[repr(u8)]
+pub enum YuvRangedColorSpace {
+    Rec601Narrow = 0,
+    Rec601Full,
+    Rec709Narrow,
+    Rec709Full,
+    Rec2020Narrow,
+    Rec2020Full,
+    GbrIdentity,
 }
 
 impl LockedResource {
@@ -2355,7 +2358,7 @@ impl LockedResource {
         locked_y: &LockedResource,
         locked_u: &LockedResource,
         locked_v: &LockedResource,
-        color_space: YUVColorSpace,
+        color_space: YuvRangedColorSpace,
         color_depth: GLuint,
         src_x: GLint,
         src_y: GLint,

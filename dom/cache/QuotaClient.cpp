@@ -106,12 +106,14 @@ Result<UsageInfo, nsresult> GetBodyUsage(nsIFile& aMorgueDir,
         // QM_OR_ELSE_WARN_IF is not used here since we just want to log
         // NS_ERROR_FILE_FS_CORRUPTED result and not spam the reports (even a
         // warning in the reports is not desired).
-        QM_TRY(QM_OR_ELSE_LOG_IF(
+        QM_TRY(QM_OR_ELSE_LOG_VERBOSE_IF(
+            // Expression.
             ToResult(BodyTraverseFiles(QuotaInfo{}, *bodyDir, getUsage,
                                        /* aCanRemoveFiles */ true,
                                        /* aTrackQuota */ false)),
+            // Predicate.
             IsSpecificError<NS_ERROR_FILE_FS_CORRUPTED>,
-            // We treat NS_ERROR_FILE_FS_CORRUPTED as if the
+            // Fallback. We treat NS_ERROR_FILE_FS_CORRUPTED as if the
             // directory did not exist at all.
             ErrToDefaultOk<>));
         return usageInfo;

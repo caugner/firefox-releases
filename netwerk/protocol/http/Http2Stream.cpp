@@ -131,6 +131,8 @@ nsresult Http2Stream::ReadSegments(nsAHttpSegmentReader* reader, uint32_t count,
                                    uint32_t* countRead) {
   LOG3(("Http2Stream %p ReadSegments reader=%p count=%d state=%x", this, reader,
         count, mUpstreamState));
+  // Reader is nullptr when this is a push stream.
+  MOZ_DIAGNOSTIC_ASSERT(!reader || (reader == mSession));
 
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
 
@@ -170,8 +172,9 @@ nsresult Http2Stream::ReadSegments(nsAHttpSegmentReader* reader, uint32_t count,
       // Check to see if the transaction's request could be written out now.
       // If not, mark the stream for callback when writing can proceed.
       if (NS_SUCCEEDED(rv) && mUpstreamState == GENERATING_HEADERS &&
-          !mRequestHeadersDone)
+          !mRequestHeadersDone) {
         mSession->TransactionHasDataToWrite(this);
+      }
 
       // mTxinlineFrameUsed represents any queued un-sent frame. It might
       // be 0 if there is no such frame, which is not a gurantee that we
@@ -843,9 +846,10 @@ void Http2Stream::UpdateTransportSendEvents(uint32_t count) {
     mSocketTransport->SetSendBufferSize(bufferSize);
   }
 
-  if (mUpstreamState != SENDING_FIN_STREAM)
+  if (mUpstreamState != SENDING_FIN_STREAM) {
     mTransaction->OnTransportStatus(mSocketTransport, NS_NET_STATUS_SENDING_TO,
                                     mTotalSent);
+  }
 
   if (!mSentWaitingFor && !mRequestBodyLenRemaining) {
     mSentWaitingFor = 1;
@@ -902,8 +906,9 @@ nsresult Http2Stream::TransmitFrame(const char* buf, uint32_t* countUsed,
     MOZ_ASSERT(!forceCommitment, "forceCommitment with WOULD_BLOCK");
     mSession->TransactionHasDataToWrite(this);
   }
-  if (NS_FAILED(rv))  // this will include WOULD_BLOCK
+  if (NS_FAILED(rv)) {  // this will include WOULD_BLOCK
     return rv;
+  }
 
   // This function calls mSegmentReader->OnReadSegment to report the actual
   // http/2 bytes through to the session object and then the HttpConnection
@@ -1475,14 +1480,17 @@ nsresult Http2Stream::OnReadSegment(const char* buf, uint32_t count,
       // Its amazing we send anything at all.
       dataLength = std::min(count, mChunkSize);
 
-      if (dataLength > Http2Session::kMaxFrameData)
+      if (dataLength > Http2Session::kMaxFrameData) {
         dataLength = Http2Session::kMaxFrameData;
+      }
 
-      if (dataLength > mSession->ServerSessionWindow())
+      if (dataLength > mSession->ServerSessionWindow()) {
         dataLength = static_cast<uint32_t>(mSession->ServerSessionWindow());
+      }
 
-      if (dataLength > mServerReceiveWindow)
+      if (dataLength > mServerReceiveWindow) {
         dataLength = static_cast<uint32_t>(mServerReceiveWindow);
+      }
 
       LOG3(
           ("Http2Stream this=%p id 0x%X send calculation "

@@ -193,11 +193,6 @@ interface nsIDocShell : nsIDocShellTreeItem
   attribute boolean allowPlugins;
 
   /**
-   * Whether to allow Javascript execution
-   */
-  attribute boolean allowJavascript;
-
-  /**
    * Attribute stating if refresh based redirects can be allowed
    */
   attribute boolean allowMetaRedirects;
@@ -469,13 +464,6 @@ interface nsIDocShell : nsIDocShellTreeItem
   void exitPrintPreview();
 
   /**
-   * Whether this docshell can execute scripts based on its hierarchy.
-   * The rule of thumb here is that we disable js if this docshell or any
-   * of its parents disallow scripting.
-   */
-  [infallible] readonly attribute boolean canExecuteScripts;
-
-  /**
    * The ID of the docshell in the session history.
    */
   readonly attribute nsIDRef historyID;
@@ -506,17 +494,10 @@ interface nsIDocShell : nsIDocShellTreeItem
   /**
    * Upon getting, returns the canonical encoding label of the document
    * currently loaded into this docshell.
-   *
-   * Upon setting, sets the forced encoding for compatibility with legacy callers.
    */
-  attribute ACString charset;
+  readonly attribute ACString charset;
 
-  /**
-   * Called when the user chose an encoding override from the character
-   * encoding menu. Separate from the setter for the charset property to avoid
-   * extensions adding noise to the data.
-   */
-  void gatherCharsetMenuTelemetry();
+  void forceEncodingDetection();
 
   /**
    * In a child docshell, this is the charset of the parent docshell
@@ -624,18 +605,11 @@ interface nsIDocShell : nsIDocShellTreeItem
    */
   [noscript, notxpcom] bool pluginsAllowedInCurrentDoc();
 
-  [noscript, infallible] attribute boolean affectPrivateSessionLifetime;
-
   /**
    * Indicates whether the UI may enable the character encoding menu. The UI
    * must disable the menu when this property is false.
    */
   [infallible] readonly attribute boolean mayEnableCharacterEncodingMenu;
-
-  /**
-   * Indicates that the character encoding was autodetected.
-   */
-  [infallible] readonly attribute boolean charsetAutodetected;
 
            attribute  nsIEditor editor;
   readonly attribute  boolean   editable;             /* this docShell is editable */

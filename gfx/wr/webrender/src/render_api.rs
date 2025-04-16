@@ -318,7 +318,7 @@ impl Transaction {
         &mut self,
         device_rect: DeviceIntRect,
     ) {
-        window_size_sanity_check(device_rect.size);
+        window_size_sanity_check(device_rect.size());
         self.scene_ops.push(
             SceneMsg::SetDocumentView {
                 device_rect,
@@ -1406,7 +1406,9 @@ pub struct MemoryReport {
     pub gpu_cache_textures: usize,
     pub vertex_data_textures: usize,
     pub render_target_textures: usize,
-    pub texture_cache_textures: usize,
+    pub picture_tile_textures: usize,
+    pub atlas_textures: usize,
+    pub standalone_textures: usize,
     pub texture_cache_structures: usize,
     pub depth_target_textures: usize,
     pub texture_upload_pbos: usize,

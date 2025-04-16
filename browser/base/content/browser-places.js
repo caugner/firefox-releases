@@ -914,13 +914,13 @@ var BookmarksEventHandler = {
     }
   },
 
-  fillInBHTooltip: function BEH_fillInBHTooltip(aDocument, aEvent) {
+  fillInBHTooltip: function BEH_fillInBHTooltip(aTooltip, aEvent) {
     var node;
     var cropped = false;
     var targetURI;
 
-    if (aDocument.tooltipNode.localName == "treechildren") {
-      var tree = aDocument.tooltipNode.parentNode;
+    if (aTooltip.triggerNode.localName == "treechildren") {
+      var tree = aTooltip.triggerNode.parentNode;
       var cell = tree.getCellAt(aEvent.clientX, aEvent.clientY);
       if (cell.row == -1) {
         return false;
@@ -930,7 +930,7 @@ var BookmarksEventHandler = {
     } else {
       // Check whether the tooltipNode is a Places node.
       // In such a case use it, otherwise check for targetURI attribute.
-      var tooltipNode = aDocument.tooltipNode;
+      var tooltipNode = aTooltip.triggerNode;
       if (tooltipNode._placesNode) {
         node = tooltipNode._placesNode;
       } else {
@@ -955,6 +955,15 @@ var BookmarksEventHandler = {
     // Show tooltip for containers only if their title is cropped.
     if (!cropped && !url) {
       return false;
+    }
+
+    if (
+      gProtonPlacesTooltip &&
+      tooltipNode &&
+      !tooltipNode.closest("menupopup")
+    ) {
+      aEvent.target.setAttribute("position", "after_start");
+      aEvent.target.moveToAnchor(tooltipNode, "after_start");
     }
 
     let tooltipTitle = aEvent.target.querySelector(".places-tooltip-title");
@@ -1678,10 +1687,6 @@ var BookmarkingUI = {
       entry: "subviewbutton",
     };
 
-    if (!gProtonDoorhangers) {
-      extraClasses.footer = "panel-subview-footer";
-    }
-
     new PlacesMenu(event, `place:parent=${PlacesUtils.bookmarks.menuGuid}`, {
       extraClasses,
       insertionPoint: ".panel-subview-footer-button",
@@ -1799,11 +1804,6 @@ var BookmarkingUI = {
   init() {
     CustomizableUI.addListener(this);
     this.updateEmptyToolbarMessage();
-
-    if (gProtonPlacesTooltip) {
-      let bhTooltip = document.getElementById("bhTooltip");
-      bhTooltip.setAttribute("position", "after_start");
-    }
   },
 
   _hasBookmarksObserver: false,
@@ -2097,14 +2097,6 @@ var BookmarkingUI = {
     let staticButtons = panelview.getElementsByTagName("toolbarbutton");
     for (let i = 0, l = staticButtons.length; i < l; ++i) {
       CustomizableUI.addShortcut(staticButtons[i]);
-
-      // While we support this panel for both Proton and non-Proton versions
-      // of the AppMenu, we only want to show icons for the non-Proton
-      // version. When Proton ships and we remove the non-Proton variant,
-      // we can remove the subviewbutton-iconic classes from the markup.
-      if (PanelUI.protonAppMenuEnabled) {
-        staticButtons[i].classList.remove("subviewbutton-iconic");
-      }
     }
 
     // Setup the Places view.

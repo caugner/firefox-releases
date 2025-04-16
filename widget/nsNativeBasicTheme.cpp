@@ -936,8 +936,8 @@ void nsNativeBasicTheme::PaintRoundedRectWithRadius(
           std::max(0.0f, float(radius) - float(borderWidth));
       wr::BorderSide side = {backgroundColor, wr::BorderStyle::Solid};
       const wr::BorderSide sides[4] = {side, side, side, side};
-      float h = backgroundRect.size.width * 0.6f;
-      float v = backgroundRect.size.height * 0.6f;
+      float h = backgroundRect.width() * 0.6f;
+      float v = backgroundRect.height() * 0.6f;
       wr::LayoutSideOffsets widths = {v, h, v, h};
       wr::BorderRadius radii = {{backgroundRadius, backgroundRadius},
                                 {backgroundRadius, backgroundRadius},
@@ -1776,12 +1776,14 @@ static LayoutDeviceRect ToSnappedRect(
   return LayoutDeviceRect::FromAppUnits(aRect, aTwipsPerPixel);
 }
 
-auto nsNativeBasicTheme::ShouldUseSystemColors(const dom::Document& aDoc)
+auto nsNativeBasicTheme::ShouldUseSystemColors(const nsPresContext& aPc)
     -> UseSystemColors {
-  // TODO: Do we really want to use system colors even when the page can
-  // override the high contrast theme? (mUseDocumentColors = true?).
-  return UseSystemColors(
-      PreferenceSheet::PrefsFor(aDoc).NonNativeThemeShouldUseSystemColors());
+  // We make sure that we're drawing backgrounds, since otherwise layout will
+  // darken our used text colors etc anyways, and that can cause contrast issues
+  // with dark high-contrast themes.
+  return UseSystemColors(aPc.GetBackgroundColorDraw() &&
+                         PreferenceSheet::PrefsFor(*aPc.Document())
+                             .NonNativeThemeShouldUseSystemColors());
 }
 
 template <typename PaintBackendData>
@@ -1798,7 +1800,7 @@ bool nsNativeBasicTheme::DoDrawWidgetBackground(PaintBackendData& aPaintData,
   const auto devPxRect = ToSnappedRect(aRect, twipsPerPixel, aPaintData);
 
   const EventStates docState = pc->Document()->GetDocumentState();
-  const auto useSystemColors = ShouldUseSystemColors(*pc->Document());
+  const auto useSystemColors = ShouldUseSystemColors(*pc);
   EventStates eventState = GetContentState(aFrame, aAppearance);
   if (aAppearance == StyleAppearance::MozMenulistArrowButton) {
     bool isHTML = IsHTMLContent(aFrame);
@@ -1812,7 +1814,10 @@ bool nsNativeBasicTheme::DoDrawWidgetBackground(PaintBackendData& aPaintData,
     }
   }
 
-  if (aDrawOverflow == DrawOverflow::No) {
+  // Don't paint the outline if we're asked not to draw overflow, or if the
+  // author has specified another kind of outline on focus.
+  if (aDrawOverflow == DrawOverflow::No ||
+      !aFrame->StyleOutline()->mOutlineStyle.IsAuto()) {
     eventState &= ~NS_EVENT_STATE_FOCUSRING;
   }
 

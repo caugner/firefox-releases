@@ -153,12 +153,14 @@ struct LoadInfoArgs
   bool                        isFromProcessingFrameAttributes;
   bool                        isMediaRequest;
   bool                        isMediaInitialRequest;
+  bool                        isFromObjectOrEmbed;
   CookieJarSettingsArgs       cookieJarSettings;
   uint32_t                    requestBlockingReason;
   CSPInfo?                    cspToInheritInfo;
   bool                        hasStoragePermission;
   bool                        isMetaRefresh;
   CrossOriginEmbedderPolicy   loadingEmbedderPolicy;
+  nsIURI                      unstrippedURI;
 };
 
 /**
@@ -228,6 +230,8 @@ struct ParentLoadInfoForwarderArgs
   bool isThirdPartyContextToTopWindow;
 
   bool isInThirdPartyContext;
+
+  nsIURI unstrippedURI;
 
   // IMPORTANT: when you add new properites here you must also update
   // LoadInfoToParentLoadInfoForwarder and MergeParentLoadInfoForwarder

@@ -882,8 +882,7 @@ nsresult nsFocusManager::ContentRemoved(Document* aDocument,
       // focus somewhere else, so just clear the focus in the toplevel window
       // so that no element is focused.
       //
-      // This check does not work correctly in Fission:
-      // https://bugzilla.mozilla.org/show_bug.cgi?id=1613054
+      // The Fission case is handled in FlushAndCheckIfFocusable().
       Document* subdoc = aDocument->GetSubDocumentFor(content);
       if (subdoc) {
         nsCOMPtr<nsIDocShell> docShell = subdoc->GetDocShell();
@@ -2563,8 +2562,7 @@ void nsFocusManager::Focus(
     if (GetFocusedBrowsingContext() == aWindow->GetBrowsingContext() &&
         !mFocusedElement && !focusInOtherContentProcess) {
       SendFocusOrBlurEvent(eFocus, presShell, doc,
-                           aWindow->GetCurrentInnerWindow(),
-                           aWindowRaised);
+                           aWindow->GetCurrentInnerWindow(), aWindowRaised);
     }
   }
 
@@ -2611,11 +2609,11 @@ void nsFocusManager::Focus(
       }
 
       if (!focusInOtherContentProcess) {
-        SendFocusOrBlurEvent(
-            eFocus, presShell, aElement->GetComposedDoc(), aElement,
-            aWindowRaised, isRefocus,
-            aBlurredElementInfo ? aBlurredElementInfo->mElement.get()
-                                : nullptr);
+        SendFocusOrBlurEvent(eFocus, presShell, aElement->GetComposedDoc(),
+                             aElement, aWindowRaised, isRefocus,
+                             aBlurredElementInfo
+                                 ? aBlurredElementInfo->mElement.get()
+                                 : nullptr);
       }
     } else {
       IMEStateManager::OnChangeFocus(presContext, nullptr,
@@ -2742,10 +2740,12 @@ void nsFocusManager::FireFocusInOrOutEvent(
       aCurrentFocusedWindow, aCurrentFocusedContent, aRelatedTarget));
 }
 
-void nsFocusManager::SendFocusOrBlurEvent(
-    EventMessage aEventMessage, PresShell* aPresShell, Document* aDocument,
-    nsISupports* aTarget, bool aWindowRaised,
-    bool aIsRefocus, EventTarget* aRelatedTarget) {
+void nsFocusManager::SendFocusOrBlurEvent(EventMessage aEventMessage,
+                                          PresShell* aPresShell,
+                                          Document* aDocument,
+                                          nsISupports* aTarget,
+                                          bool aWindowRaised, bool aIsRefocus,
+                                          EventTarget* aRelatedTarget) {
   NS_ASSERTION(aEventMessage == eFocus || aEventMessage == eBlur,
                "Wrong event type for SendFocusOrBlurEvent");
 
@@ -4844,6 +4844,7 @@ void nsFocusManager::SetFocusedBrowsingContextFromOtherProcess(
   mFocusedBrowsingContextInContent = aContext;
   mActionIdForFocusedBrowsingContextInContent = aActionId;
   mFocusedElement = nullptr;
+  mFocusedWindow = nullptr;
 }
 
 bool nsFocusManager::SetFocusedBrowsingContextInChrome(

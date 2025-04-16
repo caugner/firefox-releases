@@ -851,7 +851,7 @@ class nsIFrame : public nsQueryFrame {
    * Get the offsets of the frame. most will be 0,0
    *
    */
-  virtual nsresult GetOffsets(int32_t& start, int32_t& end) const;
+  virtual std::pair<int32_t, int32_t> GetOffsets() const;
 
   /**
    * Reset the offsets when splitting frames during Bidi reordering
@@ -1485,9 +1485,6 @@ class nsIFrame : public nsQueryFrame {
    * aFrameSize is used as the basis for percentage widths and heights.
    * aBorderArea is used for the adjustment of radii that might be too
    * large.
-   * FIXME: In the long run, we can probably get away with only one of
-   * these, especially if we change the way we handle outline-radius (by
-   * removing it and inflating the border radius)
    *
    * Return whether any radii are nonzero.
    */
@@ -3078,7 +3075,7 @@ class nsIFrame : public nsQueryFrame {
   bool HasIntrinsicKeywordForBSize() const {
     const auto& bSize = StylePosition()->BSize(GetWritingMode());
     return bSize.IsMozFitContent() || bSize.IsMinContent() ||
-           bSize.IsMaxContent();
+           bSize.IsMaxContent() || bSize.IsFitContentFunction();
   }
   /**
    * Helper method to create a view for a frame.  Only used by a few sub-classes
@@ -3357,6 +3354,17 @@ class nsIFrame : public nsQueryFrame {
   bool IsPercentageResolvedAgainstZero(
       const mozilla::StyleSize& aStyleSize,
       const mozilla::StyleMaxSize& aStyleMaxSize) const;
+
+  // Type of preferred size/min size/max size.
+  enum class SizeProperty { Size, MinSize, MaxSize };
+  /**
+   * This is simliar to the above method but accepts LengthPercentage. Return
+   * true if the frame's preferred size property or max size property contains
+   * a percentage value that should be resolved against zero. For min size, it
+   * always returns true.
+   */
+  bool IsPercentageResolvedAgainstZero(const mozilla::LengthPercentage& aSize,
+                                       SizeProperty aProperty) const;
 
   /**
    * Returns true if the frame is a block wrapper.
@@ -4776,6 +4784,7 @@ class nsIFrame : public nsQueryFrame {
     MaxContent,
     MozAvailable,
     MozFitContent,
+    FitContentFunction,
   };
 
   template <typename SizeOrMaxSize>
@@ -4789,6 +4798,8 @@ class nsIFrame : public nsQueryFrame {
         return mozilla::Some(ExtremumLength::MozAvailable);
       case SizeOrMaxSize::Tag::MozFitContent:
         return mozilla::Some(ExtremumLength::MozFitContent);
+      case SizeOrMaxSize::Tag::FitContentFunction:
+        return mozilla::Some(ExtremumLength::FitContentFunction);
       default:
         return mozilla::Nothing();
     }
@@ -4797,6 +4808,10 @@ class nsIFrame : public nsQueryFrame {
   /**
    * Helper function - computes the content-box inline size for aSize, which is
    * a more complex version to resolve a StyleExtremumLength.
+   * @param aAvailableISizeOverride If this has a value, it is used as the
+   *                                available inline-size instead of
+   *                                aContainingBlockSize.ISize(aWM) when
+   *                                resolving fit-content.
    */
   struct ISizeComputationResult {
     nscoord mISize = 0;
@@ -4807,6 +4822,7 @@ class nsIFrame : public nsQueryFrame {
       const mozilla::LogicalSize& aContainingBlockSize,
       const mozilla::LogicalSize& aContentEdgeToBoxSizing,
       nscoord aBoxSizingToMarginEdge, ExtremumLength aSize,
+      Maybe<nscoord> aAvailableISizeOverride,
       const mozilla::StyleSizeOverrides& aSizeOverrides,
       mozilla::ComputeSizeFlags aFlags);
 
@@ -4834,10 +4850,15 @@ class nsIFrame : public nsQueryFrame {
     }
     auto length = ToExtremumLength(aSize);
     MOZ_ASSERT(length, "This doesn't handle none / auto");
+    Maybe<nscoord> availbleISizeOverride;
+    if (aSize.IsFitContentFunction()) {
+      availbleISizeOverride.emplace(aSize.AsFitContentFunction().Resolve(
+          aContainingBlockSize.ISize(aWM)));
+    }
     return ComputeISizeValue(aRenderingContext, aWM, aContainingBlockSize,
                              aContentEdgeToBoxSizing, aBoxSizingToMarginEdge,
                              length.valueOr(ExtremumLength::MinContent),
-                             aSizeOverrides, aFlags);
+                             availbleISizeOverride, aSizeOverrides, aFlags);
   }
 
   DisplayItemDataArray* DisplayItemData() const {

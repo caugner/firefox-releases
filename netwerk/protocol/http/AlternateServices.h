@@ -57,7 +57,7 @@ class AltSvcMapping {
 
  public:
   AltSvcMapping(DataStorage* storage, int32_t storageEpoch,
-                const nsCString& serialized);
+                const nsCString& str);
 
   static void ProcessHeader(
       const nsCString& buf, const nsCString& originScheme,
@@ -69,7 +69,7 @@ class AltSvcMapping {
 
   // AcceptableProxy() decides whether a particular proxy configuration (pi) is
   // suitable for use with Alt-Svc. No proxy (including a null pi) is suitable.
-  static bool AcceptableProxy(nsProxyInfo* pi);
+  static bool AcceptableProxy(nsProxyInfo* proxyInfo);
 
   const nsCString& AlternateHost() const { return mAlternateHost; }
   const nsCString& OriginHost() const { return mOriginHost; }
@@ -99,14 +99,14 @@ class AltSvcMapping {
                           const nsACString& originHost, int32_t originPort,
                           bool privateBrowsing,
                           const OriginAttributes& originAttributes,
-                          bool aIsHttp3);
+                          bool aHttp3);
 
   bool IsHttp3() { return mIsHttp3; }
   const nsCString& NPNToken() const { return mNPNToken; }
 
  private:
   virtual ~AltSvcMapping() = default;
-  void SyncString(const nsCString& val);
+  void SyncString(const nsCString& str);
   RefPtr<DataStorage> mStorage;
   int32_t mStorageEpoch;
   void Serialize(nsCString& out);
@@ -115,27 +115,29 @@ class AltSvcMapping {
 
   // If you change any of these members, update Serialize()
   nsCString mAlternateHost;
-  MOZ_INIT_OUTSIDE_CTOR int32_t mAlternatePort;
+  int32_t mAlternatePort{-1};
 
   nsCString mOriginHost;
-  MOZ_INIT_OUTSIDE_CTOR int32_t mOriginPort;
+  int32_t mOriginPort{-1};
 
   nsCString mUsername;
-  MOZ_INIT_OUTSIDE_CTOR bool mPrivate;
+  bool mPrivate{false};
 
-  MOZ_INIT_OUTSIDE_CTOR uint32_t mExpiresAt;  // alt-svc mappping
+  // alt-svc mappping
+  uint32_t mExpiresAt{0};
 
-  MOZ_INIT_OUTSIDE_CTOR bool mValidated;
-  MOZ_INIT_OUTSIDE_CTOR bool mHttps;  // origin is https://
-  MOZ_INIT_OUTSIDE_CTOR bool
-      mMixedScheme;  // .wk allows http and https on same con
+  bool mValidated{false};
+  // origin is https://
+  MOZ_INIT_OUTSIDE_CTOR bool mHttps{false};
+  // .wk allows http and https on same con
+  MOZ_INIT_OUTSIDE_CTOR bool mMixedScheme{false};
 
   nsCString mNPNToken;
 
   OriginAttributes mOriginAttributes;
 
-  bool mSyncOnlyOnSuccess;
-  bool mIsHttp3;
+  bool mSyncOnlyOnSuccess{false};
+  bool mIsHttp3{false};
 };
 
 class AltSvcOverride : public nsIInterfaceRequestor,
@@ -180,7 +182,7 @@ class TransactionObserver final : public nsIStreamListener {
 
 class AltSvcCache {
  public:
-  AltSvcCache() : mStorageEpoch(0) {}
+  AltSvcCache() = default;
   virtual ~AltSvcCache() = default;
   void UpdateAltServiceMapping(
       AltSvcMapping* map, nsProxyInfo* pi, nsIInterfaceRequestor*,
@@ -191,9 +193,9 @@ class AltSvcCache {
       uint32_t caps,
       const OriginAttributes& originAttributes);  // main thread
   already_AddRefed<AltSvcMapping> GetAltServiceMapping(
-      const nsACString& scheme, const nsACString& host, int32_t port, bool pb,
-      const OriginAttributes& originAttributes, bool aHttp2Allowed,
-      bool aHttp3Allowed);
+      const nsACString& scheme, const nsACString& host, int32_t port,
+      bool privateBrowsing, const OriginAttributes& originAttributes,
+      bool aHttp2Allowed, bool aHttp3Allowed);
   void ClearAltServiceMappings();
   void ClearHostMapping(const nsACString& host, int32_t port,
                         const OriginAttributes& originAttributes);
@@ -207,7 +209,7 @@ class AltSvcCache {
   already_AddRefed<AltSvcMapping> LookupMapping(const nsCString& key,
                                                 bool privateBrowsing);
   RefPtr<DataStorage> mStorage;
-  int32_t mStorageEpoch;
+  int32_t mStorageEpoch{0};
 };
 
 // This class is used to write the validated result to AltSvcMapping when the

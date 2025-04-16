@@ -37,8 +37,10 @@ namespace jit {
 enum class BaselineCacheIRStubKind;
 enum class InlinableNative : uint16_t;
 
+class BaselineFrame;
 class ICCacheIRStub;
 class ICScript;
+class ICStubSpace;
 class Label;
 class MacroAssembler;
 struct Register;
@@ -256,6 +258,7 @@ class StubField {
     String,
     BaseScript,
     Id,
+    AllocSite,
 
     // These fields take up 64 bits on all platforms.
     RawInt64,
@@ -693,6 +696,9 @@ class MOZ_RAII CacheIRWriter : public JS::CustomAutoRooter {
   }
   void writeRawInt64Field(uint64_t val) {
     addStubField(val, StubField::Type::RawInt64);
+  }
+  void writeAllocSiteField(gc::AllocSite* ptr) {
+    addStubField(uintptr_t(ptr), StubField::Type::AllocSite);
   }
 
   void writeJSOpImm(JSOp op) {
@@ -1230,6 +1236,7 @@ class MOZ_RAII CacheIRCloner {
   jsid getIdField(uint32_t stubOffset);
   const Value getValueField(uint32_t stubOffset);
   uint64_t getRawInt64Field(uint32_t stubOffset);
+  gc::AllocSite* getAllocSiteField(uint32_t stubOffset);
 };
 
 class MOZ_RAII IRGenerator {
@@ -1817,6 +1824,7 @@ class MOZ_RAII CompareIRGenerator : public IRGenerator {
 class MOZ_RAII ToBoolIRGenerator : public IRGenerator {
   HandleValue val_;
 
+  AttachDecision tryAttachBool();
   AttachDecision tryAttachInt32();
   AttachDecision tryAttachNumber();
   AttachDecision tryAttachString();
@@ -1916,12 +1924,14 @@ class MOZ_RAII NewArrayIRGenerator : public IRGenerator {
   JSOp op_;
 #endif
   HandleObject templateObject_;
+  BaselineFrame* frame_;
 
   void trackAttached(const char* name);
 
  public:
   NewArrayIRGenerator(JSContext* cx, HandleScript, jsbytecode* pc,
-                      ICState state, JSOp op, HandleObject templateObj);
+                      ICState state, JSOp op, HandleObject templateObj,
+                      BaselineFrame* frame);
 
   AttachDecision tryAttachStub();
   AttachDecision tryAttachArrayObject();
@@ -1932,16 +1942,22 @@ class MOZ_RAII NewObjectIRGenerator : public IRGenerator {
   JSOp op_;
 #endif
   HandleObject templateObject_;
+  BaselineFrame* frame_;
 
   void trackAttached(const char* name);
 
  public:
   NewObjectIRGenerator(JSContext* cx, HandleScript, jsbytecode* pc,
-                       ICState state, JSOp op, HandleObject templateObj);
+                       ICState state, JSOp op, HandleObject templateObj,
+                       BaselineFrame* frame);
 
   AttachDecision tryAttachStub();
   AttachDecision tryAttachPlainObject();
 };
+
+inline bool BytecodeOpCanHaveAllocSite(JSOp op) {
+  return op == JSOp::NewArray || op == JSOp::NewObject || op == JSOp::NewInit;
+}
 
 // Retrieve Xray JIT info set by the embedder.
 extern JS::XrayJitInfo* GetXrayJitInfo();

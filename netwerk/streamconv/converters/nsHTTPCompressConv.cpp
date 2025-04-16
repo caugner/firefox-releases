@@ -21,6 +21,8 @@
 #include "mozilla/UniquePtrExtensions.h"
 
 // brotli headers
+#undef assert
+#include "assert.h"
 #include "state.h"
 #include "brotli/decode.h"
 
@@ -31,29 +33,30 @@ extern LazyLogModule gHttpLog;
 #define LOG(args) \
   MOZ_LOG(mozilla::net::gHttpLog, mozilla::LogLevel::Debug, args)
 
+class BrotliWrapper {
+ public:
+  BrotliWrapper() {
+    BrotliDecoderStateInit(&mState, nullptr, nullptr, nullptr);
+  }
+  ~BrotliWrapper() { BrotliDecoderStateCleanup(&mState); }
+
+  BrotliDecoderState mState{};
+  Atomic<size_t, Relaxed> mTotalOut{0};
+  nsresult mStatus = NS_OK;
+  Atomic<bool, Relaxed> mBrotliStateIsStreamEnd{false};
+
+  nsIRequest* mRequest{nullptr};
+  nsISupports* mContext{nullptr};
+  uint64_t mSourceOffset{0};
+};
+
 // nsISupports implementation
 NS_IMPL_ISUPPORTS(nsHTTPCompressConv, nsIStreamConverter, nsIStreamListener,
                   nsIRequestObserver, nsICompressConvStats,
                   nsIThreadRetargetableStreamListener)
 
 // nsFTPDirListingConv methods
-nsHTTPCompressConv::nsHTTPCompressConv()
-    : mMode(HTTP_COMPRESS_IDENTITY),
-      mOutBuffer(nullptr),
-      mInpBuffer(nullptr),
-      mOutBufferLen(0),
-      mInpBufferLen(0),
-      mCheckHeaderDone(false),
-      mStreamEnded(false),
-      mStreamInitialized(false),
-      mDummyStreamInitialised(false),
-      d_stream{},
-      mLen(0),
-      hMode(0),
-      mSkipCount(0),
-      mFlags(0),
-      mDecodedDataLength(0),
-      mMutex("nsHTTPCompressConv") {
+nsHTTPCompressConv::nsHTTPCompressConv() {
   LOG(("nsHttpCompresssConv %p ctor\n", this));
   if (NS_IsMainThread()) {
     mFailUncleanStops =
@@ -368,7 +371,8 @@ nsHTTPCompressConv::OnDataAvailable(nsIRequest* request, nsIInputStream* iStr,
             inflateEnd(&d_stream);
             mStreamEnded = true;
             break;
-          } else if (code == Z_OK) {
+          }
+          if (code == Z_OK) {
             if (bytesWritten) {
               rv = do_OnDataAvailable(request, nullptr, aSourceOffset,
                                       (char*)mOutBuffer, bytesWritten);
@@ -450,7 +454,8 @@ nsHTTPCompressConv::OnDataAvailable(nsIRequest* request, nsIInputStream* iStr,
             inflateEnd(&d_stream);
             mStreamEnded = true;
             break;
-          } else if (code == Z_OK) {
+          }
+          if (code == Z_OK) {
             if (bytesWritten) {
               rv = do_OnDataAvailable(request, nullptr, aSourceOffset,
                                       (char*)mOutBuffer, bytesWritten);

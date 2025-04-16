@@ -529,6 +529,7 @@ class EdgeChromium(BrowserSetup):
         if kwargs["binary"] is None:
             binary = self.browser.find_binary(channel=browser_channel)
             if binary:
+                logger.info("Using Edge binary %s" % binary)
                 kwargs["binary"] = binary
             else:
                 raise WptrunError("Unable to locate Edge binary")
@@ -867,7 +868,7 @@ def main():
 
         return run(venv, vars(args))
     except WptrunError as e:
-        exit(e.message)
+        exit(e)
 
 
 if __name__ == "__main__":

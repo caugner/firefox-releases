@@ -343,16 +343,16 @@ void LIRGenerator::visitGetInlinedArgument(MGetInlinedArgument* ins) {
 }
 
 void LIRGenerator::visitGetArgumentsObjectArg(MGetArgumentsObjectArg* ins) {
-  LAllocation argsObj = useRegister(ins->getArgsObject());
+  LAllocation argsObj = useRegister(ins->argsObject());
   LGetArgumentsObjectArg* lir =
       new (alloc()) LGetArgumentsObjectArg(argsObj, temp());
   defineBox(lir, ins);
 }
 
 void LIRGenerator::visitSetArgumentsObjectArg(MSetArgumentsObjectArg* ins) {
-  LAllocation argsObj = useRegister(ins->getArgsObject());
+  LAllocation argsObj = useRegister(ins->argsObject());
   LSetArgumentsObjectArg* lir = new (alloc())
-      LSetArgumentsObjectArg(argsObj, useBox(ins->getValue()), temp());
+      LSetArgumentsObjectArg(argsObj, useBox(ins->value()), temp());
   add(lir, ins);
 }
 
@@ -380,7 +380,7 @@ void LIRGenerator::visitArgumentsObjectLength(MArgumentsObjectLength* ins) {
 
 void LIRGenerator::visitGuardArgumentsObjectFlags(
     MGuardArgumentsObjectFlags* ins) {
-  MDefinition* argsObj = ins->getArgsObject();
+  MDefinition* argsObj = ins->argsObject();
   MOZ_ASSERT(argsObj->type() == MIRType::Object);
 
   auto* lir =
@@ -647,7 +647,8 @@ void LIRGenerator::visitAssertRecoveredOnBailout(
   MOZ_CRASH("AssertRecoveredOnBailout nodes are always recovered on bailouts.");
 }
 
-static JSOp ReorderComparison(JSOp op, MDefinition** lhsp, MDefinition** rhsp) {
+[[nodiscard]] static JSOp ReorderComparison(JSOp op, MDefinition** lhsp,
+                                            MDefinition** rhsp) {
   MDefinition* lhs = *lhsp;
   MDefinition* rhs = *rhsp;
 
@@ -1377,6 +1378,8 @@ void LIRGenerator::visitMinMax(MMinMax* ins) {
       MOZ_CRASH();
   }
 
+  // Input reuse is OK (for now) even on ARM64: floating min/max are fairly
+  // expensive due to SNaN -> QNaN conversion, and int min/max is for asm.js.
   defineReuseInput(lir, ins, 0);
 }
 
@@ -1394,29 +1397,30 @@ void LIRGenerator::visitMinMaxArray(MMinMaxArray* ins) {
   define(lir, ins);
 }
 
-void LIRGenerator::visitAbs(MAbs* ins) {
+LInstructionHelper<1, 1, 0>* LIRGenerator::allocateAbs(MAbs* ins,
+                                                       LAllocation input) {
   MDefinition* num = ins->input();
   MOZ_ASSERT(IsNumberType(num->type()));
 
   LInstructionHelper<1, 1, 0>* lir;
   switch (num->type()) {
     case MIRType::Int32:
-      lir = new (alloc()) LAbsI(useRegisterAtStart(num));
+      lir = new (alloc()) LAbsI(input);
       // needed to handle abs(INT32_MIN)
       if (ins->fallible()) {
         assignSnapshot(lir, ins->bailoutKind());
       }
       break;
     case MIRType::Float32:
-      lir = new (alloc()) LAbsF(useRegisterAtStart(num));
+      lir = new (alloc()) LAbsF(input);
       break;
     case MIRType::Double:
-      lir = new (alloc()) LAbsD(useRegisterAtStart(num));
+      lir = new (alloc()) LAbsD(input);
       break;
     default:
       MOZ_CRASH();
   }
-  defineReuseInput(lir, ins, 0);
+  return lir;
 }
 
 void LIRGenerator::visitClz(MClz* ins) {
@@ -1698,6 +1702,14 @@ void LIRGenerator::visitSub(MSub* ins) {
       assignSnapshot(lir, ins->bailoutKind());
     }
 
+    // If our LHS is a constant 0 and we don't have to worry about results that
+    // can't be represented as an int32, we can optimize to an LNegI.
+    if (!ins->fallible() && lhs->isConstant() &&
+        lhs->toConstant()->toInt32() == 0) {
+      lowerNegI(ins, rhs);
+      return;
+    }
+
     lowerForALU(lir, ins, lhs, rhs);
     MaybeSetRecoversInput(ins, lir);
     return;
@@ -1705,6 +1717,13 @@ void LIRGenerator::visitSub(MSub* ins) {
 
   if (ins->type() == MIRType::Int64) {
     MOZ_ASSERT(lhs->type() == MIRType::Int64);
+
+    // If our LHS is a constant 0, we can optimize to an LNegI64.
+    if (lhs->isConstant() && lhs->toConstant()->toInt64() == 0) {
+      lowerNegI64(ins, rhs);
+      return;
+    }
+
     LSubI64* lir = new (alloc()) LSubI64;
     lowerForALUInt64(lir, ins, lhs, rhs);
     return;
@@ -1735,20 +1754,28 @@ void LIRGenerator::visitMul(MMul* ins) {
     MOZ_ASSERT(lhs->type() == MIRType::Int32);
     ReorderCommutative(&lhs, &rhs, ins);
 
-    // If our RHS is a constant -1 and we don't have to worry about
-    // overflow, we can optimize to an LNegI.
+    // If our RHS is a constant -1 and we don't have to worry about results that
+    // can't be represented as an int32, we can optimize to an LNegI.
     if (!ins->fallible() && rhs->isConstant() &&
         rhs->toConstant()->toInt32() == -1) {
-      lowerNegI(ins, lhs, 0);
-    } else {
-      lowerMulI(ins, lhs, rhs);
+      lowerNegI(ins, lhs);
+      return;
     }
+
+    lowerMulI(ins, lhs, rhs);
     return;
   }
 
   if (ins->type() == MIRType::Int64) {
     MOZ_ASSERT(lhs->type() == MIRType::Int64);
     ReorderCommutative(&lhs, &rhs, ins);
+
+    // If our RHS is a constant -1, we can optimize to an LNegI64.
+    if (rhs->isConstant() && rhs->toConstant()->toInt64() == -1) {
+      lowerNegI64(ins, lhs);
+      return;
+    }
+
     LMulI64* lir = new (alloc()) LMulI64;
     lowerForMulInt64(lir, ins, lhs, rhs);
     return;
@@ -1762,9 +1789,10 @@ void LIRGenerator::visitMul(MMul* ins) {
     if (!ins->mustPreserveNaN() && rhs->isConstant() &&
         rhs->toConstant()->toDouble() == -1.0) {
       defineReuseInput(new (alloc()) LNegD(useRegisterAtStart(lhs)), ins, 0);
-    } else {
-      lowerForFPU(new (alloc()) LMathD(JSOp::Mul), ins, lhs, rhs);
+      return;
     }
+
+    lowerForFPU(new (alloc()) LMathD(JSOp::Mul), ins, lhs, rhs);
     return;
   }
 
@@ -1776,9 +1804,10 @@ void LIRGenerator::visitMul(MMul* ins) {
     if (!ins->mustPreserveNaN() && rhs->isConstant() &&
         rhs->toConstant()->toFloat32() == -1.0f) {
       defineReuseInput(new (alloc()) LNegF(useRegisterAtStart(lhs)), ins, 0);
-    } else {
-      lowerForFPU(new (alloc()) LMathF(JSOp::Mul), ins, lhs, rhs);
+      return;
     }
+
+    lowerForFPU(new (alloc()) LMathF(JSOp::Mul), ins, lhs, rhs);
     return;
   }
 
@@ -2392,6 +2421,8 @@ void LIRGenerator::visitWasmExtendU32Index(MWasmExtendU32Index* ins) {
   MOZ_ASSERT(input->type() == MIRType::Int32);
   MOZ_ASSERT(ins->type() == MIRType::Int64);
 
+  // Input reuse is OK even on ARM64 because this node *must* reuse its input in
+  // order not to generate any code at all, as is the intent.
   auto* lir = new (alloc()) LWasmExtendU32Index(useRegisterAtStart(input));
   defineReuseInput(lir, ins, 0);
 #else
@@ -2405,6 +2436,8 @@ void LIRGenerator::visitWasmWrapU32Index(MWasmWrapU32Index* ins) {
   MOZ_ASSERT(input->type() == MIRType::Int64);
   MOZ_ASSERT(ins->type() == MIRType::Int32);
 
+  // Input reuse is OK even on ARM64 because this node *must* reuse its input in
+  // order not to generate any code at all, as is the intent.
   auto* lir = new (alloc()) LWasmWrapU32Index(useRegisterAtStart(input));
   defineReuseInput(lir, ins, 0);
 #else
@@ -5201,7 +5234,8 @@ void LIRGenerator::visitCheckClassHeritage(MCheckClassHeritage* ins) {
   MDefinition* heritage = ins->heritage();
   MOZ_ASSERT(heritage->type() == MIRType::Value);
 
-  auto* lir = new (alloc()) LCheckClassHeritage(useBox(heritage), temp());
+  auto* lir =
+      new (alloc()) LCheckClassHeritage(useBox(heritage), temp(), temp());
   redefine(ins, heritage);
   add(lir, ins);
   assignSafepoint(lir, ins);
@@ -5951,60 +5985,32 @@ void LIRGenerator::visitIonToWasmCall(MIonToWasmCall* ins) {
 void LIRGenerator::visitWasmSelect(MWasmSelect* ins) {
   MDefinition* condExpr = ins->condExpr();
 
-  // Pick off specific cases that we can do with LWasmCompareAndSelect.
-  // Currently only{U,}Int32 selection driven by a comparison of {U,}Int32
-  // values.
-  if (condExpr->isCompare() && condExpr->isEmittedAtUses() &&
-      ins->type() == MIRType::Int32) {
+  // Pick off specific cases that we can do with LWasmCompareAndSelect to avoid
+  // generating a boolean that we then have to test again.
+  if (condExpr->isCompare() && condExpr->isEmittedAtUses()) {
     MCompare* comp = condExpr->toCompare();
-    JSOp jsop = comp->jsop();
     MCompare::CompareType compTy = comp->compareType();
-    // We don't currently generate any other JSOPs for the comparison, and if
-    // that changes, we want to know about it.  Hence this assertion.
-    MOZ_ASSERT(jsop == JSOp::Eq || jsop == JSOp::Ne || jsop == JSOp::Lt ||
-               jsop == JSOp::Gt || jsop == JSOp::Le || jsop == JSOp::Ge);
-    if (compTy == MCompare::Compare_Int32 ||
-        compTy == MCompare::Compare_UInt32) {
-      auto* lir = new (alloc()) LWasmCompareAndSelect(
-          useRegister(comp->lhs()), useAny(comp->rhs()), compTy, jsop,
-          useRegisterAtStart(ins->trueExpr()), useAny(ins->falseExpr()));
-
-      defineReuseInput(lir, ins, LWasmCompareAndSelect::IfTrueExprIndex);
+    if (canSpecializeWasmCompareAndSelect(compTy, ins->type())) {
+      JSOp jsop = comp->jsop();
+      // We don't currently generate any other JSOPs for the comparison, and if
+      // that changes, we want to know about it.  Hence this assertion.
+      MOZ_ASSERT(jsop == JSOp::Eq || jsop == JSOp::Ne || jsop == JSOp::Lt ||
+                 jsop == JSOp::Gt || jsop == JSOp::Le || jsop == JSOp::Ge);
+      MDefinition* lhs = comp->lhs();
+      MDefinition* rhs = comp->rhs();
+      jsop = ReorderComparison(jsop, &lhs, &rhs);
+      lowerWasmCompareAndSelect(ins, lhs, rhs, compTy, jsop);
       return;
     }
-    // Otherwise fall through to normal handling, which appears to emit the
-    // condexpr itself anyway.
   }
+  // Fall through to code that generates a boolean and selects on that.
 
   if (ins->type() == MIRType::Int64) {
-#if defined(JS_CODEGEN_ARM64)
-    // arm64 needs all three arguments forced into registers, but for x86, it
-    // may be beneficial to be more relaxed.  Hence special-case arm64.
-    auto* lir = new (alloc()) LWasmSelectI64(
-        useInt64RegisterAtStart(ins->trueExpr()),
-        useInt64Register(ins->falseExpr()), useRegister(ins->condExpr()));
-#else
-    auto* lir = new (alloc()) LWasmSelectI64(
-        useInt64RegisterAtStart(ins->trueExpr()), useInt64(ins->falseExpr()),
-        useRegister(ins->condExpr()));
-#endif
-
-    defineInt64ReuseInput(lir, ins, LWasmSelectI64::TrueExprIndex);
+    lowerWasmSelectI64(ins);
     return;
   }
 
-#if defined(JS_CODEGEN_ARM64)
-  // Same issue as above
-  auto* lir = new (alloc())
-      LWasmSelect(useRegisterAtStart(ins->trueExpr()),
-                  useRegister(ins->falseExpr()), useRegister(ins->condExpr()));
-#else
-  auto* lir = new (alloc())
-      LWasmSelect(useRegisterAtStart(ins->trueExpr()), useAny(ins->falseExpr()),
-                  useRegister(ins->condExpr()));
-#endif
-
-  defineReuseInput(lir, ins, LWasmSelect::TrueExprIndex);
+  lowerWasmSelectI(ins);
 }
 
 void LIRGenerator::visitWasmFence(MWasmFence* ins) {

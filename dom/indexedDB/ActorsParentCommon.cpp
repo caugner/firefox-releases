@@ -7,9 +7,10 @@
 #include "ActorsParentCommon.h"
 
 // local includes
-#include "FileInfoFwd.h"  // for FileInfo
-#include "FileManager.h"
+#include "DatabaseFileInfo.h"
+#include "DatabaseFileManager.h"
 #include "IndexedDatabase.h"  // for StructuredCloneFile...
+#include "IndexedDatabaseInlines.h"
 #include "IndexedDatabaseManager.h"
 #include "IndexedDBCommon.h"
 #include "ReportInternalError.h"
@@ -40,6 +41,7 @@
 #include "mozilla/TelemetryScalarEnums.h"
 #include "mozilla/dom/quota/DecryptingInputStream_impl.h"
 #include "mozilla/dom/quota/QuotaCommon.h"
+#include "mozilla/dom/quota/ScopedLogExtraInfo.h"
 #include "mozilla/fallible.h"
 #include "mozilla/ipc/BackgroundParent.h"
 #include "mozilla/mozalloc.h"
@@ -92,7 +94,8 @@ int32_t ToInteger(const nsAString& aStr, nsresult* const aRv) {
 }
 
 Result<StructuredCloneFileParent, nsresult> DeserializeStructuredCloneFile(
-    const FileManager& aFileManager, const nsDependentSubstring& aText) {
+    const DatabaseFileManager& aFileManager,
+    const nsDependentSubstring& aText) {
   MOZ_ASSERT(!aText.IsEmpty());
 
   const StructuredCloneFileBase::FileType type =
@@ -105,11 +108,11 @@ Result<StructuredCloneFileParent, nsresult> DeserializeStructuredCloneFile(
                          ? aText
                          : static_cast<const nsAString&>(Substring(aText, 1))));
 
-  SafeRefPtr<FileInfo> fileInfo = aFileManager.GetFileInfo(id);
+  SafeRefPtr<DatabaseFileInfo> fileInfo = aFileManager.GetFileInfo(id);
   MOZ_ASSERT(fileInfo);
-  // XXX In bug 1432133, for some reasons FileInfo object cannot be got. This
-  // is just a short-term fix, and we are working on finding the real cause
-  // in bug 1519859.
+  // XXX In bug 1432133, for some reasons DatabaseFileInfo object cannot be
+  // got. This is just a short-term fix, and we are working on finding the real
+  // cause in bug 1519859.
   if (!fileInfo) {
     IDB_WARNING(
         "Corrupt structured clone data detected in IndexedDB. Failing the "
@@ -337,7 +340,7 @@ nsresult ReadCompressedIndexDataValuesFromSource(
 Result<StructuredCloneReadInfoParent, nsresult>
 GetStructuredCloneReadInfoFromBlob(const uint8_t* aBlobData,
                                    uint32_t aBlobDataLength,
-                                   const FileManager& aFileManager,
+                                   const DatabaseFileManager& aFileManager,
                                    const nsAString& aFileIds,
                                    const Maybe<CipherKey>& aMaybeKey) {
   MOZ_ASSERT(!IsOnBackgroundThread());
@@ -378,10 +381,9 @@ GetStructuredCloneReadInfoFromBlob(const uint8_t* aBlobData,
 }
 
 Result<StructuredCloneReadInfoParent, nsresult>
-GetStructuredCloneReadInfoFromExternalBlob(uint64_t aIntData,
-                                           const FileManager& aFileManager,
-                                           const nsAString& aFileIds,
-                                           const Maybe<CipherKey>& aMaybeKey) {
+GetStructuredCloneReadInfoFromExternalBlob(
+    uint64_t aIntData, const DatabaseFileManager& aFileManager,
+    const nsAString& aFileIds, const Maybe<CipherKey>& aMaybeKey) {
   MOZ_ASSERT(!IsOnBackgroundThread());
 
   AUTO_PROFILER_LABEL("GetStructuredCloneReadInfoFromExternalBlob", DOM);
@@ -441,7 +443,7 @@ template <typename T>
 Result<StructuredCloneReadInfoParent, nsresult>
 GetStructuredCloneReadInfoFromSource(T* aSource, uint32_t aDataIndex,
                                      uint32_t aFileIdsIndex,
-                                     const FileManager& aFileManager,
+                                     const DatabaseFileManager& aFileManager,
                                      const Maybe<CipherKey>& aMaybeKey) {
   MOZ_ASSERT(!IsOnBackgroundThread());
   MOZ_ASSERT(aSource);
@@ -671,11 +673,10 @@ ReadCompressedNumber(const Span<const uint8_t> aSpan) {
 }
 
 Result<StructuredCloneReadInfoParent, nsresult>
-GetStructuredCloneReadInfoFromValueArray(mozIStorageValueArray* aValues,
-                                         uint32_t aDataIndex,
-                                         uint32_t aFileIdsIndex,
-                                         const FileManager& aFileManager,
-                                         const Maybe<CipherKey>& aMaybeKey) {
+GetStructuredCloneReadInfoFromValueArray(
+    mozIStorageValueArray* aValues, uint32_t aDataIndex, uint32_t aFileIdsIndex,
+    const DatabaseFileManager& aFileManager,
+    const Maybe<CipherKey>& aMaybeKey) {
   return GetStructuredCloneReadInfoFromSource(
       aValues, aDataIndex, aFileIdsIndex, aFileManager, aMaybeKey);
 }
@@ -684,14 +685,14 @@ Result<StructuredCloneReadInfoParent, nsresult>
 GetStructuredCloneReadInfoFromStatement(mozIStorageStatement* aStatement,
                                         uint32_t aDataIndex,
                                         uint32_t aFileIdsIndex,
-                                        const FileManager& aFileManager,
+                                        const DatabaseFileManager& aFileManager,
                                         const Maybe<CipherKey>& aMaybeKey) {
   return GetStructuredCloneReadInfoFromSource(
       aStatement, aDataIndex, aFileIdsIndex, aFileManager, aMaybeKey);
 }
 
 Result<nsTArray<StructuredCloneFileParent>, nsresult>
-DeserializeStructuredCloneFiles(const FileManager& aFileManager,
+DeserializeStructuredCloneFiles(const DatabaseFileManager& aFileManager,
                                 const nsAString& aText) {
   MOZ_ASSERT(!IsOnBackgroundThread());
 

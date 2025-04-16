@@ -75,6 +75,7 @@ class ChromeLauncher implements ProductLauncher {
       defaultViewport = { width: 800, height: 600 },
       slowMo = 0,
       timeout = 30000,
+      waitForInitialPage = true,
     } = options;
 
     const profilePath = path.join(os.tmpdir(), 'puppeteer_dev_chrome_profile-');
@@ -105,7 +106,9 @@ class ChromeLauncher implements ProductLauncher {
 
     let chromeExecutable = executablePath;
     if (!executablePath) {
-      if (os.arch() === 'arm64') {
+      // Use Intel x86 builds on Apple M1 until native macOS arm64
+      // Chromium builds are available.
+      if (os.platform() !== 'darwin' && os.arch() === 'arm64') {
         chromeExecutable = '/usr/bin/chromium-browser';
       } else {
         const { missingText, executablePath } = resolveExecutablePath(this);
@@ -145,7 +148,8 @@ class ChromeLauncher implements ProductLauncher {
         runner.proc,
         runner.close.bind(runner)
       );
-      await browser.waitForTarget((t) => t.type() === 'page');
+      if (waitForInitialPage)
+        await browser.waitForTarget((t) => t.type() === 'page');
       return browser;
     } catch (error) {
       runner.kill();
@@ -243,6 +247,7 @@ class FirefoxLauncher implements ProductLauncher {
       slowMo = 0,
       timeout = 30000,
       extraPrefsFirefox = {},
+      waitForInitialPage = true,
     } = options;
 
     const firefoxArguments = [];
@@ -311,7 +316,8 @@ class FirefoxLauncher implements ProductLauncher {
         runner.proc,
         runner.close.bind(runner)
       );
-      await browser.waitForTarget((t) => t.type() === 'page');
+      if (waitForInitialPage)
+        await browser.waitForTarget((t) => t.type() === 'page');
       return browser;
     } catch (error) {
       runner.kill();
@@ -502,6 +508,8 @@ class FirefoxLauncher implements ProductLauncher {
       'geo.wifi.scan': false,
       // No hang monitor
       'hangmonitor.timeout': 0,
+      // Show chrome errors and warnings in the error console
+      'javascript.options.showInConsole': true,
 
       // Disable download and usage of OpenH264: and Widevine plugins
       'media.gmp-manager.updateEnabled': false,
@@ -530,8 +538,8 @@ class FirefoxLauncher implements ProductLauncher {
 
       'privacy.trackingprotection.enabled': false,
 
-      // Can be removed once Firefox 89 is no longer supported
-      // https://bugzilla.mozilla.org/show_bug.cgi?id=1710839
+      // Enable Remote Agent
+      // https://bugzilla.mozilla.org/show_bug.cgi?id=1544393
       'remote.enabled': true,
 
       // Don't do network connections for mitm priming
@@ -579,9 +587,10 @@ class FirefoxLauncher implements ProductLauncher {
   }
 }
 
-function resolveExecutablePath(
-  launcher: ChromeLauncher | FirefoxLauncher
-): { executablePath: string; missingText?: string } {
+function resolveExecutablePath(launcher: ChromeLauncher | FirefoxLauncher): {
+  executablePath: string;
+  missingText?: string;
+} {
   let downloadPath: string;
   // puppeteer-core doesn't take into account PUPPETEER_* env variables.
   if (!launcher._isPuppeteerCore) {

@@ -72,6 +72,7 @@
 #include "vm/JSFunction.h"          // JSFunction,
 #include "vm/JSScript.h"  // JSScript, ScriptSourceObject, MemberInitializers, BaseScript
 #include "vm/Opcodes.h"        // JSOp, JSOpLength_*
+#include "vm/PropMap.h"        // SharedPropMap::MaxPropsForNonDictionary
 #include "vm/Scope.h"          // GetScopeDataTrailingNames
 #include "vm/SharedStencil.h"  // ScopeNote
 #include "vm/ThrowMsgKind.h"   // ThrowMsgKind
@@ -158,7 +159,6 @@ BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent,
                                  EmitterMode emitterMode)
     : BytecodeEmitter(parent, sc, compilationState, emitterMode) {
   parser = handle;
-  instrumentationKinds = parser->options().instrumentationKinds;
 }
 
 BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent,
@@ -168,7 +168,6 @@ BytecodeEmitter::BytecodeEmitter(BytecodeEmitter* parent,
     : BytecodeEmitter(parent, sc, compilationState, emitterMode) {
   ep_.emplace(parser);
   this->parser = ep_.ptr();
-  instrumentationKinds = this->parser->options().instrumentationKinds;
 }
 
 void BytecodeEmitter::initFromBodyPosition(TokenPos bodyPosition) {
@@ -230,10 +229,6 @@ bool BytecodeEmitter::markStepBreakpoint() {
     return true;
   }
 
-  if (!emitInstrumentation(InstrumentationKind::Breakpoint)) {
-    return false;
-  }
-
   if (!newSrcNote(SrcNoteType::StepSep)) {
     return false;
   }
@@ -260,10 +255,6 @@ bool BytecodeEmitter::markSimpleBreakpoint() {
   // having two breakpoints with the same line/column position.
   // Note: This assumes that the position for the call has already been set.
   if (!bytecodeSection().isDuplicateLocation()) {
-    if (!emitInstrumentation(InstrumentationKind::Breakpoint)) {
-      return false;
-    }
-
     if (!newSrcNote(SrcNoteType::Breakpoint)) {
       return false;
     }
@@ -938,8 +929,7 @@ bool BytecodeEmitter::emitGCIndexOp(JSOp op, GCThingIndex index) {
   return true;
 }
 
-bool BytecodeEmitter::emitAtomOp(JSOp op, TaggedParserAtomIndex atom,
-                                 ShouldInstrument shouldInstrument) {
+bool BytecodeEmitter::emitAtomOp(JSOp op, TaggedParserAtomIndex atom) {
   MOZ_ASSERT(atom);
 
   // .generator lookups should be emitted as JSOp::GetAliasedVar instead of
@@ -954,18 +944,11 @@ bool BytecodeEmitter::emitAtomOp(JSOp op, TaggedParserAtomIndex atom,
     return false;
   }
 
-  return emitAtomOp(op, index, shouldInstrument);
+  return emitAtomOp(op, index);
 }
 
-bool BytecodeEmitter::emitAtomOp(JSOp op, GCThingIndex atomIndex,
-                                 ShouldInstrument shouldInstrument) {
+bool BytecodeEmitter::emitAtomOp(JSOp op, GCThingIndex atomIndex) {
   MOZ_ASSERT(JOF_OPTYPE(op) == JOF_ATOM);
-
-  if (shouldInstrument != ShouldInstrument::No &&
-      !emitInstrumentationForOpcode(op, atomIndex)) {
-    return false;
-  }
-
   return emitGCIndexOp(op, atomIndex);
 }
 
@@ -1016,7 +999,8 @@ bool BytecodeEmitter::emitArgOp(JSOp op, uint16_t slot) {
 }
 
 bool BytecodeEmitter::emitEnvCoordOp(JSOp op, EnvironmentCoordinate ec) {
-  MOZ_ASSERT(JOF_OPTYPE(op) == JOF_ENVCOORD);
+  MOZ_ASSERT(JOF_OPTYPE(op) == JOF_ENVCOORD ||
+             JOF_OPTYPE(op) == JOF_DEBUGCOORD);
 
   constexpr size_t N = ENVCOORD_HOPS_LEN + ENVCOORD_SLOT_LEN;
   MOZ_ASSERT(GetOpLength(op) == 1 + N);
@@ -1888,8 +1872,7 @@ bool BytecodeEmitter::emitPropLHS(PropertyAccess* prop) {
 
   while (true) {
     // Walk back up the list, emitting annotated name ops.
-    if (!emitAtomOp(JSOp::GetProp, pndot->key().atom(),
-                    ShouldInstrument::Yes)) {
+    if (!emitAtomOp(JSOp::GetProp, pndot->key().atom())) {
       return false;
     }
 
@@ -2006,14 +1989,7 @@ bool BytecodeEmitter::emitObjAndKey(ParseNode* exprOrSuper, ParseNode* key,
   return true;
 }
 
-bool BytecodeEmitter::emitElemOpBase(JSOp op,
-                                     ShouldInstrument shouldInstrument) {
-  GCThingIndex unused;
-  if (shouldInstrument != ShouldInstrument::No &&
-      !emitInstrumentationForOpcode(op, unused)) {
-    return false;
-  }
-
+bool BytecodeEmitter::emitElemOpBase(JSOp op) {
   if (!emit1(op)) {
     return false;
   }
@@ -2378,11 +2354,6 @@ bool BytecodeEmitter::allocateResumeIndexRange(
 }
 
 bool BytecodeEmitter::emitYieldOp(JSOp op) {
-  // All yield operations pop or suspend the current frame.
-  if (!emitInstrumentation(InstrumentationKind::Exit)) {
-    return false;
-  }
-
   if (op == JSOp::FinalYieldRval) {
     return emit1(JSOp::FinalYieldRval);
   }
@@ -2405,10 +2376,6 @@ bool BytecodeEmitter::emitYieldOp(JSOp op) {
   }
 
   SET_RESUMEINDEX(bytecodeSection().code(off), resumeIndex);
-
-  if (!emitInstrumentation(InstrumentationKind::Entry)) {
-    return false;
-  }
 
   BytecodeOffset unusedOffset;
   return emitJumpTargetOp(JSOp::AfterYield, &unusedOffset);
@@ -2623,9 +2590,7 @@ bool BytecodeEmitter::emitScript(ParseNode* body) {
       return false;
     }
 
-    if (!switchToMain()) {
-      return false;
-    }
+    switchToMain();
 
     ParseNode* scopeBody = scope->scopeBody();
     if (!emitLexicalScopeBody(scopeBody, EMIT_LINENOTE)) {
@@ -2649,9 +2614,7 @@ bool BytecodeEmitter::emitScript(ParseNode* body) {
       }
     }
 
-    if (!switchToMain()) {
-      return false;
-    }
+    switchToMain();
 
     if (topLevelAwait) {
       if (!topLevelAwait->prepareForBody()) {
@@ -3964,8 +3927,7 @@ bool BytecodeEmitter::emitDestructuringOpsObject(ListNode* pattern,
         }
       } else if (key->isKind(ParseNodeKind::ObjectPropertyName) ||
                  key->isKind(ParseNodeKind::StringExpr)) {
-        if (!emitAtomOp(JSOp::GetProp, key->as<NameNode>().atom(),
-                        ShouldInstrument::Yes)) {
+        if (!emitAtomOp(JSOp::GetProp, key->as<NameNode>().atom())) {
           //        [stack] ... SET? RHS LREF* PROP
           return false;
         }
@@ -4027,7 +3989,7 @@ bool BytecodeEmitter::emitDestructuringOpsObject(ListNode* pattern,
 
 static bool IsDestructuringRestExclusionSetObjLiteralCompatible(
     ListNode* pattern) {
-  int32_t propCount = 0;
+  uint32_t propCount = 0;
   for (ParseNode* member : pattern->contents()) {
     if (member->isKind(ParseNodeKind::Spread)) {
       MOZ_ASSERT(!member->pn_next, "unexpected trailing element after spread");
@@ -4054,7 +4016,7 @@ static bool IsDestructuringRestExclusionSetObjLiteralCompatible(
     return false;
   }
 
-  if (propCount >= PropertyTree::MAX_HEIGHT) {
+  if (propCount > SharedPropMap::MaxPropsForNonDictionary) {
     // JSOp::NewObject cannot accept dictionary-mode objects.
     return false;
   }
@@ -6362,10 +6324,7 @@ bool BytecodeEmitter::emitReturn(UnaryNode* returnNode) {
       return false;
     }
   } else if (top + BytecodeOffsetDiff(JSOpLength_Return) !=
-                 bytecodeSection().offset() ||
-             // If we are instrumenting, make sure we use RetRval and add any
-             // instrumentation for the frame exit.
-             instrumentationKinds) {
+             bytecodeSection().offset()) {
     bytecodeSection().code()[top.value()] = jsbytecode(JSOp::SetRval);
     if (!emitReturnRval()) {
       return false;
@@ -7670,6 +7629,47 @@ bool BytecodeEmitter::emitSelfHostedGetBuiltinPrototype(BinaryNode* callNode) {
       callNode, /* isConstructor = */ false);
 }
 
+JS::SymbolCode ParserAtomToSymbolCode(TaggedParserAtomIndex atom) {
+  // NOTE: This is a linear search, but the set of entries is quite small and
+  // this is only used for initial self-hosted parse.
+#define MATCH_WELL_KNOWN_SYMBOL(NAME)                     \
+  if (atom == TaggedParserAtomIndex::WellKnown::NAME()) { \
+    return JS::SymbolCode::NAME;                          \
+  }
+  JS_FOR_EACH_WELL_KNOWN_SYMBOL(MATCH_WELL_KNOWN_SYMBOL)
+#undef MATCH_WELL_KNOWN_SYMBOL
+
+  return JS::SymbolCode::Limit;
+}
+
+bool BytecodeEmitter::emitSelfHostedGetBuiltinSymbol(BinaryNode* callNode) {
+  ListNode* argsList = &callNode->right()->as<ListNode>();
+
+  if (argsList->count() != 1) {
+    reportNeedMoreArgsError(callNode, "GetBuiltinSymbol", "1", "", argsList);
+    return false;
+  }
+
+  ParseNode* argNode = argsList->head();
+
+  if (!argNode->isKind(ParseNodeKind::StringExpr)) {
+    reportError(callNode, JSMSG_UNEXPECTED_TYPE, "built-in name",
+                "not a string constant");
+    return false;
+  }
+
+  auto name = argNode->as<NameNode>().atom();
+
+  JS::SymbolCode code = ParserAtomToSymbolCode(name);
+  if (code == JS::SymbolCode::Limit) {
+    reportError(callNode, JSMSG_UNEXPECTED_TYPE, "built-in name",
+                "not a valid built-in");
+    return false;
+  }
+
+  return emit2(JSOp::Symbol, uint8_t(code));
+}
+
 #ifdef DEBUG
 bool BytecodeEmitter::checkSelfHostedExpectedTopLevel(BinaryNode* callNode,
                                                       ParseNode* node) {
@@ -7703,7 +7703,7 @@ bool BytecodeEmitter::emitSelfHostedSetIsInlinableLargeFunction(
   ListNode* argsList = &callNode->right()->as<ListNode>();
 
   if (argsList->count() != 1) {
-    reportNeedMoreArgsError(callNode, "_SetIsInlinableLargeFunction", "1", "",
+    reportNeedMoreArgsError(callNode, "SetIsInlinableLargeFunction", "1", "",
                             argsList);
     return false;
   }
@@ -7725,7 +7725,7 @@ bool BytecodeEmitter::emitSelfHostedSetCanonicalName(BinaryNode* callNode) {
   ListNode* argsList = &callNode->right()->as<ListNode>();
 
   if (argsList->count() != 2) {
-    reportNeedMoreArgsError(callNode, "_SetCanonicalName", "2", "s", argsList);
+    reportNeedMoreArgsError(callNode, "SetCanonicalName", "2", "s", argsList);
     return false;
   }
 
@@ -8255,6 +8255,9 @@ bool BytecodeEmitter::emitCallOrNew(
     }
     if (calleeName == TaggedParserAtomIndex::WellKnown::GetBuiltinPrototype()) {
       return emitSelfHostedGetBuiltinPrototype(callNode);
+    }
+    if (calleeName == TaggedParserAtomIndex::WellKnown::GetBuiltinSymbol()) {
+      return emitSelfHostedGetBuiltinSymbol(callNode);
     }
     if (calleeName ==
         TaggedParserAtomIndex::WellKnown::SetIsInlinableLargeFunction()) {
@@ -8910,7 +8913,7 @@ void BytecodeEmitter::isPropertyListObjLiteralCompatible(ListNode* obj,
                                                          bool* withoutValues) {
   bool keysOK = true;
   bool valuesOK = true;
-  int propCount = 0;
+  uint32_t propCount = 0;
 
   for (ParseNode* propdef : obj->contents()) {
     if (!propdef->is<BinaryNode>()) {
@@ -8965,7 +8968,7 @@ void BytecodeEmitter::isPropertyListObjLiteralCompatible(ListNode* obj,
     }
   }
 
-  if (propCount >= PropertyTree::MAX_HEIGHT) {
+  if (propCount > SharedPropMap::MaxPropsForNonDictionary) {
     // JSOp::NewObject cannot accept dictionary-mode objects.
     keysOK = false;
   }
@@ -10984,130 +10987,6 @@ bool BytecodeEmitter::emitExportDefault(BinaryNode* exportNode) {
   }
 
   return true;
-}
-
-MOZ_NEVER_INLINE bool BytecodeEmitter::emitInstrumentationSlow(
-    InstrumentationKind kind,
-    const std::function<bool(uint32_t)>& pushOperandsCallback) {
-  MOZ_ASSERT(instrumentationKinds);
-
-  if (!(instrumentationKinds & (uint32_t)kind)) {
-    return true;
-  }
-
-  // Instrumentation is emitted in the form of a call to the realm's
-  // instrumentation callback, guarded by a test of whether instrumentation is
-  // currently active in the realm. The callback is invoked with the kind of
-  // operation which is executing, the current script's instrumentation ID,
-  // and the offset of the bytecode location after the instrumentation. Some
-  // operation kinds have more arguments, which will be pushed by
-  // pushOperandsCallback.
-
-  unsigned initialDepth = bytecodeSection().stackDepth();
-  InternalIfEmitter ifEmitter(this);
-
-  if (!emit1(JSOp::InstrumentationActive)) {
-    return false;
-  }
-  //                [stack] ACTIVE
-
-  if (!ifEmitter.emitThen()) {
-    return false;
-  }
-  //                [stack]
-
-  // Push the instrumentation callback for the current realm as the callee.
-  if (!emit1(JSOp::InstrumentationCallback)) {
-    return false;
-  }
-  //                [stack] CALLBACK
-
-  // Push undefined for the call's |this| value.
-  if (!emit1(JSOp::Undefined)) {
-    return false;
-  }
-  //                [stack] CALLBACK UNDEFINED
-
-  auto atom =
-      RealmInstrumentation::getInstrumentationKindName(cx, parserAtoms(), kind);
-  if (!atom) {
-    return false;
-  }
-
-  if (!emitAtomOp(JSOp::String, atom)) {
-    return false;
-  }
-  //                [stack] CALLBACK UNDEFINED KIND
-
-  if (!emit1(JSOp::InstrumentationScriptId)) {
-    return false;
-  }
-  //                [stack] CALLBACK UNDEFINED KIND SCRIPT
-
-  // Push the offset of the bytecode location following the instrumentation.
-  BytecodeOffset updateOffset;
-  if (!emitN(JSOp::Int32, 4, &updateOffset)) {
-    return false;
-  }
-  //                [stack] CALLBACK UNDEFINED KIND SCRIPT OFFSET
-
-  unsigned numPushed = bytecodeSection().stackDepth() - initialDepth;
-
-  if (pushOperandsCallback && !pushOperandsCallback(numPushed)) {
-    return false;
-  }
-  //                [stack] CALLBACK UNDEFINED KIND SCRIPT OFFSET ...EXTRA_ARGS
-
-  unsigned argc = bytecodeSection().stackDepth() - initialDepth - 2;
-  if (!emitCall(JSOp::CallIgnoresRv, argc)) {
-    return false;
-  }
-  //                [stack] RV
-
-  if (!emit1(JSOp::Pop)) {
-    return false;
-  }
-  //                [stack]
-
-  if (!ifEmitter.emitEnd()) {
-    return false;
-  }
-
-  SET_INT32(bytecodeSection().code(updateOffset),
-            bytecodeSection().code().length());
-
-  return true;
-}
-
-MOZ_NEVER_INLINE bool BytecodeEmitter::emitInstrumentationForOpcodeSlow(
-    JSOp op, GCThingIndex atomIndex) {
-  MOZ_ASSERT(instrumentationKinds);
-
-  switch (op) {
-    case JSOp::GetProp:
-      return emitInstrumentationSlow(
-          InstrumentationKind::GetProperty, [=](uint32_t pushed) {
-            return emitDupAt(pushed) && emitAtomOp(JSOp::String, atomIndex);
-          });
-    case JSOp::SetProp:
-    case JSOp::StrictSetProp:
-      return emitInstrumentationSlow(
-          InstrumentationKind::SetProperty, [=](uint32_t pushed) {
-            return emitDupAt(pushed + 1) &&
-                   emitAtomOp(JSOp::String, atomIndex) && emitDupAt(pushed + 2);
-          });
-    case JSOp::GetElem:
-      return emitInstrumentationSlow(
-          InstrumentationKind::GetElement,
-          [=](uint32_t pushed) { return emitDupAt(pushed + 1, 2); });
-    case JSOp::SetElem:
-    case JSOp::StrictSetElem:
-      return emitInstrumentationSlow(
-          InstrumentationKind::SetElement,
-          [=](uint32_t pushed) { return emitDupAt(pushed + 2, 3); });
-    default:
-      return true;
-  }
 }
 
 bool BytecodeEmitter::emitTree(

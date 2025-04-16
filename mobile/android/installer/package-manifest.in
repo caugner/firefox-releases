@@ -85,6 +85,7 @@
 ; [Base Browser Files]
 @BINPATH@/application.ini
 @BINPATH@/platform.ini
+@BINPATH@/defaults/settings/last_modified.json
 @BINPATH@/defaults/settings/blocklists/addons.json
 ; TODO bug 1639050: addons-bloomfilters should be used instead of addons.json
 @BINPATH@/defaults/settings/security-state/onecrl.json
@@ -207,8 +208,6 @@
 
 ; WebDriver (Marionette, Remote Agent) remote protocols
 #ifdef ENABLE_WEBDRIVER
-@BINPATH@/chrome/marionette@JAREXT@
-@BINPATH@/chrome/marionette.manifest
 @BINPATH@/components/marionette.manifest
 @BINPATH@/components/marionette.js
 @BINPATH@/chrome/remote@JAREXT@

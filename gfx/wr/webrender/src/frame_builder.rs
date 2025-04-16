@@ -75,6 +75,7 @@ pub struct FrameBuilderConfig {
     pub max_target_size: i32,
     pub force_invalidation: bool,
     pub is_software: bool,
+    pub low_quality_pinch_zoom: bool,
 }
 
 /// A set of common / global resources that are retained between
@@ -213,12 +214,12 @@ impl<'a> FrameBuildingState<'a> {
         &mut self,
         surface_index: SurfaceIndex,
         tasks: Vec<RenderTaskId>,
-        device_rect: DeviceRect,
+        raster_rect: DeviceRect,
     ) {
         let surface = &mut self.surfaces[surface_index.0];
         assert!(surface.render_tasks.is_none());
         surface.render_tasks = Some(SurfaceRenderTasks::Tiled(tasks));
-        surface.device_rect = Some(device_rect);
+        surface.raster_rect = Some(raster_rect);
     }
 
     /// Initialize render tasks for a simple surface, that contains only a
@@ -228,12 +229,12 @@ impl<'a> FrameBuildingState<'a> {
         surface_index: SurfaceIndex,
         task_id: RenderTaskId,
         parent_surface_index: SurfaceIndex,
-        device_rect: DeviceRect,
+        raster_rect: DeviceRect,
     ) {
         let surface = &mut self.surfaces[surface_index.0];
         assert!(surface.render_tasks.is_none());
         surface.render_tasks = Some(SurfaceRenderTasks::Simple(task_id));
-        surface.device_rect = Some(device_rect);
+        surface.raster_rect = Some(raster_rect);
 
         self.add_child_render_task(
             parent_surface_index,
@@ -250,12 +251,12 @@ impl<'a> FrameBuildingState<'a> {
         root_task_id: RenderTaskId,
         port_task_id: RenderTaskId,
         parent_surface_index: SurfaceIndex,
-        device_rect: DeviceRect,
+        raster_rect: DeviceRect,
     ) {
         let surface = &mut self.surfaces[surface_index.0];
         assert!(surface.render_tasks.is_none());
         surface.render_tasks = Some(SurfaceRenderTasks::Chained { root_task_id, port_task_id });
-        surface.device_rect = Some(device_rect);
+        surface.raster_rect = Some(raster_rect);
 
         self.add_child_render_task(
             parent_surface_index,
@@ -334,8 +335,6 @@ impl FrameBuilder {
     ) {
         profile_scope!("build_layer_screen_rects_and_cull_layers");
 
-        scratch.begin_frame();
-
         let root_spatial_node_index = scene.spatial_tree.root_reference_frame_index();
 
         const MAX_CLIP_COORD: f32 = 1.0e9;
@@ -345,10 +344,10 @@ impl FrameBuilder {
             scene_properties,
             global_screen_world_rect,
             spatial_tree: &scene.spatial_tree,
-            max_local_clip: LayoutRect::new(
-                LayoutPoint::new(-MAX_CLIP_COORD, -MAX_CLIP_COORD),
-                LayoutSize::new(2.0 * MAX_CLIP_COORD, 2.0 * MAX_CLIP_COORD),
-            ),
+            max_local_clip: LayoutRect {
+                min: LayoutPoint::new(-MAX_CLIP_COORD, -MAX_CLIP_COORD),
+                max: LayoutPoint::new(MAX_CLIP_COORD, MAX_CLIP_COORD),
+            },
             debug_flags,
             fb_config: &scene.config,
         };
@@ -384,6 +383,7 @@ impl FrameBuilder {
                 gpu_cache,
                 &scene.clip_store,
                 data_stores,
+                tile_caches,
             );
         }
 
@@ -543,6 +543,7 @@ impl FrameBuilder {
 
         profile.set(profiler::PRIMITIVES, scene.prim_store.prim_count());
         profile.set(profiler::PICTURE_CACHE_SLICES, scene.tile_cache_config.picture_cache_slice_count);
+        scratch.begin_frame();
         resource_cache.begin_frame(stamp, profile);
         gpu_cache.begin_frame(stamp);
 
@@ -557,13 +558,14 @@ impl FrameBuilder {
         // TODO(dp): Remove me completely!!
         let global_device_pixel_scale = DevicePixelScale::new(1.0);
 
-        let output_size = scene.output_rect.size;
+        let output_size = scene.output_rect.size();
         let screen_world_rect = (scene.output_rect.to_f32() / global_device_pixel_scale).round_out();
 
         let mut composite_state = CompositeState::new(
             scene.config.compositor_kind,
             scene.config.max_depth_ids,
             dirty_rects_are_valid,
+            scene.config.low_quality_pinch_zoom,
         );
 
         self.composite_state_prealloc.preallocate(&mut composite_state);
@@ -687,11 +689,12 @@ impl FrameBuilder {
 
         composite_state.end_frame();
         scene.clip_store.end_frame(&mut scratch.clip_store);
+        scratch.end_frame();
 
         Frame {
-            device_rect: DeviceIntRect::new(
+            device_rect: DeviceIntRect::from_origin_and_size(
                 device_origin,
-                scene.output_rect.size,
+                scene.output_rect.size(),
             ),
             passes,
             transform_palette: transform_palette.finish(),
@@ -737,7 +740,6 @@ impl FrameBuilder {
                     composite_state.push_surface(
                         tile_cache,
                         device_clip_rect,
-                        ctx.global_device_pixel_scale,
                         ctx.resource_cache,
                         gpu_cache,
                         deferred_resolves,

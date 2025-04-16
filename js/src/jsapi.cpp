@@ -87,7 +87,6 @@
 #include "vm/ErrorObject.h"
 #include "vm/ErrorReporting.h"
 #include "vm/HelperThreads.h"
-#include "vm/Instrumentation.h"
 #include "vm/Interpreter.h"
 #include "vm/Iteration.h"
 #include "vm/JSAtom.h"
@@ -750,7 +749,7 @@ JS_PUBLIC_API JSObject* JS_TransplantObject(JSContext* cx, HandleObject origobj,
   return newIdentity;
 }
 
-JS_FRIEND_API void js::RemapRemoteWindowProxies(
+JS_PUBLIC_API void js::RemapRemoteWindowProxies(
     JSContext* cx, CompartmentTransplantCallback* callback,
     MutableHandleObject target) {
   AssertHeapIsIdle();
@@ -1369,6 +1368,14 @@ JS_PUBLIC_API bool JS::ZoneIsCollecting(JS::Zone* zone) {
   return zone->wasGCStarted();
 }
 
+JS_PUBLIC_API bool JS::AtomsZoneIsCollecting(JSRuntime* runtime) {
+  return runtime->activeGCInAtomsZone();
+}
+
+JS_PUBLIC_API bool JS::IsAtomsZone(JS::Zone* zone) {
+  return zone->isAtomsZone();
+}
+
 JS_PUBLIC_API bool JS_AddWeakPointerZonesCallback(JSContext* cx,
                                                   JSWeakPointerZonesCallback cb,
                                                   void* data) {
@@ -1904,15 +1911,6 @@ JS_PUBLIC_API bool JS_IsNative(JSObject* obj) {
 JS_PUBLIC_API void JS::AssertObjectBelongsToCurrentThread(JSObject* obj) {
   JSRuntime* rt = obj->compartment()->runtimeFromAnyThread();
   MOZ_RELEASE_ASSERT(CurrentThreadCanAccessRuntime(rt));
-}
-
-// TODO:
-// Bug 1630189: Windows PGO build will have a linking error for
-// HelperThreadTaskCallback, use MOZ_NEVER_INLINE to prevent this. See
-// https://bugzilla.mozilla.org/show_bug.cgi?id=1630189#c4
-JS_PUBLIC_API MOZ_NEVER_INLINE void SetHelperThreadTaskCallback(
-    bool (*callback)(js::UniquePtr<js::RunnableTask>)) {
-  HelperThreadTaskCallback = callback;
 }
 
 JS_PUBLIC_API void JS::SetFilenameValidationCallback(
@@ -3528,11 +3526,6 @@ JS::CompileOptions::CompileOptions(JSContext* cx) : ReadOnlyCompileOptions() {
   // behaviours. These can still be set manually on the options though.
   if (cx->realm()) {
     discardSource = cx->realm()->behaviors().discardSource();
-
-    // If instrumentation is enabled in the realm, the compiler should insert
-    // the requested kinds of instrumentation into all scripts.
-    instrumentationKinds =
-        RealmInstrumentation::getInstrumentationKinds(cx->global());
   }
 }
 

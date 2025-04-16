@@ -202,19 +202,33 @@ class CargoProvider(MachCommandBase):
 class Doctor(MachCommandBase):
     """Provide commands for diagnosing common build environment problems"""
 
-    @Command("doctor", category="devenv", description="")
+    @Command(
+        "doctor",
+        category="devenv",
+        description="Diagnose and fix common development environment issues.",
+    )
     @CommandArgument(
         "--fix",
-        default=None,
+        default=False,
         action="store_true",
         help="Attempt to fix found problems.",
     )
-    def doctor(self, command_context, fix=None):
+    @CommandArgument(
+        "--verbose",
+        default=False,
+        action="store_true",
+        help="Print verbose information found by checks.",
+    )
+    def doctor(self, command_context, fix=False, verbose=False):
         self.activate_virtualenv()
-        from mozbuild.doctor import Doctor
+        from mozbuild.doctor import run_doctor
 
-        doctor = Doctor(self.topsrcdir, self.topobjdir, fix)
-        return doctor.check_all()
+        return run_doctor(
+            topsrcdir=self.topsrcdir,
+            topobjdir=self.topobjdir,
+            fix=fix,
+            verbose=verbose,
+        )
 
 
 @CommandProvider
@@ -547,7 +561,13 @@ class GTestCommands(MachCommandBase):
         metavar="gtest_filter",
         help="test_filter is a ':'-separated list of wildcard patterns "
         "(called the positive patterns), optionally followed by a '-' "
-        "and another ':'-separated pattern list (called the negative patterns).",
+        "and another ':'-separated pattern list (called the negative patterns)."
+        "Test names are of the format SUITE.NAME. Use --list-tests to see all.",
+    )
+    @CommandArgument(
+        "--list-tests",
+        action="store_true",
+        help="list all available tests",
     )
     @CommandArgument(
         "--jobs",
@@ -641,6 +661,7 @@ class GTestCommands(MachCommandBase):
         shuffle,
         jobs,
         gtest_filter,
+        list_tests,
         tbpl_parser,
         enable_webrender,
         package,
@@ -716,6 +737,9 @@ class GTestCommands(MachCommandBase):
         if sys.platform.startswith("win") and "MOZ_LAUNCHER_PROCESS" in self.defines:
             args.append("--wait-for-browser")
 
+        if list_tests:
+            args.append("--gtest_list_tests")
+
         if debug or debugger or debugger_args:
             args = _prepend_debugger_args(args, debugger, debugger_args)
             if not args:
@@ -723,7 +747,7 @@ class GTestCommands(MachCommandBase):
 
         # Use GTest environment variable to control test execution
         # For details see:
-        # https://code.google.com/p/googletest/wiki/AdvancedGuide#Running_Test_Programs:_Advanced_Options
+        # https://google.github.io/googletest/advanced.html#running-test-programs-advanced-options
         gtest_env = {b"GTEST_FILTER": gtest_filter}
 
         # Note: we must normalize the path here so that gtest on Windows sees

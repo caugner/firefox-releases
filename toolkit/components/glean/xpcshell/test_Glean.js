@@ -166,6 +166,39 @@ add_task(async function test_fog_event_works() {
   Assert.equal("test_only.ipc", events[0].category);
   Assert.equal("an_event", events[0].name);
   Assert.deepEqual(extra, events[0].extra);
+
+  let extra2 = {
+    extra1: "can set extras",
+    extra2: 37,
+    extra3_longer_name: false,
+  };
+  Glean.testOnlyIpc.eventWithExtra.record(extra2);
+  events = Glean.testOnlyIpc.eventWithExtra.testGetValue();
+  Assert.equal(1, events.length);
+  Assert.equal("test_only.ipc", events[0].category);
+  Assert.equal("event_with_extra", events[0].name);
+  let expectedExtra = {
+    extra1: "can set extras",
+    extra2: "37",
+    extra3_longer_name: "false",
+  };
+  Assert.deepEqual(expectedExtra, events[0].extra);
+
+  // Invalid extra keys don't crash, the event is not recorded.
+  let extra3 = {
+    extra1_nonexistent_extra: "this does not crash",
+  };
+  Glean.testOnlyIpc.eventWithExtra.record(extra3);
+  events = Glean.testOnlyIpc.eventWithExtra.testGetValue();
+  Assert.equal(1, events.length, "Recorded one event too many.");
+
+  // Quantities need to be non-negative.
+  let extra4 = {
+    extra2: -1,
+  };
+  Glean.testOnlyIpc.eventWithExtra.record(extra4);
+  events = Glean.testOnlyIpc.eventWithExtra.testGetValue();
+  Assert.equal(1, events.length, "Recorded one event too many.");
 });
 
 add_task(async function test_fog_memory_distribution_works() {
@@ -181,6 +214,26 @@ add_task(async function test_fog_memory_distribution_works() {
       "Only two buckets have a sample"
     );
   }
+});
+
+add_task(async function test_fog_custom_distribution_works() {
+  Glean.testOnlyIpc.aCustomDist.accumulateSamples([7, 268435458]);
+
+  let data = Glean.testOnlyIpc.aCustomDist.testGetValue("store1");
+  Assert.equal(7 + 268435458, data.sum, "Sum's correct");
+  for (let [bucket, count] of Object.entries(data.values)) {
+    Assert.ok(
+      count == 0 || (count == 1 && (bucket == 1 || bucket == 268435456)),
+      `Only two buckets have a sample ${bucket} ${count}`
+    );
+  }
+
+  // Negative values will not be recorded, instead an error is recorded.
+  Glean.testOnlyIpc.aCustomDist.accumulateSamples([-7]);
+  Assert.throws(
+    () => Glean.testOnlyIpc.aCustomDist.testGetValue(),
+    /NS_ERROR_LOSS_OF_SIGNIFICANT_DATA/
+  );
 });
 
 add_task(function test_fog_custom_pings() {
@@ -280,11 +333,10 @@ add_task(async function test_fog_labeled_counter_works() {
     Glean.testOnly.mabelsKitchenCounters.__other__.testGetValue()
   );
   Glean.testOnly.mabelsKitchenCounters.InvalidLabel.add(1);
-  Assert.equal(
-    1,
-    Glean.testOnly.mabelsKitchenCounters.__other__.testGetValue()
+  Assert.throws(
+    () => Glean.testOnly.mabelsKitchenCounters.__other__.testGetValue(),
+    /NS_ERROR_LOSS_OF_SIGNIFICANT_DATA/
   );
-  // TODO: Test that we have the right number and type of errors (bug 1683171)
 });
 
 add_task(async function test_fog_labeled_string_works() {
@@ -309,11 +361,10 @@ add_task(async function test_fog_labeled_string_works() {
     Glean.testOnly.mabelsBalloonStrings.__other__.testGetValue()
   );
   Glean.testOnly.mabelsBalloonStrings.InvalidLabel.set("valid");
-  Assert.equal(
-    "valid",
-    Glean.testOnly.mabelsBalloonStrings.__other__.testGetValue()
+  Assert.throws(
+    () => Glean.testOnly.mabelsBalloonStrings.__other__.testGetValue(),
+    /NS_ERROR_LOSS_OF_SIGNIFICANT_DATA/
   );
-  // TODO: Test that we have the right number and type of errors (bug 1683171)
 });
 
 add_task(function test_fog_quantity_works() {

@@ -137,13 +137,15 @@ class nsFrameLoader final : public nsStubMutationObserver,
   void StartDestroy(bool aForProcessSwitch);
   void DestroyDocShell();
   void DestroyComplete();
-  nsIDocShell* GetExistingDocShell() const { return mDocShell; }
+  nsDocShell* GetExistingDocShell() const { return mDocShell; }
   mozilla::dom::InProcessBrowserChildMessageManager*
   GetBrowserChildMessageManager() const {
     return mChildMessageManager;
   }
   nsresult UpdatePositionAndSize(nsSubDocumentFrame* aIFrame);
   void SendIsUnderHiddenEmbedderElement(bool aIsUnderHiddenEmbedderElement);
+  void PropagateIsUnderHiddenEmbedderElement(
+      bool aIsUnderHiddenEmbedderElement);
 
   // When creating a nsFrameLoaderOwner which is a static clone, a
   // `nsFrameLoader` is not immediately attached to it. Instead, it is added to
@@ -153,9 +155,11 @@ class nsFrameLoader final : public nsStubMutationObserver,
   // created for the cloned iframe, and `FinishStaticClone` will be called on
   // it, which will clone the inner document of the source nsFrameLoader.
   nsresult FinishStaticClone(nsFrameLoader* aStaticCloneOf,
+                             nsIPrintSettings* aPrintSettings,
                              bool* aOutHasInProcessPrintCallbacks);
 
-  nsresult DoRemoteStaticClone(nsFrameLoader* aStaticCloneOf);
+  nsresult DoRemoteStaticClone(nsFrameLoader* aStaticCloneOf,
+                               nsIPrintSettings* aPrintSettings);
 
   // WebIDL methods
 
@@ -211,11 +215,6 @@ class nsFrameLoader final : public nsStubMutationObserver,
 
   void DeactivateRemoteFrame(mozilla::ErrorResult& aRv);
 
-  void SendCrossProcessMouseEvent(const nsAString& aType, float aX, float aY,
-                                  int32_t aButton, int32_t aClickCount,
-                                  int32_t aModifiers,
-                                  mozilla::ErrorResult& aRv);
-
   void ActivateFrameEvent(const nsAString& aType, bool aCapture,
                           mozilla::ErrorResult& aRv);
 
@@ -227,7 +226,7 @@ class nsFrameLoader final : public nsStubMutationObserver,
 
   void RequestEpochUpdate(uint32_t aEpoch);
 
-  void RequestSHistoryUpdate(bool aImmediately = false);
+  void RequestSHistoryUpdate();
 
   already_AddRefed<Promise> PrintPreview(nsIPrintSettings* aPrintSettings,
                                          BrowsingContext* aSourceBC,
@@ -489,7 +488,7 @@ class nsFrameLoader final : public nsStubMutationObserver,
   // browsing context for a newly opened tab/window is ready.
   void InvokeBrowsingContextReadyCallback();
 
-  void RequestTabStateFlush();
+  void RequestFinalTabStateFlush();
 
   RefPtr<mozilla::dom::BrowsingContext> mPendingBrowsingContext;
   nsCOMPtr<nsIURI> mURIToLoad;

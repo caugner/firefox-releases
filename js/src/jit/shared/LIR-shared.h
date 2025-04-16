@@ -2317,6 +2317,16 @@ class LNegI : public LInstructionHelper<1, 1, 0> {
   }
 };
 
+// Negative of an int64
+class LNegI64 : public LInstructionHelper<INT64_PIECES, INT64_PIECES, 0> {
+ public:
+  LIR_HEADER(NegI64);
+  explicit LNegI64(const LInt64Allocation& num)
+      : LInstructionHelper(classOpcode) {
+    setInt64Operand(0, num);
+  }
+};
+
 // Negative of a double.
 class LNegD : public LInstructionHelper<1, 1, 0> {
  public:
@@ -8356,19 +8366,22 @@ class LCheckObjCoercible : public LInstructionHelper<0, BOX_PIECES, 0> {
   }
 };
 
-class LCheckClassHeritage : public LInstructionHelper<0, BOX_PIECES, 1> {
+class LCheckClassHeritage : public LInstructionHelper<0, BOX_PIECES, 2> {
  public:
   LIR_HEADER(CheckClassHeritage)
 
   static const size_t Heritage = 0;
 
-  LCheckClassHeritage(const LBoxAllocation& value, const LDefinition& temp)
+  LCheckClassHeritage(const LBoxAllocation& value, const LDefinition& temp1,
+                      const LDefinition& temp2)
       : LInstructionHelper(classOpcode) {
     setBoxOperand(Heritage, value);
-    setTemp(0, temp);
+    setTemp(0, temp1);
+    setTemp(1, temp2);
   }
 
-  const LDefinition* temp() { return getTemp(0); }
+  const LDefinition* temp1() { return getTemp(0); }
+  const LDefinition* temp2() { return getTemp(1); }
 };
 
 class LCheckThis : public LInstructionHelper<0, BOX_PIECES, 0> {

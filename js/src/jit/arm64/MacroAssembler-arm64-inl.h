@@ -559,6 +559,11 @@ void MacroAssembler::negateDouble(FloatRegister reg) {
   fneg(ARMFPRegister(reg, 64), ARMFPRegister(reg, 64));
 }
 
+void MacroAssembler::abs32(Register src, Register dest) {
+  Cmp(ARMRegister(src, 32), wzr);
+  Cneg(ARMRegister(dest, 32), ARMRegister(src, 32), Assembler::LessThan);
+}
+
 void MacroAssembler::absFloat32(FloatRegister src, FloatRegister dest) {
   fabs(ARMFPRegister(dest, 32), ARMFPRegister(src, 32));
 }
@@ -1942,11 +1947,9 @@ void MacroAssembler::storeUncanonicalizedFloat32(FloatRegister src,
 }
 
 void MacroAssembler::memoryBarrier(MemoryBarrierBits barrier) {
-  if (barrier == MembarStoreStore) {
-    Dmb(vixl::InnerShareable, vixl::BarrierWrites);
-  } else if (barrier == MembarLoadLoad) {
-    Dmb(vixl::InnerShareable, vixl::BarrierReads);
-  } else if (barrier) {
+  // Bug 1715494: Discriminating barriers such as StoreStore are hard to reason
+  // about.  Execute the full barrier for everything that requires a barrier.
+  if (barrier) {
     Dmb(vixl::InnerShareable, vixl::BarrierAll);
   }
 }

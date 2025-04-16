@@ -31,52 +31,55 @@ XPCOMUtils.defineLazyServiceGetter(
   "@mozilla.org/tracking-db-service;1",
   "nsITrackingDBService"
 );
-XPCOMUtils.defineLazyPreferenceGetter(
-  this,
-  "gFirstPartyIsolateUseSite",
-  "privacy.firstparty.isolate.use_site",
-  false
-);
-
-function getBaseDomainFromPartitionKey(partitionKey) {
-  if (!partitionKey?.length) {
-    return undefined;
-  }
-  if (gFirstPartyIsolateUseSite) {
-    return partitionKey;
-  }
-  let entries = partitionKey.substr(1, partitionKey.length - 2).split(",");
-  if (entries.length < 2) {
-    return undefined;
-  }
-  return entries[1];
-}
 
 /**
- * Test if host and OriginAttributes belong to a baseDomain. Also considers
- * partitioned storage by inspecting OriginAttributes partitionKey.
+ * Test if host, OriginAttributes or principal belong to a baseDomain. Also
+ * considers partitioned storage by inspecting OriginAttributes partitionKey.
  * @param options
- * @param {string} options.host - Host to compare to base domain.
+ * @param {string} [options.host] - Optional host to compare to base domain.
  * @param {object} [options.originAttributes] - Optional origin attributes to
  * inspect for aBaseDomain. If omitted, partitionKey will not be matched.
+ * @param {nsIPrincipal} [options.principal] - Optional principal to compare to
+ * base domain.
  * @param {string} aBaseDomain - Domain to check for. Must be a valid, non-empty
  * baseDomain string.
- * @returns {boolean} Whether the host or originAttributes match the base
- * domain.
+ * @returns {boolean} Whether the host, originAttributes or principal matches
+ * the base domain.
  */
-function hasBaseDomain({ host, originAttributes = null }, aBaseDomain) {
-  if (Services.eTLD.hasRootDomain(host, aBaseDomain)) {
+function hasBaseDomain(
+  { host = null, originAttributes = null, principal = null },
+  aBaseDomain
+) {
+  if (!aBaseDomain) {
+    throw new Error("Missing baseDomain.");
+  }
+  if (!host && !originAttributes && !principal) {
+    throw new Error(
+      "Missing host, originAttributes or principal to match with baseDomain."
+    );
+  }
+  if (principal && (host || originAttributes)) {
+    throw new Error(
+      "Can only pass either principal or host and originAttributes."
+    );
+  }
+
+  if (host && Services.eTLD.hasRootDomain(host, aBaseDomain)) {
     return true;
   }
 
+  if (principal?.baseDomain == aBaseDomain) {
+    return true;
+  }
+
+  originAttributes = originAttributes || principal?.originAttributes;
   if (!originAttributes) {
     return false;
   }
 
-  let partitionKeyBaseDomain = getBaseDomainFromPartitionKey(
-    originAttributes.partitionKey
-  );
-  return partitionKeyBaseDomain && partitionKeyBaseDomain == aBaseDomain;
+  return ChromeUtils.originAttributesMatchPattern(originAttributes, {
+    partitionKeyPattern: { baseDomain: aBaseDomain },
+  });
 }
 
 // Here is a list of methods cleaners may implement. These methods must return a
@@ -171,7 +174,7 @@ const CertCleaner = {
       Ci.nsICertOverrideService
     );
 
-    overrideService.clearValidityOverride(aHost, -1);
+    overrideService.clearValidityOverride(aHost, -1, aOriginAttributes);
   },
 
   deleteByPrincipal(aPrincipal) {
@@ -188,7 +191,7 @@ const CertCleaner = {
         hasBaseDomain({ host: asciiHost }, aBaseDomain)
       )
       .forEach(({ asciiHost, port }) =>
-        overrideService.clearValidityOverride(asciiHost, port)
+        overrideService.clearValidityOverride(asciiHost, port, {})
       );
   },
 
@@ -219,16 +222,15 @@ const NetworkCacheCleaner = {
     Services.cache2.clearOrigin(httpsPrincipal);
   },
 
+  async deleteByBaseDomain(aBaseDomain) {
+    Services.cache2.clearBaseDomain(aBaseDomain);
+  },
+
   deleteByPrincipal(aPrincipal) {
     return new Promise(aResolve => {
       Services.cache2.clearOrigin(aPrincipal);
       aResolve();
     });
-  },
-
-  deleteByBaseDomain(aBaseDomain) {
-    // TODO: Bug 1705030
-    return this.deleteByHost(aBaseDomain, {});
   },
 
   deleteByOriginAttributes(aOriginAttributesString) {
@@ -463,6 +465,59 @@ const MediaDevicesCleaner = {
 };
 
 const QuotaCleaner = {
+  /**
+   * Clear quota storage for matching principals.
+   * @param {function} filterFn - Filter function which is passed a principal.
+   * Return true to clear storage for given principal or false to skip it.
+   * @returns {Promise} - Resolves once all matching items have been cleared.
+   * Rejects on error.
+   */
+  async _qmsClearStoragesForPrincipalsMatching(filterFn) {
+    // Clearing quota storage by first getting all entry origins and then
+    // iterating over them is not ideal, since we can not ensure an entirely
+    // consistent clearing state. Between fetching the origins and clearing
+    // them, additional entries could be added. This means we could end up with
+    // stray entries after the clearing operation. To fix this we would need to
+    // move the clearing code to the QuotaManager itself which could either
+    // prevent new writes while clearing or clean up any additional entries
+    // which get written during the clearing operation.
+    // Performance is also not ideal, since we iterate over storage multiple
+    // times for this two step process.
+    // See Bug 1719195.
+    let origins = await new Promise((resolve, reject) => {
+      Services.qms.listOrigins().callback = request => {
+        if (request.resultCode != Cr.NS_OK) {
+          reject({ message: "Deleting quota storages failed" });
+          return;
+        }
+        resolve(request.result);
+      };
+    });
+
+    let clearPromises = origins
+      // Parse origins into principals.
+      .map(Services.scriptSecurityManager.createContentPrincipalFromOrigin)
+      // Filter out principals that don't match the filterFn.
+      .filter(filterFn)
+      // Clear quota storage by principal and collect the promises.
+      .map(
+        principal =>
+          new Promise((resolve, reject) => {
+            let clearRequest = Services.qms.clearStoragesForPrincipal(
+              principal
+            );
+            clearRequest.callback = () => {
+              if (clearRequest.resultCode != Cr.NS_OK) {
+                reject({ message: "Deleting quota storages failed" });
+                return;
+              }
+              resolve();
+            };
+          })
+      );
+    return Promise.all(clearPromises);
+  },
+
   deleteByPrincipal(aPrincipal) {
     // localStorage: The legacy LocalStorage implementation that will
     // eventually be removed depends on this observer notification to clear by
@@ -502,12 +557,56 @@ const QuotaCleaner = {
       });
   },
 
-  deleteByBaseDomain(aBaseDomain) {
-    // TODO: Bug 1705036
-    return this.deleteByHost(aBaseDomain, {});
+  async deleteByBaseDomain(aBaseDomain) {
+    // localStorage: The legacy LocalStorage implementation that will
+    // eventually be removed depends on this observer notification to clear by
+    // host.  Some other subsystems like Reporting headers depend on this too.
+    Services.obs.notifyObservers(
+      null,
+      "extension:purge-localStorage",
+      aBaseDomain
+    );
+
+    // Clear sessionStorage
+    Services.obs.notifyObservers(
+      null,
+      "browser:purge-sessionStorage",
+      aBaseDomain
+    );
+
+    // Clear third-party storage partitioned under aBaseDomain.
+    // This notification is forwarded via the StorageObserver and consumed only
+    // by the SessionStorageManager and (legacy) LocalStorageManager.
+    // There is a similar (legacy) notification "clear-origin-attributes-data"
+    // which additionally clears data across various other storages unrelated to
+    // the QuotaCleaner.
+    Services.obs.notifyObservers(
+      null,
+      "dom-storage:clear-origin-attributes-data",
+      JSON.stringify({ partitionKeyPattern: { baseDomain: aBaseDomain } })
+    );
+
+    // ServiceWorkers must be removed before cleaning QuotaManager. We store
+    // potential errors so we can re-throw later, once all operations have
+    // completed.
+    let swCleanupError;
+    try {
+      await ServiceWorkerCleanUp.removeFromBaseDomain(aBaseDomain);
+    } catch (error) {
+      swCleanupError = error;
+    }
+
+    await this._qmsClearStoragesForPrincipalsMatching(principal =>
+      hasBaseDomain({ principal }, aBaseDomain)
+    );
+
+    // Re-throw any service worker cleanup errors.
+    if (swCleanupError) {
+      throw swCleanupError;
+    }
   },
 
-  deleteByHost(aHost, aOriginAttributes) {
+  async deleteByHost(aHost, aOriginAttributes) {
     // XXX: The aOriginAttributes is expected to always be empty({}). Maybe have
     // a debug assertion here to ensure that?
 
@@ -519,59 +618,30 @@ const QuotaCleaner = {
     // Clear sessionStorage
     Services.obs.notifyObservers(null, "browser:purge-sessionStorage", aHost);
 
-    // ServiceWorkers: they must be removed before cleaning QuotaManager.
-    return ServiceWorkerCleanUp.removeFromHost(aHost)
-      .then(
-        _ => /* exceptionThrown = */ false,
-        _ => /* exceptionThrown = */ true
-      )
-      .then(exceptionThrown => {
-        // QuotaManager: In the event of a failure, we call reject to propagate
-        // the error upwards.
+    // ServiceWorkers must be removed before cleaning QuotaManager. We store any
+    // errors so we can re-throw later once all operations have completed.
+    let swCleanupError;
+    try {
+      await ServiceWorkerCleanUp.removeFromHost(aHost);
+    } catch (error) {
+      swCleanupError = error;
+    }
 
+    await this._qmsClearStoragesForPrincipalsMatching(principal => {
+      try {
         // deleteByHost has the semantics that "foo.example.com" should be
         // wiped if we are provided an aHost of "example.com".
-        return new Promise((aResolve, aReject) => {
-          Services.qms.listOrigins().callback = aRequest => {
-            if (aRequest.resultCode != Cr.NS_OK) {
-              aReject({ message: "Delete by host failed" });
-              return;
-            }
+        return Services.eTLD.hasRootDomain(principal.host, aHost);
+      } catch (e) {
+        // There is no host for the given principal.
+        return false;
+      }
+    });
 
-            let promises = [];
-            for (const origin of aRequest.result) {
-              let principal = Services.scriptSecurityManager.createContentPrincipalFromOrigin(
-                origin
-              );
-              let host;
-              try {
-                host = principal.host;
-              } catch (e) {
-                // There is no host for the given principal.
-                continue;
-              }
-
-              if (Services.eTLD.hasRootDomain(host, aHost)) {
-                promises.push(
-                  new Promise((aResolve, aReject) => {
-                    let clearRequest = Services.qms.clearStoragesForPrincipal(
-                      principal
-                    );
-                    clearRequest.callback = () => {
-                      if (clearRequest.resultCode == Cr.NS_OK) {
-                        aResolve();
-                      } else {
-                        aReject({ message: "Delete by host failed" });
-                      }
-                    };
-                  })
-                );
-              }
-            }
-            Promise.all(promises).then(exceptionThrown ? aReject : aResolve);
-          };
-        });
-      });
+    // Re-throw any service worker cleanup errors.
+    if (swCleanupError) {
+      throw swCleanupError;
+    }
   },
 
   deleteByRange(aFrom, aTo) {
@@ -627,58 +697,33 @@ const QuotaCleaner = {
       });
   },
 
-  deleteAll() {
+  async deleteAll() {
     // localStorage
     Services.obs.notifyObservers(null, "extension:purge-localStorage");
 
     // sessionStorage
     Services.obs.notifyObservers(null, "browser:purge-sessionStorage");
 
-    // ServiceWorkers
-    return ServiceWorkerCleanUp.removeAll()
-      .then(
-        _ => /* exceptionThrown = */ false,
-        _ => /* exceptionThrown = */ true
-      )
-      .then(exceptionThrown => {
-        // QuotaManager: In the event of a failure, we call reject to propagate
-        // the error upwards.
-        return new Promise((aResolve, aReject) => {
-          Services.qms.getUsage(aRequest => {
-            if (aRequest.resultCode != Cr.NS_OK) {
-              aReject({ message: "Delete all failed" });
-              return;
-            }
+    // ServiceWorkers must be removed before cleaning QuotaManager. We store any
+    // errors so we can re-throw later once all operations have completed.
+    let swCleanupError;
+    try {
+      await ServiceWorkerCleanUp.removeAll();
+    } catch (error) {
+      swCleanupError = error;
+    }
 
-            let promises = [];
-            for (let item of aRequest.result) {
-              let principal = Services.scriptSecurityManager.createContentPrincipalFromOrigin(
-                item.origin
-              );
-              if (
-                principal.schemeIs("http") ||
-                principal.schemeIs("https") ||
-                principal.schemeIs("file")
-              ) {
-                promises.push(
-                  new Promise((aResolve, aReject) => {
-                    let req = Services.qms.clearStoragesForPrincipal(principal);
-                    req.callback = () => {
-                      if (req.resultCode == Cr.NS_OK) {
-                        aResolve();
-                      } else {
-                        aReject({ message: "Delete all failed" });
-                      }
-                    };
-                  })
-                );
-              }
-            }
+    await this._qmsClearStoragesForPrincipalsMatching(
+      principal =>
+        principal.schemeIs("http") ||
+        principal.schemeIs("https") ||
+        principal.schemeIs("file")
+    );
 
-            Promise.all(promises).then(exceptionThrown ? aReject : aResolve);
-          });
-        });
-      });
+    // Re-throw any service worker cleanup errors.
+    if (swCleanupError) {
+      throw swCleanupError;
+    }
   },
 };
 
@@ -702,7 +747,12 @@ const PredictorNetworkCleaner = {
 };
 
 const PushNotificationsCleaner = {
-  deleteByHost(aHost, aOriginAttributes) {
+  /**
+   * Clear entries for aDomain including subdomains of aDomain.
+   * @param {string} aDomain - Domain to clear data for.
+   * @returns {Promise} a promise which resolves once data has been cleared.
+   */
+  _deleteByRootDomain(aDomain) {
     if (!Services.prefs.getBoolPref("dom.push.enabled", false)) {
       return Promise.resolve();
     }
@@ -711,7 +761,8 @@ const PushNotificationsCleaner = {
       let push = Cc["@mozilla.org/push/Service;1"].getService(
         Ci.nsIPushService
       );
-      push.clearForDomain(aHost, aStatus => {
+      // ClearForDomain also clears subdomains.
+      push.clearForDomain(aDomain, aStatus => {
         if (!Components.isSuccessCode(aStatus)) {
           aReject();
         } else {
@@ -721,13 +772,20 @@ const PushNotificationsCleaner = {
     });
   },
 
+  deleteByHost(aHost, aOriginAttributes) {
+    // Will also clear entries for subdomains of aHost. Data is cleared across
+    // all origin attributes.
+    return this._deleteByRootDomain(aHost);
+  },
+
   deleteByPrincipal(aPrincipal) {
-    return this.deleteByHost(aPrincipal.host, aPrincipal.originAttributes);
+    // Will also clear entries for subdomains of the principal host. Data is
+    // cleared across all origin attributes.
+    return this._deleteByRootDomain(aPrincipal.host);
   },
 
   deleteByBaseDomain(aBaseDomain) {
-    // TODO: Bug 1709623
-    return this.deleteByHost(aBaseDomain, {});
+    return this._deleteByRootDomain(aBaseDomain);
   },
 
   deleteAll() {
@@ -920,13 +978,27 @@ const AuthCacheCleaner = {
 };
 
 const PermissionsCleaner = {
-  async deleteByHost(aHost, aOriginAttributes) {
+  /**
+   * Delete permissions by either base domain or host.
+   * Clearing by host also clears associated subdomains.
+   * For example, clearing "example.com" will also clear permissions for
+   * "test.example.com" and "another.test.example.com".
+   * @param options
+   * @param {string} options.baseDomain - Base domain to delete permissions for.
+   * @param {string} options.host - Host to delete permissions for.
+   */
+  async _deleteInternal({ baseDomain, host }) {
     for (let perm of Services.perms.all) {
       let toBeRemoved;
-      try {
-        toBeRemoved = Services.eTLD.hasRootDomain(perm.principal.host, aHost);
-      } catch (ex) {
-        continue;
+
+      if (baseDomain) {
+        toBeRemoved = perm.principal.baseDomain == baseDomain;
+      } else {
+        try {
+          toBeRemoved = Services.eTLD.hasRootDomain(perm.principal.host, host);
+        } catch (ex) {
+          continue;
+        }
       }
 
       if (!toBeRemoved && perm.type.startsWith("3rdPartyStorage^")) {
@@ -938,7 +1010,7 @@ const PermissionsCleaner = {
           continue;
         }
 
-        toBeRemoved = Services.eTLD.hasRootDomain(uri.host, aHost);
+        toBeRemoved = Services.eTLD.hasRootDomain(uri.host, baseDomain || host);
       }
 
       if (!toBeRemoved) {
@@ -953,13 +1025,16 @@ const PermissionsCleaner = {
     }
   },
 
+  deleteByHost(aHost, aOriginAttributes) {
+    return this._deleteInternal({ host: aHost });
+  },
+
   deleteByPrincipal(aPrincipal) {
     return this.deleteByHost(aPrincipal.host, aPrincipal.originAttributes);
   },
 
   deleteByBaseDomain(aBaseDomain) {
-    // TODO: Bug 1709624
-    return this.deleteByHost(aBaseDomain, {});
+    return this._deleteInternal({ baseDomain: aBaseDomain });
   },
 
   async deleteByRange(aFrom, aTo) {
@@ -1025,17 +1100,12 @@ const SecuritySettingsCleaner = {
     );
     // Also remove HSTS information for subdomains by enumerating
     // the information in the site security service.
-    for (let entry of sss.enumerate(Ci.nsISiteSecurityService.HEADER_HSTS)) {
+    for (let entry of sss.enumerate()) {
       let hostname = entry.hostname;
       if (Services.eTLD.hasRootDomain(hostname, aHost)) {
         // This uri is used as a key to reset the state.
         let uri = Services.io.newURI("https://" + hostname);
-        sss.resetState(
-          Ci.nsISiteSecurityService.HEADER_HSTS,
-          uri,
-          0,
-          entry.originAttributes
-        );
+        sss.resetState(uri, 0, entry.originAttributes);
       }
     }
     let cars = Cc[
@@ -1056,19 +1126,14 @@ const SecuritySettingsCleaner = {
 
     // Remove HSTS information by enumerating entries of the site security
     // service.
-    Array.from(sss.enumerate(Ci.nsISiteSecurityService.HEADER_HSTS))
+    Array.from(sss.enumerate())
       .filter(({ hostname, originAttributes }) =>
         hasBaseDomain({ host: hostname, originAttributes }, aDomain)
       )
       .forEach(({ hostname, originAttributes }) => {
         // This uri is used as a key to reset the state.
         let uri = Services.io.newURI("https://" + hostname);
-        sss.resetState(
-          Ci.nsISiteSecurityService.HEADER_HSTS,
-          uri,
-          0,
-          originAttributes
-        );
+        sss.resetState(uri, 0, originAttributes);
       });
 
     let cars = Cc[
@@ -1077,7 +1142,34 @@ const SecuritySettingsCleaner = {
 
     cars
       .getDecisions()
-      .filter(({ asciiHost }) => hasBaseDomain({ host: asciiHost }, aDomain))
+      .filter(({ asciiHost, entryKey }) => {
+        // Get the origin attributes which are in the third component of the
+        // entryKey. ',' is used as the delimiter.
+        let originSuffixEncoded = entryKey.split(",")[2];
+        let originAttributes;
+
+        if (originSuffixEncoded) {
+          try {
+            // Decoding the suffix or parsing the origin attributes can fail. In
+            // this case we won't match the partitionKey, but we can still match
+            // the asciiHost.
+            let originSuffix = decodeURIComponent(originSuffixEncoded);
+            originAttributes = ChromeUtils.CreateOriginAttributesFromOriginSuffix(
+              originSuffix
+            );
+          } catch (e) {
+            Cu.reportError(e);
+          }
+        }
+
+        return hasBaseDomain(
+          {
+            host: asciiHost,
+            originAttributes,
+          },
+          aDomain
+        );
+      })
       .forEach(({ entryKey }) => cars.forgetRememberedDecision(entryKey));
   },
 
@@ -1096,23 +1188,22 @@ const SecuritySettingsCleaner = {
 };
 
 const EMECleaner = {
-  deleteByHost(aHost, aOriginAttributes) {
-    return new Promise(aResolve => {
-      let mps = Cc["@mozilla.org/gecko-media-plugin-service;1"].getService(
-        Ci.mozIGeckoMediaPluginChromeService
-      );
-      mps.forgetThisSite(aHost, JSON.stringify(aOriginAttributes));
-      aResolve();
-    });
+  async deleteByHost(aHost, aOriginAttributes) {
+    let mps = Cc["@mozilla.org/gecko-media-plugin-service;1"].getService(
+      Ci.mozIGeckoMediaPluginChromeService
+    );
+    mps.forgetThisSite(aHost, JSON.stringify(aOriginAttributes));
   },
 
   deleteByPrincipal(aPrincipal) {
     return this.deleteByHost(aPrincipal.host, aPrincipal.originAttributes);
   },
 
-  deleteByBaseDomain(aBaseDomain) {
-    // TODO: Bug 1705034
-    return this.deleteByHost(aBaseDomain, {});
+  async deleteByBaseDomain(aBaseDomain) {
+    let mps = Cc["@mozilla.org/gecko-media-plugin-service;1"].getService(
+      Ci.mozIGeckoMediaPluginChromeService
+    );
+    mps.forgetThisBaseDomain(aBaseDomain);
   },
 
   deleteAll() {

@@ -510,7 +510,7 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
 
   mozilla::ScreenIntMargin GetSafeAreaInsets() const { return mSafeAreaInsets; }
 
-  bool RegisterManagedPostRefreshObserver(mozilla::ManagedPostRefreshObserver*);
+  void RegisterManagedPostRefreshObserver(mozilla::ManagedPostRefreshObserver*);
   void UnregisterManagedPostRefreshObserver(
       mozilla::ManagedPostRefreshObserver*);
   void CancelManagedPostRefreshObservers();
@@ -617,6 +617,13 @@ class nsPresContext : public nsISupports, public mozilla::SupportsWeakPtr {
 
   int32_t DevPixelsToIntCSSPixels(int32_t aPixels) {
     return AppUnitsToIntCSSPixels(DevPixelsToAppUnits(aPixels));
+  }
+
+  mozilla::CSSIntPoint DevPixelsToIntCSSPixels(
+      const mozilla::LayoutDeviceIntPoint& aPoint) {
+    return mozilla::CSSIntPoint(
+        AppUnitsToIntCSSPixels(DevPixelsToAppUnits(aPoint.x)),
+        AppUnitsToIntCSSPixels(DevPixelsToAppUnits(aPoint.y)));
   }
 
   float DevPixelsToFloatCSSPixels(int32_t aPixels) const {

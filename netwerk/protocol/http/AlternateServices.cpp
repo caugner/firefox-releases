@@ -219,11 +219,8 @@ AltSvcMapping::AltSvcMapping(DataStorage* storage, int32_t epoch,
       mUsername(username),
       mPrivate(privateBrowsing),
       mExpiresAt(expiresAt),
-      mValidated(false),
-      mMixedScheme(false),
       mNPNToken(npnToken),
       mOriginAttributes(originAttributes),
-      mSyncOnlyOnSuccess(false),
       mIsHttp3(aIsHttp3) {
   MOZ_ASSERT(NS_IsMainThread());
 
@@ -408,10 +405,7 @@ void AltSvcMapping::Serialize(nsCString& out) {
 
 AltSvcMapping::AltSvcMapping(DataStorage* storage, int32_t epoch,
                              const nsCString& str)
-    : mStorage(storage),
-      mStorageEpoch(epoch),
-      mSyncOnlyOnSuccess(false),
-      mIsHttp3(false) {
+    : mStorage(storage), mStorageEpoch(epoch) {
   mValidated = false;
   nsresult code;
   char separator = ':';
@@ -884,7 +878,7 @@ void AltSvcCache::EnsureStorageInited() {
       return;
     }
 
-    if (NS_FAILED(mStorage->Init(nullptr))) {
+    if (NS_FAILED(mStorage->Init())) {
       mStorage = nullptr;
     } else {
       initialized = true;
@@ -1257,11 +1251,11 @@ void AltSvcCache::ClearAltServiceMappings() {
 nsresult AltSvcCache::GetAltSvcCacheKeys(nsTArray<nsCString>& value) {
   MOZ_ASSERT(NS_IsMainThread());
   if (gHttpHandler->AllowAltSvc() && mStorage) {
-    nsTArray<mozilla::psm::DataStorageItem> items;
+    nsTArray<DataStorageItem> items;
     mStorage->GetAll(&items);
 
     for (const auto& item : items) {
-      value.AppendElement(item.key());
+      value.AppendElement(item.key);
     }
   }
   return NS_OK;

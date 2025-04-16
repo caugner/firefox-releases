@@ -77,6 +77,7 @@
   MACRO_(case, case_, "case")                                                  \
   MACRO_(caseFirst, caseFirst, "caseFirst")                                    \
   MACRO_(catch, catch_, "catch")                                               \
+  MACRO_(cause, cause, "cause")                                                \
   MACRO_(class, class_, "class")                                               \
   MACRO_(cleanupSome, cleanupSome, "cleanupSome")                              \
   MACRO_(close, close, "close")                                                \
@@ -157,6 +158,7 @@
   MACRO_(export, export_, "export")                                            \
   MACRO_(extends, extends, "extends")                                          \
   MACRO_(false, false_, "false")                                               \
+  MACRO_(few, few, "few")                                                      \
   MACRO_(fieldOffsets, fieldOffsets, "fieldOffsets")                           \
   MACRO_(fieldTypes, fieldTypes, "fieldTypes")                                 \
   MACRO_(fileName, fileName, "fileName")                                       \
@@ -195,6 +197,7 @@
   MACRO_(GetBuiltinConstructor, GetBuiltinConstructor,                         \
          "GetBuiltinConstructor")                                              \
   MACRO_(GetBuiltinPrototype, GetBuiltinPrototype, "GetBuiltinPrototype")      \
+  MACRO_(GetBuiltinSymbol, GetBuiltinSymbol, "GetBuiltinSymbol")               \
   MACRO_(GetInternalError, GetInternalError, "GetInternalError")               \
   MACRO_(getBigInt64, getBigInt64, "getBigInt64")                              \
   MACRO_(getBigUint64, getBigUint64, "getBigUint64")                           \
@@ -286,6 +289,7 @@
   MACRO_(lookupGetter, lookupGetter, "__lookupGetter__")                       \
   MACRO_(lookupSetter, lookupSetter, "__lookupSetter__")                       \
   MACRO_(ltr, ltr, "ltr")                                                      \
+  MACRO_(many, many, "many")                                                   \
   MACRO_(MapConstructorInit, MapConstructorInit, "MapConstructorInit")         \
   MACRO_(MapIterator, MapIterator, "Map Iterator")                             \
   MACRO_(maxColumn, maxColumn, "maxColumn")                                    \
@@ -355,6 +359,7 @@
   MACRO_(objectUndefined, objectUndefined, "[object Undefined]")               \
   MACRO2(of, of, "of")                                                         \
   MACRO_(offset, offset, "offset")                                             \
+  MACRO_(one, one, "one")                                                      \
   MACRO_(optimizedOut, optimizedOut, "optimizedOut")                           \
   MACRO_(other, other, "other")                                                \
   MACRO_(outOfMemory, outOfMemory, "out of memory")                            \
@@ -411,10 +416,10 @@
   MACRO_(set, set, "set")                                                      \
   MACRO_(setBigInt64, setBigInt64, "setBigInt64")                              \
   MACRO_(setBigUint64, setBigUint64, "setBigUint64")                           \
-  MACRO_(SetCanonicalName, SetCanonicalName, "_SetCanonicalName")              \
+  MACRO_(SetCanonicalName, SetCanonicalName, "SetCanonicalName")               \
   MACRO_(SetConstructorInit, SetConstructorInit, "SetConstructorInit")         \
   MACRO_(SetIsInlinableLargeFunction, SetIsInlinableLargeFunction,             \
-         "_SetIsInlinableLargeFunction")                                       \
+         "SetIsInlinableLargeFunction")                                        \
   MACRO_(SetIterator, SetIterator, "Set Iterator")                             \
   MACRO_(setPrototypeOf, setPrototypeOf, "setPrototypeOf")                     \
   MACRO_(shape, shape, "shape")                                                \
@@ -467,6 +472,7 @@
   MACRO_(toUTCString, toUTCString, "toUTCString")                              \
   MACRO_(true, true_, "true")                                                  \
   MACRO_(try, try_, "try")                                                     \
+  MACRO_(two, two, "two")                                                      \
   MACRO_(type, type, "type")                                                   \
   MACRO_(typeof, typeof_, "typeof")                                            \
   MACRO_(uint8, uint8, "uint8")                                                \
@@ -530,6 +536,7 @@
   MACRO_(year, year, "year")                                                   \
   MACRO_(yearName, yearName, "yearName")                                       \
   MACRO_(yield, yield, "yield")                                                \
+  MACRO_(zero, zero, "zero")                                                   \
   /* Type names must be contiguous and ordered; see js::TypeName. */           \
   MACRO_(undefined, undefined, "undefined")                                    \
   MACRO_(object, object, "object")                                             \
@@ -541,7 +548,7 @@
   MACRO_(symbol, symbol, "symbol")                                             \
   MACRO_(bigint, bigint, "bigint")                                             \
   MACRO_(defineDataPropertyIntrinsic, defineDataPropertyIntrinsic,             \
-         "_DefineDataProperty")
+         "DefineDataProperty")
 
 #define PROPERTY_NAME_IGNORE(IDPART, ID, TEXT)
 

@@ -24,19 +24,13 @@
 #  include <windows.h>
 #endif
 
-#ifdef MOZ_TASK_TRACER
-#  include "GeckoTaskTracer.h"
-#  include "TracedTaskCommon.h"
-#endif
-
-namespace mozilla {
-namespace net {
+namespace mozilla::net {
 
 namespace {  // anon
 
 class CacheIOTelemetry {
  public:
-  typedef CacheIOThread::EventQueue::size_type size_type;
+  using size_type = CacheIOThread::EventQueue::size_type;
   static size_type mMinLengthToReport[CacheIOThread::LAST_LEVEL];
   static void Report(uint32_t aLevel, size_type aLength);
 };
@@ -207,22 +201,7 @@ CacheIOThread* CacheIOThread::sSelf = nullptr;
 
 NS_IMPL_ISUPPORTS(CacheIOThread, nsIThreadObserver)
 
-CacheIOThread::CacheIOThread()
-    : mMonitor("CacheIOThread"),
-      mThread(nullptr),
-      mXPCOMThread(nullptr),
-      mLowestLevelWaiting(LAST_LEVEL),
-      mCurrentlyExecutingLevel(0),
-      mHasXPCOMEvents(false),
-      mRerunCurrentEvent(false),
-      mShutdown(false),
-      mIOCancelableEvents(0),
-      mEventCounter(0)
-#ifdef DEBUG
-      ,
-      mInsideLoop(true)
-#endif
-{
+CacheIOThread::CacheIOThread() {
   for (auto& item : mQueueLength) {
     item = 0;
   }
@@ -286,8 +265,9 @@ nsresult CacheIOThread::Dispatch(already_AddRefed<nsIRunnable> aRunnable,
 
   MonitorAutoLock lock(mMonitor);
 
-  if (mShutdown && (PR_GetCurrentThread() != mThread))
+  if (mShutdown && (PR_GetCurrentThread() != mThread)) {
     return NS_ERROR_UNEXPECTED;
+  }
 
   return DispatchInternal(runnable.forget(), aLevel);
 }
@@ -298,8 +278,9 @@ nsresult CacheIOThread::DispatchAfterPendingOpens(nsIRunnable* aRunnable) {
 
   MonitorAutoLock lock(mMonitor);
 
-  if (mShutdown && (PR_GetCurrentThread() != mThread))
+  if (mShutdown && (PR_GetCurrentThread() != mThread)) {
     return NS_ERROR_UNEXPECTED;
+  }
 
   // Move everything from later executed OPEN level to the OPEN_PRIORITY level
   // where we post the (eviction) runnable.
@@ -314,12 +295,6 @@ nsresult CacheIOThread::DispatchAfterPendingOpens(nsIRunnable* aRunnable) {
 nsresult CacheIOThread::DispatchInternal(
     already_AddRefed<nsIRunnable> aRunnable, uint32_t aLevel) {
   nsCOMPtr<nsIRunnable> runnable(aRunnable);
-#ifdef MOZ_TASK_TRACER
-  if (tasktracer::IsStartLogging()) {
-    runnable = tasktracer::CreateTracedRunnable(runnable.forget());
-    (static_cast<tasktracer::TracedRunnable*>(runnable.get()))->DispatchTask();
-  }
-#endif
 
   LogRunnable::LogDispatch(runnable.get());
 
@@ -652,5 +627,4 @@ CacheIOThread::Cancelable::~Cancelable() {
   }
 }
 
-}  // namespace net
-}  // namespace mozilla
+}  // namespace mozilla::net

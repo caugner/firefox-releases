@@ -89,7 +89,7 @@ const {
   FIXUP_FLAG_FIX_SCHEME_TYPOS,
 } = Ci.nsIURIFixup;
 
-const COMMON_PROTOCOLS = ["http", "https", "ftp", "file"];
+const COMMON_PROTOCOLS = ["http", "https", "file"];
 
 // Regex used to identify user:password tokens in url strings.
 // This is not a strict valid characters check, because we try to fixup this
@@ -764,7 +764,9 @@ function maybeSetAlternateFixedURI(info, fixupFlags) {
 
   let oldHost = uri.host;
   // Don't create an alternate uri for localhost, because it would be confusing.
-  if (oldHost == "localhost") {
+  // Ditto for 'http' and 'https' as these are frequently the result of typos, e.g.
+  // 'https//foo' (note missing : ).
+  if (oldHost == "localhost" || oldHost == "http" || oldHost == "https") {
     return false;
   }
 

@@ -17,6 +17,7 @@
 #include "mozilla/dom/HTMLTextAreaElement.h"
 #include "mozilla/dom/RootedDictionary.h"
 #include "mozilla/dom/SessionStorageManager.h"
+#include "mozilla/dom/PBackgroundSessionStorageCache.h"
 #include "mozilla/dom/SessionStoreUtils.h"
 #include "mozilla/dom/txIXPathContext.h"
 #include "mozilla/dom/WindowGlobalParent.h"
@@ -37,6 +38,7 @@
 #include "nsIFormControl.h"
 #include "nsIScrollableFrame.h"
 #include "nsISHistory.h"
+#include "nsIXULRuntime.h"
 #include "nsPresContext.h"
 #include "nsPrintfCString.h"
 
@@ -221,7 +223,6 @@ void SessionStoreUtils::CollectDocShellCapabilities(const GlobalObject& aGlobal,
 void SessionStoreUtils::RestoreDocShellCapabilities(
     nsIDocShell* aDocShell, const nsCString& aDisallowCapabilities) {
   aDocShell->SetAllowPlugins(true);
-  aDocShell->SetAllowJavascript(true);
   aDocShell->SetAllowMetaRedirects(true);
   aDocShell->SetAllowSubframes(true);
   aDocShell->SetAllowImages(true);
@@ -231,12 +232,13 @@ void SessionStoreUtils::RestoreDocShellCapabilities(
   aDocShell->SetAllowContentRetargeting(true);
   aDocShell->SetAllowContentRetargetingOnChildren(true);
 
+  bool allowJavascript = true;
   for (const nsACString& token :
        nsCCharSeparatedTokenizer(aDisallowCapabilities, ',').ToRange()) {
     if (token.EqualsLiteral("Plugins")) {
       aDocShell->SetAllowPlugins(false);
     } else if (token.EqualsLiteral("Javascript")) {
-      aDocShell->SetAllowJavascript(false);
+      allowJavascript = false;
     } else if (token.EqualsLiteral("MetaRedirects")) {
       aDocShell->SetAllowMetaRedirects(false);
     } else if (token.EqualsLiteral("Subframes")) {
@@ -259,6 +261,12 @@ void SessionStoreUtils::RestoreDocShellCapabilities(
     } else if (token.EqualsLiteral("ContentRetargetingOnChildren")) {
       aDocShell->SetAllowContentRetargetingOnChildren(false);
     }
+  }
+
+  if (!mozilla::SessionHistoryInParent()) {
+    // With SessionHistoryInParent, this is set from the parent process.
+    BrowsingContext* bc = aDocShell->GetBrowsingContext();
+    Unused << bc->SetAllowJavascript(allowJavascript);
   }
 }
 
@@ -533,13 +541,13 @@ static void CollectInputElement(Document* aDocument,
     nsCOMPtr<nsIFormControl> formControl =
         do_QueryInterface(inputlist->Item(i));
     if (formControl) {
-      uint8_t controlType = formControl->ControlType();
-      if (controlType == NS_FORM_INPUT_PASSWORD ||
-          controlType == NS_FORM_INPUT_HIDDEN ||
-          controlType == NS_FORM_INPUT_BUTTON ||
-          controlType == NS_FORM_INPUT_IMAGE ||
-          controlType == NS_FORM_INPUT_SUBMIT ||
-          controlType == NS_FORM_INPUT_RESET) {
+      auto controlType = formControl->ControlType();
+      if (controlType == FormControlType::InputPassword ||
+          controlType == FormControlType::InputHidden ||
+          controlType == FormControlType::InputButton ||
+          controlType == FormControlType::InputImage ||
+          controlType == FormControlType::InputSubmit ||
+          controlType == FormControlType::InputReset) {
         continue;
       }
     }
@@ -560,14 +568,14 @@ static void CollectInputElement(Document* aDocument,
     }
 
     FormEntryValue value;
-    if (input->ControlType() == NS_FORM_INPUT_CHECKBOX ||
-        input->ControlType() == NS_FORM_INPUT_RADIO) {
+    if (input->ControlType() == FormControlType::InputCheckbox ||
+        input->ControlType() == FormControlType::InputRadio) {
       bool checked = input->Checked();
       if (checked == input->DefaultChecked()) {
         continue;
       }
       AppendEntry(input, id, Checkbox{checked}, aFormData);
-    } else if (input->ControlType() == NS_FORM_INPUT_FILE) {
+    } else if (input->ControlType() == FormControlType::InputFile) {
       IgnoredErrorResult rv;
       sessionstore::FileList file;
       input->MozGetFileNameArray(file.valueList(), rv);
@@ -737,13 +745,13 @@ void SessionStoreUtils::CollectFromInputElement(Document& aDocument,
     nsCOMPtr<nsIFormControl> formControl =
         do_QueryInterface(inputlist->Item(i));
     if (formControl) {
-      uint8_t controlType = formControl->ControlType();
-      if (controlType == NS_FORM_INPUT_PASSWORD ||
-          controlType == NS_FORM_INPUT_HIDDEN ||
-          controlType == NS_FORM_INPUT_BUTTON ||
-          controlType == NS_FORM_INPUT_IMAGE ||
-          controlType == NS_FORM_INPUT_SUBMIT ||
-          controlType == NS_FORM_INPUT_RESET) {
+      auto controlType = formControl->ControlType();
+      if (controlType == FormControlType::InputPassword ||
+          controlType == FormControlType::InputHidden ||
+          controlType == FormControlType::InputButton ||
+          controlType == FormControlType::InputImage ||
+          controlType == FormControlType::InputSubmit ||
+          controlType == FormControlType::InputReset) {
         continue;
       }
     }
@@ -763,15 +771,15 @@ void SessionStoreUtils::CollectFromInputElement(Document& aDocument,
       continue;
     }
 
-    if (input->ControlType() == NS_FORM_INPUT_CHECKBOX ||
-        input->ControlType() == NS_FORM_INPUT_RADIO) {
+    if (input->ControlType() == FormControlType::InputCheckbox ||
+        input->ControlType() == FormControlType::InputRadio) {
       bool checked = input->Checked();
       if (checked == input->DefaultChecked()) {
         continue;
       }
       AppendValueToCollectedData(input, id, checked, aGeneratedCount,
                                  std::forward<ArgsT>(args)...);
-    } else if (input->ControlType() == NS_FORM_INPUT_FILE) {
+    } else if (input->ControlType() == FormControlType::InputFile) {
       IgnoredErrorResult rv;
       nsTArray<nsString> result;
       input->MozGetFileNameArray(result, rv);
@@ -1008,7 +1016,7 @@ static void SetElementAsObject(JSContext* aCx, Element* aElement,
                                JS::Handle<JS::Value> aObject) {
   RefPtr<HTMLInputElement> input = HTMLInputElement::FromNode(aElement);
   if (input) {
-    if (input->ControlType() == NS_FORM_INPUT_FILE) {
+    if (input->ControlType() == FormControlType::InputFile) {
       CollectedFileListValue value;
       if (value.Init(aCx, aObject)) {
         SetElementAsFiles(input, value);
@@ -1215,7 +1223,7 @@ void RestoreFormEntry(Element* aNode, const FormEntryValue& aValue) {
       break;
     case Type::TFileList: {
       if (RefPtr<HTMLInputElement> input = HTMLInputElement::FromNode(aNode);
-          input && input->ControlType() == NS_FORM_INPUT_FILE) {
+          input && input->ControlType() == FormControlType::InputFile) {
         CollectedFileListValue value;
         value.mFileList = aValue.get_FileList().valueList().Clone();
         SetElementAsFiles(input, value);
@@ -1260,135 +1268,6 @@ void SessionStoreUtils::RestoreFormData(
                                : aDocument.GetElementById(entry.mData.id());
     if (node) {
       RestoreFormEntry(node, entry.mData.value());
-    }
-  }
-}
-
-/* static */
-void SessionStoreUtils::RestoreSessionStorage(
-    const GlobalObject& aGlobal, nsIDocShell* aDocShell,
-    const Record<nsString, Record<nsString, nsString>>& aData) {
-  BrowsingContext* const browsingContext =
-      nsDocShell::Cast(aDocShell)->GetBrowsingContext();
-  if (!browsingContext) {
-    return;
-  }
-
-  const RefPtr<SessionStorageManager> storageManager =
-      browsingContext->GetSessionStorageManager();
-  if (!storageManager) {
-    return;
-  }
-
-  for (auto& entry : aData.Entries()) {
-    // NOTE: In capture() we record the full origin for the URI which the
-    // sessionStorage is being captured for. As of bug 1235657 this code
-    // stopped parsing any origins which have originattributes correctly, as
-    // it decided to use the origin attributes from the docshell, and try to
-    // interpret the origin as a URI. Since bug 1353844 this code now correctly
-    // parses the full origin, and then discards the origin attributes, to
-    // make the behavior line up with the original intentions in bug 1235657
-    // while preserving the ability to read all session storage from
-    // previous versions. In the future, if this behavior is desired, we may
-    // want to use the spec instead of the origin as the key, and avoid
-    // transmitting origin attribute information which we then discard when
-    // restoring.
-    //
-    // If changing this logic, make sure to also change the principal
-    // computation logic in SessionStore::_sendRestoreHistory.
-
-    // OriginAttributes are always after a '^' character
-    int32_t pos = entry.mKey.RFindChar('^');
-    nsCOMPtr<nsIPrincipal> principal = BasePrincipal::CreateContentPrincipal(
-        NS_ConvertUTF16toUTF8(Substring(entry.mKey, 0, pos)));
-
-    nsCOMPtr<nsIPrincipal> storagePrincipal =
-        BasePrincipal::CreateContentPrincipal(
-            NS_ConvertUTF16toUTF8(entry.mKey));
-
-    RefPtr<Storage> storage;
-    // There is no need to pass documentURI, it's only used to fill documentURI
-    // property of domstorage event, which in this case has no consumer.
-    // Prevention of events in case of missing documentURI will be solved in a
-    // followup bug to bug 600307.
-    // Null window because the current window doesn't match the principal yet
-    // and loads about:blank.
-    storageManager->CreateStorage(nullptr, principal, storagePrincipal, u""_ns,
-                                  false, getter_AddRefs(storage));
-    if (!storage) {
-      continue;
-    }
-    for (auto& InnerEntry : entry.mValue.Entries()) {
-      IgnoredErrorResult result;
-      storage->SetItem(InnerEntry.mKey, InnerEntry.mValue, *principal, result);
-      if (result.Failed()) {
-        NS_WARNING("storage set item failed!");
-      }
-    }
-  }
-}
-
-// This is a mirror of SessionStoreUtils::RestoreSessionStorage for the SHIP
-// codepath. We'll be able to remove this when it becomes possible to restore
-// storage directly from the parent (bug 1700623).
-void RestoreSessionStorage(nsIDocShell* aDocShell,
-                           const nsTArray<StorageEntry>& aData) {
-  BrowsingContext* const browsingContext =
-      nsDocShell::Cast(aDocShell)->GetBrowsingContext();
-  if (!browsingContext) {
-    return;
-  }
-
-  const RefPtr<SessionStorageManager> storageManager =
-      browsingContext->GetSessionStorageManager();
-  if (!storageManager) {
-    return;
-  }
-
-  for (const auto& entry : aData) {
-    // NOTE: In capture() we record the full origin for the URI which the
-    // sessionStorage is being captured for. As of bug 1235657 this code
-    // stopped parsing any origins which have originattributes correctly, as
-    // it decided to use the origin attributes from the docshell, and try to
-    // interpret the origin as a URI. Since bug 1353844 this code now correctly
-    // parses the full origin, and then discards the origin attributes, to
-    // make the behavior line up with the original intentions in bug 1235657
-    // while preserving the ability to read all session storage from
-    // previous versions. In the future, if this behavior is desired, we may
-    // want to use the spec instead of the origin as the key, and avoid
-    // transmitting origin attribute information which we then discard when
-    // restoring.
-    //
-    // If changing this logic, make sure to also change the principal
-    // computation logic in SessionStore::_sendRestoreHistory.
-
-    // OriginAttributes are always after a '^' character
-    int32_t pos = entry.origin().RFindChar('^');
-    nsCOMPtr<nsIPrincipal> principal = BasePrincipal::CreateContentPrincipal(
-        Substring(entry.origin(), 0, pos));
-
-    nsCOMPtr<nsIPrincipal> storagePrincipal =
-        BasePrincipal::CreateContentPrincipal(entry.origin());
-
-    RefPtr<Storage> storage;
-    // There is no need to pass documentURI, it's only used to fill documentURI
-    // property of domstorage event, which in this case has no consumer.
-    // Prevention of events in case of missing documentURI will be solved in a
-    // followup bug to bug 600307.
-    // Null window because the current window doesn't match the principal yet
-    // and loads about:blank.
-    storageManager->CreateStorage(nullptr, principal, storagePrincipal, u""_ns,
-                                  false, getter_AddRefs(storage));
-    if (!storage) {
-      continue;
-    }
-    MOZ_DIAGNOSTIC_ASSERT(entry.keys().Length() == entry.values().Length());
-    for (size_t i = 0; i < entry.keys().Length(); ++i) {
-      IgnoredErrorResult result;
-      storage->SetItem(entry.keys()[i], entry.values()[i], *principal, result);
-      if (result.Failed()) {
-        NS_WARNING("storage set item failed!");
-      }
     }
   }
 }
@@ -1562,11 +1441,6 @@ void SessionStoreUtils::RestoreDocShellState(
       aDocShell->SetCurrentURI(aState.URI());
     }
     RestoreDocShellCapabilities(aDocShell, aState.docShellCaps());
-    // We'll be able to remove this when it becomes possible to restore
-    // storage directly from the parent.
-    if (!aState.sessionStorage().IsEmpty()) {
-      ::RestoreSessionStorage(aDocShell, aState.sessionStorage());
-    }
   }
 }
 
@@ -1574,7 +1448,6 @@ void SessionStoreUtils::RestoreDocShellState(
 already_AddRefed<Promise> SessionStoreUtils::RestoreDocShellState(
     const GlobalObject& aGlobal, CanonicalBrowsingContext& aContext,
     const nsACString& aURL, const nsCString& aDocShellCaps,
-    const Record<nsCString, Record<nsString, nsString>>& aSessionStorage,
     ErrorResult& aError) {
   MOZ_RELEASE_ASSERT(mozilla::SessionHistoryInParent());
   MOZ_RELEASE_ASSERT(aContext.IsTop());
@@ -1597,27 +1470,19 @@ already_AddRefed<Promise> SessionStoreUtils::RestoreDocShellState(
       }
     }
 
-    // We'll be able to remove this when it becomes possible to restore storage
-    // directly from the parent.
-    nsTArray<StorageEntry> storage;
-    for (const auto& originEntry : aSessionStorage.Entries()) {
-      StorageEntry* entry = storage.AppendElement();
-      entry->origin() = originEntry.mKey;
-      for (const auto& kvEntry : originEntry.mValue.Entries()) {
-        entry->keys().AppendElement(kvEntry.mKey);
-        entry->values().AppendElement(kvEntry.mValue);
+    bool allowJavascript = true;
+    for (const nsACString& token :
+         nsCCharSeparatedTokenizer(aDocShellCaps, ',').ToRange()) {
+      if (token.EqualsLiteral("Javascript")) {
+        allowJavascript = false;
       }
     }
 
-    DocShellRestoreState state = {uri, aDocShellCaps, storage};
+    Unused << aContext.SetAllowJavascript(allowJavascript);
 
-    // We can't know at this point if the associated browser element will
-    // go through a remoteness change to load |aURL|, so forcing a round trip
-    // here even for non-remote documents gives SessionStore a chance to first
-    // flip the browser's remoteness, and then call this again. Note that this
-    // is only actually required as long as we're still doing an explicit
-    // remoteness flip during the session restore process, which will be removed
-    // in bug 1709136.
+    DocShellRestoreState state = {uri, aDocShellCaps};
+
+    // TODO (anny): Investigate removing this roundtrip.
     wgp->SendRestoreDocShellState(state)->Then(
         GetMainThreadSerialEventTarget(), __func__,
         [promise](void) { promise->MaybeResolveWithUndefined(); },
@@ -1627,6 +1492,37 @@ already_AddRefed<Promise> SessionStoreUtils::RestoreDocShellState(
   }
 
   return nullptr;
+}
+
+/* static */
+void SessionStoreUtils::RestoreSessionStorageFromParent(
+    const GlobalObject& aGlobal, const CanonicalBrowsingContext& aContext,
+    const Record<nsCString, Record<nsString, nsString>>& aSessionStorage) {
+  nsTArray<SSCacheCopy> cacheInitList;
+  for (const auto& originEntry : aSessionStorage.Entries()) {
+    nsCOMPtr<nsIPrincipal> storagePrincipal =
+        BasePrincipal::CreateContentPrincipal(originEntry.mKey);
+
+    nsCString originKey;
+    nsresult rv = storagePrincipal->GetStorageOriginKey(originKey);
+    if (NS_FAILED(rv)) {
+      continue;
+    }
+
+    SSCacheCopy& cacheInit = *cacheInitList.AppendElement();
+
+    cacheInit.originKey() = originKey;
+    storagePrincipal->OriginAttributesRef().CreateSuffix(
+        cacheInit.originAttributes());
+
+    for (const auto& entry : originEntry.mValue.Entries()) {
+      SSSetItemInfo& setItemInfo = *cacheInit.data().AppendElement();
+      setItemInfo.key() = entry.mKey;
+      setItemInfo.value() = entry.mValue;
+    }
+  }
+
+  BackgroundSessionStorageManager::LoadData(aContext.Id(), cacheInitList);
 }
 
 /* static */
@@ -1767,9 +1663,7 @@ nsresult SessionStoreUtils::ConstructSessionStorageValues(
 
     auto entry = aRecord.Entries().AppendElement();
 
-    if (!entry->mValue.Entries().SetCapacity(
-            value.defaultData().Length() + value.sessionData().Length(),
-            fallible)) {
+    if (!entry->mValue.Entries().SetCapacity(value.data().Length(), fallible)) {
       return NS_ERROR_FAILURE;
     }
 
@@ -1777,8 +1671,7 @@ nsresult SessionStoreUtils::ConstructSessionStorageValues(
       return NS_ERROR_FAILURE;
     }
 
-    ConstructSessionStorageValue(value.defaultData(), entry->mValue);
-    ConstructSessionStorageValue(value.sessionData(), entry->mValue);
+    ConstructSessionStorageValue(value.data(), entry->mValue);
   }
 
   return NS_OK;

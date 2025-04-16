@@ -52,6 +52,7 @@
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/ProcessHangMonitor.h"
+#include "mozilla/StaticPrefs_accessibility.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/TextEventDispatcher.h"
 #include "mozilla/TextEvents.h"
@@ -221,7 +222,7 @@ BrowserParent::BrowserParent(ContentParent* aManager, const TabId& aTabId,
       mMarkedDestroying(false),
       mIsDestroyed(false),
       mRemoteTargetSetsCursor(false),
-      mPreserveLayers(false),
+      mIsPreservingLayers(false),
       mRenderLayers(true),
       mHasLayers(false),
       mHasPresented(false),
@@ -1213,7 +1214,9 @@ mozilla::ipc::IPCResult BrowserParent::RecvPDocAccessibleConstructor(
 
 #  ifdef XP_WIN
     MOZ_ASSERT(aDocCOMProxy.IsNull());
-    a11y::WrapperFor(doc)->GetMsaa()->SetID(aMsaaID);
+    if (!StaticPrefs::accessibility_cache_enabled_AtStartup()) {
+      a11y::WrapperFor(doc)->GetMsaa()->SetID(aMsaaID);
+    }
     if (a11y::nsWinUtils::IsWindowEmulationStarted()) {
       doc->SetEmulatedWindowHandle(parentDoc->GetEmulatedWindowHandle());
     }
@@ -1224,35 +1227,34 @@ mozilla::ipc::IPCResult BrowserParent::RecvPDocAccessibleConstructor(
     return IPC_OK();
   }
 
-  if (GetBrowserBridgeParent()) {
+  if (auto* bridge = GetBrowserBridgeParent()) {
     // Iframe document rendered in a different process to its embedder.
     // In this case, we don't get aParentDoc and aParentID.
     MOZ_ASSERT(!aParentDoc && !aParentID);
     doc->SetTopLevelInContentProcess();
 #  ifdef XP_WIN
-    MOZ_ASSERT(!aDocCOMProxy.IsNull());
-    RefPtr<IAccessible> proxy(aDocCOMProxy.Get());
-    doc->SetCOMInterface(proxy);
+    if (!StaticPrefs::accessibility_cache_enabled_AtStartup()) {
+      MOZ_ASSERT(!aDocCOMProxy.IsNull());
+      RefPtr<IAccessible> proxy(aDocCOMProxy.Get());
+      doc->SetCOMInterface(proxy);
+    }
 #  endif
     a11y::ProxyCreated(doc);
 #  ifdef XP_WIN
-    // This *must* be called after ProxyCreated because WrapperFor will fail
-    // before that.
-    a11y::AccessibleWrap* wrapper = a11y::WrapperFor(doc);
-    MOZ_ASSERT(wrapper);
-    wrapper->GetMsaa()->SetID(aMsaaID);
+    if (!StaticPrefs::accessibility_cache_enabled_AtStartup()) {
+      // This *must* be called after ProxyCreated because WrapperFor will fail
+      // before that.
+      a11y::AccessibleWrap* wrapper = a11y::WrapperFor(doc);
+      MOZ_ASSERT(wrapper);
+      wrapper->GetMsaa()->SetID(aMsaaID);
+    }
 #  endif
-    a11y::DocAccessibleParent* embedderDoc;
-    uint64_t embedderID;
-    Tie(embedderDoc, embedderID) = doc->GetRemoteEmbedder();
     // It's possible the embedder accessible hasn't been set yet; e.g.
     // a hidden iframe. In that case, embedderDoc will be null and this will
     // be handled when the embedder is set.
-    if (embedderDoc) {
-      MOZ_ASSERT(embedderID);
-      mozilla::ipc::IPCResult added =
-          embedderDoc->AddChildDoc(doc, embedderID,
-                                   /* aCreating */ false);
+    if (a11y::DocAccessibleParent* embedderDoc =
+            bridge->GetEmbedderAccessibleDoc()) {
+      mozilla::ipc::IPCResult added = embedderDoc->AddChildDoc(bridge);
       if (!added) {
 #  ifdef DEBUG
         return added;
@@ -1274,14 +1276,18 @@ mozilla::ipc::IPCResult BrowserParent::RecvPDocAccessibleConstructor(
     doc->SetTopLevel();
     a11y::DocManager::RemoteDocAdded(doc);
 #  ifdef XP_WIN
-    a11y::WrapperFor(doc)->GetMsaa()->SetID(aMsaaID);
-    MOZ_ASSERT(!aDocCOMProxy.IsNull());
+    if (StaticPrefs::accessibility_cache_enabled_AtStartup()) {
+      doc->MaybeInitWindowEmulation();
+    } else {
+      a11y::WrapperFor(doc)->GetMsaa()->SetID(aMsaaID);
+      MOZ_ASSERT(!aDocCOMProxy.IsNull());
 
-    RefPtr<IAccessible> proxy(aDocCOMProxy.Get());
-    doc->SetCOMInterface(proxy);
-    doc->MaybeInitWindowEmulation();
-    if (a11y::LocalAccessible* outerDoc = doc->OuterDocOfRemoteBrowser()) {
-      doc->SendParentCOMProxy(outerDoc);
+      RefPtr<IAccessible> proxy(aDocCOMProxy.Get());
+      doc->SetCOMInterface(proxy);
+      doc->MaybeInitWindowEmulation();
+      if (a11y::LocalAccessible* outerDoc = doc->OuterDocOfRemoteBrowser()) {
+        doc->SendParentCOMProxy(outerDoc);
+      }
     }
 #  endif
   }
@@ -1391,15 +1397,6 @@ void BrowserParent::UpdateVsyncParentVsyncSource() {
 
   if (nsCOMPtr<nsIWidget> widget = GetWidget()) {
     mVsyncParent->UpdateVsyncSource(widget->GetVsyncSource());
-  }
-}
-
-void BrowserParent::SendMouseEvent(const nsAString& aType, float aX, float aY,
-                                   int32_t aButton, int32_t aClickCount,
-                                   int32_t aModifiers) {
-  if (!mIsDestroyed) {
-    Unused << PBrowserParent::SendMouseEvent(nsString(aType), aX, aY, aButton,
-                                             aClickCount, aModifiers);
   }
 }
 
@@ -2716,8 +2713,6 @@ mozilla::ipc::IPCResult BrowserParent::RecvOnStateChange(
       Unused << browser->SetIsNavigating(aStateChangeData->isNavigating());
       Unused << browser->SetMayEnableCharacterEncodingMenu(
           aStateChangeData->mayEnableCharacterEncodingMenu());
-      Unused << browser->SetCharsetAutodetected(
-          aStateChangeData->charsetAutodetected());
       Unused << browser->UpdateForStateChange(aStateChangeData->charset(),
                                               aStateChangeData->documentURI(),
                                               aStateChangeData->contentType());
@@ -2786,7 +2781,6 @@ mozilla::ipc::IPCResult BrowserParent::RecvOnLocationChange(
       Unused << browser->UpdateForLocationChange(
           aLocation, aLocationChangeData->charset(),
           aLocationChangeData->mayEnableCharacterEncodingMenu(),
-          aLocationChangeData->charsetAutodetected(),
           aLocationChangeData->documentURI(), aLocationChangeData->title(),
           aLocationChangeData->contentPrincipal(),
           aLocationChangeData->contentPartitionedPrincipal(),
@@ -2945,8 +2939,7 @@ BrowserParent::BrowsingContextForWebProgress(
 
 mozilla::ipc::IPCResult BrowserParent::RecvSessionStoreUpdate(
     const Maybe<nsCString>& aDocShellCaps, const Maybe<bool>& aPrivatedMode,
-    const bool aNeedCollectSHistory, const bool& aIsFinal,
-    const uint32_t& aEpoch) {
+    const bool aNeedCollectSHistory, const uint32_t& aEpoch) {
   UpdateSessionStoreData data;
   if (aDocShellCaps.isSome()) {
     data.mDocShellCaps.Construct() = aDocShellCaps.value();
@@ -2957,18 +2950,26 @@ mozilla::ipc::IPCResult BrowserParent::RecvSessionStoreUpdate(
 
   nsCOMPtr<nsISessionStoreFunctions> funcs =
       do_ImportModule("resource://gre/modules/SessionStoreFunctions.jsm");
-  NS_ENSURE_TRUE(funcs, IPC_OK());
+  if (!funcs) {
+    return IPC_OK();
+  }
+
   nsCOMPtr<nsIXPConnectWrappedJS> wrapped = do_QueryInterface(funcs);
   AutoJSAPI jsapi;
-  MOZ_ALWAYS_TRUE(jsapi.Init(wrapped->GetJSObjectGlobal()));
-  JS::Rooted<JS::Value> dataVal(jsapi.cx());
-  bool ok = ToJSValue(jsapi.cx(), data, &dataVal);
-  NS_ENSURE_TRUE(ok, IPC_OK());
+  if (!jsapi.Init(wrapped->GetJSObjectGlobal())) {
+    return IPC_OK();
+  }
 
-  nsresult rv = funcs->UpdateSessionStore(
-      mFrameElement, mBrowsingContext, aEpoch, dataVal, aNeedCollectSHistory);
+  JS::Rooted<JS::Value> update(jsapi.cx());
+  if (!ToJSValue(jsapi.cx(), data, &update)) {
+    return IPC_OK();
+  }
 
-  NS_ENSURE_SUCCESS(rv, IPC_OK());
+  JS::RootedValue key(jsapi.cx(),
+                      mBrowsingContext->Canonical()->Top()->PermanentKey());
+
+  Unused << funcs->UpdateSessionStore(mFrameElement, mBrowsingContext, key,
+                                      aEpoch, aNeedCollectSHistory, update);
 
   return IPC_OK();
 }
@@ -3376,7 +3377,7 @@ bool BrowserParent::GetRenderLayers() { return mRenderLayers; }
 
 void BrowserParent::SetRenderLayers(bool aEnabled) {
   if (aEnabled == mRenderLayers) {
-    if (aEnabled && mHasLayers && mPreserveLayers) {
+    if (aEnabled && mHasLayers && mIsPreservingLayers) {
       // RenderLayers might be called when we've been preserving layers,
       // and already had layers uploaded. In that case, the MozLayerTreeReady
       // event will not naturally arrive, which can confuse the front-end
@@ -3395,7 +3396,7 @@ void BrowserParent::SetRenderLayers(bool aEnabled) {
 
   // Preserve layers means that attempts to stop rendering layers
   // will be ignored.
-  if (!aEnabled && mPreserveLayers) {
+  if (!aEnabled && mIsPreservingLayers) {
     return;
   }
 
@@ -3419,7 +3420,11 @@ void BrowserParent::SetRenderLayersInternal(bool aEnabled) {
 }
 
 void BrowserParent::PreserveLayers(bool aPreserveLayers) {
-  mPreserveLayers = aPreserveLayers;
+  if (mIsPreservingLayers == aPreserveLayers) {
+    return;
+  }
+  mIsPreservingLayers = aPreserveLayers;
+  Unused << SendPreserveLayers(aPreserveLayers);
 }
 
 void BrowserParent::NotifyResolutionChanged() {
@@ -3823,7 +3828,7 @@ mozilla::ipc::IPCResult BrowserParent::RecvVisitURI(nsIURI* aURI,
 }
 
 mozilla::ipc::IPCResult BrowserParent::RecvQueryVisitedState(
-    const nsTArray<RefPtr<nsIURI>>&& aURIs) {
+    nsTArray<RefPtr<nsIURI>>&& aURIs) {
 #ifdef MOZ_ANDROID_HISTORY
   nsCOMPtr<IHistory> history = components::History::Service();
   if (NS_WARN_IF(!history)) {
@@ -3834,15 +3839,15 @@ mozilla::ipc::IPCResult BrowserParent::RecvQueryVisitedState(
     return IPC_OK();
   }
 
-  for (size_t i = 0; i < aURIs.Length(); ++i) {
-    if (!aURIs[i]) {
+  // FIXME(emilio): Is this check really needed?
+  for (nsIURI* uri : aURIs) {
+    if (!uri) {
       return IPC_FAIL(this, "Received null URI");
     }
   }
 
-  GeckoViewHistory* gvHistory = static_cast<GeckoViewHistory*>(history.get());
+  auto* gvHistory = static_cast<GeckoViewHistory*>(history.get());
   gvHistory->QueryVisitedState(widget, std::move(aURIs));
-
   return IPC_OK();
 #else
   return IPC_FAIL(this, "QueryVisitedState is Android-only");

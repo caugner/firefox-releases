@@ -94,11 +94,6 @@ body {
   }
 }
 
-.search-one-offs[compact=true] .search-setting-button,
-.search-one-offs:not([compact=true]) .search-setting-button-compact {
-  display: none;
-}
-
 %ifdef MENUBAR_CAN_AUTOHIDE
 #toolbar-menubar[autohide="true"] {
   overflow: hidden;
@@ -158,11 +153,9 @@ panelview[mainview] > .panel-header {
   transition: height var(--panelui-subview-transition-duration);
 }
 
-@media (-moz-proton-doorhangers) {
 :is(panel, menupopup)::part(arrow) {
   display: none;
 }
-} /** END Proton **/
 
 @supports -moz-bool-pref("layout.css.emulate-moz-box-with-flex") {
   #tabbrowser-tabs {
@@ -829,17 +822,6 @@ toolbar:not(#TabsToolbar) > #personal-bookmarks {
   }
 }
 
-@media not (-moz-proton) {
-@media (max-width: 550px) {
-  #urlbar-container {
-    min-width: calc(225px + 24px + 2 * var(--toolbarbutton-inner-padding));
-  }
-  #nav-bar[downloadsbuttonshown] #urlbar-container {
-    min-width: 225px;
-  }
-}
-} /*** END !proton ***/
-
 /* Flexible spacer sizing (gets overridden in the navbar) */
 toolbarpaletteitem[place=toolbar][id^=wrapper-customizableui-special-spring],
 toolbarspring {
@@ -933,8 +915,8 @@ menupopup[emptyplacesresult="true"] > .hide-if-empty-places-result {
 #fullscreen-and-pointerlock-wrapper {
   position: fixed;
   z-index: 2147483647 !important;
-  width: 100vw;
-  height: 100vh;
+  width: 100%;
+  height: 100%;
   top: 0;
   pointer-events: none;
 }
@@ -1433,14 +1415,15 @@ toolbarpaletteitem:not([place="palette"]) > #stop-reload-button {
 }
 
 .printPreviewBrowser {
-  display: none;
+  visibility: collapse;
   opacity: 1;
   transition: opacity 60ms;
 }
 
-.previewStack[previewtype="primary"] > .printPreviewBrowser[previewtype="primary"],
-.previewStack[previewtype="selection"] > .printPreviewBrowser[previewtype="selection"] {
-  display: block;
+.previewStack[previewtype="source"] > .printPreviewBrowser[previewtype="source"],
+.previewStack[previewtype="selection"] > .printPreviewBrowser[previewtype="selection"],
+.previewStack[previewtype="simplified"] > .printPreviewBrowser[previewtype="simplified"] {
+  visibility: visible;
 }
 
 .previewStack[rendering=true] > .printPreviewBrowser {
@@ -1458,11 +1441,11 @@ printpreview-pagination {
   transition: opacity 100ms 500ms;
 }
 printpreview-pagination:focus-within,
-.previewStack:hover > printpreview-pagination {
+.previewStack:hover printpreview-pagination {
   opacity: 1;
   transition: opacity 100ms;
 }
-.previewStack[rendering=true] > printpreview-pagination {
+.previewStack[rendering=true] printpreview-pagination {
   opacity: 0;
 }
 
@@ -1660,11 +1643,3 @@ toolbar[keyNav=true]:not([collapsed=true], [customizing=true]) toolbartabstop {
 /**
  * End Dialogs
  */
-
-@media not (-moz-proton-doorhangers) {
-/* Password update/save doorhanger */
-#password-notification-username,
-#password-notification-password {
-  margin-inline-start: 6px;
-}
-} /** END not Proton **/

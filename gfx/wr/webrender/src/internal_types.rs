@@ -313,6 +313,17 @@ pub struct TextureCacheAllocation {
     pub kind: TextureCacheAllocationKind,
 }
 
+/// A little bit of extra information to make memory reports more useful
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(feature = "capture", derive(Serialize))]
+#[cfg_attr(feature = "replay", derive(Deserialize))]
+pub enum TextureCacheCategory {
+    Atlas,
+    Standalone,
+    PictureTile,
+    RenderTarget,
+}
+
 /// Information used when allocating / reallocating.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub struct TextureCacheAllocInfo {
@@ -325,6 +336,7 @@ pub struct TextureCacheAllocInfo {
     pub is_shared_cache: bool,
     /// If true, this texture requires a depth target.
     pub has_depth: bool,
+    pub category: TextureCacheCategory
 }
 
 /// Sub-operation-specific information for allocation operations.
@@ -405,7 +417,7 @@ impl TextureUpdateList {
         height: i32,
     ) {
         let size = DeviceIntSize::new(width, height);
-        let rect = DeviceIntRect::new(origin, size);
+        let rect = DeviceIntRect::from_origin_and_size(origin, size);
         self.push_update(id, TextureCacheUpdate {
             rect,
             stride: None,

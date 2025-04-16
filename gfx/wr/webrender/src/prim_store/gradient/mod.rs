@@ -11,6 +11,8 @@ mod linear;
 mod radial;
 mod conic;
 
+pub use linear::MAX_CACHED_SIZE as LINEAR_MAX_CACHED_SIZE;
+
 pub use linear::*;
 pub use radial::*;
 pub use conic::*;
@@ -326,38 +328,36 @@ pub fn apply_gradient_local_clip(
     tile_spacing: &LayoutSize,
     clip_rect: &LayoutRect,
 ) -> LayoutVector2D {
-    let w = prim_rect.max_x().min(clip_rect.max_x()) - prim_rect.min_x();
-    let h = prim_rect.max_y().min(clip_rect.max_y()) - prim_rect.min_y();
+    let w = prim_rect.max.x.min(clip_rect.max.x) - prim_rect.min.x;
+    let h = prim_rect.max.y.min(clip_rect.max.y) - prim_rect.min.y;
     let is_tiled_x = w > stretch_size.width + tile_spacing.width;
     let is_tiled_y = h > stretch_size.height + tile_spacing.height;
 
     let mut offset = LayoutVector2D::new(0.0, 0.0);
 
     if !is_tiled_x {
-        let diff = (clip_rect.min_x() - prim_rect.min_x()).min(prim_rect.size.width);
+        let diff = (clip_rect.min.x - prim_rect.min.x).min(prim_rect.width());
         if diff > 0.0 {
-            prim_rect.origin.x += diff;
-            prim_rect.size.width -= diff;
+            prim_rect.min.x += diff;
             offset.x = -diff;
         }
 
-        let diff = prim_rect.max_x() - clip_rect.max_x();
+        let diff = prim_rect.max.x - clip_rect.max.x;
         if diff > 0.0 {
-            prim_rect.size.width -= diff;
+            prim_rect.max.x -= diff;
         }
     }
 
     if !is_tiled_y {
-        let diff = (clip_rect.min_y() - prim_rect.min_y()).min(prim_rect.size.height);
+        let diff = (clip_rect.min.y - prim_rect.min.y).min(prim_rect.height());
         if diff > 0.0 {
-            prim_rect.origin.y += diff;
-            prim_rect.size.height -= diff;
+            prim_rect.min.y += diff;
             offset.y = -diff;
         }
 
-        let diff = prim_rect.max_y() - clip_rect.max_y();
+        let diff = prim_rect.max.y - clip_rect.max.y;
         if diff > 0.0 {
-            prim_rect.size.height -= diff;
+            prim_rect.max.y -= diff;
         }
     }
 
@@ -375,14 +375,14 @@ fn test_struct_sizes() {
     // (b) You made a structure larger. This is not necessarily a problem, but should only
     //     be done with care, and after checking if talos performance regresses badly.
     assert_eq!(mem::size_of::<LinearGradient>(), 72, "LinearGradient size changed");
-    assert_eq!(mem::size_of::<LinearGradientTemplate>(), 144, "LinearGradientTemplate size changed");
+    assert_eq!(mem::size_of::<LinearGradientTemplate>(), 152, "LinearGradientTemplate size changed");
     assert_eq!(mem::size_of::<LinearGradientKey>(), 88, "LinearGradientKey size changed");
 
     assert_eq!(mem::size_of::<RadialGradient>(), 72, "RadialGradient size changed");
-    assert_eq!(mem::size_of::<RadialGradientTemplate>(), 144, "RadialGradientTemplate size changed");
+    assert_eq!(mem::size_of::<RadialGradientTemplate>(), 152, "RadialGradientTemplate size changed");
     assert_eq!(mem::size_of::<RadialGradientKey>(), 96, "RadialGradientKey size changed");
 
     assert_eq!(mem::size_of::<ConicGradient>(), 72, "ConicGradient size changed");
-    assert_eq!(mem::size_of::<ConicGradientTemplate>(), 144, "ConicGradientTemplate size changed");
+    assert_eq!(mem::size_of::<ConicGradientTemplate>(), 152, "ConicGradientTemplate size changed");
     assert_eq!(mem::size_of::<ConicGradientKey>(), 96, "ConicGradientKey size changed");
 }

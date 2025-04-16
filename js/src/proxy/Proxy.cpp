@@ -160,7 +160,7 @@ void js::AutoEnterPolicy::recordLeave() {
   }
 }
 
-JS_FRIEND_API void js::assertEnteredPolicy(JSContext* cx, JSObject* proxy,
+JS_PUBLIC_API void js::assertEnteredPolicy(JSContext* cx, JSObject* proxy,
                                            jsid id,
                                            BaseProxyHandler::Action act) {
   MOZ_ASSERT(proxy->is<ProxyObject>());
@@ -254,12 +254,12 @@ bool Proxy::delete_(JSContext* cx, HandleObject proxy, HandleId id,
 
   // Private names shouldn't take this path, as deleting a private name
   // should be a syntax error.
-  MOZ_ASSERT_IF(JSID_IS_SYMBOL(id), !JSID_TO_SYMBOL(id)->isPrivateName());
+  MOZ_ASSERT(!id.isPrivateName());
 
   return proxy->as<ProxyObject>().handler()->delete_(cx, proxy, id, result);
 }
 
-JS_FRIEND_API bool js::AppendUnique(JSContext* cx, MutableHandleIdVector base,
+JS_PUBLIC_API bool js::AppendUnique(JSContext* cx, MutableHandleIdVector base,
                                     HandleIdVector others) {
   RootedIdVector uniqueOthers(cx);
   if (!uniqueOthers.reserve(others.length())) {
@@ -362,7 +362,7 @@ bool Proxy::has(JSContext* cx, HandleObject proxy, HandleId id, bool* bp) {
   }
 
   // Private names shouldn't take this path, but only hasOwn;
-  MOZ_ASSERT_IF(JSID_IS_SYMBOL(id), !JSID_TO_SYMBOL(id)->isPrivateName());
+  MOZ_ASSERT(!id.isPrivateName());
 
   if (handler->hasPrototype()) {
     if (!handler->hasOwn(cx, proxy, id, bp)) {
@@ -956,7 +956,7 @@ const JSClass js::ProxyClass = PROXY_CLASS_DEF_WITH_CLASS_SPEC(
     JSCLASS_HAS_CACHED_PROTO(JSProto_Proxy) | JSCLASS_HAS_RESERVED_SLOTS(2),
     &ProxyClassSpec);
 
-JS_FRIEND_API JSObject* js::NewProxyObject(JSContext* cx,
+JS_PUBLIC_API JSObject* js::NewProxyObject(JSContext* cx,
                                            const BaseProxyHandler* handler,
                                            HandleValue priv, JSObject* proto_,
                                            const ProxyOptions& options) {

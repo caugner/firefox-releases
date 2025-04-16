@@ -198,7 +198,7 @@ void FontFaceSet::RemoveDOMContentLoadedListener() {
 }
 
 void FontFaceSet::ParseFontShorthandForMatching(
-    const nsACString& aFont, RefPtr<SharedFontList>& aFamilyList,
+    const nsACString& aFont, StyleFontFamilyList& aFamilyList,
     FontWeight& aWeight, FontStretch& aStretch, FontSlantStyle& aStyle,
     ErrorResult& aRv) {
   auto style = StyleComputedFontStyleDescriptor::Normal();
@@ -249,7 +249,7 @@ void FontFaceSet::FindMatchingFontFaces(const nsACString& aFont,
                                         const nsAString& aText,
                                         nsTArray<FontFace*>& aFontFaces,
                                         ErrorResult& aRv) {
-  RefPtr<SharedFontList> familyList;
+  StyleFontFamilyList familyList;
   FontWeight weight;
   FontStretch stretch;
   FontSlantStyle italicStyle;
@@ -271,13 +271,14 @@ void FontFaceSet::FindMatchingFontFaces(const nsACString& aFont,
   // Set of FontFaces that we want to return.
   nsTHashSet<FontFace*> matchingFaces;
 
-  for (const FontFamilyName& fontFamilyName : familyList->mNames) {
-    if (!fontFamilyName.IsNamed()) {
+  for (const StyleSingleFontFamily& fontFamilyName : familyList.list.AsSpan()) {
+    if (!fontFamilyName.IsFamilyName()) {
       continue;
     }
 
+    const auto& name = fontFamilyName.AsFamilyName();
     RefPtr<gfxFontFamily> family =
-        mUserFontSet->LookupFamily(nsAtomCString(fontFamilyName.mName));
+        mUserFontSet->LookupFamily(nsAtomCString(name.name.AsAtom()));
 
     if (!family) {
       continue;
@@ -518,7 +519,11 @@ FontFace* FontFaceSet::GetFontFaceAt(uint32_t aIndex) {
   FlushUserFontSet();
 
   if (aIndex < mRuleFaces.Length()) {
-    return mRuleFaces[aIndex].mFontFace;
+    auto& entry = mRuleFaces[aIndex];
+    if (entry.mOrigin.value() != StyleOrigin::Author) {
+      return nullptr;
+    }
+    return entry.mFontFace;
   }
 
   aIndex -= mRuleFaces.Length();
@@ -530,6 +535,20 @@ FontFace* FontFaceSet::GetFontFaceAt(uint32_t aIndex) {
 }
 
 uint32_t FontFaceSet::Size() {
+  FlushUserFontSet();
+
+  // Web IDL objects can only expose array index properties up to INT32_MAX.
+
+  size_t total = mNonRuleFaces.Length();
+  for (const auto& entry : mRuleFaces) {
+    if (entry.mOrigin.value() == StyleOrigin::Author) {
+      ++total;
+    }
+  }
+  return std::min<size_t>(total, INT32_MAX);
+}
+
+uint32_t FontFaceSet::SizeIncludingNonAuthorOrigins() {
   FlushUserFontSet();
 
   // Web IDL objects can only expose array index properties up to INT32_MAX.
@@ -551,8 +570,13 @@ already_AddRefed<FontFaceSetIterator> FontFaceSet::Values() {
 void FontFaceSet::ForEach(JSContext* aCx, FontFaceSetForEachCallback& aCallback,
                           JS::Handle<JS::Value> aThisArg, ErrorResult& aRv) {
   JS::Rooted<JS::Value> thisArg(aCx, aThisArg);
-  for (size_t i = 0; i < Size(); i++) {
+  for (size_t i = 0; i < SizeIncludingNonAuthorOrigins(); i++) {
     RefPtr<FontFace> face = GetFontFaceAt(i);
+    if (!face) {
+      // The font at index |i| is a non-Author origin font, which we shouldn't
+      // expose per spec.
+      continue;
+    }
     aCallback.Call(thisArg, *face, *face, *this, aRv);
     if (aRv.Failed()) {
       return;
@@ -1321,6 +1345,10 @@ bool FontFaceSet::IsFontLoadAllowed(const gfxFontFaceSrc& aSrc) {
     return false;
   }
 
+  if (aSrc.mUseOriginPrincipal) {
+    return true;
+  }
+
   gfxFontSrcPrincipal* gfxPrincipal = aSrc.mURI->InheritsSecurityContext()
                                           ? nullptr
                                           : aSrc.LoadPrincipal(*mUserFontSet);
@@ -1378,7 +1406,8 @@ nsresult FontFaceSet::SyncLoadFontData(gfxUserFontEntry* aFontToLoad,
       getter_AddRefs(channel), aFontFaceSrc->mURI->get(), mDocument,
       principal ? principal->NodePrincipal() : nullptr,
       nsILoadInfo::SEC_REQUIRE_SAME_ORIGIN_INHERITS_SEC_CONTEXT,
-      nsIContentPolicy::TYPE_FONT);
+      aFontFaceSrc->mUseOriginPrincipal ? nsIContentPolicy::TYPE_UA_FONT
+                                        : nsIContentPolicy::TYPE_FONT);
 
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -1625,33 +1654,34 @@ void FontFaceSet::CheckLoadingFinished() {
   nsTArray<OwningNonNull<FontFace>> loaded;
   nsTArray<OwningNonNull<FontFace>> failed;
 
-  for (size_t i = 0; i < mRuleFaces.Length(); i++) {
-    if (!mRuleFaces[i].mLoadEventShouldFire) {
-      continue;
+  auto checkStatus = [&](nsTArray<FontFaceRecord>& faces) -> void {
+    for (auto& face : faces) {
+      if (!face.mLoadEventShouldFire) {
+        continue;
+      }
+      FontFace* f = face.mFontFace;
+      switch (f->Status()) {
+        case FontFaceLoadStatus::Unloaded:
+          break;
+        case FontFaceLoadStatus::Loaded:
+          loaded.AppendElement(*f);
+          face.mLoadEventShouldFire = false;
+          break;
+        case FontFaceLoadStatus::Error:
+          failed.AppendElement(*f);
+          face.mLoadEventShouldFire = false;
+          break;
+        case FontFaceLoadStatus::Loading:
+          // We should've returned above at MightHavePendingFontLoads()!
+        case FontFaceLoadStatus::EndGuard_:
+          MOZ_ASSERT_UNREACHABLE("unexpected FontFaceLoadStatus");
+          break;
+      }
     }
-    FontFace* f = mRuleFaces[i].mFontFace;
-    if (f->Status() == FontFaceLoadStatus::Loaded) {
-      loaded.AppendElement(*f);
-      mRuleFaces[i].mLoadEventShouldFire = false;
-    } else if (f->Status() == FontFaceLoadStatus::Error) {
-      failed.AppendElement(*f);
-      mRuleFaces[i].mLoadEventShouldFire = false;
-    }
-  }
+  };
 
-  for (size_t i = 0; i < mNonRuleFaces.Length(); i++) {
-    if (!mNonRuleFaces[i].mLoadEventShouldFire) {
-      continue;
-    }
-    FontFace* f = mNonRuleFaces[i].mFontFace;
-    if (f->Status() == FontFaceLoadStatus::Loaded) {
-      loaded.AppendElement(*f);
-      mNonRuleFaces[i].mLoadEventShouldFire = false;
-    } else if (f->Status() == FontFaceLoadStatus::Error) {
-      failed.AppendElement(*f);
-      mNonRuleFaces[i].mLoadEventShouldFire = false;
-    }
-  }
+  checkStatus(mRuleFaces);
+  checkStatus(mNonRuleFaces);
 
   DispatchLoadingFinishedEvent(u"loadingdone"_ns, std::move(loaded));
 

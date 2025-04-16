@@ -7,6 +7,7 @@ const {
   STUBS_UPDATE_ENV,
   createCommandsForTab,
   getCleanedPacket,
+  getSerializedPacket,
   getStubFile,
   writeStubsToFile,
 } = require(`${CHROME_URL_ROOT}stub-generator-helpers`);
@@ -16,6 +17,12 @@ const TEST_URI =
 const STUB_FILE = "cssMessage.js";
 
 add_task(async function() {
+  // Disable bfcache for Fission for now.
+  // If Fission is disabled, the pref is no-op.
+  await SpecialPowers.pushPrefEnv({
+    set: [["fission.bfcacheInParent", false]],
+  });
+
   const isStubsUpdate = env.get(STUBS_UPDATE_ENV) == "true";
   info(`${isStubsUpdate ? "Update" : "Check"} ${STUB_FILE}`);
 
@@ -40,11 +47,13 @@ add_task(async function() {
 
   let failed = false;
   for (const [key, packet] of generatedStubs) {
-    const packetStr = JSON.stringify(packet, null, 2);
-    const existingPacketStr = JSON.stringify(
-      existingStubs.stubPackets.get(key),
-      null,
-      2
+    const packetStr = getSerializedPacket(packet, {
+      sortKeys: true,
+      replaceActorIds: true,
+    });
+    const existingPacketStr = getSerializedPacket(
+      existingStubs.rawPackets.get(key),
+      { sortKeys: true, replaceActorIds: true }
     );
     is(packetStr, existingPacketStr, `"${key}" packet has expected value`);
     failed = failed || packetStr !== existingPacketStr;

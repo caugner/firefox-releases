@@ -163,6 +163,36 @@ add_task(async function theme_change() {
   theme.disable();
 });
 
+add_task(async function keyboard_focus_okay() {
+  mockShell({ canPin: true });
+
+  await showAndWaitForDialog(async win => {
+    await BrowserTestUtils.waitForEvent(win, "ready");
+    Assert.equal(
+      win.document.activeElement,
+      win.document.getElementById("primary"),
+      "Primary button has focus"
+    );
+
+    win.document.getElementById("primary").click();
+    await BrowserTestUtils.waitForEvent(win, "ready");
+    Assert.equal(
+      win.document.activeElement,
+      win.document.getElementById("primary"),
+      "Primary button has focus"
+    );
+
+    win.document.getElementById("primary").click();
+    await BrowserTestUtils.waitForEvent(win, "ready");
+    Assert.equal(
+      win.document.activeElement,
+      win.document.querySelectorAll("[name=theme]")[0],
+      "First theme has focus"
+    );
+    win.close();
+  });
+});
+
 add_task(async function skip_screens() {
   Services.telemetry.clearEvents();
   const mock = mockShell({ isPinned: true });
@@ -352,6 +382,22 @@ add_task(async function remote_disabled() {
     feature: NimbusFeatures.upgradeDialog,
     configuration: { enabled: true, variables: {} },
   });
+});
+
+add_task(async function enterprise_disabled() {
+  const defaultPrefs = Services.prefs.getDefaultBranch("");
+  const pref = "browser.aboutwelcome.enabled";
+  const orig = defaultPrefs.getBoolPref(pref, true);
+  defaultPrefs.setBoolPref(pref, false);
+
+  await BROWSER_GLUE._maybeShowDefaultBrowserPrompt();
+
+  AssertEvents("Welcome disabled like enterprise policy", [
+    "trigger",
+    "reason",
+    "no-welcome",
+  ]);
+  defaultPrefs.setBoolPref(pref, orig);
 });
 
 add_task(async function show_major_upgrade() {

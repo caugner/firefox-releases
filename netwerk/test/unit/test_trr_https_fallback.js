@@ -5,9 +5,11 @@
 "use strict";
 
 ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+var { setTimeout } = ChromeUtils.import("resource://gre/modules/Timer.jsm");
 
 let h2Port;
 let h3Port;
+let h3NoResponsePort;
 let trrServer;
 
 const dns = Cc["@mozilla.org/network/dns-service;1"].getService(
@@ -31,6 +33,10 @@ function setup() {
   Assert.notEqual(h3Port, null);
   Assert.notEqual(h3Port, "");
 
+  h3NoResponsePort = env.get("MOZHTTP3_PORT_NO_RESPONSE");
+  Assert.notEqual(h3NoResponsePort, null);
+  Assert.notEqual(h3NoResponsePort, "");
+
   Services.prefs.setIntPref("network.trr.mode", Ci.nsIDNSService.MODE_TRRFIRST);
 
   Services.prefs.setBoolPref("network.dns.upgrade_with_https_rr", true);
@@ -51,6 +57,7 @@ registerCleanupFunction(async () => {
     "network.dns.httpssvc.http3_fast_fallback_timeout"
   );
   Services.prefs.clearUserPref("network.http.speculative-parallel-limit");
+  Services.prefs.clearUserPref("network.dns.localDomains");
   if (trrServer) {
     await trrServer.stop();
   }
@@ -574,7 +581,7 @@ add_task(async function testH3Connection() {
           priority: 1,
           name: "www.h3.com",
           values: [
-            { key: "alpn", value: "h3-27" },
+            { key: "alpn", value: "h3-29" },
             { key: "port", value: h3Port },
             { key: "echconfig", value: "456..." },
           ],
@@ -601,7 +608,7 @@ add_task(async function testH3Connection() {
 
   let chan = makeChan(`https://test.h3.com`);
   let [req] = await channelOpenPromise(chan);
-  Assert.equal(req.protocolVersion, "h3-27");
+  Assert.equal(req.protocolVersion, "h3-29");
   let internal = req.QueryInterface(Ci.nsIHttpChannelInternal);
   Assert.equal(internal.remotePort, h3Port);
 
@@ -622,6 +629,10 @@ add_task(async function testFastfallbackToH2() {
     "network.dns.httpssvc.http3_fast_fallback_timeout",
     1
   );
+  Services.prefs.setCharPref(
+    "network.dns.localDomains",
+    "test.fastfallback1.com"
+  );
 
   await trrServer.registerDoHAnswers("test.fastfallback.com", "HTTPS", {
     answers: [
@@ -634,8 +645,8 @@ add_task(async function testFastfallbackToH2() {
           priority: 1,
           name: "test.fastfallback1.com",
           values: [
-            { key: "alpn", value: "h3-27" },
-            { key: "port", value: h3Port },
+            { key: "alpn", value: "h3-29" },
+            { key: "port", value: h3NoResponsePort },
             { key: "echconfig", value: "456..." },
           ],
         },
@@ -722,7 +733,7 @@ add_task(async function testFailedH3Connection() {
           priority: 1,
           name: "www.h3.org",
           values: [
-            { key: "alpn", value: "h3-27" },
+            { key: "alpn", value: "h3-29" },
             { key: "port", value: h3Port },
             { key: "echconfig", value: "456..." },
           ],
@@ -760,7 +771,7 @@ add_task(async function testHttp3ExcludedList() {
 
   Services.prefs.setCharPref(
     "network.http.http3.alt-svc-mapping-for-testing",
-    "www.h3_fail.org;h3-27=:" + h3Port
+    "www.h3_fail.org;h3-29=:" + h3Port
   );
 
   // This will fail because there is no address record for www.h3_fail.org.
@@ -780,7 +791,7 @@ add_task(async function testHttp3ExcludedList() {
           priority: 1,
           name: "www.h3_fail.org",
           values: [
-            { key: "alpn", value: "h3-27" },
+            { key: "alpn", value: "h3-29" },
             { key: "port", value: h3Port },
           ],
         },
@@ -794,7 +805,7 @@ add_task(async function testHttp3ExcludedList() {
           priority: 2,
           name: "foo.example.com",
           values: [
-            { key: "alpn", value: "h3-27" },
+            { key: "alpn", value: "h3-29" },
             { key: "port", value: h3Port },
           ],
         },
@@ -808,7 +819,7 @@ add_task(async function testHttp3ExcludedList() {
 
   chan = makeChan(`https://test.h3_excluded.org`);
   let [req] = await channelOpenPromise(chan);
-  Assert.equal(req.protocolVersion, "h3-27");
+  Assert.equal(req.protocolVersion, "h3-29");
   let internal = req.QueryInterface(Ci.nsIHttpChannelInternal);
   Assert.equal(internal.remotePort, h3Port);
 
@@ -832,7 +843,7 @@ add_task(async function testAllRecordsInHttp3ExcludedList() {
 
   Services.prefs.setCharPref(
     "network.http.http3.alt-svc-mapping-for-testing",
-    "www.h3_fail1.org;h3-27=:" + h3Port
+    "www.h3_fail1.org;h3-29=:" + h3Port
   );
 
   await trrServer.registerDoHAnswers("www.h3_all_excluded.org", "A", {
@@ -863,7 +874,7 @@ add_task(async function testAllRecordsInHttp3ExcludedList() {
 
   Services.prefs.setCharPref(
     "network.http.http3.alt-svc-mapping-for-testing",
-    "www.h3_fail2.org;h3-27=:" + h3Port
+    "www.h3_fail2.org;h3-29=:" + h3Port
   );
 
   // This will fail because there is no address record for www.h3_fail2.org.
@@ -881,7 +892,7 @@ add_task(async function testAllRecordsInHttp3ExcludedList() {
           priority: 1,
           name: "www.h3_fail1.org",
           values: [
-            { key: "alpn", value: "h3-27" },
+            { key: "alpn", value: "h3-29" },
             { key: "port", value: h3Port },
             { key: "echconfig", value: "456..." },
           ],
@@ -896,7 +907,7 @@ add_task(async function testAllRecordsInHttp3ExcludedList() {
           priority: 2,
           name: "www.h3_fail2.org",
           values: [
-            { key: "alpn", value: "h3-27" },
+            { key: "alpn", value: "h3-29" },
             { key: "port", value: h3Port },
             { key: "echconfig", value: "456..." },
           ],
@@ -934,7 +945,7 @@ add_task(async function testAllRecordsInHttp3ExcludedList() {
   // give the first record one more shot.
   chan = makeChan(`https://www.h3_all_excluded.org`);
   [req] = await channelOpenPromise(chan);
-  Assert.equal(req.protocolVersion, "h3-27");
+  Assert.equal(req.protocolVersion, "h3-29");
   let internal = req.QueryInterface(Ci.nsIHttpChannelInternal);
   Assert.equal(internal.remotePort, h3Port);
 

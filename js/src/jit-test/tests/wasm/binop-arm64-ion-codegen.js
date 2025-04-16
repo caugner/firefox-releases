@@ -238,3 +238,83 @@ for ( [op, expect] of
                            'f',
                            expect);
 }
+
+// Test that 0-n yields negation.
+
+let subneg32 =
+    `(module
+       (func (export "f") (param i32) (result i32)
+         (i32.sub (i32.const 0) (local.get 0))))`
+codegenTestARM64_adhoc(
+    subneg32,
+    'f',
+    '4b0003e0  neg w0, w0');
+assertEq(wasmEvalText(subneg32).exports.f(-37), 37)
+assertEq(wasmEvalText(subneg32).exports.f(42), -42)
+
+let subneg64 = `(module
+       (func (export "f") (param i64) (result i64)
+         (i64.sub (i64.const 0) (local.get 0))))`
+codegenTestARM64_adhoc(
+    subneg64,
+    'f',
+    'cb0003e0  neg x0, x0');
+assertEq(wasmEvalText(subneg64).exports.f(-37000000000n), 37000000000n)
+assertEq(wasmEvalText(subneg64).exports.f(42000000000n), -42000000000n)
+
+// Test that select does something reasonable and does not tie its output to one
+// of its inputs.
+
+codegenTestARM64_adhoc(
+    `(module
+       (func (export "f") (param i64) (param i64) (param i64) (param i32) (result i64)
+         (select (local.get 1) (local.get 2) (local.get 3))))`,
+    'f',
+    `6a03007f  tst     w3, w3
+     9a821020  csel    x0, x1, x2, ne`)
+
+codegenTestARM64_adhoc(
+    `(module
+       (func (export "f") (param f64) (param f64) (param f64) (param i32) (result f64)
+         (select (local.get 1) (local.get 2) (local.get 3))))`,
+    'f',
+    `6a00001f  tst     w0, w0
+     1e621c20  fcsel   d0, d1, d2, ne`)
+
+// Here we test that no boolean is generated and then re-tested, and that
+// operands are swapped so that we can use an immediate constant, and that the
+// input is not tied to the output.
+
+codegenTestARM64_adhoc(
+    `(module
+       (func (export "f") (param $a i32) (param $b i32) (param $c i32) (param $d i32) (result i32)
+         (select (local.get $b) (local.get $d) (i32.lt_s (i32.const 0) (local.get $c)))))`,
+    'f',
+    `7100005f  cmp     w2, #0x0 \\(0\\)
+     1a83c020  csel    w0, w1, w3, gt`)
+
+codegenTestARM64_adhoc(
+    `(module
+       (func (export "f") (param $a f64) (param $b f64) (param $c f64) (param $d f64) (result f64)
+         (select (local.get $b) (local.get $d) (f64.lt (f64.const 0) (local.get $c)))))`,
+    'f',
+    `9e6703e0  fmov    d0, xzr
+     1e622000  fcmp    d0, d2
+     1e63bc20  fcsel   d0, d1, d3, lt`)
+
+// FP ABS should not tie its input to its output.
+
+codegenTestARM64_adhoc(
+    `(module
+       (func (export "f") (param f32) (param f32) (result f32)
+         (f32.abs (local.get 1))))`,
+    'f',
+    '1e20c020  fabs    s0, s1');
+
+codegenTestARM64_adhoc(
+    `(module
+       (func (export "f") (param f64) (param f64) (result f64)
+         (f64.abs (local.get 1))))`,
+    'f',
+    '1e60c020  fabs    d0, d1');
+

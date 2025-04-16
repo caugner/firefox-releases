@@ -18,6 +18,7 @@
 #include "nsDocShell.h"
 #include "nsIContentInlines.h"
 #include "nsIContentViewer.h"
+#include "nsIPrintSettings.h"
 #include "nsIPrintSettingsService.h"
 #include "mozilla/dom/Document.h"
 #include "nsPIDOMWindow.h"
@@ -55,6 +56,10 @@
 #include "nsIXULRuntime.h"
 #include "nsNetUtil.h"
 #include "nsFocusManager.h"
+#include "nsIINIParser.h"
+#include "nsAppRunner.h"
+#include "nsDirectoryService.h"
+#include "nsDirectoryServiceDefs.h"
 
 #include "nsGkAtoms.h"
 #include "nsNameSpaceManager.h"
@@ -135,6 +140,10 @@
 #  include "mozilla/embedding/printingui/PrintingParent.h"
 #  include "nsIWebBrowserPrint.h"
 #endif
+
+#if defined(MOZ_TELEMETRY_REPORTING)
+#  include "mozilla/Telemetry.h"
+#endif  // defined(MOZ_TELEMETRY_REPORTING)
 
 using namespace mozilla;
 using namespace mozilla::hal;
@@ -1552,10 +1561,8 @@ nsresult nsFrameLoader::SwapWithOtherLoader(nsFrameLoader* aOther,
     return NS_ERROR_DOM_SECURITY_ERR;
   }
 
-  RefPtr<nsDocShell> ourDocshell =
-      static_cast<nsDocShell*>(GetExistingDocShell());
-  RefPtr<nsDocShell> otherDocshell =
-      static_cast<nsDocShell*>(aOther->GetExistingDocShell());
+  RefPtr<nsDocShell> ourDocshell = GetExistingDocShell();
+  RefPtr<nsDocShell> otherDocshell = aOther->GetExistingDocShell();
   if (!ourDocshell || !otherDocshell) {
     // How odd
     return NS_ERROR_NOT_IMPLEMENTED;
@@ -1856,8 +1863,14 @@ void nsFrameLoader::StartDestroy(bool aForProcessSwitch) {
   }
   mDestroyCalled = true;
 
-  // request a tabStateFlush before tab is closed
-  RequestTabStateFlush();
+  // Request a full tab state flush if the tab is closing.
+  //
+  // XXX If we find that we need to do Session Store cleanup for the frameloader
+  // that's going away, we should unconditionally do the flush here, but include
+  // the |aForProcessSwitch| flag in the completion notification.
+  if (!aForProcessSwitch) {
+    RequestFinalTabStateFlush();
+  }
 
   // After this point, we return an error when trying to send a message using
   // the message manager on the frame.
@@ -2460,6 +2473,25 @@ void nsFrameLoader::SendIsUnderHiddenEmbedderElement(
   }
 }
 
+void nsFrameLoader::PropagateIsUnderHiddenEmbedderElement(
+    bool aIsUnderHiddenEmbedderElement) {
+  bool isUnderHiddenEmbedderElement = true;
+  if (Document* ownerDoc = GetOwnerDoc()) {
+    if (PresShell* presShell = ownerDoc->GetPresShell()) {
+      isUnderHiddenEmbedderElement = presShell->IsUnderHiddenEmbedderElement();
+    }
+  }
+
+  isUnderHiddenEmbedderElement |= aIsUnderHiddenEmbedderElement;
+  if (nsDocShell* docShell = GetExistingDocShell()) {
+    if (PresShell* presShell = docShell->GetPresShell()) {
+      presShell->SetIsUnderHiddenEmbedderElement(isUnderHiddenEmbedderElement);
+    }
+  } else {
+    SendIsUnderHiddenEmbedderElement(isUnderHiddenEmbedderElement);
+  }
+}
+
 void nsFrameLoader::UpdateBaseWindowPositionAndSize(
     nsSubDocumentFrame* aIFrame) {
   nsCOMPtr<nsIBaseWindow> baseWindow = GetDocShell(IgnoreErrors());
@@ -2809,21 +2841,6 @@ void nsFrameLoader::DeactivateRemoteFrame(ErrorResult& aRv) {
   browserParent->Deactivate(false, nsFocusManager::GenerateFocusActionId());
 }
 
-void nsFrameLoader::SendCrossProcessMouseEvent(const nsAString& aType, float aX,
-                                               float aY, int32_t aButton,
-                                               int32_t aClickCount,
-                                               int32_t aModifiers,
-                                               ErrorResult& aRv) {
-  auto* browserParent = GetBrowserParent();
-  if (!browserParent) {
-    aRv.Throw(NS_ERROR_FAILURE);
-    return;
-  }
-
-  browserParent->SendMouseEvent(aType, aX, aY, aButton, aClickCount,
-                                aModifiers);
-}
-
 void nsFrameLoader::ActivateFrameEvent(const nsAString& aType, bool aCapture,
                                        ErrorResult& aRv) {
   auto* browserParent = GetBrowserParent();
@@ -2838,8 +2855,10 @@ void nsFrameLoader::ActivateFrameEvent(const nsAString& aType, bool aCapture,
   }
 }
 
-nsresult nsFrameLoader::DoRemoteStaticClone(nsFrameLoader* aStaticCloneOf) {
+nsresult nsFrameLoader::DoRemoteStaticClone(nsFrameLoader* aStaticCloneOf,
+                                            nsIPrintSettings* aPrintSettings) {
   MOZ_ASSERT(aStaticCloneOf->IsRemoteFrame());
+  MOZ_ASSERT(aPrintSettings);
   auto* cc = ContentChild::GetSingleton();
   if (!cc) {
     MOZ_DIAGNOSTIC_ASSERT(XRE_IsParentProcess());
@@ -2852,12 +2871,25 @@ nsresult nsFrameLoader::DoRemoteStaticClone(nsFrameLoader* aStaticCloneOf) {
   }
   BrowsingContext* bc = GetBrowsingContext();
   MOZ_DIAGNOSTIC_ASSERT(bc);
-  cc->SendCloneDocumentTreeInto(bcToClone, bc);
+  nsCOMPtr<nsIPrintSettingsService> printSettingsSvc =
+      do_GetService("@mozilla.org/gfx/printsettings-service;1");
+  if (NS_WARN_IF(!printSettingsSvc)) {
+    return NS_ERROR_UNEXPECTED;
+  }
+  embedding::PrintData printData;
+  nsresult rv =
+      printSettingsSvc->SerializeToPrintData(aPrintSettings, &printData);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  cc->SendCloneDocumentTreeInto(bcToClone, bc, printData);
   return NS_OK;
 }
 
 nsresult nsFrameLoader::FinishStaticClone(
-    nsFrameLoader* aStaticCloneOf, bool* aOutHasInProcessPrintCallbacks) {
+    nsFrameLoader* aStaticCloneOf, nsIPrintSettings* aPrintSettings,
+    bool* aOutHasInProcessPrintCallbacks) {
   MOZ_DIAGNOSTIC_ASSERT(
       !nsContentUtils::IsSafeToRunScript(),
       "A script blocker should be on the stack while FinishStaticClone is run");
@@ -2875,7 +2907,7 @@ nsresult nsFrameLoader::FinishStaticClone(
   }
 
   if (aStaticCloneOf->IsRemoteFrame()) {
-    return DoRemoteStaticClone(aStaticCloneOf);
+    return DoRemoteStaticClone(aStaticCloneOf, aPrintSettings);
   }
 
   nsIDocShell* origDocShell = aStaticCloneOf->GetDocShell();
@@ -2895,8 +2927,8 @@ nsresult nsFrameLoader::FinishStaticClone(
   docShell->GetContentViewer(getter_AddRefs(viewer));
   NS_ENSURE_STATE(viewer);
 
-  nsCOMPtr<Document> clonedDoc =
-      doc->CreateStaticClone(docShell, viewer, aOutHasInProcessPrintCallbacks);
+  nsCOMPtr<Document> clonedDoc = doc->CreateStaticClone(
+      docShell, viewer, aPrintSettings, aOutHasInProcessPrintCallbacks);
 
   return NS_OK;
 }
@@ -3195,7 +3227,7 @@ already_AddRefed<Promise> nsFrameLoader::RequestTabStateFlush(
 
   if (mSessionStoreListener) {
     context->FlushSessionStore();
-    mSessionStoreListener->ForceFlushFromParent(false);
+    mSessionStoreListener->ForceFlushFromParent();
     context->Canonical()->UpdateSessionStoreSessionStorage(
         [promise]() { promise->MaybeResolveWithUndefined(); });
 
@@ -3222,24 +3254,46 @@ already_AddRefed<Promise> nsFrameLoader::RequestTabStateFlush(
   return promise.forget();
 }
 
-void nsFrameLoader::RequestTabStateFlush() {
+void nsFrameLoader::RequestFinalTabStateFlush() {
   BrowsingContext* context = GetExtantBrowsingContext();
-  if (!context || !context->IsTop()) {
+  if (!context || !context->IsTop() || context->Canonical()->IsReplaced()) {
     return;
   }
 
+  RefPtr<CanonicalBrowsingContext> canonical = context->Canonical();
+  RefPtr<WindowGlobalParent> wgp = canonical->GetCurrentWindowGlobal();
+  RefPtr<Element> embedder = context->GetEmbedderElement();
+
   if (mSessionStoreListener) {
     context->FlushSessionStore();
-    mSessionStoreListener->ForceFlushFromParent(true);
-    // No async ipc call is involved in parent only case
+    mSessionStoreListener->ForceFlushFromParent();
+
+    canonical->ClearPermanentKey();
+    if (wgp) {
+      wgp->NotifySessionStoreUpdatesComplete(embedder);
+    }
+
     return;
   }
+
+  using FlushPromise = ContentParent::FlushTabStatePromise;
+  nsTArray<RefPtr<FlushPromise>> flushPromises;
   context->Group()->EachParent([&](ContentParent* aParent) {
     if (aParent->CanSend()) {
-      aParent->SendFlushTabState(
-          context, [](auto) {}, [](auto) {});
+      flushPromises.AppendElement(aParent->SendFlushTabState(context));
     }
   });
+
+  FlushPromise::All(GetCurrentSerialEventTarget(), flushPromises)
+      ->Then(GetCurrentSerialEventTarget(), __func__,
+             [canonical = RefPtr{canonical}, wgp, embedder]() {
+               if (canonical) {
+                 canonical->ClearPermanentKey();
+               }
+               if (wgp) {
+                 wgp->NotifySessionStoreUpdatesComplete(embedder);
+               }
+             });
 }
 
 void nsFrameLoader::RequestEpochUpdate(uint32_t aEpoch) {
@@ -3260,15 +3314,15 @@ void nsFrameLoader::RequestEpochUpdate(uint32_t aEpoch) {
   }
 }
 
-void nsFrameLoader::RequestSHistoryUpdate(bool aImmediately) {
+void nsFrameLoader::RequestSHistoryUpdate() {
   if (mSessionStoreListener) {
-    mSessionStoreListener->UpdateSHistoryChanges(aImmediately);
+    mSessionStoreListener->UpdateSHistoryChanges();
     return;
   }
 
   // If remote browsing (e10s), handle this with the BrowserParent.
   if (auto* browserParent = GetBrowserParent()) {
-    Unused << browserParent->SendUpdateSHistory(aImmediately);
+    Unused << browserParent->SendUpdateSHistory();
   }
 }
 
@@ -3334,7 +3388,7 @@ already_AddRefed<Promise> nsFrameLoader::PrintPreview(
     sourceWindow =
         nsGlobalWindowOuter::Cast(aSourceBrowsingContext->GetDOMWindow());
   } else {
-    auto* ourDocshell = static_cast<nsDocShell*>(GetExistingDocShell());
+    nsDocShell* ourDocshell = GetExistingDocShell();
     if (NS_WARN_IF(!ourDocshell)) {
       promise->MaybeRejectWithNotSupportedError("No print preview docShell");
       return promise.forget();
@@ -3346,16 +3400,37 @@ already_AddRefed<Promise> nsFrameLoader::PrintPreview(
     return promise.forget();
   }
 
-  nsIDocShell* docShellToCloneInto = nullptr;
+  nsCOMPtr<nsIDocShell> docShellToCloneInto = nullptr;
   if (aSourceBrowsingContext) {
     // We're going to call `Print()` below on a window that is not our own,
     // which happens when we are creating a new print preview document instead
     // of just applying a settings change to the existing PP document.  In this
-    // case we need to explicity pass our docShell as the docShell to clone
+    // case we need to explicitly pass our docShell as the docShell to clone
     // into.
     docShellToCloneInto = GetExistingDocShell();
     if (NS_WARN_IF(!docShellToCloneInto)) {
       promise->MaybeRejectWithNotSupportedError("No print preview docShell");
+      return promise.forget();
+    }
+
+    // We need to make sure we're displayed so that the view tree ends up right.
+    RefPtr<BrowsingContext> bc = docShellToCloneInto->GetBrowsingContext();
+    if (NS_WARN_IF(!bc)) {
+      promise->MaybeRejectWithNotSupportedError(
+          "No print preview browsing context");
+      return promise.forget();
+    }
+
+    RefPtr<Element> embedder = bc->GetEmbedderElement();
+    if (NS_WARN_IF(!embedder)) {
+      promise->MaybeRejectWithNotSupportedError(
+          "Trying to clone into a frameloader with no element?");
+      return promise.forget();
+    }
+
+    nsIFrame* frame = embedder->GetPrimaryFrame(FlushType::Frames);
+    if (NS_WARN_IF(!frame)) {
+      promise->MaybeRejectWithNotSupportedError("Frame is not being displayed");
       return promise.forget();
     }
   }
@@ -3653,6 +3728,32 @@ void nsFrameLoader::SetWillChangeProcess() {
   docshell->SetWillChangeProcess();
 }
 
+static mozilla::Result<bool, nsresult> DidBuildIDChange() {
+  nsresult rv;
+  nsCOMPtr<nsIFile> file;
+
+  rv = NS_GetSpecialDirectory(NS_GRE_DIR, getter_AddRefs(file));
+  MOZ_TRY(rv);
+
+  rv = file->AppendNative("platform.ini"_ns);
+  MOZ_TRY(rv);
+
+  nsCOMPtr<nsIINIParserFactory> iniFactory =
+      do_GetService("@mozilla.org/xpcom/ini-parser-factory;1", &rv);
+  MOZ_TRY(rv);
+
+  nsCOMPtr<nsIINIParser> parser;
+  rv = iniFactory->CreateINIParser(file, getter_AddRefs(parser));
+  MOZ_TRY(rv);
+
+  nsAutoCString installedBuildID;
+  rv = parser->GetString("Build"_ns, "BuildID"_ns, installedBuildID);
+  MOZ_TRY(rv);
+
+  nsDependentCString runningBuildID(PlatformBuildID());
+  return (installedBuildID != runningBuildID);
+}
+
 void nsFrameLoader::MaybeNotifyCrashed(BrowsingContext* aBrowsingContext,
                                        ContentParentId aChildID,
                                        mozilla::ipc::MessageChannel* aChannel) {
@@ -3688,13 +3789,42 @@ void nsFrameLoader::MaybeNotifyCrashed(BrowsingContext* aBrowsingContext,
     return;
   }
 
+#if defined(MOZ_TELEMETRY_REPORTING)
+  bool sendTelemetry = false;
+#endif  // defined(MOZ_TELEMETRY_REPORTING)
+
   // Fire the actual crashed event.
   nsString eventName;
   if (aChannel && !aChannel->DoBuildIDsMatch()) {
-    eventName = u"oop-browser-buildid-mismatch"_ns;
+    auto changedOrError = DidBuildIDChange();
+    if (changedOrError.isErr()) {
+      NS_WARNING("Error while checking buildid mismatch");
+      eventName = u"oop-browser-buildid-mismatch"_ns;
+    } else {
+      bool aChanged = changedOrError.unwrap();
+      if (aChanged) {
+        NS_WARNING("True build ID mismatch");
+        eventName = u"oop-browser-buildid-mismatch"_ns;
+      } else {
+        NS_WARNING("build ID mismatch false alarm");
+        eventName = u"oop-browser-crashed"_ns;
+#if defined(MOZ_TELEMETRY_REPORTING)
+        sendTelemetry = true;
+#endif  // defined(MOZ_TELEMETRY_REPORTING)
+      }
+    }
   } else {
+    NS_WARNING("No build ID mismatch");
     eventName = u"oop-browser-crashed"_ns;
   }
+
+#if defined(MOZ_TELEMETRY_REPORTING)
+  if (sendTelemetry) {
+    Telemetry::ScalarAdd(
+        Telemetry::ScalarID::DOM_CONTENTPROCESS_BUILDID_MISMATCH_FALSE_POSITIVE,
+        1);
+  }
+#endif  // defined(MOZ_TELEMETRY_REPORTING)
 
   FrameCrashedEventInit init;
   init.mBubbles = true;

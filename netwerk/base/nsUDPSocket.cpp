@@ -37,7 +37,7 @@ static const uint32_t UDP_PACKET_CHUNK_SIZE = 1400;
 
 //-----------------------------------------------------------------------------
 
-typedef void (nsUDPSocket::*nsUDPSocketFunc)(void);
+using nsUDPSocketFunc = void (nsUDPSocket::*)();
 
 static nsresult PostEvent(nsUDPSocket* s, nsUDPSocketFunc func) {
   if (!gSocketTransportService) return NS_ERROR_FAILURE;
@@ -221,15 +221,7 @@ FallibleTArray<uint8_t>& nsUDPMessage::GetDataAsTArray() { return mData; }
 // nsUDPSocket
 //-----------------------------------------------------------------------------
 
-nsUDPSocket::nsUDPSocket()
-    : mLock("nsUDPSocket.mLock"),
-      mFD(nullptr),
-      mOriginAttributes(),
-      mAttached(false),
-      mByteReadCount(0),
-      mByteWriteCount(0) {
-  this->mAddr.inet = {};
-  mAddr.raw.family = PR_AF_UNSPEC;
+nsUDPSocket::nsUDPSocket() {
   // we want to be able to access the STS directly, and it may not have been
   // constructed yet.  the STS constructor sets gSocketTransportService.
   if (!gSocketTransportService) {
@@ -503,10 +495,11 @@ nsUDPSocket::Init(int32_t aPort, bool aLoopbackOnly, nsIPrincipal* aPrincipal,
   addr.raw.family = AF_INET;
   addr.inet.port = htons(aPort);
 
-  if (aLoopbackOnly)
+  if (aLoopbackOnly) {
     addr.inet.ip = htonl(INADDR_LOOPBACK);
-  else
+  } else {
     addr.inet.ip = htonl(INADDR_ANY);
+  }
 
   return InitWithAddress(&addr, aPrincipal, aAddressReuse, aOptionalArgc);
 }
@@ -1402,6 +1395,29 @@ nsUDPSocket::SetRecvBufferSize(int size) {
     return NS_ERROR_FAILURE;
   }
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsUDPSocket::GetDontFragment(bool* dontFragment) {
+  // Bug 1252759 - missing support for GetSocketOption
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+nsUDPSocket::SetDontFragment(bool dontFragment) {
+  if (NS_WARN_IF(!mFD)) {
+    return NS_ERROR_NOT_INITIALIZED;
+  }
+
+  PRSocketOptionData opt;
+  opt.option = PR_SockOpt_DontFrag;
+  opt.value.dont_fragment = dontFragment;
+
+  nsresult rv = SetSocketOption(opt);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return NS_ERROR_FAILURE;
+  }
   return NS_OK;
 }
 

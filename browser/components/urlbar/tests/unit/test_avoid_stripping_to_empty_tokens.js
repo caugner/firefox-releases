@@ -5,7 +5,7 @@
 testEngine_setup();
 
 add_task(async function test_protocol_trimming() {
-  for (let prot of ["http", "https", "ftp"]) {
+  for (let prot of ["http", "https"]) {
     let visit = {
       // Include the protocol in the query string to ensure we get matches (see bug 1059395)
       uri: Services.io.newURI(
@@ -78,7 +78,7 @@ add_task(async function test_protocol_trimming() {
         makeVisitResult(context, {
           uri: visit.uri.spec,
           title: visit.title,
-          providerName: "UnifiedComplete",
+          providerName: "Places",
         }),
       ],
     });
@@ -108,7 +108,7 @@ add_task(async function test_protocol_trimming() {
           makeVisitResult(context, {
             uri: visit.uri.spec,
             title: visit.title,
-            providerName: "UnifiedComplete",
+            providerName: "Places",
           }),
         ],
       });

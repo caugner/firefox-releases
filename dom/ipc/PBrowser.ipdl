@@ -130,7 +130,6 @@ struct WebProgressStateChangeData
 {
   bool isNavigating;
   bool mayEnableCharacterEncodingMenu;
-  bool charsetAutodetected;
 
   // The following fields are only set when the aStateFlags param passed with
   // this struct is |nsIWebProgress.STATE_STOP|.
@@ -144,7 +143,6 @@ struct WebProgressLocationChangeData
   bool isNavigating;
   bool isSyntheticDocument;
   bool mayEnableCharacterEncodingMenu;
-  bool charsetAutodetected;
   nsString contentType;
   nsString title;
   nsString charset;
@@ -562,8 +560,7 @@ parent:
     async NavigationFinished();
 
     async SessionStoreUpdate(nsCString? aDocShellCaps, bool? aPrivatedMode,
-                             bool aNeedCollectSHistory,
-                             bool aIsFinal, uint32_t aEpoch);
+                             bool aNeedCollectSHistory, uint32_t aEpoch);
 
     async IntrinsicSizeOrRatioChanged(IntrinsicSize? aIntrinsicSize,
                                       AspectRatio? aIntrinsicRatio);
@@ -583,8 +580,9 @@ parent:
 child:
     async NativeSynthesisResponse(uint64_t aObserverId, nsCString aResponse);
     async UpdateEpoch(uint32_t aEpoch);
-    async UpdateSHistory(bool aImmediately);
-    async CloneDocumentTreeIntoSelf(MaybeDiscardedBrowsingContext aBc);
+    async UpdateSHistory();
+    async CloneDocumentTreeIntoSelf(MaybeDiscardedBrowsingContext aBc, PrintData aPrintData);
+    async UpdateRemotePrintSettings(PrintData aPrintData);
 
     /**
      * Parent informs the child to release all pointer capture.
@@ -722,16 +720,6 @@ child:
      * should stop managing IME state.
      */
     async StopIMEStateManagement();
-
-    /**
-     * @see nsIDOMWindowUtils sendMouseEvent.
-     */
-    async MouseEvent(nsString aType,
-                     float aX,
-                     float aY,
-                     int32_t aButton,
-                     int32_t aClickCount,
-                     int32_t aModifiers);
 
     /**
      * When two consecutive mouse move events would be added to the message queue,
@@ -901,6 +889,12 @@ child:
      *        PaintWhileInterruptingJS).
      */
     async RenderLayers(bool aEnabled, LayersObserverEpoch aEpoch);
+
+    /**
+     * Communicates the child that we want layers to be preserved even when the
+     * browser is inactive.
+     */
+    async PreserveLayers(bool aPreserve);
 child:
     /**
      * Notify the child that it shouldn't paint the offscreen displayport.

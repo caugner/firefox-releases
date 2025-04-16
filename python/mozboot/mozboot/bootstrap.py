@@ -36,7 +36,7 @@ from mozboot.util import get_state_dir
 # Use distro package to retrieve linux platform information
 import distro
 
-APPLICATION_CHOICE = """
+ARTIFACT_MODE_NOTE = """
 Note on Artifact Mode:
 
 Artifact builds download prebuilt C++ components rather than building
@@ -46,10 +46,13 @@ Artifact builds are recommended for people working on Firefox or
 Firefox for Android frontends, or the GeckoView Java API. They are unsuitable
 for those working on C++ code. For more information see:
 https://firefox-source-docs.mozilla.org/contributing/build/artifact_builds.html.
+""".lstrip()
 
+APPLICATION_CHOICE = """
 Please choose the version of Firefox you want to build:
 %s
-Your choice: """
+Your choice:
+""".strip()
 
 APPLICATIONS = OrderedDict(
     [
@@ -101,14 +104,7 @@ mozilla-unified).
 Would you like to run a few configuration steps to ensure Git is
 optimally configured?"""
 
-DEBIAN_DISTROS = (
-    "debian",
-    "ubuntu",
-    "linuxmint",
-    "elementary",
-    "neon",
-    "pop",
-)
+DEBIAN_DISTROS = ("debian", "ubuntu", "linuxmint", "elementary", "neon", "pop")
 
 ADD_GIT_CINNABAR_PATH = """
 To add git-cinnabar to the PATH, edit your shell initialization script, which
@@ -168,7 +164,7 @@ class Bootstrapper(object):
                 full_distribution_name=False
             )
 
-            if dist_id in ("centos", "fedora"):
+            if dist_id in ("centos", "fedora", "rocky"):
                 cls = CentOSFedoraBootstrapper
                 args["distro"] = dist_id
             elif dist_id in DEBIAN_DISTROS:
@@ -287,27 +283,32 @@ class Bootstrapper(object):
         subprocess.check_call((sys.executable, mach_binary, "install-moz-phab"))
 
     def bootstrap(self, settings):
-        if sys.version_info[0] < 3:
-            print(
-                "This script must be run with Python 3. \n"
-                'Try "python3 bootstrap.py".'
-            )
-            sys.exit(1)
-
         if self.choice is None:
+            applications = APPLICATIONS
+            if isinstance(self.instance, OSXBootstrapperLight):
+                applications = {
+                    key: value
+                    for key, value in applications.items()
+                    if "artifact_mode" not in value and "mobile_android" not in value
+                }
+                print(
+                    'Note: M1 Macs don\'t support "Artifact Mode", so '
+                    "it has been removed from the list of options below"
+                )
+            else:
+                print(ARTIFACT_MODE_NOTE)
+
             # Like ['1. Firefox for Desktop', '2. Firefox for Android Artifact Mode', ...].
             labels = [
-                "%s. %s" % (i, name) for i, name in enumerate(APPLICATIONS.keys(), 1)
+                "%s. %s" % (i, name) for i, name in enumerate(applications.keys(), 1)
             ]
             choices = ["  {} [default]".format(labels[0])]
             choices += ["  {}".format(label) for label in labels[1:]]
             prompt = APPLICATION_CHOICE % "\n".join(choices)
             prompt_choice = self.instance.prompt_int(
-                prompt=prompt,
-                low=1,
-                high=len(APPLICATIONS),
+                prompt=prompt, low=1, high=len(applications)
             )
-            name, application = list(APPLICATIONS.items())[prompt_choice - 1]
+            name, application = list(applications.items())[prompt_choice - 1]
         elif self.choice in APPLICATIONS.keys():
             name, application = self.choice, APPLICATIONS[self.choice]
         elif self.choice in APPLICATIONS.values():
@@ -543,7 +544,7 @@ def current_firefox_checkout(env, hg=None):
     HG_ROOT_REVISIONS = set(
         [
             # From mozilla-unified.
-            "8ba995b74e18334ab3707f27e9eb8f4e37ba3d29",
+            "8ba995b74e18334ab3707f27e9eb8f4e37ba3d29"
         ]
     )
 

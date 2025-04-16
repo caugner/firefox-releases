@@ -16,7 +16,7 @@ import os
 import sys
 import traceback
 import uuid
-from collections import Iterable
+from collections.abc import Iterable
 
 from six import string_types
 
@@ -34,10 +34,7 @@ from .dispatcher import CommandAction
 from .logging import LoggingManager
 from .registrar import Registrar
 from .sentry import register_sentry, NoopErrorReporter
-from .telemetry import (
-    report_invocation_metrics,
-    create_telemetry_from_environment,
-)
+from .telemetry import report_invocation_metrics, create_telemetry_from_environment
 from .util import setenv, UserError
 
 SUGGEST_MACH_BUSTED_TEMPLATE = r"""
@@ -685,6 +682,11 @@ To see more help for a specific command, run:
             "--debug-command",
             action="store_true",
             help="Start a Python debugger when command is dispatched.",
+        )
+        global_group.add_argument(
+            "--profile-command",
+            action="store_true",
+            help="Capture a Python profile of the mach process as command is dispatched.",
         )
         global_group.add_argument(
             "--settings",

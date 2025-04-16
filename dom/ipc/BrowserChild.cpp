@@ -14,7 +14,6 @@
 #include <algorithm>
 #include <utility>
 
-#include "BackgroundChild.h"
 #include "BrowserParent.h"
 #include "ClientLayerManager.h"
 #include "ContentChild.h"
@@ -81,6 +80,7 @@
 #include "mozilla/gfx/CrossProcessPaint.h"
 #include "mozilla/gfx/Matrix.h"
 #include "mozilla/gfx/gfxVars.h"
+#include "mozilla/ipc/BackgroundChild.h"
 #include "mozilla/ipc/BackgroundUtils.h"
 #include "mozilla/ipc/PBackgroundChild.h"
 #include "mozilla/ipc/URIUtils.h"
@@ -171,6 +171,8 @@ using mozilla::layers::GeckoContentController;
 NS_IMPL_ISUPPORTS(ContentListener, nsIDOMEventListener)
 
 static const char BEFORE_FIRST_PAINT[] = "before-first-paint";
+
+static uint32_t sConsecutiveTouchMoveCount = 0;
 
 typedef nsTHashMap<nsUint64HashKey, BrowserChild*> BrowserChildMap;
 static BrowserChildMap* sBrowserChildren;
@@ -313,15 +315,14 @@ BrowserChild::BrowserChild(ContentChild* aManager, const TabId& aTabId,
       mMaxTouchPoints(0),
       mLayersId{0},
       mEffectsInfo{EffectsInfo::FullyHidden()},
+      mOrientation(hal::eScreenOrientation_PortraitPrimary),
+      mDynamicToolbarMaxHeight(0),
+      mUniqueId(aTabId),
       mDidFakeShow(false),
       mTriedBrowserInit(false),
-      mOrientation(hal::eScreenOrientation_PortraitPrimary),
-      mVsyncChild(nullptr),
       mIgnoreKeyPressEvent(false),
       mHasValidInnerSize(false),
       mDestroyed(false),
-      mDynamicToolbarMaxHeight(0),
-      mUniqueId(aTabId),
       mIsTopLevel(aIsTopLevel),
       mHasSiblings(false),
       mIsTransparent(false),
@@ -329,6 +330,14 @@ BrowserChild::BrowserChild(ContentChild* aManager, const TabId& aTabId,
       mDidSetRealShowInfo(false),
       mDidLoadURLInit(false),
       mSkipKeyPress(false),
+      mDidSetEffectsInfo(false),
+      mShouldSendWebProgressEventsToParent(false),
+      mRenderLayers(true),
+      mIsPreservingLayers(false),
+      mPendingDocShellIsActive(false),
+      mPendingDocShellReceivedMessage(false),
+      mPendingRenderLayers(false),
+      mPendingRenderLayersReceivedMessage(false),
       mLayersObserverEpoch{1},
 #if defined(XP_WIN) && defined(ACCESSIBILITY)
       mNativeWindowHandle(0),
@@ -336,12 +345,6 @@ BrowserChild::BrowserChild(ContentChild* aManager, const TabId& aTabId,
 #if defined(ACCESSIBILITY)
       mTopLevelDocAccessibleChild(nullptr),
 #endif
-      mShouldSendWebProgressEventsToParent(false),
-      mRenderLayers(true),
-      mPendingDocShellIsActive(false),
-      mPendingDocShellReceivedMessage(false),
-      mPendingRenderLayers(false),
-      mPendingRenderLayersReceivedMessage(false),
       mPendingLayersObserverEpoch{0},
       mPendingDocShellBlockers(0),
       mCancelContentJSEpoch(0) {
@@ -370,6 +373,10 @@ BrowserChild::BrowserChild(ContentChild* aManager, const TabId& aTabId,
   if (mCoalesceMouseMoveEvents) {
     mCoalescedMouseEventFlusher = new CoalescedMouseMoveFlusher(this);
   }
+
+  if (StaticPrefs::dom_events_coalesce_touchmove()) {
+    mCoalescedTouchMoveEventFlusher = new CoalescedTouchMoveFlusher(this);
+  }
 }
 
 const CompositorOptions& BrowserChild::GetCompositorOptions() const {
@@ -394,7 +401,7 @@ BrowserChild::Observe(nsISupports* aSubject, const char* aTopic,
       nsCOMPtr<Document> subject(do_QueryInterface(aSubject));
       nsCOMPtr<Document> doc(GetTopLevelDocument());
 
-      if (subject == doc && doc->IsTopLevelContentDocument()) {
+      if (subject == doc) {
         RefPtr<PresShell> presShell = doc->GetPresShell();
         if (presShell) {
           presShell->SetIsFirstPaint(true);
@@ -487,10 +494,6 @@ nsresult BrowserChild::Init(mozIDOMWindowProxy* aParent,
                                           nsIWebProgress::NOTIFY_ALL);
     NS_ENSURE_SUCCESS(rv, rv);
   }
-
-  docShell->SetAffectPrivateSessionLifetime(
-      mBrowsingContext->UsePrivateBrowsing() ||
-      mChromeFlags & nsIWebBrowserChrome::CHROME_PRIVATE_LIFETIME);
 
 #ifdef DEBUG
   nsCOMPtr<nsILoadContext> loadContext = do_GetInterface(WebNavigation());
@@ -865,6 +868,11 @@ void BrowserChild::DestroyWindow() {
     mCoalescedMouseEventFlusher = nullptr;
   }
 
+  if (mCoalescedTouchMoveEventFlusher) {
+    mCoalescedTouchMoveEventFlusher->RemoveObserver();
+    mCoalescedTouchMoveEventFlusher = nullptr;
+  }
+
   if (mSessionStoreListener) {
     mSessionStoreListener->RemoveListeners();
     mSessionStoreListener = nullptr;
@@ -1032,7 +1040,9 @@ mozilla::ipc::IPCResult BrowserChild::RecvResumeLoad(
 }
 
 mozilla::ipc::IPCResult BrowserChild::RecvCloneDocumentTreeIntoSelf(
-    const MaybeDiscarded<BrowsingContext>& aSourceBC) {
+    const MaybeDiscarded<BrowsingContext>& aSourceBC,
+    const embedding::PrintData& aPrintData) {
+#ifdef NS_PRINTING
   if (NS_WARN_IF(aSourceBC.IsNullOrDiscarded())) {
     return IPC_OK();
   }
@@ -1052,27 +1062,94 @@ mozilla::ipc::IPCResult BrowserChild::RecvCloneDocumentTreeIntoSelf(
     return IPC_OK();
   }
 
+  nsCOMPtr<nsIPrintSettingsService> printSettingsSvc =
+      do_GetService("@mozilla.org/gfx/printsettings-service;1");
+  if (NS_WARN_IF(!printSettingsSvc)) {
+    return IPC_OK();
+  }
+
+  nsCOMPtr<nsIPrintSettings> printSettings;
+  nsresult rv =
+      printSettingsSvc->GetNewPrintSettings(getter_AddRefs(printSettings));
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return IPC_OK();
+  }
+
+  printSettingsSvc->DeserializeToPrintSettings(aPrintData, printSettings);
+
   RefPtr<Document> clone;
   {
     AutoPrintEventDispatcher dispatcher(*sourceDocument);
     nsAutoScriptBlocker scriptBlocker;
     bool hasInProcessCallbacks = false;
-    clone = sourceDocument->CreateStaticClone(ourDocShell, cv,
+    clone = sourceDocument->CreateStaticClone(ourDocShell, cv, printSettings,
                                               &hasInProcessCallbacks);
     if (NS_WARN_IF(!clone)) {
       return IPC_OK();
     }
   }
 
-  // Since the clone document is not parsed-created, we need to initialize
-  // layout manually. This is usually done in ReflowPrintObject for non-remote
-  // documents.
-  if (RefPtr<PresShell> ps = clone->GetPresShell()) {
-    if (!ps->DidInitialize()) {
-      nsresult rv = ps->Initialize();
-      Unused << NS_WARN_IF(NS_FAILED(rv));
-    }
+  return RecvUpdateRemotePrintSettings(aPrintData);
+#endif
+  return IPC_OK();
+}
+
+mozilla::ipc::IPCResult BrowserChild::RecvUpdateRemotePrintSettings(
+    const embedding::PrintData& aPrintData) {
+#ifdef NS_PRINTING
+  nsCOMPtr<nsIDocShell> ourDocShell = do_GetInterface(WebNavigation());
+  if (NS_WARN_IF(!ourDocShell)) {
+    return IPC_OK();
   }
+
+  RefPtr<Document> doc = ourDocShell->GetExtantDocument();
+  if (NS_WARN_IF(!doc) || NS_WARN_IF(!doc->IsStaticDocument())) {
+    return IPC_OK();
+  }
+
+  RefPtr<BrowsingContext> bc = ourDocShell->GetBrowsingContext();
+  if (NS_WARN_IF(!bc)) {
+    return IPC_OK();
+  }
+
+  nsCOMPtr<nsIPrintSettingsService> printSettingsSvc =
+      do_GetService("@mozilla.org/gfx/printsettings-service;1");
+  if (NS_WARN_IF(!printSettingsSvc)) {
+    return IPC_OK();
+  }
+
+  nsCOMPtr<nsIPrintSettings> printSettings;
+  nsresult rv =
+      printSettingsSvc->GetNewPrintSettings(getter_AddRefs(printSettings));
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return IPC_OK();
+  }
+
+  printSettingsSvc->DeserializeToPrintSettings(aPrintData, printSettings);
+
+  bc->PreOrderWalk([&](BrowsingContext* aBc) {
+    if (nsCOMPtr<nsIDocShell> inProcess = aBc->GetDocShell()) {
+      nsCOMPtr<nsIContentViewer> cv;
+      inProcess->GetContentViewer(getter_AddRefs(cv));
+      if (NS_WARN_IF(!cv)) {
+        return BrowsingContext::WalkFlag::Skip;
+      }
+      // The CanRunScript analysis is not smart enough to see across
+      // the std::function PreOrderWalk uses, so we cheat a bit here, but it is
+      // fine because PreOrderWalk does deal with arbitrary script changing the
+      // BC tree, and our code above is simple enough and keeps strong refs to
+      // everything.
+      ([&]() MOZ_CAN_RUN_SCRIPT_BOUNDARY {
+        cv->SetPrintSettingsForSubdocument(printSettings);
+      }());
+    } else if (RefPtr<BrowserBridgeChild> remoteChild =
+                   BrowserBridgeChild::GetFrom(aBc->GetEmbedderElement())) {
+      Unused << remoteChild->SendUpdateRemotePrintSettings(aPrintData);
+      return BrowsingContext::WalkFlag::Skip;
+    }
+    return BrowsingContext::WalkFlag::Next;
+  });
+#endif
 
   return IPC_OK();
 }
@@ -1329,7 +1406,7 @@ void BrowserChild::HandleDoubleTap(const CSSPoint& aPoint,
       mApzcTreeManager) {
     ScrollableLayerGuid guid(mLayersId, presShellId, viewId);
 
-    mApzcTreeManager->ZoomToRect(guid, zoomTarget, DEFAULT_BEHAVIOR);
+    mApzcTreeManager->ZoomToRect(guid, zoomTarget, ZOOM_IN_IF_CANT_ZOOM_OUT);
   }
 }
 
@@ -1461,20 +1538,23 @@ mozilla::ipc::IPCResult BrowserChild::RecvStopIMEStateManagement() {
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult BrowserChild::RecvMouseEvent(
-    const nsString& aType, const float& aX, const float& aY,
-    const int32_t& aButton, const int32_t& aClickCount,
-    const int32_t& aModifiers) {
-  // IPDL doesn't hold a strong reference to protocols as they're not required
-  // to be refcounted. This function can run script, which may trigger a nested
-  // event loop, which may release this, so we hold a strong reference here.
-  RefPtr<BrowserChild> kungFuDeathGrip(this);
-  RefPtr<PresShell> presShell = GetTopLevelPresShell();
-  APZCCallbackHelper::DispatchMouseEvent(presShell, aType, CSSPoint(aX, aY),
-                                         aButton, aClickCount, aModifiers,
-                                         MouseEvent_Binding::MOZ_SOURCE_UNKNOWN,
-                                         0 /* Use the default value here. */);
-  return IPC_OK();
+void BrowserChild::ProcessPendingColaescedTouchData() {
+  MOZ_ASSERT(StaticPrefs::dom_events_coalesce_touchmove());
+
+  if (mCoalescedTouchData.IsEmpty()) {
+    return;
+  }
+
+  if (mCoalescedTouchMoveEventFlusher) {
+    mCoalescedTouchMoveEventFlusher->RemoveObserver();
+  }
+
+  UniquePtr<WidgetTouchEvent> touchMoveEvent =
+      mCoalescedTouchData.TakeCoalescedEvent();
+  Unused << RecvRealTouchEvent(*touchMoveEvent,
+                               mCoalescedTouchData.GetScrollableLayerGuid(),
+                               mCoalescedTouchData.GetInputBlockId(),
+                               mCoalescedTouchData.GetApzResponse());
 }
 
 void BrowserChild::ProcessPendingCoalescedMouseDataAndDispatchEvents() {
@@ -1522,8 +1602,12 @@ BrowserChild::GetChildToParentConversionMatrix() const {
   return LayoutDeviceToLayoutDeviceMatrix4x4::Translation(offset);
 }
 
-ScreenRect BrowserChild::GetTopLevelViewportVisibleRectInBrowserCoords() const {
-  return mTopLevelViewportVisibleRectInBrowserCoords;
+Maybe<ScreenRect> BrowserChild::GetTopLevelViewportVisibleRectInBrowserCoords()
+    const {
+  if (!mChildToParentConversionMatrix) {
+    return Nothing();
+  }
+  return Some(mTopLevelViewportVisibleRectInBrowserCoords);
 }
 
 void BrowserChild::FlushAllCoalescedMouseData() {
@@ -1682,7 +1766,7 @@ void BrowserChild::HandleRealMouseButtonEvent(const WidgetMouseEvent& aEvent,
   // APZ before the SetTargetAPZC message. This ensures the drag input block
   // gets the drag metrics before handling the input events.
   if (postLayerization) {
-    postLayerization->TryRegister();
+    postLayerization->Register();
   }
 }
 
@@ -1705,52 +1789,12 @@ BrowserChild::RecvNormalPriorityRealMouseEnterExitWidgetEvent(
   return RecvRealMouseButtonEvent(aEvent, aGuid, aInputBlockId);
 }
 
-// In case handling repeated mouse wheel takes much time, we skip firing current
-// wheel event if it may be coalesced to the next one.
-bool BrowserChild::MaybeCoalesceWheelEvent(const WidgetWheelEvent& aEvent,
-                                           const ScrollableLayerGuid& aGuid,
-                                           const uint64_t& aInputBlockId,
-                                           bool* aIsNextWheelEvent) {
-  MOZ_ASSERT(aIsNextWheelEvent);
-  if (aEvent.mMessage == eWheel) {
-    GetIPCChannel()->PeekMessages(
-        [aIsNextWheelEvent](const IPC::Message& aMsg) -> bool {
-          if (aMsg.type() == mozilla::dom::PBrowser::Msg_MouseWheelEvent__ID) {
-            *aIsNextWheelEvent = true;
-          }
-          return false;  // Stop peeking.
-        });
-    // We only coalesce the current event when
-    // 1. It's eWheel (we don't coalesce eOperationStart and eWheelOperationEnd)
-    // 2. It's not the first wheel event.
-    // 3. It's not the last wheel event.
-    // 4. It's dispatched before the last wheel event was processed +
-    //    the processing time of the last event.
-    //    This way pages spending lots of time in wheel listeners get wheel
-    //    events coalesced more aggressively.
-    // 5. It has same attributes as the coalesced wheel event which is not yet
-    //    fired.
-    if (!mLastWheelProcessedTimeFromParent.IsNull() && *aIsNextWheelEvent &&
-        aEvent.mTimeStamp < (mLastWheelProcessedTimeFromParent +
-                             mLastWheelProcessingDuration) &&
-        (mCoalescedWheelData.IsEmpty() ||
-         mCoalescedWheelData.CanCoalesce(aEvent, aGuid, aInputBlockId))) {
-      mCoalescedWheelData.Coalesce(aEvent, aGuid, aInputBlockId);
-      return true;
-    }
-  }
-  return false;
-}
-
 nsEventStatus BrowserChild::DispatchWidgetEventViaAPZ(WidgetGUIEvent& aEvent) {
   aEvent.ResetWaitingReplyFromRemoteProcessState();
   return APZCCallbackHelper::DispatchWidgetEvent(aEvent);
 }
 
-void BrowserChild::MaybeDispatchCoalescedWheelEvent() {
-  if (mCoalescedWheelData.IsEmpty()) {
-    return;
-  }
+void BrowserChild::DispatchCoalescedWheelEvent() {
   UniquePtr<WidgetWheelEvent> wheelEvent =
       mCoalescedWheelData.TakeCoalescedEvent();
   MOZ_ASSERT(wheelEvent);
@@ -1768,7 +1812,7 @@ void BrowserChild::DispatchWheelEvent(const WidgetWheelEvent& aEvent,
         APZCCallbackHelper::SendSetTargetAPZCNotification(
             mPuppetWidget, document, aEvent, aGuid.mLayersId, aInputBlockId);
     if (postLayerization) {
-      postLayerization->TryRegister();
+      postLayerization->Register();
     }
   }
 
@@ -1795,26 +1839,35 @@ mozilla::ipc::IPCResult BrowserChild::RecvMouseWheelEvent(
     const WidgetWheelEvent& aEvent, const ScrollableLayerGuid& aGuid,
     const uint64_t& aInputBlockId) {
   bool isNextWheelEvent = false;
-  if (MaybeCoalesceWheelEvent(aEvent, aGuid, aInputBlockId,
-                              &isNextWheelEvent)) {
-    return IPC_OK();
-  }
-  if (isNextWheelEvent) {
-    // Update mLastWheelProcessedTimeFromParent so that we can compare the end
-    // time of the current event with the dispatched time of the next event.
-    mLastWheelProcessedTimeFromParent = aEvent.mTimeStamp;
-    mozilla::TimeStamp beforeDispatchingTime = TimeStamp::Now();
-    MaybeDispatchCoalescedWheelEvent();
-    DispatchWheelEvent(aEvent, aGuid, aInputBlockId);
-    mLastWheelProcessingDuration = (TimeStamp::Now() - beforeDispatchingTime);
-    mLastWheelProcessedTimeFromParent += mLastWheelProcessingDuration;
+  // We only coalesce the current event when
+  // 1. It's eWheel (we don't coalesce eOperationStart and eWheelOperationEnd)
+  // 2. It has same attributes as the coalesced wheel event which is not yet
+  //    fired.
+  if (aEvent.mMessage == eWheel) {
+    GetIPCChannel()->PeekMessages(
+        [&isNextWheelEvent](const IPC::Message& aMsg) -> bool {
+          if (aMsg.type() == mozilla::dom::PBrowser::Msg_MouseWheelEvent__ID) {
+            isNextWheelEvent = true;
+          }
+          return false;  // Stop peeking.
+        });
+
+    if (!mCoalescedWheelData.IsEmpty() &&
+        !mCoalescedWheelData.CanCoalesce(aEvent, aGuid, aInputBlockId)) {
+      DispatchCoalescedWheelEvent();
+      MOZ_ASSERT(mCoalescedWheelData.IsEmpty());
+    }
+    mCoalescedWheelData.Coalesce(aEvent, aGuid, aInputBlockId);
+
+    MOZ_ASSERT(!mCoalescedWheelData.IsEmpty());
+    // If the next event isn't a wheel event, make sure we dispatch.
+    if (!isNextWheelEvent) {
+      DispatchCoalescedWheelEvent();
+    }
   } else {
-    // This is the last wheel event. Set mLastWheelProcessedTimeFromParent to
-    // null moment to avoid coalesce the next incoming wheel event.
-    mLastWheelProcessedTimeFromParent = TimeStamp();
-    MaybeDispatchCoalescedWheelEvent();
     DispatchWheelEvent(aEvent, aGuid, aInputBlockId);
   }
+
   return IPC_OK();
 }
 
@@ -1829,6 +1882,16 @@ mozilla::ipc::IPCResult BrowserChild::RecvRealTouchEvent(
     const uint64_t& aInputBlockId, const nsEventStatus& aApzResponse) {
   MOZ_LOG(sApzChildLog, LogLevel::Debug,
           ("Receiving touch event of type %d\n", aEvent.mMessage));
+
+  if (StaticPrefs::dom_events_coalesce_touchmove()) {
+    if (aEvent.mMessage == eTouchEnd || aEvent.mMessage == eTouchStart) {
+      ProcessPendingColaescedTouchData();
+    }
+
+    if (aEvent.mMessage != eTouchMove) {
+      sConsecutiveTouchMoveCount = 0;
+    }
+  }
 
   WidgetTouchEvent localEvent(aEvent);
   localEvent.mWidget = mPuppetWidget;
@@ -1853,7 +1916,7 @@ mozilla::ipc::IPCResult BrowserChild::RecvRealTouchEvent(
             mPuppetWidget, document, localEvent, aGuid.mLayersId,
             aInputBlockId);
     if (postLayerization) {
-      postLayerization->TryRegister();
+      postLayerization->Register();
     }
   }
 
@@ -1882,6 +1945,36 @@ mozilla::ipc::IPCResult BrowserChild::RecvNormalPriorityRealTouchEvent(
 mozilla::ipc::IPCResult BrowserChild::RecvRealTouchMoveEvent(
     const WidgetTouchEvent& aEvent, const ScrollableLayerGuid& aGuid,
     const uint64_t& aInputBlockId, const nsEventStatus& aApzResponse) {
+  // Only start to coalesce the second touchmove to ensure the first
+  // touchmove isn't overridden by the second one.
+  if (StaticPrefs::dom_events_coalesce_touchmove()) {
+    ++sConsecutiveTouchMoveCount;
+    if (mCoalescedTouchMoveEventFlusher && sConsecutiveTouchMoveCount > 1) {
+      MOZ_ASSERT(aEvent.mMessage == eTouchMove);
+      if (mCoalescedTouchData.IsEmpty() ||
+          mCoalescedTouchData.CanCoalesce(aEvent, aGuid, aInputBlockId,
+                                          aApzResponse)) {
+        mCoalescedTouchData.Coalesce(aEvent, aGuid, aInputBlockId,
+                                     aApzResponse);
+      } else {
+        UniquePtr<WidgetTouchEvent> touchMoveEvent =
+            mCoalescedTouchData.TakeCoalescedEvent();
+
+        mCoalescedTouchData.Coalesce(aEvent, aGuid, aInputBlockId,
+                                     aApzResponse);
+
+        if (!RecvRealTouchEvent(*touchMoveEvent,
+                                mCoalescedTouchData.GetScrollableLayerGuid(),
+                                mCoalescedTouchData.GetInputBlockId(),
+                                mCoalescedTouchData.GetApzResponse())) {
+          return IPC_FAIL_NO_REASON(this);
+        }
+      }
+      mCoalescedTouchMoveEventFlusher->StartObserver();
+      return IPC_OK();
+    }
+  }
+
   if (!RecvRealTouchEvent(aEvent, aGuid, aInputBlockId, aApzResponse)) {
     return IPC_FAIL_NO_REASON(this);
   }
@@ -1970,10 +2063,9 @@ mozilla::ipc::IPCResult BrowserChild::RecvUpdateEpoch(const uint32_t& aEpoch) {
   return IPC_OK();
 }
 
-mozilla::ipc::IPCResult BrowserChild::RecvUpdateSHistory(
-    const bool& aImmediately) {
+mozilla::ipc::IPCResult BrowserChild::RecvUpdateSHistory() {
   if (mSessionStoreListener) {
-    mSessionStoreListener->UpdateSHistoryChanges(aImmediately);
+    mSessionStoreListener->UpdateSHistoryChanges();
   }
   return IPC_OK();
 }
@@ -2826,6 +2918,8 @@ void BrowserChild::InitAPZState() {
 }
 
 IPCResult BrowserChild::RecvUpdateEffects(const EffectsInfo& aEffects) {
+  mDidSetEffectsInfo = true;
+
   bool needInvalidate = false;
   if (mEffectsInfo.IsVisible() && aEffects.IsVisible() &&
       mEffectsInfo != aEffects) {
@@ -2882,24 +2976,7 @@ void BrowserChild::MakeVisible() {
     mPuppetWidget->Show(true);
   }
 
-  nsCOMPtr<nsIDocShell> docShell = do_GetInterface(WebNavigation());
-  if (!docShell) {
-    return;
-  }
-
-  // The browser / tab-switcher is responsible of fixing the browsingContext
-  // state up explicitly via SetDocShellIsActive, which propagates to children
-  // automatically.
-  //
-  // We need it not to be observable, as this used via RecvRenderLayers and co.,
-  // for stuff like async tab warming.
-  //
-  // We don't want to go through the docshell because we don't want to change
-  // the visibility state of the document, which has side effects like firing
-  // events to content, unblocking media playback, unthrottling timeouts...
-  if (RefPtr<PresShell> presShell = docShell->GetPresShell()) {
-    presShell->SetIsActive(true);
-  }
+  PresShellActivenessMaybeChanged();
 }
 
 void BrowserChild::MakeHidden() {
@@ -2912,24 +2989,43 @@ void BrowserChild::MakeHidden() {
   // setting up a layer manager. We should skip clearing cached layers
   // in that case, since doing so might accidentally put is into
   // BasicLayers mode.
-  if (mPuppetWidget && mPuppetWidget->HasLayerManager()) {
-    ClearCachedResources();
-  }
-
-  if (nsCOMPtr<nsIDocShell> docShell = do_GetInterface(WebNavigation())) {
-    // We don't use
-    // BrowserChildBase::GetPresShell() here because that would create a content
-    // viewer if one doesn't exist yet. Creating a content viewer can cause JS
-    // to run, which we want to avoid. nsIDocShell::GetPresShell returns null if
-    // no content viewer exists yet.
-    if (RefPtr<PresShell> presShell = docShell->GetPresShell()) {
-      presShell->SetIsActive(false);
-    }
-  }
-
   if (mPuppetWidget) {
+    if (mPuppetWidget->HasLayerManager()) {
+      ClearCachedResources();
+    }
     mPuppetWidget->Show(false);
   }
+
+  PresShellActivenessMaybeChanged();
+}
+
+IPCResult BrowserChild::RecvPreserveLayers(bool aPreserve) {
+  mIsPreservingLayers = aPreserve;
+
+  PresShellActivenessMaybeChanged();
+
+  return IPC_OK();
+}
+
+void BrowserChild::PresShellActivenessMaybeChanged() {
+  // We don't use BrowserChildBase::GetPresShell() here because that would
+  // create a content viewer if one doesn't exist yet. Creating a content
+  // viewer can cause JS to run, which we want to avoid.
+  // nsIDocShell::GetPresShell returns null if no content viewer exists yet.
+  //
+  // When this method is called we don't want to go through the browsing context
+  // because we don't want to change the visibility state of the document, which
+  // has side effects like firing events to content, unblocking media playback,
+  // unthrottling timeouts... PresShell activeness has a lot less side effects.
+  nsCOMPtr<nsIDocShell> docShell = do_GetInterface(WebNavigation());
+  if (!docShell) {
+    return;
+  }
+  RefPtr<PresShell> presShell = docShell->GetPresShell();
+  if (!presShell) {
+    return;
+  }
+  presShell->ActivenessMaybeChanged();
 }
 
 NS_IMETHODIMP
@@ -3305,7 +3401,7 @@ Maybe<nsRect> BrowserChild::GetVisibleRect() const {
     return Nothing();
   }
 
-  return Some(mEffectsInfo.mVisibleRect);
+  return mDidSetEffectsInfo ? Some(mEffectsInfo.mVisibleRect) : Nothing();
 }
 
 Maybe<LayoutDeviceRect>
@@ -3520,7 +3616,6 @@ NS_IMETHODIMP BrowserChild::OnStateChange(nsIWebProgress* aWebProgress,
     stateChangeData->isNavigating() = docShell->GetIsNavigating();
     stateChangeData->mayEnableCharacterEncodingMenu() =
         docShell->GetMayEnableCharacterEncodingMenu();
-    stateChangeData->charsetAutodetected() = docShell->GetCharsetAutodetected();
 
     RefPtr<Document> document = browsingContext->GetExtantDocument();
     if (document && aStateFlags & nsIWebProgressListener::STATE_STOP) {
@@ -3619,8 +3714,6 @@ NS_IMETHODIMP BrowserChild::OnLocationChange(nsIWebProgress* aWebProgress,
 
     locationChangeData->mayEnableCharacterEncodingMenu() =
         docShell->GetMayEnableCharacterEncodingMenu();
-    locationChangeData->charsetAutodetected() =
-        docShell->GetCharsetAutodetected();
 
     locationChangeData->contentPrincipal() = document->NodePrincipal();
     locationChangeData->contentPartitionedPrincipal() =
@@ -3772,7 +3865,7 @@ nsresult BrowserChild::PrepareProgressListenerData(
   return PrepareRequestData(aRequest, aRequestData);
 }
 
-bool BrowserChild::UpdateSessionStore(bool aIsFinal) {
+bool BrowserChild::UpdateSessionStore() {
   if (!mSessionStoreListener) {
     return false;
   }
@@ -3790,7 +3883,7 @@ bool BrowserChild::UpdateSessionStore(bool aIsFinal) {
 
   Unused << SendSessionStoreUpdate(docShellCaps, privatedMode,
                                    store->GetAndClearSHistoryChanged(),
-                                   aIsFinal, mSessionStoreListener->GetEpoch());
+                                   mSessionStoreListener->GetEpoch());
   return true;
 }
 

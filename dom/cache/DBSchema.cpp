@@ -338,7 +338,8 @@ static_assert(
         nsIContentPolicy::TYPE_INTERNAL_FONT_PRELOAD == 51 &&
         nsIContentPolicy::TYPE_INTERNAL_CHROMEUTILS_COMPILED_SCRIPT == 52 &&
         nsIContentPolicy::TYPE_INTERNAL_FRAME_MESSAGEMANAGER_SCRIPT == 53 &&
-        nsIContentPolicy::TYPE_INTERNAL_FETCH_PRELOAD == 54,
+        nsIContentPolicy::TYPE_INTERNAL_FETCH_PRELOAD == 54 &&
+        nsIContentPolicy::TYPE_UA_FONT == 55,
     "nsContentPolicyType values are as expected");
 
 namespace {
@@ -552,8 +553,12 @@ nsresult InitializeConnection(mozIStorageConnection& aConn) {
 
   // Limit fragmentation by growing the database by many pages at once.
   QM_TRY(QM_OR_ELSE_WARN_IF(
+      // Expression.
       ToResult(aConn.SetGrowthIncrement(kGrowthSize, ""_ns)),
-      IsSpecificError<NS_ERROR_FILE_TOO_BIG>, ErrToDefaultOk<>));
+      // Predicate.
+      IsSpecificError<NS_ERROR_FILE_TOO_BIG>,
+      // Fallback.
+      ErrToDefaultOk<>));
 
   // Enable WAL journaling.  This must be performed in a separate transaction
   // after changing the page_size and enabling auto_vacuum.

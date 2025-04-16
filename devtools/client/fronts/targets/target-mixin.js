@@ -144,9 +144,13 @@ function TargetMixin(parentClass) {
     }
 
     get isTopLevel() {
-      if (!this.getTrait("supportsTopLevelTargetFlag")) {
-        return this._isTopLevel;
+      // We can't use `getTrait` here as this might be called from a destroyed target (e.g.
+      // from an onTargetDestroyed callback that was triggered by a legacy listener), which
+      // means `this.client` would be null, which would make `getTrait` throw (See Bug 1714974)
+      if (!this.targetForm.hasOwnProperty("isTopLevelTarget")) {
+        return !!this._isTopLevel;
       }
+
       return this.targetForm.isTopLevelTarget;
     }
 
@@ -506,7 +510,8 @@ function TargetMixin(parentClass) {
         await this.attach();
       }
 
-      const isBrowserToolbox = targetCommand.targetFront.isParentProcess;
+      const isBrowserToolbox =
+        targetCommand.descriptorFront.isParentProcessDescriptor;
       const isNonTopLevelFrameTarget =
         !this.isTopLevel && this.targetType === targetCommand.TYPES.FRAME;
 
@@ -574,7 +579,11 @@ function TargetMixin(parentClass) {
         // If the Thread actor has already been attached from the server side
         // by the Watcher Actor, we still have to pass options that aren't yet managed via
         // the Watcher actor's addWatcherDataEntry codepath (bug 1687261).
-        await this.threadFront.reconfigure(options);
+
+        // @backward-compat { version 91 } Thread configuration actor now supports most thread options
+        if (!this.getTrait("supportsThreadConfigurationOptions")) {
+          await this.threadFront.reconfigure(options);
+        }
         return this.threadFront;
       }
       if (
