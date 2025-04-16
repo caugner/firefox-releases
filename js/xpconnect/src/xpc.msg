@@ -148,6 +148,7 @@ XPC_MSG_DEF(NS_ERROR_PROXY_CONNECTION_REFUSED       , "The connection to the pro
 XPC_MSG_DEF(NS_ERROR_PROXY_AUTHENTICATION_FAILED    , "The proxy requires authentication")
 XPC_MSG_DEF(NS_ERROR_PROXY_BAD_GATEWAY              , "The request failed on the proxy")
 XPC_MSG_DEF(NS_ERROR_PROXY_GATEWAY_TIMEOUT          , "The request timed out on the proxy")
+XPC_MSG_DEF(NS_ERROR_TOO_MANY_REQUESTS              , "Sending too many requests to a proxy")
 XPC_MSG_DEF(NS_ERROR_NET_TIMEOUT                    , "The connection has timed out")
 XPC_MSG_DEF(NS_ERROR_OFFLINE                        , "The requested action could not be completed in the offline state")
 XPC_MSG_DEF(NS_ERROR_PORT_ACCESS_NOT_ALLOWED        , "Establishing a connection to an unsafe or otherwise banned port was prohibited")
@@ -244,6 +245,7 @@ XPC_MSG_DEF(NS_ERROR_BLOCKED_URI                      , "The URI is blocked")
 XPC_MSG_DEF(NS_ERROR_HARMFUL_URI                      , "The URI is harmful")
 XPC_MSG_DEF(NS_ERROR_FINGERPRINTING_URI               , "The URI is fingerprinting")
 XPC_MSG_DEF(NS_ERROR_CRYPTOMINING_URI                 , "The URI is cryptomining")
+XPC_MSG_DEF(NS_ERROR_SOCIALTRACKING_URI               , "The URI is social tracking")
 
 /* Profile manager error codes */
 XPC_MSG_DEF(NS_ERROR_DATABASE_CHANGED                 , "Flushing the profiles to disk would have overwritten changes made elsewhere.")

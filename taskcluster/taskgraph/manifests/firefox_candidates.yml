@@ -147,11 +147,6 @@ mapping:
         description: "File containing metadata about all other files and testing harnesses specifics"
         pretty_name: firefox-${version}.test_packages.json
         checksums_path: ${path_platform}/${locale}/firefox-${version}.test_packages.json
-    target.txt:
-        <<: *default
-        description: "File containing buildid and revision"
-        pretty_name: firefox-${version}.txt
-        checksums_path: ${path_platform}/${locale}/firefox-${version}.txt
     target.web-platform.tests.tar.gz:
         <<: *default
         description: "Results for running the webplatform testing framework to cover standard Web platform features"
@@ -275,9 +270,19 @@ mapping:
             - linux64-shippable
         pretty_name: firefox-${version}.tar.bz2.asc
         checksums_path: ${path_platform}/${locale}/firefox-${version}.tar.bz2.asc
-    target.dmg:
+    target.pkg:
         <<: *default
         description: "Main package installer for Mac OS X platforms"
+        all_locales: true
+        from:
+            - signing
+        only_for_platforms:
+            - macosx64-shippable
+        pretty_name: Firefox ${version}.pkg
+        checksums_path: ${path_platform}/${locale}/Firefox ${version}.pkg
+    target.dmg:
+        <<: *default
+        description: "Main package disk image for Mac OS X platforms"
         all_locales: true
         from:
             - repackage
