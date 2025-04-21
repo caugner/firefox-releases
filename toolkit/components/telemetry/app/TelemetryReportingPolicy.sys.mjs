@@ -892,7 +892,6 @@ var TelemetryReportingPolicyImpl = {
     }
 
     await p;
-
     this._log.trace("_notifyUserViaModal: user interacted with modal");
 
     return true;
