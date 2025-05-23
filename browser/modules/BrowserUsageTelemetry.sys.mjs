@@ -616,8 +616,8 @@ export let BrowserUsageTelemetry = {
       case "TabPinned":
         this._onTabPinned();
         break;
-      case "TabGroupCreate":
-        this._onTabGroupCreate(event);
+      case "TabGroupCreateByUser":
+        this._onTabGroupCreateByUser(event);
         break;
       case "TabGrouped":
       case "TabUngrouped":
@@ -638,6 +638,9 @@ export let BrowserUsageTelemetry = {
         break;
       case "TabGroupSaved":
         this._onTabGroupSave(event);
+        break;
+      case "TabGroupUngroup":
+        this._onTabGroupUngroup(event);
         break;
 
       case "unload":
@@ -1191,13 +1194,14 @@ export let BrowserUsageTelemetry = {
     win.addEventListener("TabClose", this, true);
     win.addEventListener("TabPinned", this, true);
     win.addEventListener("TabSelect", this);
-    win.addEventListener("TabGroupCreate", this);
+    win.addEventListener("TabGroupCreateByUser", this);
     win.addEventListener("TabGroupRemoveRequested", this);
     win.addEventListener("TabGrouped", this);
     win.addEventListener("TabUngrouped", this);
     win.addEventListener("TabGroupCollapse", this);
     win.addEventListener("TabGroupExpand", this);
     win.addEventListener("TabGroupSaved", this);
+    win.addEventListener("TabGroupUngroup", this);
 
     win.gBrowser.tabContainer.addEventListener(TAB_RESTORING_TOPIC, this);
     win.gBrowser.addTabsProgressListener(URICountListener);
@@ -1213,13 +1217,14 @@ export let BrowserUsageTelemetry = {
     win.removeEventListener("TabClose", this, true);
     win.removeEventListener("TabPinned", this, true);
     win.removeEventListener("TabSelect", this);
-    win.removeEventListener("TabGroupCreate", this);
+    win.removeEventListener("TabGroupCreateByUser", this);
     win.removeEventListener("TabGroupRemoveRequested", this);
     win.removeEventListener("TabGrouped", this);
     win.removeEventListener("TabUngrouped", this);
     win.removeEventListener("TabGroupCollapse", this);
     win.removeEventListener("TabGroupExpand", this);
     win.removeEventListener("TabGroupSaved", this);
+    win.removeEventListener("TabGroupUngroup", this);
 
     win.defaultView.gBrowser.tabContainer.removeEventListener(
       TAB_RESTORING_TOPIC,
@@ -1287,26 +1292,30 @@ export let BrowserUsageTelemetry = {
     this.updateMaxTabPinnedCount(pinnedTabs);
   },
 
-  _onTabGroupCreate(event) {
-    if (event.detail.isUserTriggered) {
-      Glean.tabgroup.createGroup.record({
-        id: event.target.id,
-        layout: lazy.sidebarVerticalTabs
-          ? lazy.TabMetrics.METRIC_TABS_LAYOUT.VERTICAL
-          : lazy.TabMetrics.METRIC_TABS_LAYOUT.HORIZONTAL,
-        source: event.detail.telemetryUserCreateSource,
-        tabs: event.target.tabs.length,
-      });
-    }
+  _onTabGroupCreateByUser(event) {
+    Glean.tabgroup.createGroup.record({
+      id: event.target.id,
+      layout: lazy.sidebarVerticalTabs
+        ? lazy.TabMetrics.METRIC_TABS_LAYOUT.VERTICAL
+        : lazy.TabMetrics.METRIC_TABS_LAYOUT.HORIZONTAL,
+      source: event.detail.telemetryUserCreateSource,
+      tabs: event.target.tabs.length,
+    });
 
     this._onTabGroupChange();
   },
 
   _onTabGroupSave(event) {
+    const { isUserTriggered } = event.detail;
+
     Glean.tabgroup.save.record({
-      user_triggered: event.detail.isUserTriggered,
+      user_triggered: isUserTriggered,
       id: event.target.id,
     });
+
+    if (isUserTriggered) {
+      Glean.tabgroup.groupInteractions.save.add(1);
+    }
 
     this._onTabGroupChange();
   },
@@ -1314,6 +1323,22 @@ export let BrowserUsageTelemetry = {
   _onTabGroupChange() {
     this._onTabGroupChangeTask.disarm();
     this._onTabGroupChangeTask.arm();
+  },
+
+  /**
+   * @param {CustomEvent} event `TabGroupUngroup` event
+   */
+  _onTabGroupUngroup(event) {
+    const { isUserTriggered, telemetrySource } = event.detail;
+    if (isUserTriggered) {
+      Glean.tabgroup.ungroup.record({ source: telemetrySource });
+      // Only count explicit user actions (i.e. "Ungroup tabs" in the tab group
+      // context menu) toward the total number of tab group ungroup interations.
+      // This excludes implicit user actions, e.g. canceling tab group creation.
+      if (telemetrySource == lazy.TabMetrics.METRIC_SOURCE.TAB_GROUP_MENU) {
+        Glean.tabgroup.groupInteractions.ungroup.add(1);
+      }
+    }
   },
 
   /**
@@ -1419,6 +1444,7 @@ export let BrowserUsageTelemetry = {
         id: event.target.id,
         source: telemetrySource,
       });
+      Glean.tabgroup.groupInteractions.delete.add(1);
     }
   },
 
@@ -1481,6 +1507,10 @@ export let BrowserUsageTelemetry = {
       previousTabState.tabIndex != currentTabState.tabIndex
     ) {
       Glean.tabgroup.tabInteractions.reorder.add();
+    }
+
+    if (previousTabState.tabGroupId && !currentTabState.tabGroupId) {
+      Glean.tabgroup.tabInteractions.remove_same_window.add();
     }
   },
 
@@ -1545,7 +1575,7 @@ export let BrowserUsageTelemetry = {
       tabCount !== undefined &&
       currentTime > this._lastRecordTabCount + MINIMUM_TAB_COUNT_INTERVAL_MS
     ) {
-      Services.telemetry.getHistogramById("TAB_COUNT").add(tabCount);
+      Glean.browserEngagement.tabCount.accumulateSingleSample(tabCount);
       this._lastRecordTabCount = currentTime;
     }
 
@@ -1554,9 +1584,9 @@ export let BrowserUsageTelemetry = {
       currentTime >
         this._lastRecordLoadedTabCount + MINIMUM_TAB_COUNT_INTERVAL_MS
     ) {
-      Services.telemetry
-        .getHistogramById("LOADED_TAB_COUNT")
-        .add(loadedTabCount);
+      Glean.browserEngagement.loadedTabCount.accumulateSingleSample(
+        loadedTabCount
+      );
       this._lastRecordLoadedTabCount = currentTime;
     }
   },
@@ -1582,17 +1612,7 @@ export let BrowserUsageTelemetry = {
 
   // Reports the number of Firefox profiles on this machine to telemetry.
   async reportProfileCount() {
-    if (
-      AppConstants.platform != "win" ||
-      !AppConstants.MOZ_TELEMETRY_REPORTING
-    ) {
-      // This is currently a windows-only feature.
-      // Also, this function writes directly to disk, without using the usual
-      // telemetry recording functions. So we excplicitly check if telemetry
-      // reporting was disabled at compile time, and we do not do anything in
-      // case.
-      return;
-    }
+    // Note: this is currently a windows-only feature.
 
     // To report only as much data as we need, we will bucket our values.
     // Rather than the raw value, we will report the greatest value in the list
