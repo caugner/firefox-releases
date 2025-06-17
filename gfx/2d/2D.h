@@ -724,7 +724,7 @@ class SourceSurface : public SupportsThreadSafeWeakPtr<SourceSurface> {
   }
 
   /** Tries to generate a SurfaceDescriptor for the surface, if possible. */
-  virtual bool GetSurfaceDescriptor(layers::SurfaceDescriptor& aDesc) const {
+  virtual bool GetSurfaceDescriptor(layers::SurfaceDescriptor& aDesc) {
     return false;
   }
 
@@ -1956,7 +1956,6 @@ class DrawTarget : public external::AtomicRefCounted<DrawTarget> {
       const IntSize& aSize, SurfaceFormat aFormat) const {
     return CreateSimilarDrawTarget(aSize, aFormat);
   }
-
 
   /**
    * Get the BackendType of Paths/PathBuilders created from this DrawTarget.

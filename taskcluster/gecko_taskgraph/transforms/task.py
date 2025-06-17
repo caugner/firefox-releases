@@ -200,6 +200,8 @@ task_description_schema = Schema(
         },
         # Override the default priority for the project
         Optional("priority"): str,
+        # Override the default 5 retries
+        Optional("retries"): int,
     }
 )
 
@@ -2353,6 +2355,8 @@ def build_task(config, tasks):
 
         if task.get("requires", None):
             task_def["requires"] = task["requires"]
+        if task.get("retries") is not None:
+            task_def["retries"] = task["retries"]
 
         if task_th:
             # link back to treeherder in description
@@ -2406,7 +2410,7 @@ def build_task(config, tasks):
             )
         attributes.setdefault("shipping_product", task["shipping-product"])
 
-        # Set MOZ_AUTOMATION on all jobs.
+        # Set some MOZ_* settings  on all jobs.
         if task["worker"]["implementation"] in (
             "generic-worker",
             "docker-worker",
@@ -2414,7 +2418,15 @@ def build_task(config, tasks):
             payload = task_def.get("payload")
             if payload:
                 env = payload.setdefault("env", {})
-                env["MOZ_AUTOMATION"] = "1"
+                env.update(
+                    {
+                        "MOZ_AUTOMATION": "1",
+                        "MOZ_BUILD_DATE": config.params["moz_build_date"],
+                        "MOZ_SCM_LEVEL": config.params["level"],
+                        "MOZ_SOURCE_CHANGESET": get_branch_rev(config),
+                        "MOZ_SOURCE_REPO": get_branch_repo(config),
+                    }
+                )
 
         dependencies = task.get("dependencies", {})
         if_dependencies = task.get("if-dependencies", [])

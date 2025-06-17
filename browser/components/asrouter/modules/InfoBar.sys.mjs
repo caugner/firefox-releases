@@ -148,7 +148,12 @@ class InfoBarNotification {
   }
 
   /**
-   * Called when one of the infobar buttons is clicked
+   * Callback fired when a button in the infobar is clicked.
+   *
+   * @param {Element} notificationBox - The `<notification-message>` element representing the infobar.
+   * @param {Object} btnDescription - An object describing the button, includes the label, the action with an optional dismiss property, and primary button styling.
+   * @param {Element} target - The <button> DOM element that was clicked.
+   * @returns {boolean} Returns `false` to dismiss the infobar or `true` to keep it open.
    */
   buttonCallback(notificationBox, btnDescription, target) {
     this.dispatchUserAction(
@@ -160,6 +165,14 @@ class InfoBarNotification {
       ? "CLICK_PRIMARY_BUTTON"
       : "CLICK_SECONDARY_BUTTON";
     this.sendUserEventTelemetry(eventName);
+
+    // Prevent dismissal if dismiss property is set to 'false'
+    if (btnDescription.action?.dismiss === false) {
+      return true;
+    }
+
+    // Default, dismisses the Infobar
+    return false;
   }
 
   dispatchUserAction(action, selectedBrowser) {
@@ -267,6 +280,17 @@ export const InfoBar = {
     }
     if (!universalInNewWin) {
       this._activeInfobar = { message, dispatch };
+      // If the window closes before the user interacts with the active infobar,
+      // clear it
+      win.addEventListener(
+        "unload",
+        () => {
+          if (InfoBar._activeInfobar?.message === message) {
+            InfoBar._activeInfobar = null;
+          }
+        },
+        { once: true }
+      );
     }
 
     return notification;

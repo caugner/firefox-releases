@@ -78,6 +78,9 @@ const UnenrollReason = Object.freeze({
   ...ValidationFailureReason,
 });
 
+const EXPERIMENT_TYPE_ROLLOUT = "rollout";
+const EXPERIMENT_TYPE_NIMBUS = "nimbus";
+
 export const NimbusTelemetry = {
   EnrollmentFailureReason,
   EnrollmentSource,
@@ -89,15 +92,20 @@ export const NimbusTelemetry = {
 
   recordEnrollment(enrollment) {
     this.setExperimentActive(enrollment);
+
+    const experimentType = enrollment.isRollout
+      ? EXPERIMENT_TYPE_ROLLOUT
+      : EXPERIMENT_TYPE_NIMBUS;
+
     Glean.normandy.enrollNimbusExperiment.record({
       value: enrollment.slug,
-      experimentType: enrollment.experimentType,
       branch: enrollment.branch.slug,
+      experimentType,
     });
     Glean.nimbusEvents.enrollment.record({
       experiment: enrollment.slug,
       branch: enrollment.branch.slug,
-      experiment_type: enrollment.experimentType,
+      experiment_type: experimentType,
     });
 
     this.recordEnrollmentStatus({
@@ -268,7 +276,10 @@ export const NimbusTelemetry = {
   },
 
   setExperimentActive(enrollment) {
-    const type = `${EXPERIMENT_ACTIVE_PREFIX}${enrollment.experimentType}`;
+    const experimentType = enrollment.isRollout
+      ? EXPERIMENT_TYPE_ROLLOUT
+      : EXPERIMENT_TYPE_NIMBUS;
+    const type = `${EXPERIMENT_ACTIVE_PREFIX}${experimentType}`;
     lazy.TelemetryEnvironment.setExperimentActive(
       enrollment.slug,
       enrollment.branch.slug,
@@ -283,10 +294,15 @@ export const NimbusTelemetry = {
   recordValidationFailure(
     slug,
     reason,
-    { branch, locale, l10nIds: l10n_ids, featureIds: feature_ids } = {}
+    { branch, locale, l10nIds: l10n_ids } = {}
   ) {
     // Do not record invalid feature telemetry.
     if (reason === ValidationFailureReason.INVALID_FEATURE) {
+      return;
+    }
+
+    // Do not record unsupported feature telemetry.
+    if (reason === ValidationFailureReason.UNSUPPORTED_FEATURES) {
       return;
     }
 
@@ -296,10 +312,7 @@ export const NimbusTelemetry = {
       reason === ValidationFailureReason.L10N_MISSING_ENTRY
         ? { l10n_ids, locale }
         : {},
-      reason === ValidationFailureReason.L10N_MISSING_LOCALE ? { locale } : {},
-      reason === ValidationFailureReason.UNSUPPORTED_FEATURES
-        ? { feature_ids }
-        : {}
+      reason === ValidationFailureReason.L10N_MISSING_LOCALE ? { locale } : {}
     );
 
     Glean.normandy.validationFailedNimbusExperiment.record({
