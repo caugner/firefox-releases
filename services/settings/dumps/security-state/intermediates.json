@@ -1,6 +1,188 @@
 {
   "data": [
     {
+      "schema": 1752631067902,
+      "derHash": "0LYmyK2TliKWs5IBBu1/s4GPy5jgtz55kUG0JSEzWw8=",
+      "attachment": {
+        "hash": "e83823e094fc33d3b4af78f1e8f95390c19a2251a7d71707bc51ab535b687881",
+        "size": 2398,
+        "filename": "Vtg6Fi854KaDx08x8gXvmz8mCn0Hf4Hzg9dxrDDqdy4=.pem",
+        "location": "security-state-staging/intermediates/2e2ef072-843c-43ab-81c6-3ef63bec497f.pem",
+        "mimetype": "application/x-pem-file"
+      },
+      "id": "145fcad9-5361-4ffc-9211-df101aba2447",
+      "last_modified": 1752634622702
+    },
+    {
+      "schema": 1752631065993,
+      "derHash": "c+m+fVe9XHKgYwRGPTL4+F7KEuLy0oTkiug/ZT/bTrY=",
+      "attachment": {
+        "hash": "a2c755c8197181625e61972939ace42b83b548a84b87297dd3d5526e086d942c",
+        "size": 1248,
+        "filename": "d8WQ9OkyrmgWqzbQsQkl5uL-ue7f9DCEdocJUpRznGE=.pem",
+        "location": "security-state-staging/intermediates/333b516d-f328-45a9-a282-dd467c385449.pem",
+        "mimetype": "application/x-pem-file"
+      },
+      "id": "594866e3-2f79-4535-b9f1-f737fc4c4e13",
+      "last_modified": 1752634622699
+    },
+    {
+      "schema": 1752631068872,
+      "derHash": "0Z4fzY4SdH11t0ooMY7v3XAPYW4rIVcBu+gEw83aAns=",
+      "attachment": {
+        "hash": "3a875c4b72419f95c880d4900ecd61247f13d956dd713437be7533c89c574e45",
+        "size": 1272,
+        "filename": "7U61eZ4xMG3x6qHpfWYVmKJWTdiaYVIULIx0M_RG3a4=.pem",
+        "location": "security-state-staging/intermediates/acb26498-dff9-48d5-b59f-c8a69dbbb112.pem",
+        "mimetype": "application/x-pem-file"
+      },
+      "id": "e7da2e76-651d-463b-8d4b-54ee29f224fa",
+      "last_modified": 1752634622696
+    },
+    {
+      "schema": 1752631064983,
+      "derHash": "2IbCNfr63S5HNJJM9YtNjwy3Bl8PVFGz4cMI+S73sus=",
+      "attachment": {
+        "hash": "297a19d0445566ff14b3b97cf18232ec1e8ad20ffe497c86761e4aefc86460bc",
+        "size": 2418,
+        "filename": "TcwsJhAKwWICVN6Q_-7q3y7eRrrfy3jzpeQpmQQJ1xI=.pem",
+        "location": "security-state-staging/intermediates/a9eca34b-18e1-410c-8579-52e591e58f32.pem",
+        "mimetype": "application/x-pem-file"
+      },
+      "id": "53bd5549-1ff9-4d57-9424-6b771d76b60e",
+      "last_modified": 1752634622693
+    },
+    {
+      "schema": 1752631066965,
+      "derHash": "XrAhe5KMLeEXD84RDKzDyJpCSS5Pl/WuHrjNVPimjus=",
+      "attachment": {
+        "hash": "f6c7a0fbe0b582c8e293c787df084d869fcfbb1ed253abf042bc0822ed3d702b",
+        "size": 2398,
+        "filename": "X4AGLwdqSLcL__rYNWWFtfT1CnCt94N7jSHB6cabFBU=.pem",
+        "location": "security-state-staging/intermediates/c71b6605-bfbe-4e05-b6b5-330d8b8d45c6.pem",
+        "mimetype": "application/x-pem-file"
+      },
+      "id": "7f7bab56-8394-4df2-9fb6-38c3c73ed596",
+      "last_modified": 1752634622689
+    },
+    {
+      "schema": 1752631063928,
+      "derHash": "DpdeYqgwMOrj9EG6/7/XV0+3I17stQ8fdH348FBtJF4=",
+      "attachment": {
+        "hash": "427314e9b431619df2a582efee7af27462a4280becca49d6e4f1766e155b9398",
+        "size": 1252,
+        "filename": "aRfTKraYCxRcgK83CNuXDEPgOjT8-Nb6by2DridqnCQ=.pem",
+        "location": "security-state-staging/intermediates/56f251d4-9c5c-4fbb-9151-f0fd927bd905.pem",
+        "mimetype": "application/x-pem-file"
+      },
+      "id": "bb7cf118-78d3-41a2-b3be-09ec709dced8",
+      "last_modified": 1752634622686
+    },
+    {
+      "schema": 1752587864240,
+      "derHash": "LSCKTMC+QhaUfZZdOu+w43iX12kd3rAX5T5cB4vNNEw=",
+      "attachment": {
+        "hash": "aa8b4daa9dd2371f283c508baff98aef07de0de576c9c9d3159a823b724c7df8",
+        "size": 2682,
+        "filename": "rHb2OkbnYbWswyWXBckgy38FY9JI2NGA-TSvaAmaFfk=.pem",
+        "location": "security-state-staging/intermediates/26c71151-a442-4b12-a27e-16f66e950182.pem",
+        "mimetype": "application/x-pem-file"
+      },
+      "id": "a8c02be2-1bf2-4dd6-8294-a00fb0433d20",
+      "last_modified": 1752591422549
+    },
+    {
+      "schema": 1752587863094,
+      "derHash": "dotnRqKMSMw1AkEB5Y+XhvVrZ2o86UxS+WjriI3SNy4=",
+      "attachment": {
+        "hash": "360cb955c8df54989d7f9f5408472a2b6e54ca85f0318701657cb46fb8bad2bd",
+        "size": 2101,
+        "filename": "YD928oyf66g-x1HttmyNdSPqQP5J_nRCdin1Dau89Vo=.pem",
+        "location": "security-state-staging/intermediates/0cb909fe-022f-4ae1-8f53-5cb0d1704c56.pem",
+        "mimetype": "application/x-pem-file"
+      },
+      "id": "345e6ce5-5cda-4a03-ab2b-29012db8d064",
+      "last_modified": 1752591422546
+    },
+    {
+      "schema": 1752155863326,
+      "derHash": "dx59bC13t7kOG0/32/6j4a19JJ0Ncp7QRVZ7XBZAknY=",
+      "attachment": {
+        "hash": "1ae45b7b0ceef35190fcbaf30c8b0442d2f2caa0a5519ffff89b9a5152bb84c0",
+        "size": 1305,
+        "filename": "wyPygwouDrmZ9JjrHsSya44hCIbHB0O1i3IMIeU20FE=.pem",
+        "location": "security-state-staging/intermediates/befc0f92-2e21-4ed1-900b-8947f01e7372.pem",
+        "mimetype": "application/x-pem-file"
+      },
+      "id": "85d03609-d84b-4554-a164-7d75746b959d",
+      "last_modified": 1752159422751
+    },
+    {
+      "schema": 1752155862293,
+      "derHash": "mAWUbNRs0vIidtRj9YLU6BHuJAJdjBfW7QrOOPc2Z0w=",
+      "attachment": {
+        "hash": "f1280eef8ebc2ff612458b2798279e95d5172d8883a5b646a68b352fbed96f4b",
+        "size": 2109,
+        "filename": "83xSo8lPiDB3NfbtH8Sf6nnd6a_5lf9oOooQ86ca04I=.pem",
+        "location": "security-state-staging/intermediates/74958bc5-8cdf-4aaa-a74a-5f74bcd32b6d.pem",
+        "mimetype": "application/x-pem-file"
+      },
+      "id": "77a5b5de-9cfa-4d8b-8f6d-570f0afa4d3c",
+      "last_modified": 1752159422748
+    },
+    {
+      "schema": 1752155864301,
+      "derHash": "Rud26nxsD5HxzeMXVfhkxFphgS8cN47VWU4Tu03mM8M=",
+      "attachment": {
+        "hash": "43be86a2c15a4438f0f6135b49ef56ea9d5ecc5688c3744dddd47258fb6116c1",
+        "size": 2450,
+        "filename": "2PetmpDyIF3lqvSYiYQyKHCHGnW0P7DdIC1MnDREeHc=.pem",
+        "location": "security-state-staging/intermediates/42f7aee8-d33a-445f-871c-affdc0cb6809.pem",
+        "mimetype": "application/x-pem-file"
+      },
+      "id": "f9b2d933-0eae-46e6-942a-41244569963a",
+      "last_modified": 1752159422744
+    },
+    {
+      "schema": 1751896661778,
+      "derHash": "EflXHDDC3iMnU9WxWMVPd7CgLf9BcTV1LTLpi4m8lxk=",
+      "attachment": {
+        "hash": "d57e574d55d96c379a3926a86cd251a818034e0950b914ee0955f9f6e52a3c93",
+        "size": 2406,
+        "filename": "i-KvnAmgyN3RFmy3WIX3PLPVfLL7ohyVZ6NMlvZbwME=.pem",
+        "location": "security-state-staging/intermediates/7c7c258a-b262-4f87-a321-3ca974337bb4.pem",
+        "mimetype": "application/x-pem-file"
+      },
+      "id": "b08c45a5-1cc0-4c09-afd6-5b60ab026262",
+      "last_modified": 1751900222448
+    },
+    {
+      "schema": 1750730263299,
+      "derHash": "LguEGJ/5dAwUDMfr3aBRosI58d7rEvxMVtvVAPlTmNg=",
+      "attachment": {
+        "hash": "c4d199ed4f7b32cdadcf429f7b1d962e6a3c034fe3b704492b0ac16fcd1b00b2",
+        "size": 1853,
+        "filename": "joN6IPaPB9ALd3OzEFQHSQcSICs0_U_MmT4qcKgSXrc=.pem",
+        "location": "security-state-staging/intermediates/f96f2779-246d-471e-b62b-242743e655e3.pem",
+        "mimetype": "application/x-pem-file"
+      },
+      "id": "d58e8eea-15e8-46e4-a20b-aad35a61dfdd",
+      "last_modified": 1750733822397
+    },
+    {
+      "schema": 1750255062558,
+      "derHash": "sOcUWki5+uSkmQcf6cT6WQMt9y51lVsrPvt5WZ5KU+A=",
+      "attachment": {
+        "hash": "f1f67fdd9b44a170657f5ecb602b7115773ba1a9ee24505ac5d702c7bc16a3bb",
+        "size": 2369,
+        "filename": "Vo0kHXgA-__lFjaxinaazmjp6Snzw2dANQzv6YTU5n0=.pem",
+        "location": "security-state-staging/intermediates/1cd9e0f2-1935-4231-ae43-19ac3d9aef8c.pem",
+        "mimetype": "application/x-pem-file"
+      },
+      "id": "7422ccce-eccc-4a7f-a6b7-f9481a9c169b",
+      "last_modified": 1750258622612
+    },
+    {
       "schema": 1749218267234,
       "derHash": "M7W3wh5mUE/T7mWw/g0SwxdboqYWRBtxM9s8Eja1Xfc=",
       "attachment": {
@@ -7297,42 +7479,6 @@
       "last_modified": 1704470223072
     },
     {
-      "schema": 1703537607315,
-      "derHash": "ctcW97tr0QVwT0K5UkkjUQ3LhbLYcMDpraWuuclpBRo=",
-      "subject": "CN=ePKI Root Certification Authority - G2,O=Chunghwa Telecom Co.\\, Ltd.,C=TW",
-      "subjectDN": "MGMxCzAJBgNVBAYTAlRXMSMwIQYDVQQKDBpDaHVuZ2h3YSBUZWxlY29tIENvLiwgTHRkLjEvMC0GA1UEAwwmZVBLSSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IC0gRzI=",
-      "whitelist": false,
-      "attachment": {
-        "hash": "aff986340dcc592a5eacd96a6044c07f55438a9b0214921ea5306a0ea997fed9",
-        "size": 2804,
-        "filename": "tInMsiS5prgd0nTOr1IJwlKZjJp2r0jk9MUKByhGGCU=.pem",
-        "location": "security-state-staging/intermediates/1cd7753f-d18c-4864-8129-0ea1a5092f75.pem",
-        "mimetype": "application/x-pem-file"
-      },
-      "pubKeyHash": "tInMsiS5prgd0nTOr1IJwlKZjJp2r0jk9MUKByhGGCU=",
-      "crlite_enrolled": false,
-      "id": "4e467304-4cae-4b24-8542-fa721e586cfb",
-      "last_modified": 1703537823229
-    },
-    {
-      "schema": 1703537607030,
-      "derHash": "aAfJcjXF7GCQJppLX+36tGmG5C9NZ9Lt3c9uRc8N+oA=",
-      "subject": "CN=HiPKI Root CA - G1,O=Chunghwa Telecom Co.\\, Ltd.,C=TW",
-      "subjectDN": "ME8xCzAJBgNVBAYTAlRXMSMwIQYDVQQKDBpDaHVuZ2h3YSBUZWxlY29tIENvLiwgTHRkLjEbMBkGA1UEAwwSSGlQS0kgUm9vdCBDQSAtIEcx",
-      "whitelist": false,
-      "attachment": {
-        "hash": "c94a4c47c3048f75024cf6c844a614b253f7ee3823a41c0e39e567effea001fc",
-        "size": 2328,
-        "filename": "ecqvU0fm5KlMjniphJb8dAIPgJ7eE_Ig-rYQTI3tMp8=.pem",
-        "location": "security-state-staging/intermediates/24d59f73-321d-498a-8fa9-3f4111529687.pem",
-        "mimetype": "application/x-pem-file"
-      },
-      "pubKeyHash": "ecqvU0fm5KlMjniphJb8dAIPgJ7eE/Ig+rYQTI3tMp8=",
-      "crlite_enrolled": false,
-      "id": "64de4f00-ad9d-48db-9d46-2c27c55f4337",
-      "last_modified": 1703537823226
-    },
-    {
       "schema": 1702979286308,
       "derHash": "hHQJ5jUm8WJ1OsSfdSGO+q+n1clK3pCVznLn9rbjrJk=",
       "subject": "CN=WE5,O=Google Trust Services,C=US",
@@ -12427,24 +12573,6 @@
       "last_modified": 1666727875348
     },
     {
-      "schema": 1666727336675,
-      "derHash": "2uNDT2lvyfD2UuGypvabXpJz0J9DvTvdRxfWFB+M0sI=",
-      "subject": "OU=Public Certification Authority - G2,O=Chunghwa Telecom Co.\\, Ltd.,C=TW",
-      "subjectDN": "MGAxCzAJBgNVBAYTAlRXMSMwIQYDVQQKDBpDaHVuZ2h3YSBUZWxlY29tIENvLiwgTHRkLjEsMCoGA1UECwwjUHVibGljIENlcnRpZmljYXRpb24gQXV0aG9yaXR5IC0gRzI=",
-      "whitelist": false,
-      "attachment": {
-        "hash": "d35775690c65ebee8113249b23f19a293655d0ed08e999f64243089ed009db1b",
-        "size": 2129,
-        "filename": "tnFqrstaexEa6Zz-CVGGozhI8IF1FafM6uzX3zzHrUI=.pem",
-        "location": "security-state-staging/intermediates/07e9d719-440e-4db5-9e24-7f15cd5cee54.pem",
-        "mimetype": "application/x-pem-file"
-      },
-      "pubKeyHash": "tnFqrstaexEa6Zz+CVGGozhI8IF1FafM6uzX3zzHrUI=",
-      "crlite_enrolled": false,
-      "id": "9bae286e-930a-4285-8a27-54c6509f3077",
-      "last_modified": 1666727875331
-    },
-    {
       "schema": 1666727377394,
       "derHash": "GDWw5ILqZVNvwBDkvBPAYPZWaBZfupfi9ULOlspt/vw=",
       "subject": "CN=Entrust Certification Authority - L1F,OU=See www.entrust.net/legal-terms+OU=(c) 2016 Entrust\\, Inc. - for authorized use only,O=Entrust\\, Inc.,C=US",
@@ -13091,24 +13219,6 @@
       "crlite_enrolled": false,
       "id": "9dfe1a67-5cce-4d31-a077-99d8791d279d",
       "last_modified": 1666727874573
-    },
-    {
-      "schema": 1666727376029,
-      "derHash": "YJkw64B61CCv2iqKphtnSDA5FozXZuCZQqSL/n873BA=",
-      "subject": "OU=Public Certification Authority - G2,O=Chunghwa Telecom Co.\\, Ltd.,C=TW",
-      "subjectDN": "MGAxCzAJBgNVBAYTAlRXMSMwIQYDVQQKDBpDaHVuZ2h3YSBUZWxlY29tIENvLiwgTHRkLjEsMCoGA1UECwwjUHVibGljIENlcnRpZmljYXRpb24gQXV0aG9yaXR5IC0gRzI=",
-      "whitelist": false,
-      "attachment": {
-        "hash": "b2b74d8c5d2ce4f283391974773f823f1441c476105a4e78f1b99db3e02f9528",
-        "size": 2117,
-        "filename": "tnFqrstaexEa6Zz-CVGGozhI8IF1FafM6uzX3zzHrUI=.pem",
-        "location": "security-state-staging/intermediates/b062306c-bad7-433f-bcc1-81512b1194eb.pem",
-        "mimetype": "application/x-pem-file"
-      },
-      "pubKeyHash": "tnFqrstaexEa6Zz+CVGGozhI8IF1FafM6uzX3zzHrUI=",
-      "crlite_enrolled": false,
-      "id": "4835ad01-5f2c-4639-abc1-05d2b5279fb5",
-      "last_modified": 1666727874544
     },
     {
       "schema": 1666727343840,
@@ -22615,42 +22725,6 @@
       "last_modified": 1663786626309
     },
     {
-      "schema": 1663786359609,
-      "derHash": "JJvmXwx6sP47dkizDODrPPaRQCxy2stAzxRinGA8ujY=",
-      "subject": "CN=BlackCert\\, Inc. RSA DV Certification Authority,O=BlackCert\\, Inc.,L=Denver,ST=CO,C=US",
-      "subjectDN": "MH4xCzAJBgNVBAYTAlVTMQswCQYDVQQIEwJDTzEPMA0GA1UEBxMGRGVudmVyMRgwFgYDVQQKEw9CbGFja0NlcnQsIEluYy4xNzA1BgNVBAMTLkJsYWNrQ2VydCwgSW5jLiBSU0EgRFYgQ2VydGlmaWNhdGlvbiBBdXRob3JpdHk=",
-      "whitelist": false,
-      "attachment": {
-        "hash": "ffb41132fe60448dca99fed8dc36b06e864ec803804810ddb99ded957920e092",
-        "size": 2154,
-        "filename": "dnTrbfgvJOGlJse4RxYg30jhwWfQfKyNYkL6SpGs_1I=.pem",
-        "location": "security-state-staging/intermediates/c4c47a34-c4f5-4229-ae72-be617d7272f9.pem",
-        "mimetype": "application/x-pem-file"
-      },
-      "pubKeyHash": "dnTrbfgvJOGlJse4RxYg30jhwWfQfKyNYkL6SpGs/1I=",
-      "crlite_enrolled": false,
-      "id": "b3de065f-383e-4062-984d-582c5ee787af",
-      "last_modified": 1663786626302
-    },
-    {
-      "schema": 1663786358729,
-      "derHash": "6+ABXvZBxICVTtKmiEL8zSqKeSE67tg23fpigujqj2o=",
-      "subject": "CN=BlackCert\\, Inc. RSA EV Certification Authority,OU=Controlled by COMODO exclusively for BlackCert\\, Inc.,O=BlackCert\\, Inc.,L=Denver,ST=CO,C=US",
-      "subjectDN": "MIG9MQswCQYDVQQGEwJVUzELMAkGA1UECBMCQ08xDzANBgNVBAcTBkRlbnZlcjEYMBYGA1UEChMPQmxhY2tDZXJ0LCBJbmMuMT0wOwYDVQQLEzRDb250cm9sbGVkIGJ5IENPTU9ETyBleGNsdXNpdmVseSBmb3IgQmxhY2tDZXJ0LCBJbmMuMTcwNQYDVQQDEy5CbGFja0NlcnQsIEluYy4gUlNBIEVWIENlcnRpZmljYXRpb24gQXV0aG9yaXR5",
-      "whitelist": false,
-      "attachment": {
-        "hash": "102f83bddea759d6a13c4385f9633aba85ef379cd52dde79f7d2c10f4d463dcb",
-        "size": 2272,
-        "filename": "nq1PHRuOp_qQ-vlMQDWIjBXQS9CPEsH5CLd-dlkam7U=.pem",
-        "location": "security-state-staging/intermediates/ead2cc1f-3b5a-4901-9bef-7454e11f15e1.pem",
-        "mimetype": "application/x-pem-file"
-      },
-      "pubKeyHash": "nq1PHRuOp/qQ+vlMQDWIjBXQS9CPEsH5CLd+dlkam7U=",
-      "crlite_enrolled": false,
-      "id": "3b4cd15a-23cd-4507-bbc7-c4eed10c1309",
-      "last_modified": 1663786626295
-    },
-    {
       "schema": 1663786360454,
       "derHash": "00GZhqSHZYJdE7MBVHsn3Fag7NMJGYr+mn1/qtZJaao=",
       "subject": "CN=Verokey High Assurance Business,O=Verokey,C=AU",
@@ -22865,24 +22939,6 @@
       "crlite_enrolled": false,
       "id": "d177b415-a735-49d3-acf1-d483a8cf8445",
       "last_modified": 1663786626107
-    },
-    {
-      "schema": 1663786337728,
-      "derHash": "mHpclYS0a1mHjkJGD4Pk1h9MJyI2aUbU0hbzNqbxKPc=",
-      "subject": "CN=BlackCert\\, Inc. ECC DV Certification Authority,O=BlackCert\\, Inc.,L=Denver,ST=CO,C=US",
-      "subjectDN": "MH4xCzAJBgNVBAYTAlVTMQswCQYDVQQIEwJDTzEPMA0GA1UEBxMGRGVudmVyMRgwFgYDVQQKEw9CbGFja0NlcnQsIEluYy4xNzA1BgNVBAMTLkJsYWNrQ2VydCwgSW5jLiBFQ0MgRFYgQ2VydGlmaWNhdGlvbiBBdXRob3JpdHk=",
-      "whitelist": false,
-      "attachment": {
-        "hash": "1f922e42ebd0e6bf8d650a099283a6fce1dbaaa0d43e103c152fb431a9173a7c",
-        "size": 1313,
-        "filename": "UHhlKE9aTixVYvtmCIINV9nOgVj-gicuzrl4dZJypeA=.pem",
-        "location": "security-state-staging/intermediates/4a348e85-a781-41c4-b9f5-7cc66956acaf.pem",
-        "mimetype": "application/x-pem-file"
-      },
-      "pubKeyHash": "UHhlKE9aTixVYvtmCIINV9nOgVj+gicuzrl4dZJypeA=",
-      "crlite_enrolled": false,
-      "id": "b7188189-ae9f-4f81-a602-7a6df6946a84",
-      "last_modified": 1663786626094
     },
     {
       "schema": 1663786332479,
@@ -23171,24 +23227,6 @@
       "crlite_enrolled": false,
       "id": "5cb1707f-a3c5-4bec-93f5-ea54cf32feb3",
       "last_modified": 1663786625784
-    },
-    {
-      "schema": 1663786291500,
-      "derHash": "MoTgNczXH3odBjrpjimx5ZEjEa2fbZEYhMr513HTfE0=",
-      "subject": "CN=BlackCert\\, Inc. RSA OV Certification Authority,O=BlackCert\\, Inc.,L=Denver,ST=CO,C=US",
-      "subjectDN": "MH4xCzAJBgNVBAYTAlVTMQswCQYDVQQIEwJDTzEPMA0GA1UEBxMGRGVudmVyMRgwFgYDVQQKEw9CbGFja0NlcnQsIEluYy4xNzA1BgNVBAMTLkJsYWNrQ2VydCwgSW5jLiBSU0EgT1YgQ2VydGlmaWNhdGlvbiBBdXRob3JpdHk=",
-      "whitelist": false,
-      "attachment": {
-        "hash": "35bdce85f3230d2b21cf676bcf2eb1b6f77b6324e7f590ff39e91ee3d18226f7",
-        "size": 2150,
-        "filename": "B5IV9Zui5uDR_htFQKKJviedASQLhuhY2W547xasQvc=.pem",
-        "location": "security-state-staging/intermediates/b12990b4-e8de-4d6b-82d3-76eb85619484.pem",
-        "mimetype": "application/x-pem-file"
-      },
-      "pubKeyHash": "B5IV9Zui5uDR/htFQKKJviedASQLhuhY2W547xasQvc=",
-      "crlite_enrolled": false,
-      "id": "b5f8be2f-292a-4792-9a15-d1f31c2c9f23",
-      "last_modified": 1663786625756
     },
     {
       "schema": 1663786294128,
@@ -23603,24 +23641,6 @@
       "crlite_enrolled": false,
       "id": "3377e410-48b3-4539-b704-678f14914f2d",
       "last_modified": 1663786625358
-    },
-    {
-      "schema": 1663786230301,
-      "derHash": "OcedKkz/4Jxh3mnsFJkdjpXOcTTs9x7weZANCtVHjK0=",
-      "subject": "CN=BlackCert\\, Inc. ECC EV Certification Authority,OU=Controlled by COMODO exclusively for BlackCert\\, Inc.,O=BlackCert\\, Inc.,L=Denver,ST=CO,C=US",
-      "subjectDN": "MIG9MQswCQYDVQQGEwJVUzELMAkGA1UECBMCQ08xDzANBgNVBAcTBkRlbnZlcjEYMBYGA1UEChMPQmxhY2tDZXJ0LCBJbmMuMT0wOwYDVQQLEzRDb250cm9sbGVkIGJ5IENPTU9ETyBleGNsdXNpdmVseSBmb3IgQmxhY2tDZXJ0LCBJbmMuMTcwNQYDVQQDEy5CbGFja0NlcnQsIEluYy4gRUNDIEVWIENlcnRpZmljYXRpb24gQXV0aG9yaXR5",
-      "whitelist": false,
-      "attachment": {
-        "hash": "cbf77056b300bdaecc476ef372be42ee1bbb163d57247103d428fd65833bc732",
-        "size": 1431,
-        "filename": "YMJYGd5waNYmUtnRh_uwLFzS5lXUfdRoNphUMGKD7UY=.pem",
-        "location": "security-state-staging/intermediates/b5439e20-bf07-4d4a-8a0e-1427b2b6b0f1.pem",
-        "mimetype": "application/x-pem-file"
-      },
-      "pubKeyHash": "YMJYGd5waNYmUtnRh/uwLFzS5lXUfdRoNphUMGKD7UY=",
-      "crlite_enrolled": false,
-      "id": "50d77a86-7f84-4da8-8e05-e89dfa9cd97b",
-      "last_modified": 1663786625337
     },
     {
       "schema": 1663786220064,
@@ -24217,24 +24237,6 @@
       "last_modified": 1663786624771
     },
     {
-      "schema": 1663786252838,
-      "derHash": "PKGOHtvmhg1wkU6aoNuOYeGT5+9UfNq4tN9UX0bexrs=",
-      "subject": "CN=BlackCert\\, Inc. ECC OV Certification Authority,O=BlackCert\\, Inc.,L=Denver,ST=CO,C=US",
-      "subjectDN": "MH4xCzAJBgNVBAYTAlVTMQswCQYDVQQIEwJDTzEPMA0GA1UEBxMGRGVudmVyMRgwFgYDVQQKEw9CbGFja0NlcnQsIEluYy4xNzA1BgNVBAMTLkJsYWNrQ2VydCwgSW5jLiBFQ0MgT1YgQ2VydGlmaWNhdGlvbiBBdXRob3JpdHk=",
-      "whitelist": false,
-      "attachment": {
-        "hash": "37a914d05ca64eee1c00792d05096a08d43a4139983cca5f78abd8e569677510",
-        "size": 1313,
-        "filename": "bQkT-mQD0009MLZyZZBcx4FuOI9_hOoj322Ms-tQWFo=.pem",
-        "location": "security-state-staging/intermediates/6162d339-3ba2-4905-a428-441a37839f24.pem",
-        "mimetype": "application/x-pem-file"
-      },
-      "pubKeyHash": "bQkT+mQD0009MLZyZZBcx4FuOI9/hOoj322Ms+tQWFo=",
-      "crlite_enrolled": false,
-      "id": "db21ebe3-6953-4f00-a637-b99d8c6ae432",
-      "last_modified": 1663786624754
-    },
-    {
       "schema": 1663699718906,
       "derHash": "LBcQZNv6KAofKU9y4qH8JMhhEbI3I9uTddMASyfnszs=",
       "subject": "CN=DigiCert G5 TLS EU ECC P-384 SHA384 2022 CA1,O=DigiCert Ireland Limited,C=IE",
@@ -24395,24 +24397,6 @@
       "crlite_enrolled": false,
       "id": "abf9e632-aa0d-4b33-a74e-1afa980faa53",
       "last_modified": 1663293423105
-    },
-    {
-      "schema": 1663225023673,
-      "derHash": "q97sUxSQmPigsH79lys0Wom+3o7eaXXmG+le4Cbafvo=",
-      "subject": "CN=Actalis Client Authentication CA G1,O=Actalis S.p.A./03358520967,L=Milano,ST=Milano,C=IT",
-      "subjectDN": "MIGCMQswCQYDVQQGEwJJVDEPMA0GA1UECAwGTWlsYW5vMQ8wDQYDVQQHDAZNaWxhbm8xIzAhBgNVBAoMGkFjdGFsaXMgUy5wLkEuLzAzMzU4NTIwOTY3MSwwKgYDVQQDDCNBY3RhbGlzIENsaWVudCBBdXRoZW50aWNhdGlvbiBDQSBHMQ==",
-      "whitelist": false,
-      "attachment": {
-        "hash": "737f0f0ce1590b65bb7efa52f0521e84ec1ac16313c8b4c6cd288064af2d127d",
-        "size": 2235,
-        "filename": "YsqG87ugr7iITRNFFaHeNX5oMmY80JlEVuqBCxAhZAM=.pem",
-        "location": "security-state-staging/intermediates/5df58a07-e383-4a1a-8af4-9471aa61c013.pem",
-        "mimetype": "application/x-pem-file"
-      },
-      "pubKeyHash": "YsqG87ugr7iITRNFFaHeNX5oMmY80JlEVuqBCxAhZAM=",
-      "crlite_enrolled": false,
-      "id": "621a2382-280e-48de-b859-5293ba5379b7",
-      "last_modified": 1663246623215
     },
     {
       "schema": 1662515823574,
@@ -27241,42 +27225,6 @@
       "last_modified": 1645578266173
     },
     {
-      "schema": 1643316508186,
-      "derHash": "S9FvSVXz88nI6kjvmZUyTaUSFyT4mRXV8skesLrvIzc=",
-      "subject": "OU=Public Certification Authority,O=Chunghwa Telecom Co.\\, Ltd.,C=TW",
-      "subjectDN": "MFsxCzAJBgNVBAYTAlRXMSMwIQYDVQQKDBpDaHVuZ2h3YSBUZWxlY29tIENvLiwgTHRkLjEnMCUGA1UECwweUHVibGljIENlcnRpZmljYXRpb24gQXV0aG9yaXR5",
-      "whitelist": false,
-      "attachment": {
-        "hash": "689c7ab13bb497838c62b566e5da7f914f4cf9354f08643500263bcfb46a32a3",
-        "size": 2105,
-        "filename": "qMjf0br8Ay71_wiJ0t25y4v3IWwirr3SF1bWHJzkbnE=.pem",
-        "location": "security-state-staging/intermediates/c2017a82-2237-4c28-8656-5764f263e185.pem",
-        "mimetype": "application/x-pem-file"
-      },
-      "pubKeyHash": "qMjf0br8Ay71/wiJ0t25y4v3IWwirr3SF1bWHJzkbnE=",
-      "crlite_enrolled": false,
-      "id": "a869aa70-b82b-40fc-b8b7-123af99bb58e",
-      "last_modified": 1643317054972
-    },
-    {
-      "schema": 1643295453377,
-      "derHash": "RksOwKYC8Bk9tfM5EYhaOmGSGtFtJmTiW++rEM+m7SU=",
-      "subject": "OU=Public Certification Authority,O=Chunghwa Telecom Co.\\, Ltd.,C=TW",
-      "subjectDN": "MFsxCzAJBgNVBAYTAlRXMSMwIQYDVQQKDBpDaHVuZ2h3YSBUZWxlY29tIENvLiwgTHRkLjEnMCUGA1UECwweUHVibGljIENlcnRpZmljYXRpb24gQXV0aG9yaXR5",
-      "whitelist": false,
-      "attachment": {
-        "hash": "49845caec147a9f80e7f49b5e4b2b8629653bccf72d7aa8dfa0b7029f5d75514",
-        "size": 1934,
-        "filename": "qMjf0br8Ay71_wiJ0t25y4v3IWwirr3SF1bWHJzkbnE=.pem",
-        "location": "security-state-staging/intermediates/cabaf189-98ae-41ee-8da3-966fb99dbea2.pem",
-        "mimetype": "application/x-pem-file"
-      },
-      "pubKeyHash": "qMjf0br8Ay71/wiJ0t25y4v3IWwirr3SF1bWHJzkbnE=",
-      "crlite_enrolled": false,
-      "id": "201bbcbe-98a9-4e1d-9ba8-1d91ccaef4d5",
-      "last_modified": 1643317054962
-    },
-    {
       "schema": 1642150113750,
       "derHash": "fPY09fr+ndzIizbWsefr+3B4A01kQZ58Z4M15W2CNCE=",
       "subject": "CN=ZoTrus ECC DV SSL CA,O=ZoTrus Technology Limited,C=CN",
@@ -27817,24 +27765,6 @@
       "last_modified": 1601517444423
     },
     {
-      "schema": 1601376733088,
-      "derHash": "ZHFyUK+LAo3Y5cC65MkULIsQNTJhK8SHCF/Twxn5wGc=",
-      "subject": "CN=ePKI Root Certification Authority - G2,O=Chunghwa Telecom Co.\\, Ltd.,C=TW",
-      "subjectDN": "MGMxCzAJBgNVBAYTAlRXMSMwIQYDVQQKDBpDaHVuZ2h3YSBUZWxlY29tIENvLiwgTHRkLjEvMC0GA1UEAwwmZVBLSSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IC0gRzI=",
-      "whitelist": false,
-      "attachment": {
-        "hash": "73789188b1ff6dcd70442594b8ff119cb7b30d858c0e7f072cf8a014cd8f296a",
-        "size": 2649,
-        "filename": "tInMsiS5prgd0nTOr1IJwlKZjJp2r0jk9MUKByhGGCU=.pem",
-        "location": "security-state-staging/intermediates/3785b85c-da3b-4b7b-bd12-2796cce60c04.pem",
-        "mimetype": "application/x-pem-file"
-      },
-      "pubKeyHash": "tInMsiS5prgd0nTOr1IJwlKZjJp2r0jk9MUKByhGGCU=",
-      "crlite_enrolled": false,
-      "id": "ee033ab1-7bfc-4f08-b26a-b3b2bce86767",
-      "last_modified": 1601517444135
-    },
-    {
       "schema": 1601376755836,
       "derHash": "joxuv3fcc9s+OOk/SAPmK2tZM761HuQVL2jXqhRCazE=",
       "subject": "CN=Microsec e-Szigno Root CA 2009,O=Microsec Ltd.,L=Budapest,C=HU",
@@ -27869,42 +27799,6 @@
       "crlite_enrolled": false,
       "id": "ff319db3-4ac0-4406-9c29-03f632e42c98",
       "last_modified": 1601517443342
-    },
-    {
-      "schema": 1601376763286,
-      "derHash": "0QjDSljA5KYWRJ+MSDGAI6IpyGzT3dXV/mBBpAHBahQ=",
-      "subject": "OU=ePKI Root Certification Authority,O=Chunghwa Telecom Co.\\, Ltd.,C=TW",
-      "subjectDN": "MF4xCzAJBgNVBAYTAlRXMSMwIQYDVQQKDBpDaHVuZ2h3YSBUZWxlY29tIENvLiwgTHRkLjEqMCgGA1UECwwhZVBLSSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5",
-      "whitelist": false,
-      "attachment": {
-        "hash": "15e5931fc9e514bb8bf23b5f5c3c40bb3131ccf6ed8b0857416342b002b8db15",
-        "size": 2645,
-        "filename": "YlVMFwBVQ7I3IV8EJo3NL9HEcCQK08hmDiWuLFljD1U=.pem",
-        "location": "security-state-staging/intermediates/a894f5a2-8e74-4828-97c6-41052369ca59.pem",
-        "mimetype": "application/x-pem-file"
-      },
-      "pubKeyHash": "YlVMFwBVQ7I3IV8EJo3NL9HEcCQK08hmDiWuLFljD1U=",
-      "crlite_enrolled": false,
-      "id": "056b1bcf-53e9-405c-96eb-eea77dcff395",
-      "last_modified": 1601517442680
-    },
-    {
-      "schema": 1601376780263,
-      "derHash": "GEZ8TmTVhshEpERm3lunptWWnHqShZpRHF/a11sDzc4=",
-      "subject": "CN=ePKI Root Certification Authority - G2,O=Chunghwa Telecom Co.\\, Ltd.,C=TW",
-      "subjectDN": "MGMxCzAJBgNVBAYTAlRXMSMwIQYDVQQKDBpDaHVuZ2h3YSBUZWxlY29tIENvLiwgTHRkLjEvMC0GA1UEAwwmZVBLSSBSb290IENlcnRpZmljYXRpb24gQXV0aG9yaXR5IC0gRzI=",
-      "whitelist": false,
-      "attachment": {
-        "hash": "6bf1025a0f2a333a3a9f9cf1fa26d326f099cad7c0d6658f30ea16733092bd7a",
-        "size": 2621,
-        "filename": "tInMsiS5prgd0nTOr1IJwlKZjJp2r0jk9MUKByhGGCU=.pem",
-        "location": "security-state-staging/intermediates/c7b2feb5-da29-4802-ba1d-e34f9184099c.pem",
-        "mimetype": "application/x-pem-file"
-      },
-      "pubKeyHash": "tInMsiS5prgd0nTOr1IJwlKZjJp2r0jk9MUKByhGGCU=",
-      "crlite_enrolled": false,
-      "id": "ca26521c-22ff-48b3-bd4d-3c06d4ffa75a",
-      "last_modified": 1601517442632
     },
     {
       "schema": 1601376748460,
@@ -29977,5 +29871,5 @@
       "last_modified": 1559865884636
     }
   ],
-  "timestamp": 1749567422319
+  "timestamp": 1752692222697
 }
