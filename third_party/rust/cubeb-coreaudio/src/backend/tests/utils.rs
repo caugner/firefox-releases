@@ -98,7 +98,7 @@ pub extern "C" fn state_tracking_cb(
     };
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum Scope {
     Input,
     Output,
@@ -535,7 +535,7 @@ pub fn test_device_in_scope(id: AudioObjectID, scope: Scope) -> bool {
     channels.is_ok() && channels.unwrap() > 0
 }
 
-pub fn test_get_all_onwed_devices(id: AudioDeviceID) -> Vec<AudioObjectID> {
+pub fn test_get_all_owned_devices(id: AudioDeviceID) -> Vec<AudioObjectID> {
     assert_ne!(id, kAudioObjectUnknown);
     debug_assert_running_serially();
 
@@ -630,6 +630,20 @@ pub fn test_get_drift_compensations(id: AudioObjectID) -> std::result::Result<u3
     } else {
         Err(status)
     }
+}
+
+pub fn test_object_id_to_devid(
+    context_ptr: *mut ffi::cubeb,
+    id: AudioObjectID,
+    devtype: DeviceType,
+) -> ffi::cubeb_devid {
+    if id == kAudioObjectUnknown {
+        return ptr::null();
+    }
+    let context = unsafe { &mut *(context_ptr as *mut AudioUnitContext) };
+    let uid = run_serially_forward_panics(|| get_device_uid(id, devtype).unwrap());
+    let c_string = uid.into_cstring();
+    context.devids.lock().unwrap().add(&c_string) as _
 }
 
 pub fn test_audiounit_scope_is_enabled(unit: AudioUnit, scope: Scope) -> bool {
@@ -1279,6 +1293,11 @@ pub fn test_ops_stream_operation<F>(
     F: FnOnce(*mut ffi::cubeb_stream),
 {
     test_ops_context_operation("context: stream operation", |context_ptr| {
+        let input_device =
+            test_object_id_to_devid(context_ptr, input_device as _, DeviceType::INPUT);
+        let output_device =
+            test_object_id_to_devid(context_ptr, output_device as _, DeviceType::OUTPUT);
+
         test_ops_stream_operation_on_context(
             name,
             context_ptr,

@@ -75,7 +75,7 @@ impl std::fmt::Display for StringRef {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let string =
             String::from_utf8(utf8_from_cfstringref(self.0)).expect("convert bytes to a String");
-        write!(f, "{}", string)
+        write!(f, "{string}")
     }
 }
 
@@ -102,7 +102,7 @@ fn utf8_from_cfstringref(string_ref: CFStringRef) -> Vec<u8> {
             kCFStringEncodingUTF8,
             0,
             false as Boolean,
-            ptr::null_mut() as *mut u8,
+            ptr::null_mut(),
             0,
             &mut size,
         )

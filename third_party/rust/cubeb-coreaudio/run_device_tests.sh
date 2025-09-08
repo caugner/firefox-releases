@@ -41,7 +41,15 @@ cargo test test_destroy_duplex_stream_after_unplugging_a_nondefault_output_devic
 cargo test test_suspend_duplex_stream_by_unplugging_a_nondefault_output_device -- --ignored --nocapture
 
 cargo test test_destroy_duplex_stream_after_unplugging_a_default_input_device -- --ignored --nocapture
+# After the previous test the macOS chooses a new default device arbitrarily,
+# so we ensure that the device controlled by us is selected when the next test
+# starts.
+SwitchAudioSource -s "BlackHole 2ch" -t input
 cargo test test_reinit_duplex_stream_by_unplugging_a_default_input_device -- --ignored --nocapture
 
 cargo test test_destroy_duplex_stream_after_unplugging_a_default_output_device -- --ignored --nocapture
 cargo test test_reinit_duplex_stream_by_unplugging_a_default_output_device -- --ignored --nocapture
+
+cargo test test_device_collection_change_on_default_input_device_change -- --ignored --nocapture
+cargo test test_device_collection_change_on_default_output_device_change -- --ignored --nocapture
+cargo test test_device_collection_change_on_default_device_change_duplex -- --ignored --nocapture
