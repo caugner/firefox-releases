@@ -1888,269 +1888,76 @@ const MESSAGES = () => {
       skip_in_tests: "it's not tested in automation",
     },
     {
-      id: "IP_PROTECTION_INTRODUCTION_CALLOUT_FIRST",
+      id: "NEW_PROFILE_APP_MENU_TOUR",
+      groups: [],
+      profileScope: "single",
+      targeting:
+        "'browser.profiles.profile-name.updated' | preferenceValue == true && userPrefs.cfrFeatures && localeLanguageCode == 'en'",
+      trigger: {
+        id: "preferenceObserver",
+        params: ["browser.profiles.profile-name.updated"],
+      },
+      frequency: {
+        lifetime: 1,
+      },
+      skip_in_tests: "it's not tested in automation",
       template: "feature_callout",
-      groups: ["cfr"],
       content: {
-        id: "IP_PROTECTION_INTRODUCTION_CALLOUT_FIRST",
+        id: "NEW_PROFILE_APP_MENU_TOUR",
         template: "multistage",
         backdrop: "transparent",
         transitions: false,
         disableHistoryUpdates: true,
         screens: [
           {
-            id: "IP_PROTECTION_INTRODUCTION_CALLOUT_FIRST",
+            id: "NEW_PROFILE_APP_MENU_TOUR",
             anchors: [
               {
-                selector: "#ipprotection-button",
+                selector: "#PanelUI-button",
                 panel_position: {
-                  anchor_attachment: "bottomcenter",
+                  anchor_attachment: "leftcenter",
                   callout_attachment: "topright",
                 },
-                no_open_on_anchor: true,
               },
             ],
             content: {
               position: "callout",
-              width: "352px",
-              padding: 16,
               logo: {
                 imageURL:
-                  "chrome://browser/content/asrouter/assets/ipprotection/ipprotection.svg",
-                height: "153.0356px",
-                width: "320px",
+                  "chrome://browser/content/asrouter/assets/fox-with-profiles.svg",
+                height: "100%",
+                width: "100%",
               },
               title: {
-                string_id: "ipprotection-feature-introduction-title",
-                fontSize: "0.9375em",
-                marginInline: "0 25px",
+                string_id: "profiles-appmenu-callout-tour-title",
+                paddingBlock: "8px",
               },
-              above_button_content: [
-                {
-                  type: "text",
-                  text: {
-                    string_id: "ipprotection-feature-introduction-link-text",
-                    textAlign: "start",
-                    fontSize: "0.9375em",
-                    marginBlock: "-4px 0",
-                  },
-                  link_keys: ["learn-more-vpn"],
-                },
-              ],
-              "learn-more-vpn": {
+              subtitle: {
+                string_id: "profiles-appmenu-callout-tour-subtitle",
+              },
+              dismiss_button: {
+                size: "small",
+                background: true,
+                marginInline: "0 21px",
+                marginBlock: "21px 0",
                 action: {
-                  type: "OPEN_URL",
-                  data: {
-                    args: "https://support.mozilla.org/en-US/kb/use-ip-concealment-in-firefox",
-                    where: "tabshifted",
-                  },
+                  dismiss: true,
                 },
               },
               primary_button: {
                 label: {
-                  string_id: "ipprotection-feature-introduction-button-primary",
-                  fontSize: "0.9375em",
-                  paddingBlock: "4px",
-                  paddingInline: "16px",
-                  lineHeight: "24px",
+                  string_id: "profiles-appmenu-callout-tour-primary-button",
                 },
                 action: {
-                  type: "MULTI_ACTION",
-                  dismiss: true,
-                  data: {
-                    actions: [
-                      {
-                        type: "FXA_SIGNIN_FLOW",
-                        data: {
-                          where: "tab",
-                          entrypoint: "desktop-fx-vpn",
-                          autoClose: false,
-                          extraParams: {
-                            service: "sync",
-                            entrypoint_experiment: "fx-vpn-pilot",
-                            entrypoint_variation: "alpha",
-                            utm_source: "callout",
-                            utm_campaign: "fx-vpn-pilot",
-                            utm_medium: "firefox-desktop",
-                            utm_term: "fx-vpn-pilot-callout-1",
-                          },
-                        },
-                      },
-                      {
-                        type: "OPEN_PANEL",
-                        data: {
-                          widget_id: "ipprotection-button",
-                          panel_id: "PanelUI-ipprotection",
-                        },
-                        requiresPrevious: true,
-                      },
-                    ],
-                    orderedExecution: true,
-                  },
-                },
-              },
-              secondary_button: {
-                label: {
-                  string_id:
-                    "ipprotection-feature-introduction-button-secondary-not-now",
-                  fontSize: "0.9375em",
-                  paddingBlock: "4px",
-                  paddingInline: "16px",
-                  lineHeight: "24px",
-                },
-                action: {
-                  dismiss: true,
+                  navigate: true,
+                  type: "HIGHLIGHT_FEATURE",
+                  data: { args: "profilesAppMenuButton" },
                 },
               },
             },
           },
         ],
       },
-      targeting:
-        "'browser.ipProtection.enabled' | preferenceValue && !hasActiveEnterprisePolicies && isFxAEnabled && !isFxASignedIn && !activeNotifications && (messageImpressions.IP_PROTECTION_CALLOUT_SECOND || [])  | length == 0",
-      trigger: {
-        id: "ipProtectionReady",
-      },
-      frequency: {
-        lifetime: 1,
-      },
-      skip_in_tests: "it's not tested in automation",
-    },
-    {
-      id: "IP_PROTECTION_INTRODUCTION_CALLOUT_SECOND",
-      template: "feature_callout",
-      groups: ["cfr"],
-      content: {
-        id: "IP_PROTECTION_INTRODUCTION_CALLOUT_SECOND",
-        template: "multistage",
-        backdrop: "transparent",
-        transitions: false,
-        disableHistoryUpdates: true,
-        screens: [
-          {
-            id: "IP_PROTECTION_INTRODUCTION_CALLOUT_SECOND",
-            anchors: [
-              {
-                selector: "#ipprotection-button",
-                panel_position: {
-                  anchor_attachment: "bottomcenter",
-                  callout_attachment: "topright",
-                },
-                no_open_on_anchor: true,
-              },
-            ],
-            content: {
-              position: "callout",
-              width: "352px",
-              padding: 16,
-              logo: {
-                imageURL:
-                  "chrome://browser/content/asrouter/assets/ipprotection/ipprotection.svg",
-                height: "153.0356px",
-                width: "320px",
-              },
-              title: {
-                string_id: "ipprotection-feature-introduction-title",
-                fontSize: "0.9375em",
-                marginInline: "0 25px",
-              },
-              above_button_content: [
-                {
-                  type: "text",
-                  text: {
-                    string_id: "ipprotection-feature-introduction-link-text",
-                    textAlign: "start",
-                    fontSize: "0.9375em",
-                    marginBlock: "-4px 0",
-                  },
-                  link_keys: ["learn-more-vpn"],
-                },
-              ],
-              "learn-more-vpn": {
-                action: {
-                  type: "OPEN_URL",
-                  data: {
-                    args: "https://support.mozilla.org/en-US/kb/use-ip-concealment-in-firefox",
-                    where: "tabshifted",
-                  },
-                },
-              },
-              primary_button: {
-                label: {
-                  string_id: "ipprotection-feature-introduction-button-primary",
-                  fontSize: "0.9375em",
-                  paddingBlock: "4px",
-                  paddingInline: "16px",
-                  lineHeight: "24px",
-                },
-                action: {
-                  type: "MULTI_ACTION",
-                  dismiss: true,
-                  data: {
-                    actions: [
-                      {
-                        type: "FXA_SIGNIN_FLOW",
-                        data: {
-                          where: "tab",
-                          entrypoint: "desktop-fx-vpn",
-                          autoClose: false,
-                          extraParams: {
-                            service: "sync",
-                            entrypoint_experiment: "fx-vpn-pilot",
-                            entrypoint_variation: "alpha",
-                            utm_source: "callout",
-                            utm_campaign: "fx-vpn-pilot",
-                            utm_medium: "firefox-desktop",
-                            utm_term: "fx-vpn-pilot-callout-2",
-                          },
-                        },
-                      },
-                      {
-                        type: "OPEN_PANEL",
-                        data: {
-                          widget_id: "ipprotection-button",
-                          panel_id: "PanelUI-ipprotection",
-                        },
-                        requiresPrevious: true,
-                      },
-                    ],
-                    orderedExecution: true,
-                  },
-                },
-              },
-              secondary_button: {
-                label: {
-                  string_id:
-                    "ipprotection-feature-introduction-button-secondary-no-thanks",
-                  fontSize: "0.9375em",
-                  paddingBlock: "4px",
-                  paddingInline: "16px",
-                  lineHeight: "24px",
-                },
-                action: {
-                  type: "SET_PREF",
-                  data: {
-                    pref: {
-                      name: "browser.ipProtection.enabled",
-                      value: false,
-                    },
-                  },
-                  dismiss: true,
-                },
-              },
-            },
-          },
-        ],
-      },
-      targeting:
-        "'browser.ipProtection.enabled' | preferenceValue && !hasActiveEnterprisePolicies && isFxAEnabled && !isFxASignedIn && !activeNotifications && (messageImpressions.IP_PROTECTION_INTRODUCTION_CALLOUT_FIRST < currentDate|date - 86400000)",
-      trigger: {
-        id: "ipProtectionReady",
-      },
-      frequency: {
-        lifetime: 1,
-      },
-      skip_in_tests: "it's not tested in automation",
     },
   ];
   messages = add24HourImpressionJEXLTargeting(

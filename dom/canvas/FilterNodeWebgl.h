@@ -28,9 +28,9 @@ class FilterNodeWebgl : public FilterNode {
 
   FilterBackend GetBackendType() override { return FILTER_BACKEND_WEBGL; }
 
-  void ReserveInputIndex(uint32_t aIndex);
-  void SetInputAccel(uint32_t aIndex, SourceSurface* aSurface);
-  void SetInputSoftware(uint32_t aIndex, SourceSurface* aSurface);
+  bool ReserveInputIndex(uint32_t aIndex);
+  bool SetInputAccel(uint32_t aIndex, SourceSurface* aSurface);
+  bool SetInputSoftware(uint32_t aIndex, SourceSurface* aSurface);
   void SetInput(uint32_t aIndex, SourceSurface* aSurface) override;
   void SetInput(uint32_t aIndex, FilterNode* aFilter) override;
   void SetAttribute(uint32_t aIndex, bool) override;
@@ -54,9 +54,9 @@ class FilterNodeWebgl : public FilterNode {
 
   virtual void Draw(DrawTargetWebgl* aDT, const Rect& aSourceRect,
                     const Point& aDestPoint, const DrawOptions& aOptions);
-  virtual already_AddRefed<SourceSurface> DrawChild(
-      DrawTargetWebgl* aDT, const Rect& aSourceRect,
-      IntPoint* aSurfaceOffset = nullptr);
+  virtual already_AddRefed<SourceSurface> DrawChild(DrawTargetWebgl* aDT,
+                                                    const Rect& aSourceRect,
+                                                    Point& aSurfaceOffset);
   virtual DeviceColor GetColor() const { return DeviceColor(1, 1, 1, 1); }
 
   virtual void ResolveInputs(DrawTargetWebgl* aDT, bool aAccel) {}
@@ -80,7 +80,7 @@ class FilterNodeWebgl : public FilterNode {
     return std::max(mInputSurfaces.size(), mInputFilters.size());
   }
 
-  virtual int32_t InputIndex(uint32_t aInputEnumIndex) const { return -1; }
+  virtual int32_t InputIndex(uint32_t aInputEnumIndex) const;
 
   IntRect MapInputRectToSource(uint32_t aInputEnumIndex, const IntRect& aRect,
                                const IntRect& aMax, FilterNode* aSourceNode);
@@ -112,11 +112,9 @@ class FilterNodeTransformWebgl : public FilterNodeWebgl {
   IntRect MapRectToSource(const IntRect& aRect, const IntRect& aMax,
                           FilterNode* aSourceNode) override;
 
-  void Draw(DrawTargetWebgl* aDT, const Rect& aSourceRect,
-            const Point& aDestPoint, const DrawOptions& aOptions) override;
   already_AddRefed<SourceSurface> DrawChild(DrawTargetWebgl* aDT,
                                             const Rect& aSourceRect,
-                                            IntPoint* aSurfaceOffset) override;
+                                            Point& aSurfaceOffset) override;
 
  protected:
   Matrix mMatrix;
