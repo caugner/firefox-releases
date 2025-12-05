@@ -434,19 +434,26 @@ private fun TopSiteFaviconCard(
                 color = backgroundColor,
                 shape = RoundedCornerShape(4.dp),
             ) {
-                if (topSite is TopSite.Provided) {
-                    TopSiteFavicon(topSite.url, topSite.imageUrl)
-                } else {
-                    TopSiteFavicon(topSite.url)
-                }
+                TopSiteFavicon(topSite = topSite)
             }
         }
     }
 }
 
 @Composable
-private fun TopSiteFavicon(url: String, imageUrl: String? = null) {
-    Favicon(url = url, size = TOP_SITES_FAVICON_SIZE.dp, imageUrl = imageUrl)
+private fun TopSiteFavicon(topSite: TopSite) {
+    when (val favicon = getTopSitesFavicon(topSite)) {
+        is TopSitesFavicon.ImageUrl -> Favicon(
+            url = topSite.url,
+            size = TOP_SITES_FAVICON_SIZE.dp,
+            imageUrl = favicon.imageUrl,
+        )
+
+        is TopSitesFavicon.Drawable -> Favicon(
+            size = TOP_SITES_FAVICON_SIZE.dp,
+            imageResource = favicon.drawableResId,
+        )
+    }
 }
 
 @Composable

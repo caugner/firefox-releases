@@ -2668,7 +2668,7 @@ Result<CreateElementResult, nsresult> EditorBase::InsertBRElement(
         insertBRElementResultOrError.unwrap();
     insertBRElementResult.IgnoreCaretPointSuggestion();
   } else {
-    Unused << aPointToInsert.Offset();
+    (void)aPointToInsert.Offset();
     RefPtr<InsertNodeTransaction> transaction =
         InsertNodeTransaction::Create(*this, *newBRElement, aPointToInsert);
     nsresult rv = transaction->DoTransaction();
@@ -6620,16 +6620,11 @@ EditorBase::AutoEditActionDataSetter::AutoEditActionDataSetter(
       mParentData(aEditorBase.mEditActionData),
       mData(VoidString()),
       mRawEditAction(aEditAction),
-      mTopLevelEditSubAction(EditSubAction::eNone),
-      mAborted(false),
-      mHasTriedToDispatchBeforeInputEvent(false),
-      mBeforeInputEventCanceled(false),
-      mMakeBeforeInputEventNonCancelable(false),
-      mHasTriedToDispatchClipboardEvent(false),
       mEditorWasDestroyedDuringHandlingEditAction(
           mParentData &&
           mParentData->mEditorWasDestroyedDuringHandlingEditAction),
-      mHandled(false) {
+      mEditorWasReinitialized(mParentData &&
+                              mParentData->mEditorWasReinitialized) {
   // If we're nested edit action, copies necessary data from the parent.
   if (mParentData) {
     mSelection = mParentData->mSelection;
