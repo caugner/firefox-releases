@@ -87,7 +87,9 @@ const FORM_IFRAME_SANDBOXED_URL =
 const FORMS_WITH_DYNAMIC_FORM_CHANGE =
   "https://example.org" + HTTP_TEST_PATH + "dynamic_forms.html";
 const FORMS_REPLACING_ALL_FIELDS_ON_INPUT =
-  "https://example.org" + HTTP_TEST_PATH + "dynamic_forms.html";
+  "https://example.org" +
+  HTTP_TEST_PATH +
+  "dynamic_form_replacing_all_fields.html";
 const FORM_WITH_USER_INITIATED_FORM_CHANGE =
   "https://example.org" +
   HTTP_TEST_PATH +
@@ -1217,7 +1219,10 @@ async function verifyPreviewResult(browser, section, expectedSection) {
       if (content.HTMLSelectElement.isInstance(element)) {
         if (obj.expected) {
           for (let idx = 0; idx < element.options.length; idx++) {
-            if (element.options[idx].value == obj.expected) {
+            if (
+              element.options[idx].value == obj.expected &&
+              element.previewValue == element.options[idx].text
+            ) {
               obj.expected = element.options[idx].text;
               break;
             }
@@ -1246,11 +1251,21 @@ async function verifyAutofillResult(browser, section, expectedSection) {
     const expected = expectedFieldDetails[i].autofill ?? "";
     await SpecialPowers.spawn(context, [{ expected, selector }], async obj => {
       const element = content.document.querySelector(obj.selector);
+
+      if (obj.expected) {
+        Assert.equal(
+          element.autofillState,
+          "autofill",
+          `element ${obj.selector} is highlighted`
+        );
+      }
+
       if (content.HTMLSelectElement.isInstance(element)) {
         if (!obj.expected) {
           obj.expected = element.options[0].value;
         }
       }
+
       Assert.equal(
         element.value,
         obj.expected,
@@ -1474,6 +1489,9 @@ async function triggerCapture(browser, submitButtonSelector, fillSelectors) {
  * @param {object} patterns.captureExpectedRecord
  *        The expected saved record after capturing the form. Keyed by field name. This
  *        parameter is only used when `options.testCapture` is set.
+ * @param {boolean} patterns.useTestYear
+ *        Set to the current year to assign while running the test, useful for credit
+ *        card expiry tests with a manual set of year options in the dropdown.
  * @param {object} patterns.only
  *        This parameter is used solely for debugging purposes. When set to true,
  *        it restricts the execution to only the specified testcase.
@@ -1598,16 +1616,32 @@ async function add_heuristic_tests(
       const sleepAfterFocus = contexts.length > 1;
 
       for (const context of contexts) {
-        await SpecialPowers.spawn(context, [], async () => {
-          const elements = Array.from(
-            content.document.querySelectorAll("input, select")
-          );
-          // Focus on each field in the test document to trigger autofill field detection
-          // on all the fields.
-          elements.forEach(element => {
-            element.focus();
-          });
-        });
+        await SpecialPowers.spawn(
+          context,
+          [testPattern.useTestYear],
+          async year => {
+            let FormAutofillHeuristics;
+            if (year) {
+              FormAutofillHeuristics = ChromeUtils.importESModule(
+                "resource://gre/modules/shared/FormAutofillHeuristics.sys.mjs"
+              ).FormAutofillHeuristics;
+              FormAutofillHeuristics.useTestYear = year;
+            }
+
+            const elements = Array.from(
+              content.document.querySelectorAll("input, select")
+            );
+            // Focus on each field in the test document to trigger autofill field detection
+            // on all the fields.
+            elements.forEach(element => {
+              element.focus();
+            });
+
+            if (year) {
+              FormAutofillHeuristics.useTestYear = null;
+            }
+          }
+        );
 
         try {
           await BrowserTestUtils.synthesizeKey("VK_ESCAPE", {}, context);

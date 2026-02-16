@@ -1114,9 +1114,18 @@ void SandboxBroker::SetSecurityLevelForContentProcess(int32_t aSandboxLevel,
   }
 
   if (StaticPrefs::security_sandbox_content_close_ksecdd_handle()) {
-    result = config->AddKernelObjectToClose(L"File", L"\\Device\\KsecDD");
-    MOZ_RELEASE_ASSERT(sandbox::SBOX_ALL_OK == result,
-                       "AddKernelObjectToClose should never fail.");
+    // bug 2006941 and bug 2008739 - Trellix DLP uses these functions, so don't
+    // do this if their DLLs are loaded
+#if defined(_M_X64)
+    const wchar_t* trellixDllName = L"fcagff64.dll";
+#else
+    const wchar_t* trellixDllName = L"fcagff.dll";
+#endif
+    if (!::GetModuleHandleW(trellixDllName)) {
+      result = config->AddKernelObjectToClose(L"File", L"\\Device\\KsecDD");
+      MOZ_RELEASE_ASSERT(sandbox::SBOX_ALL_OK == result,
+                         "AddKernelObjectToClose should never fail.");
+    }
   }
 
   sandbox::MitigationFlags mitigations =
@@ -1311,6 +1320,19 @@ void SandboxBroker::SetSecurityLevelForContentProcess(int32_t aSandboxLevel,
       NS_ERROR("Failed to get user's SID.");
       LOG_E("Failed to get user's SID. %lx", ::GetLastError());
     }
+
+    // Required for GetUserGeoID, which is used to get timezone information.
+    bool geoRuleSet =
+        config->AllowRegistryRead(L"HKEY_CURRENT_USER") ==
+            sandbox::SBOX_ALL_OK &&
+        config->AllowRegistryRead(
+            L"HKEY_CURRENT_USER\\Control Panel\\International\\Geo") ==
+            sandbox::SBOX_ALL_OK;
+    if (!geoRuleSet) {
+      NS_ERROR("Failed to add rule for International Geo.");
+      LOG_E("Failed (ResultCode %d) to add rule for International Geo.",
+            result);
+    }
   }
 }
 
@@ -1361,9 +1383,14 @@ void SandboxBroker::SetSecurityLevelForGPUProcess(int32_t aSandboxLevel) {
   config->SetLockdownDefaultDacl();
   config->AddRestrictingRandomSid();
 
-  // Policy wrapper to keep track of available rule space. The full policy has
-  // 14 pages, so 13 allows one page for generic process rules.
-  sandboxing::SizeTrackingConfig trackingConfig(config, 13);
+  // Policy wrapper to keep track of available rule space. We allow two spare
+  // pages for generic process rules and to allow for padding that occurs in
+  // LowLevelPolicy::Done. See bug 2009140.
+  // Note that we plan to move to a single font access rule in bug 2002995. This
+  // will remove the need for individual rules and mean that we can reduce
+  // sandbox::kPolMemPageCount.
+  sandboxing::SizeTrackingConfig trackingConfig(config,
+                                                sandbox::kPolMemPageCount - 2);
 
   if (StaticPrefs::security_sandbox_chrome_pipe_rule_enabled()) {
     // Add the policy for the client side of a pipe. It is just a file
@@ -1397,7 +1424,12 @@ void SandboxBroker::SetSecurityLevelForGPUProcess(int32_t aSandboxLevel) {
       sandboxing::UserFontConfigHelper configHelper(
           LR"(Software\Microsoft\Windows NT\CurrentVersion\Fonts)",
           *sWindowsProfileDir, *sLocalAppDataDir, *sRoamingAppDataDir);
-      configHelper.AddRules(trackingConfig);
+      if (!configHelper.AddRules(trackingConfig)) {
+        // We've run out of space for font rules, so fall back to
+        // USER_INTERACTIVE to maintain access to all user fonts.
+        SANDBOX_SUCCEED_OR_CRASH(config->SetTokenLevel(
+            initialTokenLevel, sandbox::USER_INTERACTIVE));
+      }
     }
   }
 }

@@ -223,8 +223,8 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_NSIOBSERVER
 
-  nsresult Init();
-  nsresult Shutdown();
+  void Init();
+  void Shutdown();
 
   static LazyLogModule& MouseCursorUpdateLogRef();
 
@@ -1381,6 +1381,7 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   // Stores the mRefPoint (the offset from the widget's origin in device
   // pixels) of the last mouse event.
   static LayoutDeviceIntPoint sLastRefPoint;
+  static LayoutDeviceIntPoint sLastRefPointOfRawUpdate;
 
   // member variables for the d&d gesture state machine
   LayoutDeviceIntPoint mGestureDownPoint;  // screen coordinates

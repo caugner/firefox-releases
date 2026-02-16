@@ -66,6 +66,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.sp
@@ -220,7 +221,7 @@ internal fun InlineAutocompleteTextField(
                     showKeyboardOnFocus = true,
                     keyboardType = KeyboardType.Uri,
                     imeAction = ImeAction.Go,
-                    autoCorrectEnabled = !usePrivateModeQueries,
+                    autoCorrectEnabled = false,
                 ),
                 onKeyboardAction = {
                     keyboardController?.hide()
@@ -429,6 +430,8 @@ private fun AutocompleteDecorator(
                     fontSize = TEXT_SIZE.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 ),
+                maxLines = 1,
+                overflow = TextOverflow.Clip,
             )
         }
         innerTextField()

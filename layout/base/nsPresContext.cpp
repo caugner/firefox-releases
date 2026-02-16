@@ -113,6 +113,8 @@ using namespace mozilla::dom;
 using namespace mozilla::gfx;
 using namespace mozilla::layers;
 
+static LazyLogModule gFingerprinterDetection("FingerprinterDetection");
+
 /**
  * Layer UserData for ContainerLayers that want to be notified
  * of local invalidations of them and their descendant layers.
@@ -641,9 +643,9 @@ bool nsPresContext::NormalizeRubyMetrics() {
   return mRubyPositioningFactor > 0.0f;
 }
 
-nsresult nsPresContext::Init(nsDeviceContext* aDeviceContext) {
-  NS_ASSERTION(!mInitialized, "attempt to reinit pres context");
-  NS_ENSURE_ARG(aDeviceContext);
+void nsPresContext::Init(nsDeviceContext* aDeviceContext) {
+  MOZ_ASSERT(!mInitialized, "attempt to reinit pres context");
+  MOZ_ASSERT(aDeviceContext);
 
   mDeviceContext = aDeviceContext;
 
@@ -714,8 +716,7 @@ nsresult nsPresContext::Init(nsDeviceContext* aDeviceContext) {
   Preferences::RegisterCallbacks(nsPresContext::PreferenceChanged,
                                  gExactCallbackPrefs, this);
 
-  nsresult rv = mEventManager->Init();
-  NS_ENSURE_SUCCESS(rv, rv);
+  mEventManager->Init();
 
   mEventManager->SetPresContext(this);
 
@@ -734,8 +735,6 @@ nsresult nsPresContext::Init(nsDeviceContext* aDeviceContext) {
 #ifdef DEBUG
   mInitialized = true;
 #endif
-
-  return NS_OK;
 }
 
 void nsPresContext::UpdateForcedColors(bool aNotify) {
@@ -3055,7 +3054,6 @@ void nsPresContext::DoUpdateHiddenByContentVisibilityForAnimations() {
   MOZ_ASSERT(NeedsToUpdateHiddenByContentVisibilityForAnimations());
   mNeedsToUpdateHiddenByContentVisibilityForAnimations = false;
   mDocument->UpdateHiddenByContentVisibilityForAnimations();
-  TimelineManager()->UpdateHiddenByContentVisibilityForAnimations();
 }
 
 #ifdef DEBUG
@@ -3078,6 +3076,7 @@ bool nsPresContext::ShouldResistFingerprinting(RFPTarget aTarget) const {
 }
 
 void nsPresContext::ReportBlockedFontFamily(const nsCString& aMsg) const {
+  MOZ_LOG(gFingerprinterDetection, LogLevel::Info, ("%s", aMsg.get()));
   nsContentUtils::ReportToConsoleNonLocalized(NS_ConvertUTF8toUTF16(aMsg),
                                               nsIScriptError::warningFlag,
                                               "Security"_ns, Document());

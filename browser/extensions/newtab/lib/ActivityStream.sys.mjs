@@ -30,6 +30,8 @@ ChromeUtils.defineESModuleGetters(lazy, {
   DEFAULT_SITES: "resource://newtab/lib/DefaultSites.sys.mjs",
   DefaultPrefs: "resource://newtab/lib/ActivityStreamPrefs.sys.mjs",
   DiscoveryStreamFeed: "resource://newtab/lib/DiscoveryStreamFeed.sys.mjs",
+  ExternalComponentsFeed:
+    "resource://newtab/lib/ExternalComponentsFeed.sys.mjs",
   FaviconFeed: "resource://newtab/lib/FaviconFeed.sys.mjs",
   HighlightsFeed: "resource://newtab/lib/HighlightsFeed.sys.mjs",
   ListsFeed: "resource://newtab/lib/Widgets/ListsFeed.sys.mjs",
@@ -95,11 +97,6 @@ const LOCALE_TOPIC_LABEL_CONFIG =
 const REGION_BASIC_CONFIG =
   "browser.newtabpage.activity-stream.discoverystream.region-basic-config";
 
-const REGION_THUMBS_CONFIG =
-  "browser.newtabpage.activity-stream.discoverystream.thumbsUpDown.region-thumbs-config";
-const LOCALE_THUMBS_CONFIG =
-  "browser.newtabpage.activity-stream.discoverystream.thumbsUpDown.locale-thumbs-config";
-
 const REGION_CONTEXTUAL_AD_CONFIG =
   "browser.newtabpage.activity-stream.discoverystream.sections.contextualAds.region-config";
 const LOCALE_CONTEXTUAL_AD_CONFIG =
@@ -120,6 +117,9 @@ const PREF_IMAGE_PROXY_ENABLED =
   "browser.newtabpage.activity-stream.discoverystream.imageProxy.enabled";
 
 const PREF_IMAGE_PROXY_ENABLED_STORE = "discoverystream.imageProxy.enabled";
+
+const PREF_SHOULD_ENABLE_EXTERNAL_COMPONENTS_FEED =
+  "browser.newtabpage.activity-stream.externalComponents.enabled";
 
 export const WEATHER_OPTIN_REGIONS = [
   "AT", // Austria
@@ -232,13 +232,6 @@ function showTopicLabels({ geo, locale }) {
   return (
     csvPrefHasValue(REGION_TOPIC_LABEL_CONFIG, geo) &&
     csvPrefHasValue(LOCALE_TOPIC_LABEL_CONFIG, locale)
-  );
-}
-
-function showThumbsUpDown({ geo, locale }) {
-  return (
-    csvPrefHasValue(REGION_THUMBS_CONFIG, geo) &&
-    csvPrefHasValue(LOCALE_THUMBS_CONFIG, locale)
   );
 }
 
@@ -830,14 +823,6 @@ export const PREFS_CONFIG = new Map([
     },
   ],
   [
-    "discoverystream.sections.cards.thumbsUpDown.enabled",
-    {
-      title:
-        "Boolean flag to enable thumbs up/down buttons in the new card UI in recommended stories",
-      value: true,
-    },
-  ],
-  [
     "discoverystream.reportAds.enabled",
     {
       title: "Boolean flag to enable reporting ads from the context menu",
@@ -1140,6 +1125,28 @@ export const PREFS_CONFIG = new Map([
     },
   ],
   [
+    "widgets.weatherForecast.enabled",
+    {
+      title: "Enables the weather forecast widget",
+      value: true,
+    },
+  ],
+  [
+    "widgets.system.weatherForecast.enabled",
+    {
+      title: "Enables the weather forecast widget experiment in Nimbus",
+      value: false,
+    },
+  ],
+  [
+    "widgets.weatherForecast.interaction",
+    {
+      title:
+        "Boolean flag for determining if a user has interacted with the weather forecast widget",
+      value: false,
+    },
+  ],
+  [
     "improvesearch.noDefaultSearchTile",
     {
       title: "Remove tiles that are the same as the default search",
@@ -1213,22 +1220,6 @@ export const PREFS_CONFIG = new Map([
         "Endpoint prefixes (comma-separated) that are allowed to be requested",
       value:
         "https://getpocket.cdn.mozilla.net/,https://firefox-api-proxy.cdn.mozilla.net/,https://spocs.getpocket.com/,https://merino.services.mozilla.com/,https://ads.mozilla.org/",
-    },
-  ],
-  [
-    "discoverystream.thumbsUpDown.enabled",
-    {
-      title: "Allow users to give thumbs up/down on recommended stories",
-      // pref is dynamic
-      getValue: showThumbsUpDown,
-    },
-  ],
-  [
-    "discoverystream.thumbsUpDown.searchTopsitesCompact",
-    {
-      title:
-        "A compact layout of the search/topsites/stories sections to account for new height from thumbs up/down icons ",
-      value: false,
     },
   ],
   [
@@ -1440,6 +1431,12 @@ export const PREFS_CONFIG = new Map([
 // Array of each feed's FEEDS_CONFIG factory and values to add to PREFS_CONFIG
 const FEEDS_DATA = [
   {
+    name: "startupcacheinit",
+    factory: () => new lazy.StartupCacheInit(),
+    title: "Sends a copy of the state to the startup cache newtab",
+    value: true,
+  },
+  {
     name: "aboutpreferences",
     factory: () => new lazy.AboutPreferences(),
     title: "about:preferences rendering",
@@ -1467,12 +1464,6 @@ const FEEDS_DATA = [
     name: "sections",
     factory: () => new lazy.SectionsFeed(),
     title: "Manages sections",
-    value: true,
-  },
-  {
-    name: "startupcacheinit",
-    factory: () => new lazy.StartupCacheInit(),
-    title: "Sends a copy of the state to the startup cache newtab",
     value: true,
   },
   {
@@ -1628,6 +1619,20 @@ const FEEDS_DATA = [
     title: "Handles the data for the Timer widget",
     value: true,
   },
+  {
+    name: "externalcomponentsfeed",
+    factory: () => new lazy.ExternalComponentsFeed(),
+    title: "Handles updating the registry of external components",
+    getValue() {
+      // This feed should only be enabled on versions of the app that have the
+      // AboutNewTabComponents module. Those versions of the app have this
+      // preference set to true.
+      return Services.prefs.getBoolPref(
+        PREF_SHOULD_ENABLE_EXTERNAL_COMPONENTS_FEED,
+        false
+      );
+    },
+  },
 ];
 
 const FEEDS_CONFIG = new Map();
@@ -1639,14 +1644,30 @@ for (const config of FEEDS_DATA) {
 }
 
 export class ActivityStream {
+  #createdInstant = null;
+
   /**
    * constructor - Initializes an instance of ActivityStream
+   *
+   * @param {Temporal.Instant} [createdInstant=null]
+   *   The creation time of the current user profile.
    */
-  constructor() {
+  constructor(createdInstant) {
     this.initialized = false;
     this.store = new lazy.Store();
     this._defaultPrefs = new lazy.DefaultPrefs(PREFS_CONFIG);
     this._proxyRegistered = false;
+    this.#createdInstant = createdInstant ?? null;
+  }
+
+  /**
+   * Returns a Temporal.Instant for when the user profile was created, or null
+   * if that value was never passed to us in the constructor.
+   *
+   * @type {Temporal.Instant}
+   */
+  get createdInstant() {
+    return this.#createdInstant;
   }
 
   get feeds() {
