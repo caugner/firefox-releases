@@ -833,9 +833,12 @@ struct CCGraph {
 
   void Init() {
     MOZ_ASSERT(IsEmpty(), "Failed to call CCGraph::Clear");
-    if (!mPtrInfoMap.reserve(kInitialMapLength)) {
-      MOZ_CRASH("OOM");
-    }
+
+    // This can fail if we're running low on memory, but we can still grow the
+    // hashtable normally at the cost of performance. The process might still
+    // be in an unrecoverably bad state.
+    DebugOnly<bool> ok = mPtrInfoMap.reserve(kInitialMapLength);
+    MOZ_ASSERT(ok, "initial reserve should succeed");
   }
 
   void Clear() {
@@ -1326,8 +1329,12 @@ struct CCIntervalMarker : public mozilla::BaseMarkerType<CCIntervalMarker> {
 
   using MS = mozilla::MarkerSchema;
   static constexpr MS::PayloadField PayloadFields[] = {
-      {"mReason", MS::InputType::CString, "Reason", MS::Format::String,
-       MS::PayloadFlags::Searchable},
+      {
+          "mReason",
+          MS::InputType::CString,
+          "Reason",
+          MS::Format::String,
+      },
       {"mMaxSliceTime", MS::InputType::TimeDuration, "Max Slice Time",
        MS::Format::Duration},
       {"mSuspected", MS::InputType::Uint32, "Suspected Objects",

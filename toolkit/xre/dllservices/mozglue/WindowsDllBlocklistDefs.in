@@ -287,6 +287,12 @@ ALL_PROCESSES += [
 
     # ExplorerPatcher (bug 1798707)
     DllBlocklistEntry("explorerpatcher.amd64.dll", ALL_VERSIONS),
+
+    # Idera Delphi DLL (bug 1400169)
+    DllBlocklistEntry("evpComponentsXE.bpl", ALL_VERSIONS),
+
+    # Intuit DLLs (bug 1400169)
+    DllBlocklistEntry("FtuEngine.dll", ALL_VERSIONS),
 ]
 
 ALL_PROCESSES_TESTS += [
@@ -369,6 +375,9 @@ BROWSER_PROCESS += [
 
     # Print Guard by MWStory (bug 2011909)
     DllBlocklistEntry("printguard64.dll", (25, 11, 21, 1)),
+
+    # Esafenet (bug 2019298)
+    DllBlocklistEntry("dynamicdll64.dll", ALL_VERSIONS),
 ]
 
 CHILD_PROCESSES += [
