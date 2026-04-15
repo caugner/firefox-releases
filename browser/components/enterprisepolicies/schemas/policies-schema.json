@@ -16,6 +16,96 @@
       }
     },
 
+    "AIControls": {
+      "type": "object",
+      "properties": {
+        "Default": {
+          "type": "object",
+          "properties": {
+            "Value": {
+              "type": "string",
+              "enum": ["available", "blocked"]
+            },
+            "Locked": {
+              "type": "boolean"
+            }
+          }
+        },
+        "Translations": {
+          "type": "object",
+          "properties": {
+            "Value": {
+              "type": "string",
+              "enum": ["available", "blocked"]
+            },
+            "Locked": {
+              "type": "boolean"
+            }
+          }
+        },
+        "PDFAltText": {
+          "type": "object",
+          "properties": {
+            "Value": {
+              "type": "string",
+              "enum": ["available", "blocked"]
+            },
+            "Locked": {
+              "type": "boolean"
+            }
+          }
+        },
+        "SmartTabGroups": {
+          "type": "object",
+          "properties": {
+            "Value": {
+              "type": "string",
+              "enum": ["available", "blocked"]
+            },
+            "Locked": {
+              "type": "boolean"
+            }
+          }
+        },
+        "LinkPreviewKeyPoints": {
+          "type": "object",
+          "properties": {
+            "Value": {
+              "type": "string",
+              "enum": ["available", "blocked"]
+            },
+            "Locked": {
+              "type": "boolean"
+            }
+          }
+        },
+        "SidebarChatbot": {
+          "type": "object",
+          "properties": {
+            "Value": {
+              "type": "string",
+              "enum": ["available", "blocked"]
+            },
+            "Locked": {
+              "type": "boolean"
+            }
+          }
+        },
+        "SmartWindow": {
+          "type": "object",
+          "properties": {
+            "Value": {
+              "type": "string",
+              "enum": ["available", "blocked"]
+            },
+            "Locked": {
+              "type": "boolean"
+            }
+          }
+        }
+      }
+    },
+
     "AllowedDomainsForApps": {
       "type": "string"
     },
@@ -881,6 +971,9 @@
         "Chatbot": {
           "type": "boolean"
         },
+        "SmartWindow": {
+          "type": "boolean"
+        },
         "LinkPreviews": {
           "type": "boolean"
         },
@@ -994,6 +1087,10 @@
           "type": "boolean"
         }
       }
+    },
+
+    "IPProtectionAvailable": {
+      "type": "boolean"
     },
 
     "LegacyProfiles": {
@@ -1614,6 +1711,38 @@
 
     "ShowHomeButton": {
       "type": "boolean"
+    },
+
+    "SitePolicies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "Match": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+
+          "Exceptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+
+          "Policies": {
+            "type": "object",
+            "properties": {
+              "DisableJit": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "required": ["Policies"]
+      }
     },
 
     "SkipTermsOfUse": {

@@ -78,7 +78,7 @@ add_task(async function test_translate_ai_feature_toggle_from_disabled() {
     ],
   });
 
-  await TranslationsParent.AIFeature.disable();
+  await TranslationsParent.AIFeature.block();
 
   info("Search for the translate quick action keyword");
   await UrlbarTestUtils.promiseAutocompleteResultPopup({
@@ -114,7 +114,7 @@ add_task(async function test_translate_ai_feature_toggle_from_disabled() {
     EventUtils.synthesizeKey("KEY_Escape");
   });
 
-  await TranslationsParent.AIFeature.disable();
+  await TranslationsParent.AIFeature.block();
 
   info("Search for the translate quick action keyword after disable again");
   await UrlbarTestUtils.promiseAutocompleteResultPopup({
@@ -163,7 +163,7 @@ add_task(async function test_translate_ai_feature_toggle_from_enabled() {
     EventUtils.synthesizeKey("KEY_Escape");
   });
 
-  await TranslationsParent.AIFeature.disable();
+  await TranslationsParent.AIFeature.block();
 
   info("Search for the translate quick action keyword after disable");
   await UrlbarTestUtils.promiseAutocompleteResultPopup({
@@ -407,4 +407,47 @@ add_task(async function test_translate_switches_to_existing_tab() {
   }
   BrowserTestUtils.removeTab(otherTab);
   BrowserTestUtils.removeTab(translateTab);
+});
+
+add_task(async function test_translate_reenabled() {
+  info("Disable the translate quick action and ensure it is hidden");
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.translations.quickAction.enabled", false]],
+  });
+
+  info("Search for the translate quick action keyword");
+  await UrlbarTestUtils.promiseAutocompleteResultPopup({
+    window,
+    value: "tran",
+  });
+
+  Assert.ok(
+    !window.document.querySelector(
+      `.urlbarView-action-btn[data-action=translate]`
+    ),
+    "Translate action is not shown when disabled"
+  );
+
+  await UrlbarTestUtils.promisePopupClose(window, () => {
+    EventUtils.synthesizeKey("KEY_Escape");
+  });
+
+  await SpecialPowers.popPrefEnv();
+
+  info("Search for the translate quick action keyword");
+  await UrlbarTestUtils.promiseAutocompleteResultPopup({
+    window,
+    value: "tran",
+  });
+
+  Assert.ok(
+    window.document.querySelector(
+      ".urlbarView-action-btn[data-action=translate]"
+    ),
+    "Translate action is now shown"
+  );
+
+  await UrlbarTestUtils.promisePopupClose(window, () => {
+    EventUtils.synthesizeKey("KEY_Escape");
+  });
 });

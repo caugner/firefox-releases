@@ -17,11 +17,6 @@ object FeatureFlags {
     val customExtensionCollectionFeature = Config.channel.isNightlyOrDebug || Config.channel.isBeta
 
     /**
-     * Controls whether the "Choose download location" feature is enabled or not.
-     */
-    val downloadsDefaultLocation = Config.channel.isDebug
-
-    /**
      * Pull-to-refresh allows you to pull the web content down far enough to have the page to
      * reload.
      */
@@ -31,11 +26,6 @@ object FeatureFlags {
      * Allows users to enable Firefox Suggest.
      */
     const val FX_SUGGEST = true
-
-    /**
-     * Enable Meta attribution.
-     */
-    const val META_ATTRIBUTION_ENABLED = true
 
     /**
      * Disables the Onboarding feature for debug builds by default. Set this to `true` if you need

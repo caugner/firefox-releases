@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -343,13 +341,12 @@ nsresult WorkletModuleLoader::GetResolveFailureMessage(
     ResolveError aError, const nsAString& aSpecifier, nsAString& aResult) {
   uint8_t index = static_cast<uint8_t>(aError);
   MOZ_ASSERT(index < static_cast<uint8_t>(ResolveError::Length));
-  MOZ_ASSERT(mLocalizedStrs);
-  MOZ_ASSERT(!mLocalizedStrs->IsEmpty());
-  if (!mLocalizedStrs || NS_WARN_IF(mLocalizedStrs->IsEmpty())) {
+  MOZ_ASSERT(HasSetLocalizedStrings());
+  if (NS_WARN_IF(mLocalizedStrs.IsEmpty())) {
     return NS_ERROR_FAILURE;
   }
 
-  const nsString& localizedStr = mLocalizedStrs->ElementAt(index);
+  const nsString& localizedStr = mLocalizedStrs.ElementAt(index);
 
   AutoTArray<nsString, 1> params;
   params.AppendElement(aSpecifier);

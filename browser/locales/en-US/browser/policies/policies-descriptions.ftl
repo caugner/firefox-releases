@@ -11,6 +11,8 @@
 
 policy-3rdparty = Set policies that WebExtensions can access via chrome.storage.managed.
 
+policy-AIControls = Configure AI controls.
+
 policy-AllowedDomainsForApps = Define domains allowed to access Google Workspace.
 
 policy-AllowFileSelectionDialogs = Allow file selection dialogs.
@@ -156,6 +158,8 @@ policy-HttpsOnlyMode = Allow HTTPS-Only Mode to be enabled.
 
 policy-InstallAddonsPermission = Allow certain websites to install add-ons.
 
+policy-IPProtectionAvailable = Prevent the built-in VPN from being available to users.
+
 policy-LegacyProfiles = Disable the feature enforcing a separate profile for each installation.
 
 ## Do not translate "SameSite", it's the name of a cookie attribute.
@@ -231,6 +235,8 @@ policy-SearchSuggestEnabled = Enable or disable search suggestions.
 policy-SecurityDevices2 = Add or delete PKCS #11 modules.
 
 policy-ShowHomeButton = Show the home button on the toolbar.
+
+policy-SitePolicies = Site specific policies.
 
 # ”You represent that...” means ”You confirm/declare that...”
 policy-SkipTermsOfUse2 = Do not display the Terms of Use and Privacy Notice upon startup. You represent that you accept and have the authority to accept the Terms of Use on behalf of all individuals to whom you provide access to this browser.

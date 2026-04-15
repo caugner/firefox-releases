@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=4 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -566,6 +564,9 @@ nsDragSession::nsDragSession() {
 
   // set up our logging module
   mTempFileTimerID = 0;
+#ifdef MOZ_X11
+  mActive = widget::GdkIsX11Display();
+#endif
 
   static std::once_flag onceFlag;
   std::call_once(onceFlag, [] {
@@ -2418,9 +2419,6 @@ void nsDragSession::SourceBeginDrag(GdkDragContext* aContext) {
     LOGDRAGSERVICE("  FlavorsTransferableCanImport failed!");
     return;
   }
-  if (widget::GdkIsWaylandDisplay()) {
-    mSourceDragContext = aContext;
-  }
 
   for (uint32_t i = 0; i < flavors.Length(); ++i) {
     if (flavors[i].EqualsLiteral(kFilePromiseDestFilename)) {
@@ -2532,14 +2530,6 @@ void nsDragSession::SetDragIcon(GdkDragContext* aContext) {
   } else {
     LOGDRAGSERVICE("  Surface is missing!");
   }
-}
-
-void nsDragSession::MarkAsActive() { mSourceDragContext = nullptr; }
-
-bool nsDragSession::IsActive() const { return !!mSourceDragContext; }
-
-RefPtr<GdkDragContext> nsDragSession::GetSourceDragContext() {
-  return mSourceDragContext;
 }
 
 static void invisibleSourceDragBegin(GtkWidget* aWidget,

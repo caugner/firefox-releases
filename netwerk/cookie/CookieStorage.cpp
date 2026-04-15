@@ -1,4 +1,3 @@
-/* -*- Mode: C++; tab-width: 2; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -610,6 +609,7 @@ void CookieStorage::RemoveOlderCookiesByBytes(CookieEntry* aEntry,
                                               uint32_t removeBytes,
                                               nsCOMPtr<nsIArray>& aPurgedList) {
   MOZ_ASSERT(aEntry);
+  CookieKey key(aEntry->mBaseDomain, aEntry->mOriginAttributes);
 
   // remove insecure older cookies until we are within the byte limit
   // (CHIPS cookies will not be detected here since they must be secure)
@@ -618,11 +618,16 @@ void CookieStorage::RemoveOlderCookiesByBytes(CookieEntry* aEntry,
 
   // remove secure cookies if we still have cookies to remove
   if (bytesRemoved <= removeBytes) {
+    // Re-lookup: aEntry may have been freed if pass 1 emptied it.
+    CookieEntry* entry = mHostTable.GetEntry(key);
+    if (!entry) {
+      return;
+    }
     // remove secure older cookies until we are within the byte limit
     MOZ_LOG(gCookieLog, LogLevel::Debug,
             ("Still too many cookies for partition, purging secure\n"));
     uint32_t bytesStillToRemove = removeBytes - bytesRemoved;
-    RemoveOldestCookies(aEntry, true, bytesStillToRemove, aPurgedList);
+    RemoveOldestCookies(entry, true, bytesStillToRemove, aPurgedList);
   }
 }
 
@@ -894,7 +899,9 @@ void CookieStorage::AddCookie(CookieParser* aCookieParser,
         purgedList = PurgeCookies(aCurrentTimeInUsec, mMaxNumberOfCookies,
                                   mCookiePurgeAge);
         uint32_t purgedLength = 0;
-        purgedList->GetLength(&purgedLength);
+        if (purgedList) {
+          purgedList->GetLength(&purgedLength);
+        }
         mozilla::glean::networking::cookie_purge_max.AccumulateSingleSample(
             purgedLength);
       }

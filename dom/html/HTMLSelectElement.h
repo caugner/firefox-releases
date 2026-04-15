@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -354,7 +352,7 @@ class HTMLSelectElement final : public nsGenericHTMLFormControlElementWithState,
   // Returns the text node that has the selected <option>'s text.
   // Note that it might return null for printing.
   Text* GetSelectedContentText() const;
-  void SelectedContentTextMightHaveChanged();
+  void SelectedContentTextMightHaveChanged(bool aNotify = true);
 
  protected:
   virtual ~HTMLSelectElement() = default;
@@ -388,7 +386,6 @@ class HTMLSelectElement final : public nsGenericHTMLFormControlElementWithState,
   /**
    * Called to trigger notifications of frames and fixing selected index
    *
-   * @param aSelectFrame the frame for this content (could be null)
    * @param aIndex the index that was selected or deselected
    * @param aSelected whether the index was selected or deselected
    * @param aChangeOptionState if false, don't do anything to the
@@ -396,8 +393,8 @@ class HTMLSelectElement final : public nsGenericHTMLFormControlElementWithState,
    *                           its selected state to aSelected.
    * @param aNotify whether to notify the style system and such
    */
-  void OnOptionSelected(nsListControlFrame* aSelectFrame, int32_t aIndex,
-                        bool aSelected, bool aChangeOptionState, bool aNotify);
+  void OnOptionSelected(int32_t aIndex, bool aSelected, bool aChangeOptionState,
+                        bool aNotify);
   /**
    * Restore state to a particular state string (representing the options)
    * @param aNewSelected the state string to restore to

@@ -18,6 +18,9 @@ enum MediaControlKey {
   "skipad",
   "seekto",
   "stop",
+  "mute",
+  "unmute",
+  "setvolume",
 };
 
 /**
@@ -31,6 +34,7 @@ interface MediaController : EventTarget {
   readonly attribute boolean isActive;
   readonly attribute boolean isAudible;
   readonly attribute boolean isPlaying;
+  readonly attribute boolean isAnyMediaBeingControlled;
   readonly attribute MediaSessionPlaybackState playbackState;
 
   [Throws]

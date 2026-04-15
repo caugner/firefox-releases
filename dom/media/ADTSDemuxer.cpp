@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -550,7 +548,7 @@ uint32_t ADTSTrackDemuxer::Read(uint8_t* aBuffer, int64_t aOffset,
   if (mInfo && streamLen > 0) {
     int64_t max = streamLen > aOffset ? streamLen - aOffset : 0;
     // Prevent blocking reads after successful initialization.
-    aSize = std::min<int32_t>(aSize, AssertedCast<int32_t>(max));
+    aSize = static_cast<int32_t>(std::min(static_cast<int64_t>(aSize), max));
   }
 
   uint32_t read = 0;

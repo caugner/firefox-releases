@@ -232,10 +232,10 @@ static BigInt* CreateBigInt(JSContext* cx,
     if (!result) {
       return nullptr;
     }
-    if (y) {
+    if (length > 1) {
       result->setDigit(1, y);
     }
-    if (x) {
+    if (length > 0) {
       result->setDigit(0, x);
     }
     return result;
@@ -315,7 +315,7 @@ BigInt* js::temporal::ToBigInt(JSContext* cx,
  */
 EpochNanoseconds js::temporal::GetUTCEpochNanoseconds(
     const ISODateTime& isoDateTime) {
-  MOZ_ASSERT(ISODateTimeWithinLimits(isoDateTime));
+  MOZ_ASSERT(IsValidISODateTime(isoDateTime));
 
   const auto& [date, time] = isoDateTime;
 

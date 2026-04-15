@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -131,7 +129,7 @@ class HTMLFieldSetElement final : public nsGenericHTMLFormControlElement,
   // List of elements which have this fieldset as first fieldset ancestor.
   nsTArray<nsGenericHTMLFormElement*> mDependentElements;
 
-  nsIContent* mFirstLegend;
+  RefPtr<nsIContent> mFirstLegend;
 
   /**
    * Number of invalid and candidate for constraint validation

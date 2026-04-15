@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -234,10 +232,11 @@ nsBMPDecoder::nsBMPDecoder(RasterImage* aImage, uint32_t aDataOffset)
   mH.mDataOffset = aDataOffset;
 }
 
-nsBMPDecoder::~nsBMPDecoder() {}
+nsBMPDecoder::~nsBMPDecoder() = default;
 
 // Obtains the size of the compressed image resource.
-int32_t nsBMPDecoder::GetCompressedImageSize() const {
+uint32_t nsBMPDecoder::GetCompressedImageSize() const {
+  // Keep this in sync with the overflow check in ReadInfoHeaderRest.
   // In the RGB case mImageSize might not be set, so compute it manually.
   MOZ_ASSERT(mPixelRowSize != 0);
   return mH.mCompression == Compression::RGB ? mPixelRowSize * AbsoluteHeight()
@@ -634,6 +633,16 @@ LexerTransition<nsBMPDecoder::State> nsBMPDecoder::ReadInfoHeaderRest(
   uint32_t surplus = mPixelRowSize % 4;
   if (surplus != 0) {
     mPixelRowSize += 4 - surplus;
+  }
+
+  if (mIsWithinICO && mH.mCompression == Compression::RGB) {
+    // The ICO decoders calls GetCompressedImageSize so we need to make sure the
+    // computation it does cannot overflow. Keep this in sync with that
+    // function.
+    auto product = CheckedInt<uint32_t>(mPixelRowSize) * AbsoluteHeight();
+    if (!product.isValid()) {
+      return Transition::TerminateFailure();
+    }
   }
 
   size_t bitFieldsLengthStillToRead = 0;

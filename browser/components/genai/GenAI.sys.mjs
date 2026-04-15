@@ -734,6 +734,14 @@ export const GenAI = {
       return;
     }
 
+    // Popups don't have a sidebar, so don't show the menu.
+    // Also, it's not useful for most Document Picture-in-Picture API use-cases.
+    const isPopup = !browser.ownerGlobal.toolbar.visible;
+    if (browser.browsingContext?.isDocumentPiP || isPopup) {
+      showItem(menu, false);
+      return;
+    }
+
     // Page feature can be shown without provider unless disabled via menu
     // or revamp sidebar excludes chatbot
     const isPageFeatureAllowed =
@@ -1338,8 +1346,14 @@ export const GenAI = {
     );
   },
 
-  async reset() {
-    Services.prefs.clearUserPref(PREF_CHAT_ENABLED);
+  async makeAvailable() {
+    // Set explicitly rather than clearing, so that a non-locked policy default
+    // of "blocked" does not prevent the user from switching back to "available".
+    Services.prefs.setStringPref(
+      "browser.ai.control.sidebarChatbot",
+      "available"
+    );
+    Services.prefs.setBoolPref(PREF_CHAT_ENABLED, true);
     Services.prefs.clearUserPref(PREF_CHAT_PAGE);
     Services.prefs.clearUserPref(PREF_CHAT_PROVIDER);
   },
@@ -1351,7 +1365,7 @@ export const GenAI = {
     // "available" unless it's set elsewhere.
   },
 
-  async disable() {
+  async block() {
     Services.prefs.setBoolPref(PREF_CHAT_ENABLED, false);
     Services.prefs.setBoolPref(PREF_CHAT_PAGE, false);
     Services.prefs.clearUserPref(PREF_CHAT_PROVIDER);

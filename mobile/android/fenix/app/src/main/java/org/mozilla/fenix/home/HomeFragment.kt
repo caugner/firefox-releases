@@ -36,13 +36,16 @@ import androidx.core.view.isVisible
 import androidx.core.view.updateLayoutParams
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.activityViewModels
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.Observer
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.navigation.NavController
 import androidx.navigation.fragment.findNavController
 import androidx.navigation.fragment.navArgs
 import com.google.android.material.appbar.AppBarLayout
 import kotlinx.coroutines.Dispatchers.IO
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.map
@@ -61,7 +64,6 @@ import mozilla.components.concept.sync.OAuthAccount
 import mozilla.components.feature.accounts.push.SendTabUseCases
 import mozilla.components.feature.tab.collections.TabCollection
 import mozilla.components.feature.top.sites.presenter.DefaultTopSitesPresenter
-import mozilla.components.lib.state.ext.consumeFlow
 import mozilla.components.lib.state.ext.consumeFrom
 import mozilla.components.lib.state.ext.flow
 import mozilla.components.lib.state.ext.observeAsComposableState
@@ -90,6 +92,7 @@ import org.mozilla.fenix.components.HomepageThumbnailIntegration
 import org.mozilla.fenix.components.QrScanFenixFeature
 import org.mozilla.fenix.components.TabCollectionStorage
 import org.mozilla.fenix.components.VoiceSearchFeature
+import org.mozilla.fenix.components.accounts.FenixFxAEntryPoint
 import org.mozilla.fenix.components.appstate.AppAction
 import org.mozilla.fenix.components.appstate.AppAction.ContentRecommendationsAction
 import org.mozilla.fenix.components.appstate.AppAction.MessagingAction
@@ -97,10 +100,13 @@ import org.mozilla.fenix.components.appstate.AppAction.MessagingAction.Microsurv
 import org.mozilla.fenix.components.appstate.AppAction.ReviewPromptAction.CheckIfEligibleForReviewPrompt
 import org.mozilla.fenix.components.appstate.OrientationMode
 import org.mozilla.fenix.components.components
+import org.mozilla.fenix.components.metrics.installSourcePackage
 import org.mozilla.fenix.components.toolbar.BottomToolbarContainerView
 import org.mozilla.fenix.compose.snackbar.Snackbar
 import org.mozilla.fenix.compose.snackbar.SnackbarState
 import org.mozilla.fenix.databinding.FragmentHomeBinding
+import org.mozilla.fenix.e2e.SystemInsetsPaddedFragment
+import org.mozilla.fenix.ext.application
 import org.mozilla.fenix.ext.components
 import org.mozilla.fenix.ext.getBottomToolbarHeight
 import org.mozilla.fenix.ext.getTopToolbarHeight
@@ -153,6 +159,11 @@ import org.mozilla.fenix.microsurvey.ui.MicrosurveyRequestPrompt
 import org.mozilla.fenix.microsurvey.ui.ext.MicrosurveyUIData
 import org.mozilla.fenix.microsurvey.ui.ext.toMicrosurveyUIData
 import org.mozilla.fenix.nimbus.FxNimbus
+import org.mozilla.fenix.onboarding.OnboardingFragmentDirections
+import org.mozilla.fenix.onboarding.OnboardingReason
+import org.mozilla.fenix.onboarding.OnboardingTelemetryRecorder
+import org.mozilla.fenix.onboarding.continuous.ContinuousOnboardingFeatureDefault
+import org.mozilla.fenix.onboarding.continuous.ContinuousOnboardingStageProviderDefault
 import org.mozilla.fenix.pbmlock.NavigationOrigin
 import org.mozilla.fenix.pbmlock.observePrivateModeLock
 import org.mozilla.fenix.perf.MarkersFragmentLifecycleCallbacks
@@ -164,7 +175,7 @@ import org.mozilla.fenix.search.toolbar.DefaultSearchSelectorController
 import org.mozilla.fenix.search.toolbar.SearchSelectorMenu
 import org.mozilla.fenix.snackbar.FenixSnackbarDelegate
 import org.mozilla.fenix.snackbar.SnackbarBinding
-import org.mozilla.fenix.tabstray.Page
+import org.mozilla.fenix.tabstray.redux.state.Page
 import org.mozilla.fenix.tabstray.ui.AccessPoint
 import org.mozilla.fenix.termsofuse.store.DefaultPrivacyNoticeBannerRepository
 import org.mozilla.fenix.termsofuse.store.PrivacyNoticeBannerAction
@@ -174,13 +185,17 @@ import org.mozilla.fenix.termsofuse.store.PrivacyNoticeBannerStore
 import org.mozilla.fenix.termsofuse.store.PrivacyNoticeBannerTelemetryMiddleware
 import org.mozilla.fenix.termsofuse.store.Surface
 import org.mozilla.fenix.theme.FirefoxTheme
+import org.mozilla.fenix.trackingprotection.TrackersBlockedFeature
 import org.mozilla.fenix.utils.allowUndo
 import org.mozilla.fenix.utils.showAddSearchWidgetPromptIfSupported
 import org.mozilla.fenix.wallpapers.Wallpaper
 import java.lang.ref.WeakReference
 
+/**
+ * The home screen.
+ */
 @Suppress("TooManyFunctions", "LargeClass")
-class HomeFragment : Fragment() {
+class HomeFragment : Fragment(), SystemInsetsPaddedFragment {
     private val args by navArgs<HomeFragmentArgs>()
 
     @VisibleForTesting
@@ -254,6 +269,7 @@ class HomeFragment : Fragment() {
         get() = nullableToolbarView!!
 
     private var lastAppliedWallpaperName: String = Wallpaper.DEFAULT
+    private var wallpaperUpdatesJob: Job? = null
 
     @VisibleForTesting
     internal val messagingFeatureHomescreen = ViewBoundFeatureWrapper<MessagingFeature>()
@@ -272,6 +288,7 @@ class HomeFragment : Fragment() {
     private val snackbarBinding = ViewBoundFeatureWrapper<SnackbarBinding>()
     private val showReviewPromptBinding = ViewBoundFeatureWrapper<ShowReviewPromptBinding>()
     private val topSitesBinding = ViewBoundFeatureWrapper<TopSitesBinding>()
+    private val trackersBlockedFeature = ViewBoundFeatureWrapper<TrackersBlockedFeature>()
 
     private val homepageEdgeToEdgeFeature = ViewBoundFeatureWrapper<HomepageEdgeToEdgeFeature>()
     private var qrScanFenixFeature: ViewBoundFeatureWrapper<QrScanFenixFeature>? =
@@ -306,6 +323,45 @@ class HomeFragment : Fragment() {
                 }
             }
         }
+
+    private val continuousOnboardingDefaultBrowserLauncher: ActivityResultLauncher<Intent> =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            continuousOnboardingFeature.onDefaultBrowserStepCompleted(
+                activity = requireActivity(),
+                resultCode = result.resultCode,
+            )
+        }
+
+    private val telemetryRecorder by lazy {
+        OnboardingTelemetryRecorder(
+            onboardingReason = if (requireComponents.settings.enablePersistentOnboarding) {
+                OnboardingReason.EXISTING_USER
+            } else {
+                OnboardingReason.NEW_USER
+            },
+            installSource = installSourcePackage(
+                packageManager = requireContext().application.packageManager,
+                packageName = requireContext().application.packageName,
+            ),
+        )
+    }
+
+    private val continuousOnboardingFeature by lazy {
+        val settings = requireContext().settings()
+        ContinuousOnboardingFeatureDefault(
+            settings = settings,
+            telemetryRecorder = telemetryRecorder,
+            stageProvider = ContinuousOnboardingStageProviderDefault(settings),
+            navigateToSyncSignIn = {
+                findNavController().nav(
+                    id = R.id.homeFragment,
+                    directions = OnboardingFragmentDirections.actionGlobalTurnOnSync(
+                        entrypoint = FenixFxAEntryPoint.NewUserOnboarding,
+                    ),
+                )
+            },
+        )
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // DO NOT ADD ANYTHING ABOVE THIS getProfilerTime CALL!
@@ -347,7 +403,11 @@ class HomeFragment : Fragment() {
 
         lifecycleScope.launch(IO) {
             val settings = requireContext().settings()
-            val showStories = settings.showPocketRecommendationsFeature
+
+            val showStories =
+                settings.showPocketRecommendationsFeature ||
+                    settings.privateModeAndStoriesEntryPointEnabled
+
             val showSponsoredStories = showStories && settings.showPocketSponsoredStories
 
             if (showStories) {
@@ -423,6 +483,17 @@ class HomeFragment : Fragment() {
                     accountManager = requireComponents.backgroundServices.accountManager,
                     historyStorage = requireComponents.core.historyStorage,
                     coroutineScope = viewLifecycleOwner.lifecycleScope,
+                ),
+                owner = viewLifecycleOwner,
+                view = binding.root,
+            )
+        }
+
+        if (requireContext().settings().showPrivacyReportFeature) {
+            trackersBlockedFeature.set(
+                feature = TrackersBlockedFeature(
+                    appStore = components.appStore,
+                    protectionsStorage = components.core.protectionsStorage,
                 ),
                 owner = viewLifecycleOwner,
                 view = binding.root,
@@ -664,7 +735,7 @@ class HomeFragment : Fragment() {
             true -> {
                 val toolbarStore by buildToolbarStore(activity)
 
-                if (homepageEdgeToEdgeFeature.get() == null) {
+                if (isEdgeToEdgeBackgroundEnabled() && homepageEdgeToEdgeFeature.get() == null) {
                     homepageEdgeToEdgeFeature.set(
                         feature = HomepageEdgeToEdgeFeature(
                             appStore = requireComponents.appStore,
@@ -943,8 +1014,6 @@ class HomeFragment : Fragment() {
             HomeScreen.standardHomepageViewCount.add()
         }
 
-        observeWallpaperUpdates()
-
         observePrivateModeLock {
             findNavController().navigate(
                 NavGraphDirections.actionGlobalUnlockPrivateTabsFragment(NavigationOrigin.HOME_PAGE),
@@ -1022,6 +1091,11 @@ class HomeFragment : Fragment() {
             ),
             owner = viewLifecycleOwner,
             view = view,
+        )
+
+        continuousOnboardingFeature.maybeRunContinuousOnboarding(
+            activity = requireActivity(),
+            launcher = continuousOnboardingDefaultBrowserLauncher,
         )
 
         // DO NOT MOVE ANYTHING BELOW THIS addMarker CALL!
@@ -1221,6 +1295,11 @@ class HomeFragment : Fragment() {
     override fun onStart() {
         super.onStart()
 
+        val settings = requireContext().settings()
+        if (settings.privateModeAndStoriesEntryPointEnabled) {
+            settings.incrementNewsButtonForegroundCount()
+        }
+
         findNavController().addOnDestinationChangedListener(destinationChangedListener)
 
         subscribeToTabCollections()
@@ -1286,7 +1365,7 @@ class HomeFragment : Fragment() {
         evaluateMessagesForMicrosurvey(components)
 
         maybeShowEncourageSearchCfr(
-            canShowCfr = components.settings.canShowCfr,
+            canShowCfr = components.settings.canShowCfr && components.settings.cfrPopupsEnabled,
             shouldShowCFR = components.settings.shouldShowSearchBarCFR,
             showCfr = ::showEncourageSearchCfr,
             recordExposure = { FxNimbus.features.encourageSearchCfr.recordExposure() },
@@ -1374,19 +1453,25 @@ class HomeFragment : Fragment() {
     internal fun shouldEnableWallpaper() =
         (activity as? HomeActivity)?.themeManager?.currentTheme?.isPrivate?.not() ?: false
 
-    internal fun isEdgeToEdgeBackgroundEnabled(): Boolean =
-        requireContext().settings().currentWallpaperName == Wallpaper.EDGE_TO_EDGE
+    internal fun isEdgeToEdgeBackgroundEnabled(): Boolean {
+        val settings = requireContext().settings()
+        return settings.enableHomepageEdgeToEdgeBackgroundFeature &&
+                settings.currentWallpaperName == Wallpaper.EDGE_TO_EDGE
+    }
 
     private fun applyWallpaper(wallpaperName: String, orientationChange: Boolean, orientation: Int) {
-        when {
-            !shouldEnableWallpaper() ||
-                (wallpaperName == lastAppliedWallpaperName && !orientationChange) -> return
-            Wallpaper.isLocalWallpaper(wallpaperName) -> {
-                binding.wallpaperImageView.isVisible = false
-                lastAppliedWallpaperName = wallpaperName
-            }
-            else -> {
-                viewLifecycleOwner.lifecycleScope.launch {
+        viewLifecycleOwner.lifecycleScope.launch {
+            when {
+                !shouldEnableWallpaper() || (wallpaperName == lastAppliedWallpaperName && !orientationChange) -> {
+                    // no-op
+                }
+
+                Wallpaper.isLocalWallpaper(wallpaperName) -> {
+                    binding.wallpaperImageView.isVisible = false
+                    lastAppliedWallpaperName = wallpaperName
+                }
+
+                else -> {
                     // loadBitmap does file lookups based on name, so we don't need a fully
                     // qualified type to load the image
                     val wallpaper = Wallpaper.Default.copy(name = wallpaperName)
@@ -1396,7 +1481,7 @@ class HomeFragment : Fragment() {
                         binding.wallpaperImageView.isVisible = true
                         lastAppliedWallpaperName = wallpaperName
                     } ?: run {
-                        if (!isActive) return@run
+                        if (!isActive) return@launch
                         with(binding.wallpaperImageView) {
                             isVisible = false
                             showSnackBar(
@@ -1410,23 +1495,32 @@ class HomeFragment : Fragment() {
                     }
                 }
             }
+
+            observeWallpaperUpdates()
         }
     }
 
     private fun observeWallpaperUpdates() {
-        consumeFlow(requireComponents.appStore, viewLifecycleOwner) { flow ->
-            flow.filter { it.mode == BrowsingMode.Normal }
-                .map { it.wallpaperState.currentWallpaper }
-                .distinctUntilChanged()
-                .collect {
-                    if (it.name != lastAppliedWallpaperName) {
-                        applyWallpaper(
-                            wallpaperName = it.name,
-                            orientationChange = false,
-                            orientation = requireContext().resources.configuration.orientation,
-                        )
+        if (!shouldEnableWallpaper() || wallpaperUpdatesJob?.isActive == true) return
+
+        wallpaperUpdatesJob = viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.CREATED) {
+                requireComponents.appStore.stateFlow
+                    .filter { it.mode == BrowsingMode.Normal }
+                    .map { it.wallpaperState.currentWallpaper }
+                    .distinctUntilChanged()
+                    .collect {
+                        if (it.name != lastAppliedWallpaperName) {
+                            applyWallpaper(
+                                wallpaperName = it.name,
+                                orientationChange = false,
+                                orientation = requireContext().resources.configuration.orientation,
+                            )
+                        }
                     }
-                }
+            }
+        }.also { job ->
+            job.invokeOnCompletion { wallpaperUpdatesJob = null }
         }
     }
 
@@ -1454,9 +1548,6 @@ class HomeFragment : Fragment() {
         // Navigation arguments passed to HomeFragment
         const val FOCUS_ON_ADDRESS_BAR = "focusOnAddressBar"
         private const val SESSION_TO_DELETE = "sessionToDelete"
-
-        // Elevation for undo toasts
-        internal const val TOAST_ELEVATION = 80f
 
         private const val ENCOURAGE_SEARCH_CFR_VERTICAL_OFFSET = 0
     }

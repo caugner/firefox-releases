@@ -47,7 +47,7 @@ ChromeUtils.defineLazyGetter(lazy, "log", () => {
     prefix: "Policies",
     // tip: set maxLogLevel to "debug" and use log.debug() to create detailed
     // messages during development. See LOG_LEVELS in Console.sys.mjs for details.
-    maxLogLevel: "error",
+    maxLogLevel: "warn",
     maxLogLevelPref: PREF_LOGLEVEL,
   });
 });
@@ -108,6 +108,63 @@ export var Policies = {
   "3rdparty": {
     onBeforeAddons(manager, param) {
       manager.setExtensionPolicies(param.Extensions);
+    },
+  },
+
+  AIControls: {
+    onBeforeAddons(manager, param) {
+      const features = [
+        [
+          "SidebarChatbot",
+          ["browser.ml.chat.enabled", "browser.ml.chat.page"],
+          "browser.ai.control.sidebarChatbot",
+        ],
+        [
+          "Translations",
+          ["browser.translations.enable"],
+          "browser.ai.control.translations",
+        ],
+        [
+          "PDFAltText",
+          ["pdfjs.enableAltText"],
+          "browser.ai.control.pdfjsAltText",
+        ],
+        [
+          "LinkPreviewKeyPoints",
+          ["browser.ml.linkPreview.enabled"],
+          "browser.ai.control.linkPreviewKeyPoints",
+        ],
+        [
+          "SmartTabGroups",
+          ["browser.tabs.groups.smart.userEnabled"],
+          "browser.ai.control.smartTabGroups",
+        ],
+        ["SmartWindow", [], "browser.ai.control.smartWindow"],
+      ];
+
+      const defaultItem = param.Default;
+      const defaultLocked = defaultItem?.Locked ?? false;
+
+      for (const [key, prefs, aiControlPref] of features) {
+        let item = param[key] ?? defaultItem;
+        if (!item) {
+          continue;
+        }
+        let value = item.Value;
+        let locked = item.Locked ?? defaultLocked;
+        PoliciesUtils.setDefaultPref(aiControlPref, value, locked);
+        for (const pref of prefs) {
+          PoliciesUtils.setDefaultPref(pref, value === "available", locked);
+        }
+      }
+
+      if (defaultItem) {
+        PoliciesUtils.setDefaultPref(
+          "browser.ai.control.default",
+          defaultItem.Value,
+          defaultLocked
+        );
+      }
     },
   },
 
@@ -1322,13 +1379,6 @@ export var Policies = {
           param.Locked
         );
       }
-      if ("HarmfulAddon" in param) {
-        PoliciesUtils.setDefaultPref(
-          "privacy.trackingprotection.harmfuladdon.enabled",
-          param.HarmfulAddon,
-          param.Locked
-        );
-      }
       if ("Fingerprinting" in param) {
         PoliciesUtils.setDefaultPref(
           "privacy.trackingprotection.fingerprinting.enabled",
@@ -1671,6 +1721,12 @@ export var Policies = {
 
   GenerativeAI: {
     onBeforeAddons(manager, param) {
+      let policies = Services.policies.getActivePolicies();
+      if (policies.AIControls) {
+        lazy.log.warn("Ignoring GenerativeAI policy in favor of AIControls");
+        return;
+      }
+
       const defaultValue = "Enabled" in param ? param.Enabled : undefined;
 
       const features = [
@@ -1683,6 +1739,11 @@ export var Policies = {
           "LinkPreviews",
           ["browser.ml.linkPreview.optin"],
           "browser.ai.control.linkPreviewKeyPoints",
+        ],
+        [
+          "SmartWindow",
+          ["browser.smartwindow.enabled"],
+          "browser.ai.control.smartWindow",
         ],
         [
           "TabGroups",
@@ -1865,6 +1926,14 @@ export var Policies = {
           );
           manager.disallowFeature("xpinstall");
         }
+      }
+    },
+  },
+
+  IPProtectionAvailable: {
+    onBeforeAddons(manager, param) {
+      if (!param) {
+        setAndLockPref("browser.ipProtection.enabled", false);
       }
     },
   },
@@ -2179,9 +2248,17 @@ export var Policies = {
           blockValue = false;
         }
         setAndLockPref("dom.disable_open_during_load", blockValue);
+        setAndLockPref(
+          "dom.security.framebusting_intervention.enabled",
+          blockValue
+        );
       } else if (param.Default !== undefined) {
         PoliciesUtils.setDefaultPref(
           "dom.disable_open_during_load",
+          !!param.Default
+        );
+        PoliciesUtils.setDefaultPref(
+          "dom.security.framebusting_intervention.enabled",
           !!param.Default
         );
       }
@@ -2766,7 +2843,7 @@ export var Policies = {
   },
 
   SecurityDevices: {
-    async onProfileAfterChange(manager, param) {
+    async _onProfileAfterChangeImpl(manager, param) {
       let pkcs11db = Cc["@mozilla.org/security/pkcs11moduledb;1"].getService(
         Ci.nsIPKCS11ModuleDB
       );
@@ -2816,6 +2893,20 @@ export var Policies = {
         }
       }
     },
+
+    onProfileAfterChange(manager, param) {
+      this._onProfileAfterChangeImpl(manager, param)
+        .then(() => {
+          Services.obs.notifyObservers(
+            null,
+            "test-enterprisepolicies-securitydevices"
+          );
+        })
+        .catch(ex => {
+          lazy.log.error(`Error running SecurityDevices.onProfileAfterChange`);
+          lazy.log.debug(ex);
+        });
+    },
   },
 
   ShowHomeButton: {
@@ -2840,6 +2931,110 @@ export var Policies = {
       } else {
         lazy.CustomizableUI.removeWidgetFromArea("home-button");
       }
+    },
+  },
+
+  SitePolicies: {
+    /**
+     * Converts a wildcard domain into a match pattern.
+     *
+     * Any `*.` prefix is stripped and then the remaining domain converted to a base
+     * domain (ETLD + 1). If the pattern isn't long enough to be a base domain then an exception is
+     * thrown. If the pattern is too long then a warning is logged and the base domain is used.
+     *
+     * @param {string} pattern The wildcard domain pattern to convert.
+     * @returns {MatchPattern} The corresponding match pattern.
+     */
+    intoMatchPattern(pattern) {
+      let base = pattern;
+      if (base.startsWith("*.")) {
+        base = base.substring(2);
+      }
+
+      // This will throw an exception if the domain is not long enough to make a site.
+      let site = Services.eTLD.getBaseDomainFromHost(base);
+      if (site != base) {
+        console.warn(
+          `SitePolicies: Pattern ${pattern} is too specific. Using *.${site} instead.`
+        );
+      }
+
+      return new MatchPattern(`*://*.${site}/*`);
+    },
+
+    validate(params) {
+      // The schema will have validated the general structure, we need to validate the patterns
+      for (let param of params) {
+        for (let patterns of [param.Match ?? [], param.Exceptions ?? []]) {
+          try {
+            patterns.forEach(p => {
+              if (p != "*") {
+                this.intoMatchPattern(p);
+              }
+            });
+          } catch (e) {
+            return false;
+          }
+        }
+      }
+
+      return true;
+    },
+
+    featuresForPolicies(policies) {
+      let features = {};
+
+      if ("DisableJit" in policies) {
+        features.jit = !policies.DisableJit;
+      }
+
+      return features;
+    },
+
+    onBeforeAddons(manager, params) {
+      let sitePolicies = [];
+
+      for (let policies of params) {
+        let matches = policies.Match ?? [];
+        let exceptions = policies.Exceptions ?? [];
+
+        // If the entire web is an exception then this policy can never apply so
+        // ignore it.
+        if (exceptions.includes("*")) {
+          continue;
+        }
+
+        let exceptionPatterns = exceptions.map(this.intoMatchPattern);
+        let matchPatterns;
+
+        if (!matches.length || matches.includes("*")) {
+          matchPatterns = [new MatchPattern("<all_urls>")];
+        } else {
+          matchPatterns = matches.map(this.intoMatchPattern);
+
+          // Filter out any match patterns that are also exceptions.
+          matchPatterns = matchPatterns.filter(matchPattern => {
+            return !exceptionPatterns.some(
+              exceptionPattern =>
+                exceptionPattern.pattern == matchPattern.pattern
+            );
+          });
+
+          if (!matchPatterns.length) {
+            // If there are no match patterns left then this policy can never
+            // apply so ignore it.
+            continue;
+          }
+        }
+
+        sitePolicies.push({
+          match: new MatchPatternSet(matchPatterns),
+          exceptions: new MatchPatternSet(exceptionPatterns),
+          features: this.featuresForPolicies(policies.Policies),
+        });
+      }
+
+      manager.updateSitePolicies(sitePolicies);
     },
   },
 
@@ -2908,6 +3103,13 @@ export var Policies = {
 
   TranslateEnabled: {
     onBeforeAddons(manager, param) {
+      let policies = Services.policies.getActivePolicies();
+      if (policies.AIControls?.Translations || policies.AIControls?.Default) {
+        lazy.log.warn(
+          "Ignoring TranslateEnabled policy in favor of AIControls"
+        );
+        return;
+      }
       setAndLockPref("browser.translations.enable", param);
       setAndLockPref(
         "browser.ai.control.translations",

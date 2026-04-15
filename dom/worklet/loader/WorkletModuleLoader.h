@@ -1,5 +1,3 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*- */
-/* vim: set ts=8 sts=2 et sw=2 tw=80: */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
@@ -49,9 +47,10 @@ class WorkletModuleLoader : public JS::loader::ModuleLoaderBase {
   void RemoveRequest(nsIURI* aURI);
   JS::loader::ModuleLoadRequest* GetRequest(nsIURI* aURI) const;
 
-  bool HasSetLocalizedStrings() const { return (bool)mLocalizedStrs; }
-  void SetLocalizedStrings(const nsTArray<nsString>* aStrings) {
-    mLocalizedStrs = aStrings;
+  bool HasSetLocalizedStrings() const { return !mLocalizedStrs.IsEmpty(); }
+  void SetLocalizedStrings(nsTArray<nsString>&& aStrings) {
+    MOZ_ASSERT(!aStrings.IsEmpty());
+    mLocalizedStrs = std::move(aStrings);
   }
 
  private:
@@ -105,7 +104,7 @@ class WorkletModuleLoader : public JS::loader::ModuleLoaderBase {
 
   // We get the localized strings on the main thread, and pass it to
   // WorkletModuleLoader.
-  const nsTArray<nsString>* mLocalizedStrs = nullptr;
+  nsTArray<nsString> mLocalizedStrs;
 };
 }  // namespace loader
 

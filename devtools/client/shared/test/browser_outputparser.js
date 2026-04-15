@@ -9,6 +9,7 @@ add_task(async function () {
       ["security.allow_unsafe_parent_loads", true],
       ["layout.css.backdrop-filter.enabled", true],
       ["layout.css.relative-color-syntax.enabled", true],
+      ["layout.css.color-mix-multi-color.enabled", true],
       ["dom.security.html_serialization_escape_lt_gt", true],
     ],
   });
@@ -379,6 +380,23 @@ function testParseCssProperty(doc, parser) {
         ")",
       ]
     ),
+
+    // multi-color color-mix
+    makeColorTest("color", "color-mix(in srgb, red, blue, green)", [
+      "color-mix(in srgb, ",
+      { name: "red", colorFunction: "color-mix" },
+      ", ",
+      { name: "blue", colorFunction: "color-mix" },
+      ", ",
+      { name: "green", colorFunction: "color-mix" },
+      ")",
+    ]),
+
+    makeColorTest("color", "color-mix(in srgb, red)", [
+      "color-mix(in srgb, ",
+      { name: "red", colorFunction: "color-mix" },
+      ")",
+    ]),
   ];
 
   const target = doc.querySelector("div");
@@ -1091,6 +1109,34 @@ function testParseVariable(doc, parser) {
       // This shouldn't have a Jump to variable button
       expected: `<span>var(<span data-variable="10px">--x</span>)</span>`,
     },
+    {
+      // var() with spaces between params/parenthesis
+      text: "var(  --foo  ,  500px  )",
+      variables: { "--foo": "1px" },
+      expected:
+        // prettier-ignore
+        `<span>` +
+          `var(` +
+            `<span data-variable="1px">--foo${getJumpToVariableButton("--foo")}</span>` +
+            `,` +
+            `<span class="unmatched-class">  500px  </span>` +
+          `)` +
+        `</span>`,
+    },
+    {
+      // multiline var()
+      text: "var(\n--foo, 500px\n)",
+      variables: { "--foo": "1px" },
+      expected:
+        // prettier-ignore
+        `<span>` +
+          `var(` +
+            `<span data-variable="1px">--foo${getJumpToVariableButton("--foo")}</span>` +
+            `,` +
+            `<span class="unmatched-class"> 500px\n</span>` +
+          `)` +
+        `</span>`,
+    },
   ];
 
   const target = doc.querySelector("div");
@@ -1675,6 +1721,96 @@ function testParseLightDark(doc, parser) {
           `</span>,a,b` +
         `)`,
     },
+    {
+      message:
+        "in light mode with images, the second parameter gets the unmatched class",
+      propertyName: "background-image",
+      propertyValue: `light-dark(url("a.png"), url("b.png"))`,
+      isDarkColorScheme: false,
+      expected: `light-dark(url("a.png"), <span class="unmatched-class">url("b.png")</span>)`,
+    },
+    {
+      message:
+        "in dark mode with images, the first parameter gets the unmatched class",
+      propertyName: "background-image",
+      propertyValue: `light-dark(url("a.png"), url("b.png"))`,
+      isDarkColorScheme: true,
+      expected: `light-dark(<span class="unmatched-class">url("a.png")</span>, url("b.png"))`,
+    },
+    {
+      message:
+        "in light mode with gradients, the second parameter gets the unmatched class",
+      propertyName: "background-image",
+      propertyValue:
+        "light-dark(linear-gradient(white, blue), linear-gradient(black, red))",
+      isDarkColorScheme: false,
+      expected:
+        // prettier-ignore
+        `light-dark(` +
+          `linear-gradient(` +
+            `<span data-color="white" class="color-swatch-container">` +
+              `<span class="test-class" style="background-color:white" tabindex="0" role="button" data-color-function="linear-gradient"></span>` +
+              `<span>white</span>` +
+            `</span>` +
+            `, ` +
+            `<span data-color="blue" class="color-swatch-container">` +
+              `<span class="test-class" style="background-color:blue" tabindex="0" role="button" data-color-function="linear-gradient"></span>` +
+              `<span>blue</span>` +
+            `</span>` +
+          `)` +
+          `, ` +
+          `<span class="unmatched-class">` +
+            `linear-gradient(` +
+              `<span data-color="black" class="color-swatch-container">` +
+                `<span class="test-class" style="background-color:black" tabindex="0" role="button" data-color-function="linear-gradient"></span>` +
+                `<span>black</span>` +
+              `</span>` +
+              `, ` +
+              `<span data-color="red" class="color-swatch-container">` +
+                `<span class="test-class" style="background-color:red" tabindex="0" role="button" data-color-function="linear-gradient"></span>` +
+                `<span>red</span>` +
+              `</span>` +
+            `)` +
+          `</span>` +
+        `)`,
+    },
+    {
+      message:
+        "in dark mode with gradients, the first parameter gets the unmatched class",
+      propertyName: "background-image",
+      propertyValue:
+        "light-dark(linear-gradient(white, blue), linear-gradient(black, red))",
+      isDarkColorScheme: true,
+      expected:
+        // prettier-ignore
+        `light-dark(` +
+          `<span class="unmatched-class">` +
+            `linear-gradient(` +
+              `<span data-color="white" class="color-swatch-container">` +
+                `<span class="test-class" style="background-color:white" tabindex="0" role="button" data-color-function="linear-gradient"></span>` +
+                `<span>white</span>` +
+              `</span>` +
+              `, ` +
+              `<span data-color="blue" class="color-swatch-container">` +
+                `<span class="test-class" style="background-color:blue" tabindex="0" role="button" data-color-function="linear-gradient"></span>` +
+                `<span>blue</span>` +
+              `</span>` +
+            `)` +
+          `</span>` +
+          `, ` +
+          `linear-gradient(` +
+            `<span data-color="black" class="color-swatch-container">` +
+              `<span class="test-class" style="background-color:black" tabindex="0" role="button" data-color-function="linear-gradient"></span>` +
+              `<span>black</span>` +
+            `</span>` +
+            `, ` +
+            `<span data-color="red" class="color-swatch-container">` +
+              `<span class="test-class" style="background-color:red" tabindex="0" role="button" data-color-function="linear-gradient"></span>` +
+              `<span>red</span>` +
+            `</span>` +
+          `)` +
+        `)`,
+    },
   ];
 
   for (const test of TESTS) {
@@ -1739,6 +1875,18 @@ function testParseAttr(doc, parser) {
       propertyValue: `attr(data-x, "fallback")`,
       attributes: { "data-x": "" },
       expected: `attr(<span class="inspector-attribute" data-attribute="&quot;&quot;">data-x</span>, <span class="inspector-attr-fallback unmatched-class">"fallback"</span>)`,
+    },
+    {
+      message: "Checking attr() + spaces",
+      propertyValue: `attr(  data-x  ,  "fallback"  )`,
+      attributes: { "data-x": "" },
+      // prettier-ignore
+      expected:
+        `attr(` +
+          `<span class="inspector-attribute" data-attribute="&quot;&quot;">data-x</span>` +
+          `, ` +
+          `<span class="inspector-attr-fallback unmatched-class">"fallback"</span>` +
+        `)`,
     },
   ];
 

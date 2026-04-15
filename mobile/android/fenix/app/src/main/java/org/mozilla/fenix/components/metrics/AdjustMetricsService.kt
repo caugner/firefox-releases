@@ -9,6 +9,7 @@ import androidx.annotation.VisibleForTesting
 import com.adjust.sdk.Adjust
 import com.adjust.sdk.AdjustConfig
 import com.adjust.sdk.AdjustEvent
+import com.adjust.sdk.AdjustThirdPartySharing
 import com.adjust.sdk.Constants.ADJUST_PREINSTALL_SYSTEM_PROPERTY_PATH
 import com.adjust.sdk.LogLevel
 import kotlinx.coroutines.CoroutineDispatcher
@@ -21,6 +22,7 @@ import org.mozilla.fenix.BuildConfig
 import org.mozilla.fenix.Config
 import org.mozilla.fenix.GleanMetrics.AdjustAttribution
 import org.mozilla.fenix.GleanMetrics.Pings
+import org.mozilla.fenix.distributions.DistributionAdjustStartupStrategy
 import org.mozilla.fenix.ext.components
 import org.mozilla.fenix.utils.Settings
 
@@ -64,8 +66,14 @@ class AdjustMetricsService(
 
             // If we skipped the marketing consent screen, enable COPPA compliance to prevent
             // personal identifiers from being shared with Adjust.
-            if (distributionIdManager.shouldSkipMarketingConsentScreen()) {
-                config.enableCoppaCompliance()
+            when (distributionIdManager.getDistributionAdjustStartupStrategy()) {
+                DistributionAdjustStartupStrategy.IMMEDIATE_WITH_COPPA ->
+                    config.enableCoppaCompliance()
+
+                DistributionAdjustStartupStrategy.IMMEDIATE_WITH_PLAY_STORE_KIDS ->
+                    config.enablePlayStoreKidsCompliance()
+
+                else -> {}
             }
 
             if (!alreadyKnown(settings)) {
@@ -99,6 +107,12 @@ class AdjustMetricsService(
             config.setLogLevel(LogLevel.SUPPRESS)
 
             Adjust.initSdk(config)
+            if (settings.isUserMetaAttributed) {
+                enableOnlyMetaThirdPartySharing()
+            } else {
+                disableMetaThirdPartySharing()
+            }
+
             Adjust.enable()
             logger.info("Adjust SDK enabled")
         }
@@ -143,6 +157,25 @@ class AdjustMetricsService(
         event is Event.GrowthData || event is Event.FirstWeekPostInstall
 
     companion object {
+        const val META_PARTNER_ID = "34"
+
+        private fun enableOnlyMetaThirdPartySharing() {
+            Adjust.trackThirdPartySharing(
+                AdjustThirdPartySharing(true).apply {
+                    addPartnerSharingSetting("all", "all", false)
+                    addPartnerSharingSetting(META_PARTNER_ID, "all", true)
+                },
+            )
+        }
+
+        private fun disableMetaThirdPartySharing() {
+            Adjust.trackThirdPartySharing(
+                AdjustThirdPartySharing(true).apply {
+                    addPartnerSharingSetting(META_PARTNER_ID, "all", false)
+                },
+            )
+        }
+
         @VisibleForTesting
         internal fun alreadyKnown(settings: Settings): Boolean {
             return settings.adjustCampaignId.isNotEmpty() || settings.adjustNetwork.isNotEmpty() ||
