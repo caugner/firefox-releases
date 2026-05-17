@@ -4,7 +4,7 @@
  *
  *   TrueType bytecode interpreter (body).
  *
- * Copyright (C) 1996-2025 by
+ * Copyright (C) 1996-2026 by
  * David Turner, Robert Wilhelm, and Werner Lemberg.
  *
  * This file is part of the FreeType project, and may only be used,
@@ -5132,13 +5132,11 @@
     /* XXX: UNDOCUMENTED! SHZ doesn't move the phantom points.     */
     /*      Twilight zone has no real contours, so use `n_points'. */
     /*      Normal zone's `n_points' includes phantoms, so must    */
-    /*      use end of last contour.                               */
+    /*      subtract them.                                         */
     if ( exc->GS.gep2 == 0 )
       limit = exc->zp2.n_points;
-    else if ( exc->GS.gep2 == 1 && exc->zp2.n_contours > 0 )
-      limit = exc->zp2.contours[exc->zp2.n_contours - 1] + 1;
     else
-      limit = 0;
+      limit = exc->zp2.n_points - 4U;
 
     /* XXX: UNDOCUMENTED! SHZ doesn't touch the points */
     for ( i = 0; i < limit; i++ )

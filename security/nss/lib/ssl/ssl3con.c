@@ -7360,6 +7360,15 @@ ssl3_HandleServerHello(sslSocket *ss, PRUint8 *b, PRUint32 length)
         goto alert_loser;
     }
 
+    /* A server that sent HelloVerifyRequest is DTLS 1.2 or earlier;
+     * reject a subsequent TLS 1.3 ServerHello as illegal. */
+    if (ss->ssl3.hs.dtlsReceivedHVR &&
+        ss->version >= SSL_LIBRARY_VERSION_TLS_1_3) {
+        desc = illegal_parameter;
+        errCode = SSL_ERROR_RX_MALFORMED_SERVER_HELLO;
+        goto alert_loser;
+    }
+
     /* There are three situations in which the server must pick
      * TLS 1.3.
      *
@@ -8312,10 +8321,21 @@ ssl3_ClientCertCallbackComplete(sslSocket *ss, SECStatus outcome, SECKEYPrivateK
     ssl3_ClientAuthCallbackOutcome(ss, outcome);
 
     /* Continue the handshake */
-    PORT_Assert(ss->ssl3.hs.restartTarget);
     if (!ss->ssl3.hs.restartTarget) {
-        FATAL_ERROR(ss, PR_INVALID_STATE_ERROR, internal_error);
-        return SECFailure;
+        /* The client cert callback completed before the server Finished
+         * message was fully received.  This can happen on a non-blocking
+         * socket when EAGAIN interrupts the record-header read partway
+         * through (e.g. when the Finished record header straddles a TCP
+         * segment boundary).  The partial gather state is preserved in
+         * ss->gs and will be resumed by the next SSL_ForceHandshake /
+         * PR_Read call.  tls13_SendClientSecondRound will run after the
+         * Finished is processed and will find clientCertificatePending
+         * already cleared, so it will proceed without blocking. */
+        SSL_TRC(3, ("%d: SSL3[%p]: client certificate selection won the race"
+                    " with server Finished; will resume on next I/O",
+                    SSL_GETPID(), ss->fd));
+        PORT_Assert(ss->ssl3.hs.ws != idle_handshake);
+        return SECSuccess;
     }
     sslRestartTarget target = ss->ssl3.hs.restartTarget;
     ss->ssl3.hs.restartTarget = NULL;
@@ -14078,6 +14098,8 @@ ssl3_InitState(sslSocket *ss)
                 sizeof(ss->ssl3.hs.newSessionTicket));
 
     ss->ssl3.hs.zeroRttState = ssl_0rtt_none;
+
+    ss->ssl3.hs.dtlsReceivedHVR = PR_FALSE;
     return SECSuccess;
 }
 

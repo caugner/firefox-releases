@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -22,7 +20,6 @@
 #include "gc/ParallelMarking.h"
 #include "gc/TraceKind.h"
 #include "jit/JitCode.h"
-#include "jit/JitScript.h"
 #include "js/GCTypeMacros.h"  // JS_FOR_EACH_PUBLIC_{,TAGGED_}GC_POINTER_TYPE
 #include "js/SliceBudget.h"
 #include "util/Poison.h"
@@ -456,15 +453,11 @@ INSTANTIATE_INTERNAL_TRACE_FUNCTIONS(TaggedProto)
 
 }  // namespace js::gc
 
-// In debug builds, makes a note of the current compartment before calling a
-// trace hook or traceChildren() method on a GC thing.
+// Records the source zone (and, in debug builds, compartment) before calling
+// a trace hook or traceChildren() method on a GC thing. The source zone is
+// required in all builds so that MarkingTracerT::onEdge can keep the per-zone
+// atom-marking bitmap in sync for Symbol edges traced via the generic tracer.
 class MOZ_RAII AutoSetTracingSource {
-#ifndef DEBUG
- public:
-  template <typename T>
-  AutoSetTracingSource(JSTracer* trc, T* thing) {}
-  ~AutoSetTracingSource() {}
-#else
   GCMarker* marker = nullptr;
 
  public:
@@ -474,33 +467,32 @@ class MOZ_RAII AutoSetTracingSource {
       marker = GCMarker::fromTracer(trc);
       MOZ_ASSERT(!marker->tracingZone);
       marker->tracingZone = thing->asTenured().zone();
+#ifdef DEBUG
       MOZ_ASSERT(!marker->tracingCompartment);
       marker->tracingCompartment = thing->maybeCompartment();
+#endif
     }
   }
 
   ~AutoSetTracingSource() {
     if (marker) {
       marker->tracingZone = nullptr;
+#ifdef DEBUG
       marker->tracingCompartment = nullptr;
+#endif
     }
   }
-#endif
 };
 
-// In debug builds, clear the trace hook compartment. This happens after the
-// trace hook has called back into one of our trace APIs and we've checked the
-// traced thing.
+// Clear the tracing source. This happens after the trace hook has called back
+// into one of our trace APIs and we've checked the traced thing, before any
+// nested traversal that may itself use AutoSetTracingSource.
 class MOZ_RAII AutoClearTracingSource {
-#ifndef DEBUG
- public:
-  explicit AutoClearTracingSource(GCMarker* marker) {}
-  explicit AutoClearTracingSource(JSTracer* trc) {}
-  ~AutoClearTracingSource() {}
-#else
   GCMarker* marker = nullptr;
   JS::Zone* prevZone = nullptr;
+#ifdef DEBUG
   Compartment* prevCompartment = nullptr;
+#endif
 
  public:
   explicit AutoClearTracingSource(JSTracer* trc) {
@@ -508,17 +500,20 @@ class MOZ_RAII AutoClearTracingSource {
       marker = GCMarker::fromTracer(trc);
       prevZone = marker->tracingZone;
       marker->tracingZone = nullptr;
+#ifdef DEBUG
       prevCompartment = marker->tracingCompartment;
       marker->tracingCompartment = nullptr;
+#endif
     }
   }
   ~AutoClearTracingSource() {
     if (marker) {
       marker->tracingZone = prevZone;
+#ifdef DEBUG
       marker->tracingCompartment = prevCompartment;
+#endif
     }
   }
-#endif
 };
 
 template <typename T>
@@ -847,6 +842,22 @@ MOZ_ALWAYS_INLINE GCMarker* MarkingTracerT<opts>::getMarker() {
   return GCMarker::fromTracer(this);
 }
 
+// Unmark gray symbols in incremental GC: gray unmarking doesn't proceed through
+// zones which are currently being marked incrementally because the marking
+// state isn't consistent, and we handle this later as part of marking.
+static inline void MaybeUnmarkGraySymbol(JSRuntime* runtime,
+                                         JS::Zone* sourceZone,
+                                         JS::Symbol* target) {
+  // Ignore edges from self-hosted JitCode that lives in the atoms zone.
+  if (sourceZone->isAtomsZone()) {
+    return;
+  }
+
+  AtomMarkingRuntime& atomMarking = runtime->gc.atomMarking;
+  MOZ_ASSERT(atomMarking.atomIsMarked(sourceZone, target));
+  atomMarking.maybeUnmarkGrayAtomically(sourceZone, target);
+}
+
 template <uint32_t opts>
 template <typename T>
 void MarkingTracerT<opts>::onEdge(T** thingp, const char* name) {
@@ -862,6 +873,12 @@ void MarkingTracerT<opts>::onEdge(T** thingp, const char* name) {
 
   MOZ_ASSERT_IF(IsOwnedByOtherRuntime(this->runtime(), thing),
                 thing->isMarkedBlack());
+
+  if constexpr (std::is_same_v<T, JS::Symbol>) {
+    if (marker->markColor() == MarkColor::Black && marker->tracingZone) {
+      MaybeUnmarkGraySymbol(this->runtime(), marker->tracingZone, thing);
+    }
+  }
 
 #ifdef DEBUG
   CheckMarkedThing(marker, thing);
@@ -942,8 +959,6 @@ void js::gc::PerformIncrementalPreWriteBarrier(TenuredCell* cell) {
   // The same as PerformIncrementalReadBarrier except for an extra check on the
   // runtime for cells in atoms zone.
 
-  Zone* zone = cell->zoneFromAnyThread();
-
   MOZ_ASSERT(cell);
   if (cell->isMarkedBlack()) {
     return;
@@ -952,6 +967,7 @@ void js::gc::PerformIncrementalPreWriteBarrier(TenuredCell* cell) {
   // Barriers can be triggered off the main thread by background finalization of
   // HeapPtrs to the atoms zone. We don't want to trigger the barrier in this
   // case.
+  Zone* zone = cell->zoneFromAnyThread();
   bool checkThread = zone->isAtomsZone();
   JSRuntime* runtime = cell->runtimeFromAnyThread();
   if (checkThread && !CurrentThreadCanAccessRuntime(runtime)) {
@@ -967,6 +983,35 @@ void js::gc::PerformIncrementalPreWriteBarrier(TenuredCell* cell) {
   GCMarker* gcmarker = GCMarker::fromTracer(zone->barrierTracer());
   TraceEdgeForBarrier(gcmarker, cell, cell->getTraceKind());
 }
+
+#ifdef ENABLE_WASM_JSPI
+void js::gc::PerformIncrementalPreWriteBarrierAllChildren(JSObject* cell) {
+  if (!cell) {
+    return;
+  }
+
+  // If the object is already marked black, its children may already be in the
+  // GC's marking work queue. However, with incremental and concurrent marking,
+  // objects can be marked black before their trace hooks have run. So we
+  // conservatively mark it even if it's black.
+  Zone* zone = cell->zoneFromAnyThread();
+  MOZ_ASSERT(!zone->isAtomsZone());
+  MOZ_ASSERT(zone->needsMarkingBarrier());
+  MOZ_ASSERT(CurrentThreadIsMainThread());
+  MOZ_ASSERT(!JS::RuntimeHeapIsMajorCollecting());
+
+  // Skip dispatching on known tracer type.
+  GCMarker* gcmarker = GCMarker::fromTracer(zone->barrierTracer());
+
+  MOZ_ASSERT(ShouldMark(gcmarker, cell));
+  CheckTracedThing(gcmarker->tracer(), cell);
+  AutoClearTracingSource acts(gcmarker->tracer());
+#  ifdef DEBUG
+  AutoSetThreadIsMarking threadIsMarking;
+#  endif  // DEBUG
+  cell->traceChildren(zone->barrierTracer());
+}
+#endif  // ENABLE_WASM_JSPI
 
 void js::gc::PerformIncrementalBarrierDuringFlattening(JSString* str) {
   TenuredCell* cell = &str->asTenured();
@@ -1165,11 +1210,8 @@ inline void GCMarker::checkTraversedEdge(S source, T* target) {
 template <uint32_t opts, typename S, typename T>
 void js::GCMarker::markAndTraverseEdge(S* source, T* target) {
   if constexpr (std::is_same_v<T, JS::Symbol>) {
-    // Unmark gray symbols in incremental GC.
     if (markColor() == MarkColor::Black) {
-      GCRuntime* gc = &runtime()->gc;
-      MOZ_ASSERT(gc->atomMarking.atomIsMarked(source->zone(), target));
-      gc->atomMarking.maybeUnmarkGrayAtomically(source->zone(), target);
+      MaybeUnmarkGraySymbol(runtime(), source->zone(), target);
     }
   }
 
@@ -1423,11 +1465,11 @@ bool GCMarker::markOneObjectForTest(JSObject* obj) {
 // concurrent marking and interrupt the main thread to do this work.
 static constexpr size_t MainThreadBufferThreshold = 16384;
 
-inline bool GCMarker::addToMainThreadBuffer(JS::GCCellPtr ptr,
+inline bool GCMarker::addToMainThreadBuffer(JSObject* object,
                                             SliceBudget& budget) {
   auto& buffer = markColor() == MarkColor::Black ? blackMainThreadBuffer_.ref()
                                                  : grayMainThreadBuffer_.ref();
-  if (!buffer.append(ptr)) {
+  if (!buffer.append(object)) {
     return false;
   }
 
@@ -1469,29 +1511,20 @@ bool GCMarker::processMainThreadBuffers(SliceBudget& budget) {
 bool GCMarker::processMainThreadBuffer(MainThreadBuffer& buffer,
                                        SliceBudget& budget) {
   while (!buffer.empty()) {
-    JS::GCCellPtr cell = buffer.popCopy();
+    JSObject* obj = buffer.popCopy();
 
-    MOZ_ASSERT(cell.asCell()->isMarkedAtLeast(markColor()));
-    if (markColor() == MarkColor::Gray && cell.asCell()->isMarkedBlack()) {
+    MOZ_ASSERT(obj->isMarkedAtLeast(markColor()));
+    if (markColor() == MarkColor::Gray && obj->isMarkedBlack()) {
       // We subsequently marked this black so we can skip marking it gray.
       continue;
     }
 
-    if (cell.is<JSObject>()) {
-      JSObject* obj = &cell.as<JSObject>();
-      const JSClass* clasp = obj->getClass();
-      // It's possible for the mutator to swap a native object with a proxy
-      // after it go put into the buffer so we need to recheck for a trace hook
-      // here.
-      if (clasp->hasTrace()) {
-        AutoSetTracingSource asts(tracer(), obj);
-        clasp->doTrace(tracer(), obj);
-      }
-    } else {
-      BaseScript* script = &cell.as<BaseScript>();
-      if (script->hasJitScript()) {
-        script->jitScript()->trace(tracer());
-      }
+    const JSClass* clasp = obj->getClass();
+    // It's possible for the mutator to swap a native object with a proxy after
+    // it got put into the buffer so we need to recheck for a trace hook here.
+    if (clasp->hasTrace()) {
+      AutoSetTracingSource asts(tracer(), obj);
+      clasp->doTrace(tracer(), obj);
     }
 
     budget.step();
@@ -1689,21 +1722,6 @@ inline bool GCMarker::processMarkStackTop(SliceBudget& budget) {
           markImplicitEdges(script);
         }
         AutoSetTracingSource asts(tracer(), script);
-
-#ifdef JS_GC_CONCURRENT_MARKING
-        // It's not safe to trace JitScript concurrently. Trace everything else
-        // and add the script to the main thread trace buffer.
-        if constexpr (bool(opts & MarkingOptions::ConcurrentMarking)) {
-          bool skippedJitScript = false;
-          script->traceChildrenConcurrently(tracer(), &skippedJitScript);
-          if (skippedJitScript && MOZ_UNLIKELY(!addToMainThreadBuffer(
-                                      JS::GCCellPtr(script), budget))) {
-            delayMarkingChildrenOnOOM(script);
-          }
-          return true;
-        }
-#endif
-
         script->traceChildren(tracer());
         return true;
       }
@@ -1857,7 +1875,7 @@ bool GCMarker::callOrDelayTraceHook(JSObject* obj, const JSClass* clasp,
   if constexpr (bool(opts & MarkingOptions::ConcurrentMarking)) {
     // TODO: Add a class flag to allow us to call the trace hook concurrently
     // for classes that support it.
-    if (MOZ_UNLIKELY(!addToMainThreadBuffer(JS::GCCellPtr(obj), budget))) {
+    if (MOZ_UNLIKELY(!addToMainThreadBuffer(obj, budget))) {
       delayMarkingChildrenOnOOM(obj);
       return false;
     }
@@ -2352,8 +2370,7 @@ inline void MarkStack::poisonUnused() {
                capacity_ - topIndex_, MemCheckKind::MakeUndefined);
 }
 
-size_t MarkStack::sizeOfExcludingThis(
-    mozilla::MallocSizeOf mallocSizeOf) const {
+size_t MarkStack::sizeOfExcludingThis() const {
   return capacity_ * sizeof(uintptr_t);
 }
 
@@ -2719,6 +2736,9 @@ void GCRuntime::markDelayedChildren(Arena* arena, MarkColor color) {
   for (ArenaCellIterUnderGC cell(arena); !cell.done(); cell.next()) {
     if (cell->isMarked(colorToCheck)) {
       ApplyGCThingTyped(cell, kind, [trc, this](auto t) {
+        // Record the source zone so onEdge can update the atom-marking
+        // bitmap for any Symbol edges traced via the generic tracer.
+        AutoSetTracingSource asts(trc, t);
         t->traceChildren(trc);
         marker().markImplicitEdges(t);
       });
@@ -2853,8 +2873,8 @@ void GCMarker::checkZone(Cell* cell) {
 #endif
 
 size_t GCMarker::sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
-  return mallocSizeOf(this) + stack.sizeOfExcludingThis(mallocSizeOf) +
-         otherStack.sizeOfExcludingThis(mallocSizeOf);
+  return mallocSizeOf(this) + stack.sizeOfExcludingThis() +
+         otherStack.sizeOfExcludingThis();
 }
 
 /*** IsMarked / IsAboutToBeFinalized ****************************************/
@@ -2975,13 +2995,23 @@ inline void SweepingTracer::onEdge(T** thingp, const char* name) {
     return;
   }
 
-  // Permanent things are never finalized by non-owning runtimes.
   TenuredCell* cell = &thing->asTenured();
   Zone* zone = cell->zoneFromAnyThread();
+
 #ifdef DEBUG
+  // Permanent things are never finalized by non-owning runtimes.
   if (IsOwnedByOtherRuntime(runtime(), thing)) {
     MOZ_ASSERT(!zone->wasGCStarted());
     MOZ_ASSERT(thing->isMarkedBlack());
+  }
+
+  // Any zone can contain references to symbols so make sure we've finished
+  // marking them before we try and sweep them. If this fails then we missed
+  // adding a sweep group edge somewhere. This check can be disabled in places
+  // where we only care about references from the current zone.
+  if (cell->getTraceKind() == JS::TraceKind::Symbol && !cell->isMarkedBlack() &&
+      !allowSweepingSymbolsEarly) {
+    MOZ_ASSERT(!zone->isGCMarking());
   }
 #endif
 
@@ -2990,7 +3020,8 @@ inline void SweepingTracer::onEdge(T** thingp, const char* name) {
   //  - atoms
   //  - the jitcode map
   //  - the mark queue
-  if ((zone->isGCSweeping() || zone->isAtomsZone()) && !cell->isMarkedAny()) {
+  if ((zone->isGCSweeping() || (zone->isAtomsZone() && zone->isGCMarking())) &&
+      !cell->isMarkedAny()) {
     *thingp = nullptr;
   }
 }

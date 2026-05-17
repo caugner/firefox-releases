@@ -111,7 +111,7 @@ class ContentChild final : public PContentChild,
   void Init(mozilla::ipc::UntypedEndpoint&& aEndpoint,
             const char* aParentBuildID, bool aIsForBrowser);
 
-  void InitXPCOM(XPCOMInitData&& aXPCOMInit,
+  void InitXPCOM(XPCOMInitData& aXPCOMInit,
                  NotNull<StructuredCloneData*> aInitialData,
                  bool aIsReadyForBackgroundProcessing);
 
@@ -338,6 +338,15 @@ class ContentChild final : public PContentChild,
 
   mozilla::ipc::IPCResult RecvRemoveAllPermissions();
 
+  mozilla::ipc::IPCResult RecvSetBrowserPermission(const nsCString& aOrigin,
+                                                   const nsCString& aType,
+                                                   const uint32_t& aAction,
+                                                   const uint64_t& aBrowserId,
+                                                   const bool& aIsRemoval);
+
+  mozilla::ipc::IPCResult RecvClearBrowserPermissions(
+      const uint64_t& aBrowserId, const uint32_t& aActionFilter);
+
  private:
   void NotifyMemoryPressure(const char* aTopic, const char16_t* aReason);
 
@@ -450,7 +459,8 @@ class ContentChild final : public PContentChild,
   PContentPermissionRequestChild* AllocPContentPermissionRequestChild(
       Span<const PermissionRequest> aRequests, nsIPrincipal* aPrincipal,
       nsIPrincipal* aTopLevelPrincipal, const bool& aIsHandlingUserInput,
-      const bool& aMaybeUnsafePermissionDelegate, const TabId& aTabId);
+      const bool& aMaybeUnsafePermissionDelegate, const TabId& aTabId,
+      const bool& aIgnoreAllowSitePermission);
   bool DeallocPContentPermissionRequestChild(
       PContentPermissionRequestChild* actor);
 
@@ -819,6 +829,9 @@ class ContentChild final : public PContentChild,
  private:
   void AddProfileToProcessName(const nsACString& aProfile);
   mozilla::ipc::IPCResult RecvFlushFOGData(FlushFOGDataResolver&& aResolver);
+
+  mozilla::ipc::IPCResult RecvSystemPermissionChanged(PermissionName aName,
+                                                      PermissionState aState);
 
   mozilla::ipc::IPCResult RecvUpdateMediaCodecsSupported(
       RemoteMediaIn aLocation, const media::MediaCodecsSupported& aSupported);

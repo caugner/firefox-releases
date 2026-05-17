@@ -136,6 +136,65 @@ add_task(async function test_messageEvent_assistant() {
   await SpecialPowers.popPrefEnv();
 });
 
+add_task(async function test_completed_assistant_message_announced() {
+  const restoreSignIn = skipSignIn();
+  const { restore } = await stubEngineNetworkBoundaries({
+    serverOptions: { streamChunks: ["**Final** answer\n\nSecond paragraph"] },
+  });
+
+  let win;
+  try {
+    win = await openAIWindow();
+    const browser = win.gBrowser.selectedBrowser;
+
+    await typeInSmartbar(browser, "Hello");
+    await submitSmartbar(browser);
+
+    const aiWindowEl = browser.contentDocument?.querySelector("ai-window");
+    const aichatBrowser = await TestUtils.waitForCondition(
+      () => aiWindowEl.shadowRoot?.querySelector("#aichat-browser"),
+      "Wait for aichat-browser"
+    );
+
+    await SpecialPowers.spawn(aichatBrowser, [], async () => {
+      const chatContent = content.document.querySelector("ai-chat-content");
+      const announcer = await ContentTaskUtils.waitForCondition(
+        () =>
+          chatContent.shadowRoot?.querySelector(
+            ".assistant-response-announcer"
+          ),
+        "assistant response announcer should exist"
+      );
+      Assert.equal(
+        announcer.getAttribute("role"),
+        "status",
+        "announcer should expose status"
+      );
+      Assert.equal(
+        announcer.getAttribute("aria-live"),
+        "polite",
+        "announcer should use polite live updates"
+      );
+      Assert.equal(
+        announcer.getAttribute("aria-atomic"),
+        "true",
+        "announcer should announce its full contents"
+      );
+
+      await ContentTaskUtils.waitForCondition(
+        () => announcer.textContent.trim() === "Final answer Second paragraph",
+        "completed assistant response should be announced"
+      );
+    });
+  } finally {
+    if (win) {
+      await BrowserTestUtils.closeWindow(win);
+    }
+    restoreSignIn();
+    await restore();
+  }
+});
+
 /**
  * Test that messageEvent handles loading messages correctly
  */
@@ -238,6 +297,58 @@ add_task(async function test_messageEvent_clear_conversation() {
         receivedEventDetail.convId,
         "conv456",
         "Should receive correct convId"
+      );
+    });
+  });
+
+  await SpecialPowers.popPrefEnv();
+});
+
+/**
+ * Test that switching conversations clears the loading state.
+ */
+add_task(async function test_conversation_change_clears_loading_state() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.smartwindow.enabled", true]],
+  });
+
+  await BrowserTestUtils.withNewTab("about:aichatcontent", async browser => {
+    const actor =
+      browser.browsingContext.currentWindowGlobal.getActor("AIChatContent");
+
+    await actor.dispatchMessageToChatContent({
+      role: "user",
+      convId: "conv-a",
+      ordinal: 0,
+      content: { body: "Hello" },
+    });
+
+    await SpecialPowers.spawn(browser, [], async () => {
+      const chatContent = content.document.querySelector("ai-chat-content");
+      await ContentTaskUtils.waitForMutationCondition(
+        chatContent.shadowRoot,
+        { childList: true, subtree: true },
+        () => chatContent.shadowRoot?.querySelector("chat-assistant-loader")
+      );
+      Assert.ok(
+        chatContent.shadowRoot?.querySelector("chat-assistant-loader"),
+        "loading indicator should be visible while waiting for a response"
+      );
+    });
+
+    // A tab switch dispatches clear-conversation without a convId, which
+    // triggers #checkConversationState to detect the conversation change
+    // and reset assistantIsLoading and isSearching.
+    await actor.dispatchMessageToChatContent({
+      role: "clear-conversation",
+      content: { body: "" },
+    });
+
+    await SpecialPowers.spawn(browser, [], async () => {
+      const chatContent = content.document.querySelector("ai-chat-content");
+      await ContentTaskUtils.waitForCondition(
+        () => !chatContent.shadowRoot?.querySelector("chat-assistant-loader"),
+        "loading indicator should be cleared when conversation changes"
       );
     });
   });

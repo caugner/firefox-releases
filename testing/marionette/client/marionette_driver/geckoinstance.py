@@ -88,6 +88,8 @@ class GeckoInstance:
         "dom.max_script_run_time": 0,
         # Disable navigation change rate limitation
         "dom.navigation.navigationRateLimit.count": 0,
+        # Disable system permission checks for navigator.permissions.query
+        "dom.permissions.testing.enabled": True,
         # DOM Push
         "dom.push.connection.enabled": False,
         # Screen Orientation API
@@ -129,6 +131,8 @@ class GeckoInstance:
         "focusmanager.testmode": True,
         # Disable useragent updates
         "general.useragent.updates.enabled": False,
+        # Do not open system settings when geolocation is requested without OS permission
+        "geo.prompt.open_system_prefs": False,
         # Disable geolocation ping (#2)
         "geo.provider.network.url": "",
         # Always use network provider for geolocation tests

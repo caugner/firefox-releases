@@ -497,9 +497,7 @@ impl PseudoElement {
             PseudoElement::FirstLine => PropertyFlags::APPLIES_TO_FIRST_LINE,
             PseudoElement::Placeholder => PropertyFlags::APPLIES_TO_PLACEHOLDER,
             PseudoElement::Cue => PropertyFlags::APPLIES_TO_CUE,
-            PseudoElement::Marker if static_prefs::pref!("layout.css.marker.restricted") => {
-                PropertyFlags::APPLIES_TO_MARKER
-            },
+            PseudoElement::Marker => PropertyFlags::APPLIES_TO_MARKER,
             _ => return None,
         })
     }
@@ -560,7 +558,7 @@ impl PseudoElement {
                 // https://drafts.csswg.org/cssom/#dom-window-getcomputedstyle
                 input.parse_nested_block(|input| {
                     selector_parser::parse_functional_pseudo_element_with_name(
-                        name,
+                        &name,
                         input,
                         Target::Cssom,
                     )

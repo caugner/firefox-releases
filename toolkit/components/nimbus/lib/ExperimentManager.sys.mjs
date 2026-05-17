@@ -232,6 +232,11 @@ export class ExperimentManager {
 
       isFirstStartup: lazy.FirstStartup.state === lazy.FirstStartup.IN_PROGRESS,
 
+      isNonStubFirstRun: !Services.prefs.getBoolPref(
+        "nimbus.firstUpdateComplete",
+        false
+      ),
+
       get currentDate() {
         return new Date();
       },
@@ -1829,6 +1834,39 @@ export class ExperimentManager {
    */
   isPrefBeingChangedViaAboutConfig(pref) {
     return this.#aboutConfigObserver.isBeingChanged(pref);
+  }
+
+  /**
+   * Clear the opt-in list.
+   *
+   * @param {object} options
+   * @param {Set<string> | undefined} options.onlyFeatureIds
+   * If provided, only recipes that contain at least one of the features in this
+   * set will be removed.
+   *
+   * Otherwise, all recipes will be removed.
+   */
+  _clearOptInRecipes({ onlyFeatureIds = undefined } = {}) {
+    if (onlyFeatureIds) {
+      this.optInRecipes = this.optInRecipes.filter(recipe =>
+        recipe.featureIds.some(featureId => !onlyFeatureIds.has(featureId))
+      );
+    } else {
+      this.optInRecipes = [];
+    }
+  }
+
+  /**
+   * Sort the opt-in list by recipe published date.
+   *
+   * This must be called at the end of each update cycle to ensure that
+   * presentation of the features in about:preferences#experimental is
+   * consistent.
+   */
+  _sortOptInRecipes() {
+    this.optInRecipes.sort(
+      (a, b) => new Date(a.publishedDate ?? 0) - new Date(b.publishedDate ?? 0)
+    );
   }
 
   /**

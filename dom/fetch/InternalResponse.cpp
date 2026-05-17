@@ -149,18 +149,20 @@ InternalResponseMetadata InternalResponse::GetMetadata() {
   // efficient, because there's no move-friendly constructor generated.
   nsCOMPtr<nsITransportSecurityInfo> securityInfo(mChannelInfo.SecurityInfo());
   return InternalResponseMetadata(
-      mType, GetUnfilteredURLList(), GetUnfilteredStatus(),
+      mType, GetUnfilteredURLList().Clone(), GetUnfilteredStatus(),
       GetUnfilteredStatusText(), headersGuard, headers, mErrorCode,
       GetAlternativeDataType(), securityInfo, principalInfo, bodyBlobURISpec,
       bodyLocalPath, GetCredentialsMode());
 }
 
 void InternalResponse::ToChildToParentInternalResponse(
-    ChildToParentInternalResponse* aIPCResponse,
-    mozilla::ipc::PBackgroundChild* aManager) {
+    ChildToParentInternalResponse* aIPCResponse) {
   *aIPCResponse = ChildToParentInternalResponse(GetMetadata(), Nothing(),
                                                 UNKNOWN_BODY_SIZE, Nothing());
+}
 
+void InternalResponse::SerializeChildToParentInternalResponseBody(
+    ChildToParentInternalResponse* aIPCResponse) {
   nsCOMPtr<nsIInputStream> body;
   int64_t bodySize;
   GetUnfilteredBody(getter_AddRefs(body), &bodySize);

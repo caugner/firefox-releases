@@ -75,11 +75,9 @@
     <dimen name="bookmark_edit_text_height">48dp</dimen>
 
     <!-- Home Fragment -->
-    <dimen name="home_fragment_top_toolbar_header_margin">60dp</dimen>
     <dimen name="home_item_horizontal_margin">16dp</dimen>
     <dimen name="home_item_vertical_margin">8dp</dimen>
     <dimen name="wordmark_text_height">18dp</dimen>
-    <dimen name="wordmark_text_margin_top">10dp</dimen>
 
     <!-- Browser Fragment -->
     <!--The size of the gap between the tab preview and content layout.-->
@@ -142,7 +140,7 @@
     <dimen name="tab_tray_new_collection_padding_start">24dp</dimen>
     <dimen name="tab_tray_new_collection_drawable_padding">28dp</dimen>
     <!--  Keeps FAB and snackbar from covering last item in list -->
-    <dimen name="tab_tray_list_bottom_padding">80dp</dimen>
+    <dimen name="tab_tray_list_bottom_padding">140dp</dimen>
     <dimen name="tab_tray_grid_bottom_padding">40dp</dimen>
 
 

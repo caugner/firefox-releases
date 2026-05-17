@@ -42,6 +42,7 @@ export class AIChatMessage extends MozLitElement {
     message: { type: String },
     messageId: { type: String, reflect: true, attribute: "data-message-id" },
     searchTokens: { type: Array },
+    complete: { type: Boolean },
     seenUrls: { type: Object, attribute: false },
     conversationId: { type: String },
   };
@@ -137,6 +138,24 @@ export class AIChatMessage extends MozLitElement {
     this.dispatchEvent(e);
   }
 
+  updated(changed) {
+    if (changed.has("complete") && this.complete && this.role === "assistant") {
+      const messageEl = this.shadowRoot?.querySelector(`.message-${this.role}`);
+      const text = messageEl
+        ? (messageEl.innerText || messageEl.textContent || "")
+            .replace(/\s+/g, " ")
+            .trim()
+        : "";
+      this.dispatchEvent(
+        new CustomEvent("ai-chat-message:complete", {
+          bubbles: true,
+          composed: true,
+          detail: { messageId: this.messageId, text },
+        })
+      );
+    }
+  }
+
   #getIconSrc = linkHref => {
     // Since we use the "page-icon:" CSP rule we can just look at the page URL for the img src
     const finalIcon = linkHref
@@ -208,6 +227,27 @@ export class AIChatMessage extends MozLitElement {
     }
   }
 
+  static #SETTINGS_URL = new URL("about:preferences");
+  static #SETTINGS_ALIAS_URL = new URL("about:settings");
+
+  /**
+   * Returns true if the parsed URL points to the browser settings page.
+   * Matches both about:preferences and its about:settings alias,
+   *
+   * @param {URL} parsed - A parsed URL object
+   * @returns {boolean}
+   */
+  #isSettingsURL(parsed) {
+    if (!parsed) {
+      return false;
+    }
+    return (
+      parsed.protocol === AIChatMessage.#SETTINGS_URL.protocol &&
+      (parsed.pathname === AIChatMessage.#SETTINGS_URL.pathname ||
+        parsed.pathname === AIChatMessage.#SETTINGS_ALIAS_URL.pathname)
+    );
+  }
+
   /**
    * This functions handles unfurling links that have not been seen by the conversation.
    * Language models can hallucinate URLs and can be forced by untrusted content to
@@ -229,6 +269,12 @@ export class AIChatMessage extends MozLitElement {
     for (const anchor of root.querySelectorAll("a[href]")) {
       const parsed = URL.parse(anchor.href);
 
+      // Settings pages are always trusted
+      if (this.#isSettingsURL(parsed)) {
+        continue;
+      }
+
+      // Disallowed scheme, strip href to prevent navigation.
       if (
         !parsed ||
         (parsed.protocol !== "http:" && parsed.protocol !== "https:")

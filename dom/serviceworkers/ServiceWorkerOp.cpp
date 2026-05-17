@@ -1519,14 +1519,14 @@ void FetchEventOp::AsyncLog(const nsCString& aScriptSpec, uint32_t aLineNumber,
 }
 
 void FetchEventOp::GetRequestURL(nsAString& aOutRequestURL) {
-  nsTArray<nsCString>& urls =
+  nsTArray<NotNull<RefPtr<nsIURI>>>& urls =
       mArgs.get_ParentToChildServiceWorkerFetchEventOpArgs()
           .common()
           .internalRequest()
           .urlList();
   MOZ_ASSERT(!urls.IsEmpty());
 
-  CopyUTF8toUTF16(urls.LastElement(), aOutRequestURL);
+  CopyUTF8toUTF16(urls.LastElement()->GetSpecOrDefault(), aOutRequestURL);
 }
 
 void FetchEventOp::ResolvedCallback(JSContext* aCx,
@@ -1646,7 +1646,7 @@ void FetchEventOp::ResolvedCallback(JSContext* aCx,
   // responses always have a URL does not break.
   if (NS_WARN_IF((response->Type() == ResponseType::Opaque ||
                   response->Type() == ResponseType::Cors) &&
-                 ir->GetUnfilteredURL().IsEmpty())) {
+                 !ir->GetUnfilteredURL())) {
     MOZ_DIAGNOSTIC_CRASH("Cors or opaque Response without a URL");
     return;
   }
@@ -1656,7 +1656,8 @@ void FetchEventOp::ResolvedCallback(JSContext* aCx,
     // XXXtt: Will have a pref to enable the quirk response in bug 1419684.
     // The variadic template provided by StringArrayAppender requires exactly
     // an nsString.
-    NS_ConvertUTF8toUTF16 responseURL(ir->GetUnfilteredURL());
+    NS_ConvertUTF8toUTF16 responseURL(
+        ir->GetUnfilteredURL()->GetSpecOrDefault());
     autoCancel.SetCancelMessage("CorsResponseForSameOriginRequest"_ns,
                                 requestURL, responseURL);
     return;
@@ -1690,10 +1691,17 @@ void FetchEventOp::ResolvedCallback(JSContext* aCx,
   ir->SnapshotUnfilteredHeaders();
 
   mHandled->MaybeResolveWithUndefined();
+
+  ChildToParentSynthesizeResponseArgs synthesizeResponseArgs;
+  synthesizeResponseArgs.closure() = mRespondWithClosure.ref();
+  synthesizeResponseArgs.timeStamps() =
+      FetchEventTimeStamps(mFetchHandlerStart, mFetchHandlerFinish);
+  ir->ToChildToParentInternalResponse(
+      &synthesizeResponseArgs.internalResponse());
+
   mRespondWithPromiseHolder.Resolve(
-      FetchEventRespondWithResult(std::make_tuple(
-          std::move(ir), mRespondWithClosure.ref(),
-          FetchEventTimeStamps(mFetchHandlerStart, mFetchHandlerFinish))),
+      FetchEventRespondWithResult(
+          std::make_pair(std::move(ir), std::move(synthesizeResponseArgs))),
       __func__);
 }
 
@@ -1856,10 +1864,14 @@ nsresult FetchEventOp::DispatchFetchEvent(JSContext* aCx,
             GetCurrentSerialEventTarget(), __func__,
             [self, globalObjectAsSupports](
                 SafeRefPtr<InternalResponse>&& aPreloadResponse) {
-              self->mPreloadResponse->MaybeResolve(
-                  MakeRefPtr<Response>(globalObjectAsSupports,
-                                       std::move(aPreloadResponse), nullptr));
+              // let's complete the promise holder before MaybeResolve
               self->mPreloadResponseAvailablePromiseRequestHolder.Complete();
+              RefPtr<Promise> preloadResponse = self->mPreloadResponse;
+              if (preloadResponse) {
+                preloadResponse->MaybeResolve(
+                    MakeRefPtr<Response>(globalObjectAsSupports,
+                                         std::move(aPreloadResponse), nullptr));
+              }
             },
             [self](int) {
               self->mPreloadResponseAvailablePromiseRequestHolder.Complete();
@@ -1898,10 +1910,14 @@ nsresult FetchEventOp::DispatchFetchEvent(JSContext* aCx,
         ->Then(
             GetCurrentSerialEventTarget(), __func__,
             [self, globalObjectAsSupports](ResponseEndArgs&& aArgs) {
-              if (aArgs.endReason() == FetchDriverObserver::eAborted) {
-                self->mPreloadResponse->MaybeReject(NS_ERROR_DOM_ABORT_ERR);
-              }
+              // let's complete the promise holder before MaybeReject
               self->mPreloadResponseEndPromiseRequestHolder.Complete();
+              if (aArgs.endReason() == FetchDriverObserver::eAborted) {
+                RefPtr<Promise> preloadResponse = self->mPreloadResponse;
+                if (preloadResponse) {
+                  preloadResponse->MaybeReject(NS_ERROR_DOM_ABORT_ERR);
+                }
+              }
             },
             [self](int) {
               self->mPreloadResponseEndPromiseRequestHolder.Complete();

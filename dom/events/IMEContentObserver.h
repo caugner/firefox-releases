@@ -103,8 +103,8 @@ class IMEContentObserver final : public nsStubMutationObserver,
    *                        design mode document.
    * @param aEditorBase     The editor which is associated with aContent.
    */
-  MOZ_CAN_RUN_SCRIPT void Init(nsIWidget& aWidget, nsPresContext& aPresContext,
-                               dom::Element* aElement, EditorBase& aEditorBase);
+  void Init(nsIWidget& aWidget, nsPresContext& aPresContext,
+            dom::Element* aElement, EditorBase& aEditorBase);
 
   /**
    * Destroy() finalizes the instance, i.e., stops observing contents and
@@ -137,10 +137,8 @@ class IMEContentObserver final : public nsStubMutationObserver,
    * @return            Returns true if the instance is managing the content.
    *                    Otherwise, false.
    */
-  MOZ_CAN_RUN_SCRIPT bool MaybeReinitialize(nsIWidget& aWidget,
-                                            nsPresContext& aPresContext,
-                                            dom::Element* aElement,
-                                            EditorBase& aEditorBase);
+  bool MaybeReinitialize(nsIWidget& aWidget, nsPresContext& aPresContext,
+                         dom::Element* aElement, EditorBase& aEditorBase);
 
   /**
    * Return true if this is observing editable content and aElement has focus.
@@ -174,6 +172,7 @@ class IMEContentObserver final : public nsStubMutationObserver,
   nsPresContext* GetPresContext() const;
   nsresult GetSelectionAndRoot(dom::Selection** aSelection,
                                dom::Element** aRootElement) const;
+  dom::Selection* GetSelection() const;
 
   /**
    * TryToFlushPendingNotifications() should be called when pending events
@@ -243,9 +242,8 @@ class IMEContentObserver final : public nsStubMutationObserver,
     eState_Observing
   };
   State GetState() const;
-  MOZ_CAN_RUN_SCRIPT bool InitWithEditor(nsPresContext& aPresContext,
-                                         dom::Element* aElement,
-                                         EditorBase& aEditorBase);
+  bool InitWithEditor(nsPresContext& aPresContext, dom::Element* aElement,
+                      EditorBase& aEditorBase);
   void OnIMEReceivedFocus();
   void Clear();
 
@@ -395,7 +393,6 @@ class IMEContentObserver final : public nsStubMutationObserver,
   // focused editor is in XUL panel, this should be the widget of the panel.
   // On the other hand, mWidget is its parent which handles IME.
   nsCOMPtr<nsIWidget> mFocusedWidget;
-  RefPtr<dom::Selection> mSelection;
   // The anonymous <div> element if mEditorBase is a TextEditor or an editing
   // host if mEditorBase is an HTMLEditor.
   RefPtr<dom::Element> mRootElement;

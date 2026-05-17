@@ -7150,8 +7150,27 @@ bool nsTextFrame::PaintTextWithSelectionColors(
                                    *aParams.textPaintStyle, rangeStyles[index]);
         if (colors.mHasBackground) {
           if (textDrawer) {
-            textDrawer->AppendSelectionRect(selectionRect,
-                                            ToDeviceColor(colors.mBackground));
+            nsRectCornerRadii radii;
+            bool hasRadii = false;
+            if (PresContext()->Document()->ChromeRulesEnabled()) {
+              if (auto* style =
+                      aParams.textPaintStyle->GetSelectionPseudoStyle()) {
+                nsSize size = LayoutDeviceRect::ToAppUnits(selectionRect,
+                                                           appUnitsPerDevPixel)
+                                  .Size();
+                hasRadii = nsIFrame::ComputeBorderRadii(
+                    style->StyleBorder()->mBorderRadius, size, size, {}, radii);
+              }
+            }
+
+            if (hasRadii) {
+              textDrawer->AppendSelectionRoundRect(
+                  selectionRect, ToDeviceColor(colors.mBackground), radii,
+                  appUnitsPerDevPixel);
+            } else {
+              textDrawer->AppendSelectionRect(
+                  selectionRect, ToDeviceColor(colors.mBackground));
+            }
           } else {
             PaintSelectionBackground(*aParams.context->GetDrawTarget(),
                                      colors.mBackground, aParams.dirtyRect,
@@ -8265,7 +8284,7 @@ nsIFrame::ContentOffsets nsTextFrame::GetCharacterOffsetAtFramePointInternal(
         gfxFontUtils::IsRegionalIndicator(
             characterDataBuffer.ScalarValueAt(offs))) {
       allowSplitLigature = false;
-      if (extraCluster.GetSkippedOffset() > 1 &&
+      if (extraCluster.GetSkippedOffset() >= skippedRange.start + 2 &&
           !mTextRun->IsLigatureGroupStart(extraCluster.GetSkippedOffset())) {
         // CountCharsFit() left us in the middle of the flag; back up over the
         // first character of the ligature, and adjust fitWidth accordingly.

@@ -124,6 +124,14 @@ async function runPopupPositionTest(parentDocumentFileName, oop) {
   BrowserTestUtils.removeTab(tab);
 }
 
+add_setup(async () => {
+  if (AppConstants.platform == "macosx") {
+    await SpecialPowers.pushPrefEnv({
+      set: [["widget.macos.allow-native-select", false]],
+    });
+  }
+});
+
 add_task(async function test_popup_transformed_in_parent_same_origin() {
   await runPopupPositionTest(
     "helper_test_select_popup_position_transformed_in_parent.html",
@@ -148,6 +156,20 @@ add_task(async function test_popup_positioned_zoomed_same_origin() {
 add_task(async function test_popup_positioned_zoomed_oop() {
   await runPopupPositionTest(
     "helper_test_select_popup_position_zoomed.html",
+    true
+  );
+});
+
+add_task(async function test_popup_positioned_iframe_zoom_same_origin() {
+  await runPopupPositionTest(
+    "helper_test_select_popup_position_iframe_zoom.html",
+    false
+  );
+});
+
+add_task(async function test_popup_positioned_iframe_zoom_oop() {
+  await runPopupPositionTest(
+    "helper_test_select_popup_position_iframe_zoom.html",
     true
   );
 });

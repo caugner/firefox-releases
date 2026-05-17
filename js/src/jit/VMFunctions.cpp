@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -1404,10 +1402,10 @@ bool LeaveWith(JSContext* cx, BaselineFrame* frame) {
   return true;
 }
 
-bool InitBaselineFrameForOsr(BaselineFrame* frame,
+void InitBaselineFrameForOsr(BaselineFrame* frame,
                              InterpreterFrame* interpFrame,
                              uint32_t numStackValues) {
-  return frame->initForOsr(interpFrame, numStackValues);
+  frame->initForOsr(interpFrame, numStackValues);
 }
 
 JSString* StringReplace(JSContext* cx, HandleString string,
@@ -1553,11 +1551,6 @@ JSObject* ObjectKeysFromIterator(JSContext* cx, HandleObject iterObj) {
   }
 
   return array;
-}
-
-bool ObjectKeysLength(JSContext* cx, HandleObject obj, int32_t* length) {
-  MOZ_ASSERT(!obj->is<ProxyObject>());
-  return js::obj_keys_length(cx, obj, *length);
 }
 
 void JitValuePreWriteBarrier(JSRuntime* rt, Value* vp) {
@@ -3371,25 +3364,31 @@ void AssertPropertyLookup(NativeObject* obj, PropertyKey id, uint32_t slot) {
 #endif
 }
 
-// This is a specialized version of ExposeJSThingToActiveJS
-void ReadBarrier(gc::Cell* cell) {
+// This is a specialized version of WeakMap::valueReadBarrier. It should
+// only be called with a tenured cell that is not marked black.
+void WeakMapValueReadBarrier(js::gc::TenuredCell* cell, Zone* mapZone) {
   AutoUnsafeCallWithABI unsafe;
 
-  MOZ_ASSERT(!JS::RuntimeHeapIsCollecting());
-  MOZ_ASSERT(!gc::IsInsideNursery(cell));
+  // This is an inlined and specialized copy of ExposeGCThingToActiveJS.
+  {
+    MOZ_ASSERT(!JS::RuntimeHeapIsCollecting());
+    MOZ_ASSERT(!gc::IsInsideNursery(cell));
+    MOZ_ASSERT(!gc::detail::TenuredCellIsMarkedBlack(cell));
 
-  gc::TenuredCell* tenured = &cell->asTenured();
-  MOZ_ASSERT(!gc::detail::TenuredCellIsMarkedBlack(tenured));
-
-  Zone* zone = tenured->zone();
-  if (zone->needsMarkingBarrier()) {
-    gc::PerformIncrementalReadBarrier(tenured);
-  } else if (!zone->isGCPreparing() &&
-             gc::detail::NonBlackCellIsMarkedGray(tenured)) {
-    gc::UnmarkGrayGCThingRecursively(tenured);
+    Zone* cellZone = cell->zone();
+    if (cellZone->needsMarkingBarrier()) {
+      gc::PerformIncrementalReadBarrier(cell);
+    } else if (!cellZone->isGCPreparing() &&
+               gc::detail::NonBlackCellIsMarkedGray(cell)) {
+      gc::UnmarkGrayGCThingRecursively(cell);
+    }
+    MOZ_ASSERT_IF(!cellZone->isGCPreparing(),
+                  !gc::detail::TenuredCellIsMarkedGray(cell));
   }
-  MOZ_ASSERT_IF(!zone->isGCPreparing(),
-                !gc::detail::TenuredCellIsMarkedGray(tenured));
+
+  if (MOZ_UNLIKELY(cell->is<JS::Symbol>())) {
+    gc::MarkSymbolForWeakMapReadBarrier(mapZone, cell->as<JS::Symbol>());
+  }
 }
 
 void AssumeUnreachable(const char* output) {

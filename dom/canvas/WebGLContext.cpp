@@ -1070,11 +1070,13 @@ bool WebGLContext::PresentInto(gl::SwapChain& swapChain) {
 
   const auto error = [&]() -> std::optional<std::string> {
     const auto canvasCspace = ToColorSpace2ForOutput(mDrawingBufferColorSpace);
-    auto presenter = swapChain.Acquire(size, canvasCspace);
+    const auto canvasTF = gfx::TransferFunction::SRGB;
+    auto presenter = swapChain.Acquire(size, canvasCspace, canvasTF);
     if (!presenter) {
       return "Swap chain surface creation failed.";
     }
     const auto outputCspace = presenter->BackBuffer()->mDesc.colorSpace;
+    const auto outputTF = presenter->BackBuffer()->mDesc.transferFunction;
     const auto destFb = presenter->Fb();
 
     // -
@@ -1091,8 +1093,10 @@ bool WebGLContext::PresentInto(gl::SwapChain& swapChain) {
     auto colorLut = std::shared_ptr<gl::Texture>{};
     if (colorManage) {
       MOZ_ASSERT(canvasCspace != gfx::ColorSpace2::Display);
-      colorLut = gl->BlitHelper()->GetColorLutTex(gl::GLBlitHelper::ColorLutKey{
-          .src = canvasCspace, .dst = outputCspace});
+      const gl::GLBlitHelper::CSTF src{.cs = canvasCspace, .tf = canvasTF};
+      const gl::GLBlitHelper::CSTF dst{.cs = outputCspace, .tf = outputTF};
+      colorLut = gl->BlitHelper()->GetColorLutTex(
+          gl::GLBlitHelper::ColorLutKey{.src = src, .dst = dst});
       if (!colorLut) {
         NS_WARNING("GetColorLutTex() -> nullptr => colorManage = false.");
         colorManage = false;
@@ -1170,7 +1174,8 @@ bool WebGLContext::PresentIntoXR(gl::SwapChain& swapChain,
   OnEndOfFrame();
 
   const auto colorSpace = ToColorSpace2ForOutput(mDrawingBufferColorSpace);
-  auto presenter = swapChain.Acquire(fb.mSize, colorSpace);
+  const auto transferFunction = gfx::TransferFunction::SRGB;
+  auto presenter = swapChain.Acquire(fb.mSize, colorSpace, transferFunction);
   if (!presenter) {
     GenerateWarning("Swap chain surface creation failed.");
     LoseContext();
@@ -1301,7 +1306,9 @@ bool WebGLContext::CopyToSwapChain(
   {
     // TODO: ColorSpace will need to be part of SwapChainOptions for DTWebgl.
     const auto colorSpace = ToColorSpace2ForOutput(mDrawingBufferColorSpace);
-    auto presenter = srcFb->mSwapChain.Acquire(size, colorSpace);
+    const auto transferFunction = gfx::TransferFunction::SRGB;
+    auto presenter =
+        srcFb->mSwapChain.Acquire(size, colorSpace, transferFunction);
     if (!presenter) {
       GenerateWarning("Swap chain surface creation failed.");
       LoseContext();
@@ -1380,6 +1387,7 @@ bool WebGLContext::PushRemoteTexture(
 
   const auto surfaceFormat = mOptions.alpha ? gfx::SurfaceFormat::B8G8R8A8
                                             : gfx::SurfaceFormat::B8G8R8X8;
+
   Maybe<layers::SurfaceDescriptor> desc;
   if (surf) {
     desc = surf->ToSurfaceDescriptor();
@@ -1704,9 +1712,12 @@ WebGLContext::GetBackBufferSnapshotSharedSurface(layers::TextureType texType,
 
   {
     // TODO: ColorSpace will need to be part of SwapChainOptions for DTWebgl.
+    // TODO: TransferFunction will need to be part of SwapChainOptions for
+    // DTWebgl.
     const auto colorSpace = ToColorSpace2ForOutput(mDrawingBufferColorSpace);
+    const auto transferFunction = gfx::TransferFunction::SRGB;
     auto presenter = mSnapshotSwapChain.Acquire(
-        gfx::IntSize(surfSize.x, surfSize.y), colorSpace);
+        gfx::IntSize(surfSize.x, surfSize.y), colorSpace, transferFunction);
     if (!presenter) {
       GenerateWarning("Swap chain surface creation failed.");
       return nullptr;
@@ -2862,6 +2873,14 @@ webgl::ExplicitPixelPackingState::ForUseWith(
     state.imageHeight = subrectSize.y;
   }
 
+  if (!std::in_range<GLint>(state.rowLength) ||
+      !std::in_range<GLint>(state.imageHeight) ||
+      !std::in_range<GLint>(state.skipPixels) ||
+      !std::in_range<GLint>(state.skipRows) ||
+      !std::in_range<GLint>(state.skipImages)) {
+    return Err("pixelStorei params must be GLint.");
+  }
+
   // -
 
   const auto mpii = PackingInfoInfo::For(pi);
@@ -2956,7 +2975,9 @@ webgl::ExplicitPixelPackingState::ForUseWith(
 
   const auto elemsPerRowStride = ElemsPerRowStride();
   const auto bytesPerRowStride = pii.bytesPerElement * elemsPerRowStride;
-  if (!bytesPerRowStride.isValid()) {
+  const auto maxBytesPerRow = StaticPrefs::webgl_max_bytes_per_row();
+  if (!bytesPerRowStride.isValid() ||
+      (maxBytesPerRow > 0 && bytesPerRowStride.value() > maxBytesPerRow)) {
     return Err("ROW_LENGTH or width too large for packing.");
   }
   metrics.bytesPerRowStride = bytesPerRowStride.value();

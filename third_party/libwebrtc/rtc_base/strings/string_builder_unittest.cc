@@ -13,11 +13,25 @@
 #include <cstring>
 #include <string>
 
-#include "rtc_base/checks.h"
+#include "absl/strings/string_view.h"
 #include "test/gmock.h"
 #include "test/gtest.h"
 
 namespace webrtc {
+namespace {
+
+class StructWithAbslStringify {
+ public:
+  explicit StructWithAbslStringify(absl::string_view sv) : value_(sv) {}
+
+  template <typename Sink>
+  friend void AbslStringify(Sink& sink, const StructWithAbslStringify& self) {
+    sink.Append(self.value_);
+  }
+
+ private:
+  std::string value_;
+};
 
 TEST(SimpleStringBuilder, Limit) {
   char sb_buf[10];
@@ -56,20 +70,23 @@ TEST(SimpleStringBuilder, StdString) {
   EXPECT_EQ(str, sb.str());
 }
 
+TEST(SimpleStringBuilder, CanUseAbslStringForCustomTypes) {
+  char sb_buf[100];
+  SimpleStringBuilder sb(sb_buf);
+  StructWithAbslStringify value("absl-stringify");
+  sb << value;
+  EXPECT_STREQ(sb.str(), "absl-stringify");
+}
+
 // These tests are safe to run if we have death test support or if DCHECKs are
 // off.
-#if (GTEST_HAS_DEATH_TEST && !defined(WEBRTC_ANDROID)) || !RTC_DCHECK_IS_ON
+#if GTEST_HAS_DEATH_TEST && !defined(WEBRTC_ANDROID)
 
 TEST(SimpleStringBuilderDeathTest, BufferOverrunConstCharP) {
   char sb_buf[4];
   SimpleStringBuilder sb(sb_buf);
   const char* const msg = "This is just too much";
-#if RTC_DCHECK_IS_ON
   EXPECT_DEATH(sb << msg, "");
-#else
-  sb << msg;
-  EXPECT_THAT(sb.str(), ::testing::StrEq("Thi"));
-#endif
 }
 
 TEST(SimpleStringBuilderDeathTest, BufferOverrunStdString) {
@@ -77,41 +94,21 @@ TEST(SimpleStringBuilderDeathTest, BufferOverrunStdString) {
   SimpleStringBuilder sb(sb_buf);
   sb << 12;
   const std::string msg = "Aw, come on!";
-#if RTC_DCHECK_IS_ON
   EXPECT_DEATH(sb << msg, "");
-#else
-  sb << msg;
-  EXPECT_THAT(sb.str(), ::testing::StrEq("12A"));
-#endif
 }
 
 TEST(SimpleStringBuilderDeathTest, BufferOverrunInt) {
   char sb_buf[4];
   SimpleStringBuilder sb(sb_buf);
   constexpr int num = -12345;
-#if RTC_DCHECK_IS_ON
   EXPECT_DEATH(sb << num, "");
-#else
-  sb << num;
-  // If we run into the end of the buffer, resonable results are either that
-  // the append has no effect or that it's truncated at the point where the
-  // buffer ends.
-  EXPECT_THAT(sb.str(),
-              ::testing::AnyOf(::testing::StrEq(""), ::testing::StrEq("-12")));
-#endif
 }
 
 TEST(SimpleStringBuilderDeathTest, BufferOverrunDouble) {
   char sb_buf[5];
   SimpleStringBuilder sb(sb_buf);
   constexpr double num = 123.456;
-#if RTC_DCHECK_IS_ON
   EXPECT_DEATH(sb << num, "");
-#else
-  sb << num;
-  EXPECT_THAT(sb.str(),
-              ::testing::AnyOf(::testing::StrEq(""), ::testing::StrEq("123.")));
-#endif
 }
 
 TEST(SimpleStringBuilderDeathTest, BufferOverrunConstCharPAlreadyFull) {
@@ -119,12 +116,7 @@ TEST(SimpleStringBuilderDeathTest, BufferOverrunConstCharPAlreadyFull) {
   SimpleStringBuilder sb(sb_buf);
   sb << 123;
   const char* const msg = "This is just too much";
-#if RTC_DCHECK_IS_ON
   EXPECT_DEATH(sb << msg, "");
-#else
-  sb << msg;
-  EXPECT_THAT(sb.str(), ::testing::StrEq("123"));
-#endif
 }
 
 TEST(SimpleStringBuilderDeathTest, BufferOverrunIntAlreadyFull) {
@@ -132,12 +124,7 @@ TEST(SimpleStringBuilderDeathTest, BufferOverrunIntAlreadyFull) {
   SimpleStringBuilder sb(sb_buf);
   sb << "xyz";
   constexpr int num = -12345;
-#if RTC_DCHECK_IS_ON
   EXPECT_DEATH(sb << num, "");
-#else
-  sb << num;
-  EXPECT_THAT(sb.str(), ::testing::StrEq("xyz"));
-#endif
 }
 
 #endif
@@ -175,6 +162,13 @@ TEST(StringBuilder, StdString) {
   EXPECT_EQ(str, sb.str());
 }
 
+TEST(StringBuilder, CanUseAbslStringForCustomTypes) {
+  StringBuilder sb;
+  StructWithAbslStringify value("absl-stringify");
+  sb << value;
+  EXPECT_EQ(sb.str(), "absl-stringify");
+}
+
 TEST(StringBuilder, Release) {
   StringBuilder sb;
   std::string str =
@@ -200,4 +194,5 @@ TEST(StringBuilder, Reset) {
   EXPECT_EQ("123!", sb.str());
 }
 
+}  // namespace
 }  // namespace webrtc

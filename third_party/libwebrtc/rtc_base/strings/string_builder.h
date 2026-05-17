@@ -15,6 +15,7 @@
 #include <string>
 #include <utility>
 
+#include "absl/strings/has_absl_stringify.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/string_view.h"
 #include "api/array_view.h"
@@ -43,6 +44,12 @@ class SimpleStringBuilder {
   SimpleStringBuilder& operator<<(float f);
   SimpleStringBuilder& operator<<(double f);
   SimpleStringBuilder& operator<<(long double f);
+
+  template <typename T>
+    requires absl::HasAbslStringify<T>::value
+  SimpleStringBuilder& operator<<(const T& value) {
+    return *this << absl::StrCat(value);
+  }
 
   // Returns a pointer to the built string. The name `str()` is borrowed for
   // compatibility reasons as we replace usage of stringstream throughout the
@@ -83,12 +90,10 @@ class SimpleStringBuilder {
 // might be more efficient for some use cases.
 class StringBuilder {
  public:
-  StringBuilder() {}
+  StringBuilder() = default;
   explicit StringBuilder(absl::string_view s) : str_(s) {}
-
-  // TODO(tommi): Support construction from StringBuilder?
-  StringBuilder(const StringBuilder&) = delete;
-  StringBuilder& operator=(const StringBuilder&) = delete;
+  StringBuilder(const StringBuilder&) = default;
+  StringBuilder& operator=(const StringBuilder&) = default;
 
   StringBuilder& operator<<(const absl::string_view str) {
     str_.append(str.data(), str.length());
@@ -137,17 +142,21 @@ class StringBuilder {
     return *this;
   }
 
+  template <typename T>
+    requires absl::HasAbslStringify<T>::value
+  StringBuilder& operator<<(const T& value) {
+    str_ += absl::StrCat(value);
+    return *this;
+  }
+
   const std::string& str() const { return str_; }
 
   void Clear() { str_.clear(); }
 
   size_t size() const { return str_.size(); }
 
-  std::string Release() {
-    std::string ret = std::move(str_);
-    str_.clear();
-    return ret;
-  }
+  // Moves out the internal std::string.
+  std::string Release() { return std::move(str_); }
 
   // Allows appending a printf style formatted string.
   StringBuilder& AppendFormat(const char* fmt, ...)

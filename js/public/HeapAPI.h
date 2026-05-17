@@ -1,6 +1,4 @@
-/* -*- Mode: C++; tab-width: 8; indent-tabs-mode: nil; c-basic-offset: 2 -*-
- * vim: set ts=8 sts=2 et sw=2 tw=80:
- * This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -868,8 +866,9 @@ namespace gc {
 extern JS_PUBLIC_API void PerformIncrementalReadBarrier(JS::GCCellPtr thing);
 
 static MOZ_ALWAYS_INLINE void ExposeGCThingToActiveJS(JS::GCCellPtr thing) {
-  // js::jit::ReadBarrier is a specialized version of this function designed to
-  // be called from jitcode. If this code is changed, it should be kept in sync.
+  // js::jit::WeakMapValueReadBarrier inlines a specialized version of this
+  // function designed to be called from jitcode. If this code is changed, it
+  // should be kept in sync.
 
   // TODO: I'd like to assert !RuntimeHeapIsBusy() here but this gets
   // called while we are tracing the heap, e.g. during memory reporting
