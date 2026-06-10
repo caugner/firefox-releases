@@ -68,7 +68,7 @@ File: `src/main/AndroidManifest.xml`
 <manifest />
 ```
 
-### 5. Create Main Kotlin Source
+### 5. (Optional) Create Main Kotlin Source
 
 File: `src/main/java/mozilla/components/{category}/{name}/{ComponentName}.kt`
 
@@ -84,7 +84,7 @@ Key elements for a feature component:
 
 For simpler library components, a basic class with the necessary methods is sufficient.
 
-### 6. Create Test File
+### 6. (Optional) Create Test File
 
 File: `src/test/java/mozilla/components/{category}/{name}/{ComponentName}Test.kt`
 
