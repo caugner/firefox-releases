@@ -54,6 +54,7 @@ add_task(function test_parseConversationRow() {
     status: "a status",
     security_properties: '{"privateData": false, "untrustedInput": true}',
     seen_urls: '["https://example.com/page1"]',
+    serp_urls_for_anonymous_fetch: '["https://search-result.example.com/a"]',
     memories_toggled: true,
   });
 
@@ -82,6 +83,12 @@ add_task(function test_parseConversationRow() {
     soft.ok(
       conversation.seenUrls.has("https://example.com/page1"),
       "seenUrls should contain the persisted URL"
+    );
+    soft.ok(
+      conversation.serpUrlsForAnonymousFetch.has(
+        "https://search-result.example.com/a"
+      ),
+      "serpUrlsForAnonymousFetch ledger should contain the persisted URL"
     );
     soft.equal(
       conversation.memoriesToggled,
@@ -130,6 +137,7 @@ add_task(function test_parseConversationRow() {
     memories_applied: '{ "some": "memories" }',
     web_search_queries: '{ "some": "web search queries" }',
     page_history_deleted: false,
+    tool_ui_data: '{ "toolCallId": "t1", "uiType": "ai-action-result" }',
   });
 
   const rows = parseMessageRows([testRow]);
@@ -157,6 +165,10 @@ add_task(function test_parseConversationRow() {
     soft.equal(message.memoriesFlagSource, 1);
     soft.deepEqual(message.memoriesApplied, { some: "memories" });
     soft.deepEqual(message.webSearchQueries, { some: "web search queries" });
+    soft.deepEqual(message.toolUIData, {
+      toolCallId: "t1",
+      uiType: "ai-action-result",
+    });
   });
 });
 
@@ -181,6 +193,8 @@ add_task(function test_missingField_parseConversationRow() {
     memories_flag_source: 1,
     memories_applied: '{ "some": "memories" }',
     web_search_queries: '{ "some": "web search queries" }',
+    page_history_deleted: false,
+    tool_ui_data: null,
   });
 
   Assert.throws(function () {
@@ -234,7 +248,7 @@ add_task(function test_parseChatHistoryViewRows() {
     title: "conv 1",
     created_date: 116952982,
     updated_date: 116952982,
-    urls: "https://www.firefox.com,https://www.mozilla.com",
+    urls: '["https://www.firefox.com","https://www.mozilla.com"]',
   });
 
   const row2 = new RowStub({
@@ -242,7 +256,7 @@ add_task(function test_parseChatHistoryViewRows() {
     title: "conv 2",
     created_date: 117189198,
     updated_date: 117189198,
-    urls: "https://www.mozilla.org",
+    urls: '["https://www.mozilla.org"]',
   });
 
   const row3 = new RowStub({
@@ -250,10 +264,18 @@ add_task(function test_parseChatHistoryViewRows() {
     title: "conv 3",
     created_date: 168298919,
     updated_date: 168298919,
-    urls: "https://www.firefox.com",
+    urls: '["https://www.firefox.com"]',
   });
 
-  const rows = [row1, row2, row3];
+  const row4 = new RowStub({
+    conv_id: "4",
+    title: "conv 4",
+    created_date: 200000000,
+    updated_date: 200000000,
+    urls: '["https://example.com/#::text=Student,financial%20aid%20workshops%2C%20and%20take%20part%20in"]',
+  });
+
+  const rows = [row1, row2, row3, row4];
 
   const viewRows = parseChatHistoryViewRows(rows);
 
@@ -278,6 +300,16 @@ add_task(function test_parseChatHistoryViewRows() {
     soft.equal(viewRows[2].createdDate, 168298919);
     soft.equal(viewRows[2].updatedDate, 168298919);
     soft.deepEqual(viewRows[2].urls, [new URL("https://www.firefox.com")]);
+
+    soft.equal(viewRows[3].convId, "4");
+    soft.equal(viewRows[3].title, "conv 4");
+    soft.equal(viewRows[3].createdDate, 200000000);
+    soft.equal(viewRows[3].updatedDate, 200000000);
+    soft.deepEqual(viewRows[3].urls, [
+      new URL(
+        "https://example.com/#::text=Student,financial%20aid%20workshops%2C%20and%20take%20part%20in"
+      ),
+    ]);
   });
 });
 

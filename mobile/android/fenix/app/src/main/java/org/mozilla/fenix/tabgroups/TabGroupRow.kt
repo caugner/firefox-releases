@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LocalContentColor
@@ -49,7 +48,6 @@ import org.mozilla.fenix.tabstray.ui.tabitems.TabsTrayItemSelectionState
 import org.mozilla.fenix.tabstray.ui.tabitems.tablistItemThumbnailBorder
 import org.mozilla.fenix.theme.FirefoxTheme
 
-private val ROUNDED_CORNER_SHAPE = RoundedCornerShape(4.dp)
 private val THUMBNAIL_WIDTH = 78.dp
 private val THUMBNAIL_HEIGHT = 68.dp
 
@@ -62,6 +60,7 @@ private val THUMBNAIL_HEIGHT = 68.dp
  * @param selectionState: The tab selection state.
  * @param trailingContent Optional trailing content.
  * @param trailingContentColor Optional content color for trailing content.
+ * @param shouldClickListen Whether the [TabGroupRow] should respond to click events.
  */
 @Composable
 fun TabGroupRow(
@@ -71,6 +70,7 @@ fun TabGroupRow(
     selectionState: TabsTrayItemSelectionState = TabsTrayItemSelectionState(),
     trailingContent: @Composable (() -> Unit)? = null,
     trailingContentColor: Color? = null,
+    shouldClickListen: Boolean = true,
 ) {
     val tabGroupRowContentDescription = pluralStringResource(
         id = R.plurals.add_to_exiting_tab_group_content_description,
@@ -83,7 +83,7 @@ fun TabGroupRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .clickable(enabled = shouldClickListen, onClick = onClick)
             .testTag("${TabsTrayTestTag.TAB_GROUP_ROOT}.${tabGroup.id}")
             .padding(
                 if (trailingContent == null) {
@@ -171,7 +171,7 @@ private fun TabGroupListThumbnail(
         modifier = modifier
             .size(THUMBNAIL_WIDTH, THUMBNAIL_HEIGHT),
         border = tablistItemThumbnailBorder,
-        shape = ROUNDED_CORNER_SHAPE,
+        shape = MaterialTheme.shapes.extraSmall,
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceContainerHighest,
         ),

@@ -540,16 +540,10 @@ pub extern "C" fn wgpu_client_request_device(
         label,
         required_features,
         required_limits: desc.required_limits.clone(),
-        memory_hints: wgt::MemoryHints::MemoryUsage,
-        // The content process is untrusted, so this value is ignored
-        // by the GPU process. The GPU process overwrites this with
-        // the result of consulting the `WGPU_TRACE` environment
-        // variable itself in `wgpu_server_adapter_request_device`.
-        trace: wgt::Trace::Off,
-        // The content process is untrusted, so this value is ignored
-        // by the GPU process. The GPU process overwrites this with
-        // `ExperimentalFeatures::disabled()`.
-        experimental_features: wgt::ExperimentalFeatures::disabled(),
+        // The content process is untrusted, so values set here in fields of the device descriptor
+        // not intended to be set by content are ignored, and are overridden in
+        // `server::request_device`.
+        ..wgt::DeviceDescriptor::default()
     };
     let message = Message::RequestDevice {
         adapter_id,
@@ -938,6 +932,9 @@ pub extern "C" fn wgpu_client_create_swap_chain(
     width: i32,
     height: i32,
     format: crate::SurfaceFormat,
+    texture_format: TextureFormat,
+    usage: wgt::TextureUsages,
+    view_formats: FfiSlice<TextureFormat>,
     remote_texture_owner_id: crate::RemoteTextureOwnerId,
     use_shared_texture_in_swap_chain: bool,
 ) {
@@ -946,12 +943,17 @@ pub extern "C" fn wgpu_client_create_swap_chain(
         array::from_fn(|_| identities.buffers.process());
     drop(identities);
 
+    let view_formats = unsafe { view_formats.as_slice() }.to_vec();
+
     let message = Message::CreateSwapChain {
         device_id,
         queue_id,
         width,
         height,
         format,
+        texture_format,
+        usage,
+        view_formats,
         buffer_ids,
         remote_texture_owner_id,
         use_shared_texture_in_swap_chain,

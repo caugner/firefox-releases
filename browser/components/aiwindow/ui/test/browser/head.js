@@ -14,14 +14,19 @@ ChromeUtils.defineESModuleGetters(this, {
   ChatConversation:
     "moz-src:///browser/components/aiwindow/ui/modules/ChatConversation.sys.mjs",
   getModelForChoice:
-    "moz-src:///browser/components/aiwindow/ui/modules/AIWindowConstants.sys.mjs",
+    "moz-src:///browser/components/aiwindow/models/Utils.sys.mjs",
   IntentClassifier:
     "moz-src:///browser/components/aiwindow/models/IntentClassifier.sys.mjs",
   openAIEngine: "moz-src:///browser/components/aiwindow/models/Utils.sys.mjs",
+  PlacesTestUtils: "resource://testing-common/PlacesTestUtils.sys.mjs",
   SessionStore: "resource:///modules/sessionstore/SessionStore.sys.mjs",
   SessionWindowUI: "resource:///modules/sessionstore/SessionWindowUI.sys.mjs",
   sinon: "resource://testing-common/Sinon.sys.mjs",
 });
+
+const { _setLoadPromptForTesting } = ChromeUtils.importESModule(
+  "moz-src:///browser/components/aiwindow/ui/modules/ChatConversation.sys.mjs"
+);
 
 /**
  * @import { SmartbarAction } from "chrome://browser/content/aiwindow/components/input-cta/input-cta.mjs"
@@ -32,8 +37,80 @@ async function modelFor(choiceId) {
 }
 
 const AIWINDOW_URL = "chrome://browser/content/aiwindow/aiWindow.html";
+const FIRSTRUN_URL = "chrome://browser/content/aiwindow/firstrun.html";
 
 let gIntentEngineStub;
+let gRemoteClientStub;
+
+// Minimal RS records returned by the global getRemoteClient stub.
+// Version numbers must match FEATURE_MAJOR_VERSIONS in models/Utils.sys.mjs.
+const MOCK_RS_RECORDS = [
+  ["chat", 7],
+  ["title-generation", 1],
+  ["conversation-starters-sidebar-system", 1],
+  ["conversation-suggestions-sidebar-starter", 2],
+  ["conversation-suggestions-followup", 1],
+  ["conversation-suggestions-assistant-limitations", 1],
+  ["conversation-suggestions-memories", 1],
+  ["memories-initial-generation-system", 2],
+  ["memories-initial-generation-user", 2],
+  ["memories-deduplication-system", 1],
+  ["memories-deduplication-user", 1],
+  ["memories-sensitivity-filter-system", 1],
+  ["memories-sensitivity-filter-user", 1],
+  ["memories-quality-filter-system", 1],
+  ["memories-quality-filter-user", 1],
+  ["memories-message-classification-system", 1],
+  ["memories-message-classification-user", 1],
+  ["memories-relevant-context", 2],
+]
+  .map(([feature, major]) => ({
+    feature,
+    // chat uses "generic" as the fallback model name (see selectMainConfig);
+    // all other features use "test-model" with is_default: true.
+    model: feature === "chat" ? "generic" : "test-model",
+    service_type: "ai",
+    parameters: {},
+    prompts:
+      feature === "conversation-suggestions-sidebar-starter"
+        ? "Generate {n} prompts for {current_tab}.\nOpen tabs: {open_tabs}"
+        : "Test system prompt.",
+    version: `v${major}.0`,
+    is_default: true,
+  }))
+  // Per-choice records for chat so resolveChatModelChoice returns correct model names.
+  .concat([
+    {
+      feature: "chat",
+      model: "gemini-3.1-flash-lite",
+      model_choice_id: "1",
+      service_type: "ai",
+      purpose: "chat",
+      parameters: {},
+      prompts: "Test system prompt.",
+      version: "v7.0",
+    },
+    {
+      feature: "chat",
+      model: "qwen3-235b-a22b-instruct-2507-maas",
+      model_choice_id: "2",
+      service_type: "ai",
+      purpose: "chat",
+      parameters: {},
+      prompts: "Test system prompt.",
+      version: "v7.0",
+    },
+    {
+      feature: "chat",
+      model: "gpt-oss-120b",
+      model_choice_id: "3",
+      service_type: "ai",
+      purpose: "chat",
+      parameters: {},
+      prompts: "Test system prompt.",
+      version: "v7.0",
+    },
+  ]);
 
 add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
@@ -58,13 +135,23 @@ add_setup(async function () {
     .stub(IntentClassifier, "_createEngine")
     .resolves(fakeIntentEngine);
   registerCleanupFunction(() => gIntentEngineStub.restore());
+
+  // Stub getRemoteClient so loadCallContext never hits real Remote Settings.
+  gRemoteClientStub = sinon
+    .stub(openAIEngine, "getRemoteClient")
+    .returns({ get: async () => MOCK_RS_RECORDS });
+  registerCleanupFunction(() => gRemoteClientStub.restore());
+
+  // Stub ChatConversation's loadPrompt so generatePrompt doesn't hit RS.
+  _setLoadPromptForTesting(async () => "Test system prompt.");
+  registerCleanupFunction(() => _setLoadPromptForTesting(null));
 });
 
 /**
  * Opens a new AI Window
  *
  * @param {object} options
- * @param {string|boolean} options.waitForTabURL - URL to wait for or false to skip waiting
+ * @param {string} [options.waitForTabURL] - URL to wait for, or empty string to skip waiting
  * @returns {Promise<Window>}
  */
 async function openAIWindow({ waitForTabURL = AIWINDOW_URL } = {}) {
@@ -85,6 +172,21 @@ async function openAIWindow({ waitForTabURL = AIWINDOW_URL } = {}) {
 }
 
 /**
+ * Waits for the sidebar ai-window element to connect.
+ *
+ * @param {Window} win - Window reference
+ * @returns {Promise<MozBrowser>} - The sidebar browser element
+ */
+async function waitForSidebarReady(win) {
+  const sidebarBrowser = win.document.getElementById("ai-window-browser");
+  await BrowserTestUtils.waitForCondition(
+    () => sidebarBrowser.contentDocument?.querySelector("ai-window:defined"),
+    "Sidebar ai-window should be loaded"
+  );
+  return sidebarBrowser;
+}
+
+/**
  * Opens a new AI Window with about:blank
  * and the chat assistant sidebar open
  *
@@ -92,6 +194,16 @@ async function openAIWindow({ waitForTabURL = AIWINDOW_URL } = {}) {
  */
 async function openAIWindowWithSidebar() {
   const win = await openAIWindow();
+  return openAIWindowSidebar(win);
+}
+
+/**
+ * Navigates an AI Window to about:blank and opens the sidebar.
+ *
+ * @param {Window} win
+ * @returns {Promise<{win: Window, sidebarBrowser: MozBrowser}>}
+ */
+async function openAIWindowSidebar(win) {
   BrowserTestUtils.startLoadingURIString(
     win.gBrowser.selectedBrowser,
     "about:blank"
@@ -103,11 +215,7 @@ async function openAIWindowWithSidebar() {
     info("Opening sidebar");
     AIWindowUI.toggleSidebar(win);
   }
-  const sidebarBrowser = win.document.getElementById("ai-window-browser");
-  await BrowserTestUtils.waitForCondition(
-    () => sidebarBrowser.contentDocument?.querySelector("ai-window:defined"),
-    "Sidebar ai-window should be loaded"
-  );
+  const sidebarBrowser = await waitForSidebarReady(win);
   return { win, sidebarBrowser };
 }
 
@@ -198,6 +306,8 @@ async function getConversationId(browser) {
  * Call the returned async restore function to clean up stubs, pop prefs, and
  * stop the server.
  *
+ * @deprecated Please use MockEngineManager in AIWindowTestUtils.sys.mjs.
+ *   TODO (Bug 2045844): Remove and replace existing usages across test files.
  * @param {StubEngineNetworkBoundariesConfig} [config]
  * @returns {Promise<StubEngineNetworkBoundariesResult>}
  */
@@ -213,19 +323,26 @@ async function stubEngineNetworkBoundaries({
   const originalBuild = openAIEngine.build.bind(openAIEngine);
   const buildStub = sinon
     .stub(openAIEngine, "build")
-    .callsFake(async (feature, ...rest) => {
+    .callsFake(async (featureOrConfig, ...rest) => {
+      const feature =
+        typeof featureOrConfig === "object" && featureOrConfig !== null
+          ? featureOrConfig.feature
+          : featureOrConfig;
       if (passthroughFeatures.has(feature)) {
-        return originalBuild(feature, ...rest);
+        return originalBuild(featureOrConfig, ...rest);
       }
       // Non-passthrough features get a mock engine whose methods resolve
       // synchronously, preventing dangling async chains.
       return {
-        loadPrompt: () => "",
-        getConfig: () => ({}),
         feature,
+        model:
+          typeof featureOrConfig === "object"
+            ? featureOrConfig.model
+            : "test-model",
         async run() {
           return engineRunResponse;
         },
+        runWithGenerator() {},
       };
     });
 
@@ -457,6 +574,38 @@ async function selectExplicitSmartbarAction(browser, action) {
 }
 
 /**
+ * Select the first search engine from the smartbar CTA "Search with…" submenu.
+ *
+ * @param {MozBrowser} browser - The browser element
+ */
+async function selectSmartbarSearchEngine(browser) {
+  const inputCta = BrowserTestUtils.querySelectorDeep(
+    browser.contentDocument,
+    "input-cta"
+  );
+  const mozButton = BrowserTestUtils.querySelectorDeep(inputCta, "moz-button");
+
+  const chevronButton = await BrowserTestUtils.waitForCondition(() =>
+    mozButton.shadowRoot.querySelector("#chevron-button")
+  );
+  const [mainPanel, searchSubpanel] =
+    inputCta.shadowRoot.querySelectorAll("panel-list");
+
+  const mainShown = BrowserTestUtils.waitForEvent(mainPanel, "shown");
+  chevronButton.click();
+  await mainShown;
+
+  const subpanelShown = BrowserTestUtils.waitForEvent(searchSubpanel, "shown");
+  mainPanel.querySelector('panel-item[icon="search-with"]').click();
+  await subpanelShown;
+
+  const engineItem = await BrowserTestUtils.waitForCondition(() =>
+    searchSubpanel.querySelector('panel-item[icon="engine"]')
+  );
+  engineItem.click();
+}
+
+/**
  * Wait for the smartbar action to be set.
  *
  * @param {MozBrowser} browser - The browser element
@@ -560,7 +709,7 @@ async function typeInSmartbar(browser, text) {
       "Wait for Smartbar to be rendered"
     );
     info("typeInSmartbar: smartbar found, calling focus()");
-    smartbar.focus();
+    smartbar.inputField.focus();
     await ContentTaskUtils.waitForCondition(
       () => smartbar.matches(":focus-within"),
       "Wait for smartbar to receive focus"
@@ -805,6 +954,66 @@ async function getSmartbarContextChips(browser) {
 }
 
 /**
+ * Gets the smartbar model select data.
+ *
+ * @param {MozBrowser} browser - The browser element
+ * @returns {Promise<object>} Returns model select data
+ */
+async function getSmartbarModelSelectData(browser) {
+  return SpecialPowers.spawn(browser, [], async () => {
+    const aiWindowElement = content.document.querySelector("ai-window");
+    const smartbar = aiWindowElement.shadowRoot.querySelector(
+      "#ai-window-smartbar"
+    );
+    const modelSelect = smartbar.querySelector("input-model-select");
+
+    return {
+      availableModels: modelSelect.availableModels,
+      selectedModelId: aiWindowElement.selectedModelId,
+    };
+  });
+}
+
+/**
+ * Switches to a model in the smartbar by choice ID.
+ *
+ * @param {MozBrowser} browser - The browser element
+ * @param {string} modelChoiceId - Model choice id to switch to
+ */
+async function switchSmartbarModel(browser, modelChoiceId) {
+  return SpecialPowers.spawn(browser, [modelChoiceId], async choiceId => {
+    const aiWindowElement = content.document.querySelector("ai-window");
+    const smartbar = aiWindowElement.shadowRoot.querySelector(
+      "#ai-window-smartbar"
+    );
+    const modelSelect = smartbar.querySelector("input-model-select");
+    const triggerButton = modelSelect.shadowRoot.querySelector("moz-button");
+    triggerButton.click();
+
+    const panelList = modelSelect.shadowRoot.querySelector("panel-list");
+    await ContentTaskUtils.waitForMutationCondition(
+      panelList,
+      { attributes: true },
+      () => panelList.hasAttribute("open")
+    );
+
+    const modelKeys = Object.keys(modelSelect.availableModels);
+    const index = modelKeys.indexOf(choiceId);
+    if (index === -1) {
+      throw new Error(`Model choice "${choiceId}" not available`);
+    }
+    const targetModelId = modelSelect.availableModels[choiceId].model;
+    panelList.querySelectorAll("button.model-item")[index].click();
+
+    await ContentTaskUtils.waitForMutationCondition(
+      aiWindowElement,
+      { attributes: true },
+      () => aiWindowElement.selectedModelId === targetModelId
+    );
+  });
+}
+
+/**
  * Returns the chat messages currently displayed in the sidebar.
  *
  * @param {MozBrowser} sidebarBrowser - The sidebar browser element
@@ -837,6 +1046,215 @@ async function getSidebarChatMessages(sidebarBrowser) {
       };
     });
   });
+}
+
+/**
+ * Default bound for the render waits below. Generous enough to never false-fail
+ * behind the mock LLM round-trip, but a fraction of the harness timeout so a
+ * genuine stall fails fast with a clear message rather than hanging.
+ */
+const RENDER_TIMEOUT_MS = 15000;
+
+/**
+ * Bounded wrapper around BrowserTestUtils.waitForMutationCondition, which on its
+ * own never rejects. Races the (event-driven) mutation wait against a timeout so
+ * a missing element fails fast with a clear message instead of hanging until the
+ * harness aborts the task.
+ *
+ * @param {Node} target - The node on which to observe mutations
+ * @param {MutationObserverInit} options - Options for MutationObserver.observe()
+ * @param {Function} checkFn - Returns the awaited value once it is truthy
+ * @param {string} label - Description used in the timeout error message
+ * @param {number} [timeoutMs=RENDER_TIMEOUT_MS]
+ *
+ * @returns {Promise<any>} The value returned by checkFn
+ */
+function waitForMutationBounded(
+  target,
+  options,
+  checkFn,
+  label,
+  timeoutMs = RENDER_TIMEOUT_MS
+) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`Timed out waiting for: ${label}`)),
+      timeoutMs
+    );
+  });
+  return Promise.race([
+    BrowserTestUtils.waitForMutationCondition(target, options, checkFn),
+    timeout,
+  ]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Resolves the #aichat-browser frame for the AI Window hosted in the given
+ * browser. By the time the post-response helpers below run, both ai-window and
+ * #aichat-browser already exist, so the check resolves immediately; the bound
+ * just guarantees a fast, clear failure if they ever don't.
+ *
+ * @param {MozBrowser} browser - The browser hosting the AI Window
+ *
+ * @returns {Promise<MozBrowser>} The #aichat-browser frame
+ */
+function getAIChatBrowser(browser) {
+  return waitForMutationBounded(
+    browser.contentDocument.documentElement,
+    { childList: true, subtree: true },
+    () =>
+      browser.contentDocument
+        ?.querySelector("ai-window")
+        ?.shadowRoot?.querySelector("#aichat-browser"),
+    "ai-window #aichat-browser"
+  );
+}
+
+/**
+ * Runs a SpecialPowers.spawn task bounded by a timeout. The content task can use
+ * plain ContentTaskUtils.waitForMutationCondition (event-driven, no polling),
+ * which never rejects on its own; this wrapper races the spawn against a timer so
+ * a task that never settles fails fast with a clear message instead of hanging
+ * until the harness aborts the SpecialPowers actor.
+ *
+ * @param {MozBrowser} browser - The frame to run the task in
+ * @param {Array} args - Arguments forwarded to the task
+ * @param {Function} task - The content task
+ * @param {string} label - Description used in the timeout error message
+ * @param {number} [timeoutMs=RENDER_TIMEOUT_MS]
+ *
+ * @returns {Promise<any>} The task's return value
+ */
+function spawnBounded(
+  browser,
+  args,
+  task,
+  label,
+  timeoutMs = RENDER_TIMEOUT_MS
+) {
+  const spawned = SpecialPowers.spawn(browser, args, task);
+  // If the timeout wins, the spawn promise is abandoned; handle its eventual
+  // rejection (the actor is torn down at cleanup) so it isn't surfaced as an
+  // unhandled rejection. A real task error still propagates through the race.
+  spawned.catch(() => {});
+
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`Timed out waiting for: ${label}`)),
+      timeoutMs
+    );
+  });
+  return Promise.race([spawned, timeout]).finally(() => clearTimeout(timer));
+}
+
+/**
+ * Checks for presence of a selector within the chat messages, either at a
+ * specific message element or in any message element
+ *
+ * @param {MozBrowser} browser - browser that the messages are in
+ * @param {string} selector - The selector to look for
+ * @param {number} [nthElement] - Which message index to check for the selector,
+ *                                defaults to last item
+ *
+ * @returns {boolean} Whether the selector was found
+ */
+async function checkForElementInChatMessage(
+  browser,
+  selector,
+  nthElement = -1
+) {
+  const aiChatBrowser = await getAIChatBrowser(browser);
+
+  return spawnBounded(
+    aiChatBrowser,
+    [selector, nthElement],
+    async (sel, nthEl) => {
+      await ContentTaskUtils.waitForMutationCondition(
+        content.document.documentElement,
+        { childList: true, subtree: true },
+        () => content.document.querySelector("ai-chat-content")
+      );
+      const contentEl = content.document.querySelector("ai-chat-content");
+
+      await ContentTaskUtils.waitForMutationCondition(
+        contentEl.shadowRoot,
+        { childList: true, subtree: true },
+        () => {
+          const messages = Array.from(
+            contentEl.shadowRoot.querySelectorAll("ai-chat-message")
+          );
+          const message = messages.at(nthEl);
+          return message && ContentTaskUtils.querySelectorDeep(message, sel);
+        }
+      );
+
+      const messages = Array.from(
+        contentEl.shadowRoot.querySelectorAll("ai-chat-message")
+      );
+      return !!ContentTaskUtils.querySelectorDeep(messages.at(nthEl), sel);
+    },
+    `${selector} in chat message ${nthElement}`
+  );
+}
+
+async function checkForNumberOfElementsInChatMessage(
+  browser,
+  selector,
+  amount,
+  nthElement = -1
+) {
+  const aiChatBrowser = await getAIChatBrowser(browser);
+
+  return spawnBounded(
+    aiChatBrowser,
+    [selector, nthElement, amount],
+    async (sel, nthEl, amt) => {
+      await ContentTaskUtils.waitForMutationCondition(
+        content.document.documentElement,
+        { childList: true, subtree: true },
+        () => content.document.querySelector("ai-chat-content")
+      );
+      const contentEl = content.document.querySelector("ai-chat-content");
+
+      await ContentTaskUtils.waitForMutationCondition(
+        contentEl.shadowRoot,
+        { childList: true, subtree: true },
+        () => {
+          const messages = Array.from(
+            contentEl.shadowRoot.querySelectorAll("ai-chat-message")
+          );
+          const message = messages.at(nthEl);
+          return (
+            message &&
+            ContentTaskUtils.querySelectorDeep(message, "ai-chat-grid")
+          );
+        }
+      );
+
+      const messages = Array.from(
+        contentEl.shadowRoot.querySelectorAll("ai-chat-message")
+      );
+      const aiChatGrid = ContentTaskUtils.querySelectorDeep(
+        messages.at(nthEl),
+        "ai-chat-grid"
+      );
+
+      // The counted children render asynchronously inside the grid's own shadow
+      // root, so observe there.
+      await ContentTaskUtils.waitForMutationCondition(
+        aiChatGrid.shadowRoot,
+        { childList: true, subtree: true },
+        () =>
+          ContentTaskUtils.querySelectorDeep(aiChatGrid, sel)?.children
+            .length === amt
+      );
+
+      return true;
+    },
+    `${amount} ${selector} in chat message ${nthElement}`
+  );
 }
 
 /**
@@ -887,6 +1305,9 @@ function readRequestBody(request) {
  * a tool-use round-trip: the first request returns the tool call, and the
  * follow-up request (containing the tool result) returns followupChunks.
  *
+ * @deprecated - Please use MockEngineManager in AIWindowTestUtils.sys.mjs unless
+ * a test is explicitly needing to test the network layer of the OpenAI chat protocol.
+ *   TODO (Bug 2045844): Remove and replace existing usages across test files.
  * @param {MockOpenAIServerOptions} [options]
  * @returns {{ server: HttpServer, port: number }} The running server and
  *   its port number.
@@ -1146,7 +1567,10 @@ async function getUserMessageChipLabels(sidebarBrowser, messageIndex = 0) {
 async function withServer(serverOptions, task) {
   const { server, port } = startMockOpenAI(serverOptions);
   await SpecialPowers.pushPrefEnv({
-    set: [["browser.smartwindow.endpoint", `http://localhost:${port}/v1`]],
+    set: [
+      ["browser.smartwindow.endpoint", `http://localhost:${port}/v1`],
+      ["browser.smartwindow.customEndpoint", `http://localhost:${port}/v1`],
+    ],
   });
 
   const getFxAccountTokenStub = sinon

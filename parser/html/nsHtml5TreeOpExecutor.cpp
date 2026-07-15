@@ -495,8 +495,10 @@ static bool BackgroundFlushCallback(TimeStamp /*aDeadline*/) {
     ex->RunFlushLoop();
   }
   if (gBackgroundFlushList && gBackgroundFlushList->isEmpty()) {
-    gBackgroundFlushRunner->Cancel();
-    gBackgroundFlushRunner = nullptr;
+    if (gBackgroundFlushRunner) {
+      gBackgroundFlushRunner->Cancel();
+      gBackgroundFlushRunner = nullptr;
+    }
     return true;
   }
   return true;
@@ -526,7 +528,7 @@ void nsHtml5TreeOpExecutor::ContinueInterruptedParsingAsync() {
     gBackgroundFlushRunner = IdleTaskRunner::Create(
         &BackgroundFlushCallback,
         "nsHtml5TreeOpExecutor::BackgroundFlushCallback"_ns,
-        0,  // Start looking for idle time immediately.
+        nullptr,  // Start looking for idle time immediately.
         TimeDuration::FromMilliseconds(250),  // The hard deadline.
         TimeDuration::FromMicroseconds(
             StaticPrefs::content_sink_interactive_parse_time()),  // Required
@@ -1300,8 +1302,7 @@ void nsHtml5TreeOpExecutor::PreloadStyle(
   if (aLinkPreload) {
     auto hashKey = PreloadHashKey::CreateAsStyle(
         uri, mDocument->NodePrincipal(),
-        dom::Element::StringToCORSMode(aCrossOrigin),
-        css::eAuthorSheetFeatures);
+        dom::Element::StringToCORSMode(aCrossOrigin));
     if (mDocument->Preloads().PreloadExists(hashKey)) {
       return;
     }

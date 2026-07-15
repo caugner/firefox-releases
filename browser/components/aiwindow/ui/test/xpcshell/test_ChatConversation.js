@@ -33,6 +33,10 @@ const { EmbeddingsGenerator } = ChromeUtils.importESModule(
   "chrome://global/content/ml/EmbeddingsGenerator.sys.mjs"
 );
 
+const { _setLoadPromptForTesting } = ChromeUtils.importESModule(
+  "moz-src:///browser/components/aiwindow/ui/modules/ChatConversation.sys.mjs"
+);
+
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   sinon: "resource://testing-common/Sinon.sys.mjs",
@@ -657,7 +661,10 @@ add_task(async function test_unrelatedMessage_ChatConversation_retryMessage() {
 
   await Assert.rejects(
     conversation.retryMessage(unrelatedMessage),
-    /Unrelated message/
+    err =>
+      /Unrelated message/.test(err.message) &&
+      err.clientReason === "retryInvalidMessage",
+    "retryMessage should reject with clientReason retryInvalidMessage"
   );
 });
 
@@ -668,7 +675,10 @@ add_task(async function test_nonUserMessage_ChatConversation_retryMessage() {
 
   await Assert.rejects(
     conversation.retryMessage(conversation.messages[0]),
-    /Not a user message/
+    err =>
+      /Not a user message/.test(err.message) &&
+      err.clientReason === "retryInvalidMessage",
+    "retryMessage should reject with clientReason retryInvalidMessage"
   );
 });
 
@@ -827,46 +837,33 @@ add_task(async function test_returnsContent_ChatConversation_getRealTimeInfo() {
     timezone: "America/Los_Angeles",
     isoTimestamp: "2024-01-15T10:30:00",
   });
-  const mockEngineInstance = {
-    loadPrompt: lazy.sinon
-      .stub()
-      .resolves("Current date: {todayDate}\nLocale: {locale}"),
-  };
+  const loadPromptStub = lazy.sinon
+    .stub()
+    .resolves("Current date: {todayDate}\nLocale: {locale}");
+  _setLoadPromptForTesting(loadPromptStub);
 
-  const realTimeInfo = await ChatConversation.getRealTimeInfo(
-    mockEngineInstance,
-    {
-      getRealTimeMapping: mockGetRealTimeMapping,
-    }
-  );
+  const realTimeInfo = await ChatConversation.getRealTimeInfo({
+    getRealTimeMapping: mockGetRealTimeMapping,
+  });
 
   Assert.withSoftAssertions(function (soft) {
-    soft.ok(
-      mockEngineInstance.loadPrompt.called,
-      "loadPrompt should be called"
-    );
+    soft.ok(loadPromptStub.called, "loadPrompt should be called");
   });
   Assert.equal(
     realTimeInfo,
     "Current date: 2024-01-15\nLocale: en-US",
     "getRealTimeInfo returns the expected contexutal information"
   );
+  _setLoadPromptForTesting(null);
 });
 
 add_task(
   async function test_returnsNoContent_ChatConversation_getRealTimeInfo() {
-    const mockEngineInstance = {
-      loadPrompt: lazy.sinon.stub().resolves("prompt text"),
-    };
-
     const mockGetRealTimeMapping = lazy.sinon.stub().resolves(null);
 
-    const realTimeInfo = await ChatConversation.getRealTimeInfo(
-      mockEngineInstance,
-      {
-        getRealTimeMapping: mockGetRealTimeMapping,
-      }
-    );
+    const realTimeInfo = await ChatConversation.getRealTimeInfo({
+      getRealTimeMapping: mockGetRealTimeMapping,
+    });
 
     Assert.equal(
       realTimeInfo,
@@ -879,9 +876,6 @@ add_task(
 add_task(
   async function test_returnsContent_ChatConversation_getMemoriesContext() {
     console.log(Object.keys(lazy.sinon));
-    const mockEngineInstance = {
-      loadPrompt: lazy.sinon.stub().resolves("prompt text"),
-    };
     const constructMemories = lazy.sinon
       .stub()
       .resolves({ content: "memories data" });
@@ -889,15 +883,14 @@ add_task(
     const conversation = new ChatConversation({});
     const memoriesContext = await conversation.getMemoriesContext(
       "hello",
-      mockEngineInstance,
       constructMemories,
       new SecurityProperties()
     );
 
     Assert.withSoftAssertions(function (soft) {
       soft.ok(
-        constructMemories.calledWith("hello", mockEngineInstance),
-        "constructMemories should be called with message and engineInstance"
+        constructMemories.calledWith("hello"),
+        "constructMemories should be called with the message"
       );
     });
     Assert.equal(
@@ -916,7 +909,8 @@ add_task(
     const conversation = new ChatConversation({});
     const memoriesContext = await conversation.getMemoriesContext(
       "hello",
-      constructMemories
+      constructMemories,
+      new SecurityProperties()
     );
 
     Assert.equal(
@@ -967,7 +961,7 @@ add_task(
     const conversation = new ChatConversation({});
     conversation.addAssistantMessage("text", "some response");
     const assistantMsg = conversation.messages.at(-1);
-    assistantMsg._pendingMemoryIds = ["mem-1", "mem-1", "mem-2", "mem-2"];
+    assistantMsg.memoriesApplied = ["mem-1", "mem-1", "mem-2", "mem-2"];
 
     async function* emptyStream() {}
     await conversation.receiveResponse(emptyStream());
@@ -988,10 +982,6 @@ add_task(
       assistantMsg.memoriesApplied,
       mockMemories,
       "memoriesApplied should be set to the resolved memories"
-    );
-    Assert.ok(
-      !("_pendingMemoryIds" in assistantMsg),
-      "_pendingMemoryIds should be deleted after processing"
     );
 
     sandbox.restore();
@@ -1028,9 +1018,7 @@ add_task(async function test_addUserMessage_sets_memories_fields() {
 add_task(async function test_generatePrompt_emitsUserMessage() {
   const sandbox = lazy.sinon.createSandbox();
   const conversation = new ChatConversation({});
-  const mockEngineInstance = {
-    loadPrompt: lazy.sinon.stub().resolves("system prompt"),
-  };
+  _setLoadPromptForTesting(lazy.sinon.stub().resolves("system prompt"));
   sandbox.stub(ChatConversation, "getRealTimeInfo").resolves(null);
   sandbox.stub(conversation, "getMemoriesContext").resolves(null);
 
@@ -1039,20 +1027,19 @@ add_task(async function test_generatePrompt_emitsUserMessage() {
     emittedMessage = msg;
   });
 
-  await conversation.generatePrompt("hello", null, mockEngineInstance);
+  await conversation.generatePrompt("hello", null);
 
   Assert.ok(emittedMessage, "event should have been emitted");
   Assert.equal(emittedMessage.content.body, "hello");
   Assert.equal(emittedMessage.role, MESSAGE_ROLE.USER);
+  _setLoadPromptForTesting(null);
   sandbox.restore();
 });
 
 add_task(async function test_generatePrompt_skipUserDispatch() {
   const sandbox = lazy.sinon.createSandbox();
   const conversation = new ChatConversation({});
-  const mockEngineInstance = {
-    loadPrompt: lazy.sinon.stub().resolves("system prompt"),
-  };
+  _setLoadPromptForTesting(lazy.sinon.stub().resolves("system prompt"));
   sandbox.stub(ChatConversation, "getRealTimeInfo").resolves(null);
   sandbox.stub(conversation, "getMemoriesContext").resolves(null);
 
@@ -1061,18 +1048,13 @@ add_task(async function test_generatePrompt_skipUserDispatch() {
     emitted = true;
   });
 
-  await conversation.generatePrompt(
-    "hello",
-    null,
-    mockEngineInstance,
-    undefined,
-    true
-  );
+  await conversation.generatePrompt("hello", null, undefined, true);
 
   Assert.ok(
     !emitted,
     "event should not be emitted when skipUserDispatch is true"
   );
+  _setLoadPromptForTesting(null);
   sandbox.restore();
 });
 
@@ -1097,19 +1079,14 @@ add_task(async function test_generatePrompt_memoriesContextErrorDoesNotThrow() {
     .rejects(new Error("Failed to download embedding model"));
 
   const conversation = new ChatConversation({});
-  const mockEngineInstance = {
-    loadPrompt: sandbox.stub().resolves("system prompt"),
-  };
+  _setLoadPromptForTesting(lazy.sinon.stub().resolves("system prompt"));
   sandbox
     .stub(ChatConversation, "getRealTimeInfo")
     .resolves("real time context");
 
-  const result = await conversation.generatePrompt(
-    "hello",
-    null,
-    mockEngineInstance,
-    { memoriesEnabled: true }
-  );
+  const result = await conversation.generatePrompt("hello", null, {
+    memoriesEnabled: true,
+  });
 
   Assert.ok(result, "generatePrompt should resolve successfully");
 
@@ -1133,6 +1110,7 @@ add_task(async function test_generatePrompt_memoriesContextErrorDoesNotThrow() {
 
   await MemoryStore.hardDeleteMemory("memory-embed-fail", "other");
   MemoriesManager._clearEmbeddingsCache();
+  _setLoadPromptForTesting(null);
   sandbox.restore();
 });
 
@@ -1140,9 +1118,7 @@ add_task(
   async function test_generatePrompt_userContextPopulatedBeforeResolving() {
     const sandbox = lazy.sinon.createSandbox();
     const conversation = new ChatConversation({});
-    const mockEngineInstance = {
-      loadPrompt: lazy.sinon.stub().resolves("system prompt"),
-    };
+    _setLoadPromptForTesting(lazy.sinon.stub().resolves("system prompt"));
     sandbox
       .stub(ChatConversation, "getRealTimeInfo")
       .resolves("real time context");
@@ -1150,7 +1126,7 @@ add_task(
       .stub(conversation, "getMemoriesContext")
       .resolves("memories context");
 
-    await conversation.generatePrompt("hello", null, mockEngineInstance, {
+    await conversation.generatePrompt("hello", null, {
       memoriesEnabled: true,
     });
 
@@ -1170,6 +1146,7 @@ add_task(
         "memoriesContext should be set on userContext before generatePrompt resolves"
       );
     });
+    _setLoadPromptForTesting(null);
     sandbox.restore();
   }
 );
@@ -1185,11 +1162,9 @@ add_task(async function test_getRealTimeInfo_setsPrivateData_when_hasTabInfo() {
     timezone: "America/Los_Angeles",
     isoTimestamp: "2024-01-15T10:30:00",
   });
-  const mockEngineInstance = {
-    loadPrompt: lazy.sinon.stub().resolves("{todayDate}"),
-  };
+  _setLoadPromptForTesting(lazy.sinon.stub().resolves("{todayDate}"));
 
-  await ChatConversation.getRealTimeInfo(mockEngineInstance, {
+  await ChatConversation.getRealTimeInfo({
     getRealTimeMapping: mockGetRealTimeMapping,
     securityProperties,
   });
@@ -1199,6 +1174,7 @@ add_task(async function test_getRealTimeInfo_setsPrivateData_when_hasTabInfo() {
     securityProperties.privateData,
     "privateData should be true after commit when hasTabInfo is true"
   );
+  _setLoadPromptForTesting(null);
 });
 
 add_task(
@@ -1211,11 +1187,9 @@ add_task(
       timezone: "America/Los_Angeles",
       isoTimestamp: "2024-01-15T10:30:00",
     });
-    const mockEngineInstance = {
-      loadPrompt: lazy.sinon.stub().resolves("{todayDate}"),
-    };
+    _setLoadPromptForTesting(lazy.sinon.stub().resolves("{todayDate}"));
 
-    await ChatConversation.getRealTimeInfo(mockEngineInstance, {
+    await ChatConversation.getRealTimeInfo({
       getRealTimeMapping: mockGetRealTimeMapping,
       securityProperties,
     });
@@ -1225,6 +1199,7 @@ add_task(
       !securityProperties.privateData,
       "privateData should remain false when hasTabInfo is false"
     );
+    _setLoadPromptForTesting(null);
   }
 );
 
@@ -1234,12 +1209,10 @@ add_task(
     const constructMemories = lazy.sinon
       .stub()
       .resolves({ content: "some memory" });
-    const mockEngineInstance = {};
 
     const conversation = new ChatConversation({});
     await conversation.getMemoriesContext(
       "hello",
-      mockEngineInstance,
       constructMemories,
       securityProperties
     );
@@ -1256,12 +1229,10 @@ add_task(
   async function test_getMemoriesContext_doesNotSetPrivateData_when_noMemories() {
     const securityProperties = new SecurityProperties();
     const constructMemories = lazy.sinon.stub().resolves(null);
-    const mockEngineInstance = {};
 
     const conversation = new ChatConversation({});
     await conversation.getMemoriesContext(
       "hello",
-      mockEngineInstance,
       constructMemories,
       securityProperties
     );
@@ -1276,47 +1247,42 @@ add_task(
 
 add_task(
   async function test_generatePrompt_commitsPrivateData_when_hasTabInfo() {
-    const mockEngineInstance = {
-      loadPrompt: lazy.sinon.stub().resolves("system prompt"),
-    };
     const conversation = new ChatConversation({});
     const sandbox = lazy.sinon.createSandbox();
+    _setLoadPromptForTesting(lazy.sinon.stub().resolves("system prompt"));
 
-    sandbox
-      .stub(ChatConversation, "getRealTimeInfo")
-      .callsFake(async (_, opts) => {
-        opts.securityProperties?.setPrivateData();
-        return "real time info";
-      });
+    sandbox.stub(ChatConversation, "getRealTimeInfo").callsFake(async opts => {
+      opts.securityProperties?.setPrivateData();
+      return "real time info";
+    });
     sandbox.stub(conversation, "getMemoriesContext").resolves(null);
 
-    await conversation.generatePrompt("hello", null, mockEngineInstance);
+    await conversation.generatePrompt("hello", null);
 
     Assert.ok(
       conversation.securityProperties.privateData,
       "privateData should be committed true when getRealTimeInfo stages it"
     );
+    _setLoadPromptForTesting(null);
     sandbox.restore();
   }
 );
 
 add_task(
   async function test_generatePrompt_commitsPrivateData_when_memoriesEnabled() {
-    const mockEngineInstance = {
-      loadPrompt: lazy.sinon.stub().resolves("system prompt"),
-    };
     const conversation = new ChatConversation({});
     const sandbox = lazy.sinon.createSandbox();
+    _setLoadPromptForTesting(lazy.sinon.stub().resolves("system prompt"));
 
     sandbox.stub(ChatConversation, "getRealTimeInfo").resolves(null);
     sandbox
       .stub(conversation, "getMemoriesContext")
-      .callsFake(async (_, _engine, _construct, sp) => {
+      .callsFake(async (_message, _construct, sp) => {
         sp?.setPrivateData();
         return "some memories";
       });
 
-    await conversation.generatePrompt("hello", null, mockEngineInstance, {
+    await conversation.generatePrompt("hello", null, {
       memoriesEnabled: true,
     });
 
@@ -1324,27 +1290,27 @@ add_task(
       conversation.securityProperties.privateData,
       "privateData should be committed true when getMemoriesContext stages it"
     );
+    _setLoadPromptForTesting(null);
     sandbox.restore();
   }
 );
 
 add_task(
   async function test_generatePrompt_doesNotSetPrivateData_when_noTabOrMemories() {
-    const mockEngineInstance = {
-      loadPrompt: lazy.sinon.stub().resolves("system prompt"),
-    };
     const conversation = new ChatConversation({});
     const sandbox = lazy.sinon.createSandbox();
+    _setLoadPromptForTesting(lazy.sinon.stub().resolves("system prompt"));
 
     sandbox.stub(ChatConversation, "getRealTimeInfo").resolves(null);
     sandbox.stub(conversation, "getMemoriesContext").resolves(null);
 
-    await conversation.generatePrompt("hello", null, mockEngineInstance);
+    await conversation.generatePrompt("hello", null);
 
     Assert.ok(
       !conversation.securityProperties.privateData,
       "privateData should remain false when no private data was staged"
     );
+    _setLoadPromptForTesting(null);
     sandbox.restore();
   }
 );
@@ -1446,74 +1412,62 @@ add_task(async function test_convertUrlToToken_tokenGeneration() {
   }
 });
 
-add_task(async function test_generatePrompt_tableInstructions_pref_enabled() {
-  Services.prefs.setBoolPref("browser.smartwindow.allowTables", false);
-  registerCleanupFunction(() =>
-    Services.prefs.clearUserPref("browser.smartwindow.allowTables")
-  );
+add_task(async function test_generatePrompt_persistsPromptVersion() {
+  const sandbox = lazy.sinon.createSandbox();
+  const loadPromptStub = lazy.sinon.stub().resolves({
+    prompt: "system prompt",
+    version: "chat-v1",
+  });
+  _setLoadPromptForTesting(loadPromptStub);
 
-  const mockEngineInstance = {
-    loadPrompt: lazy.sinon
-      .stub()
-      .onFirstCall()
-      .resolves("system prompt {tableInstructions}")
-      .onSecondCall()
-      .resolves("table instructions content"),
-  };
   const conversation = new ChatConversation({});
-  const getRealTimeInfoStub = lazy.sinon
-    .stub(ChatConversation, "getRealTimeInfo")
-    .resolves(null);
-  lazy.sinon.stub(conversation, "getMemoriesContext").resolves(null);
+  sandbox.stub(ChatConversation, "getRealTimeInfo").resolves(null);
+  sandbox.stub(conversation, "getMemoriesContext").resolves(null);
 
-  await conversation.generatePrompt("hello", null, mockEngineInstance);
+  await conversation.generatePrompt("hello", null);
 
-  getRealTimeInfoStub.restore();
-
+  Assert.equal(
+    loadPromptStub.callCount,
+    1,
+    "system prompt is loaded with a single loadPrompt call"
+  );
   const systemMessage = conversation.messages.find(
     m => m.role === MESSAGE_ROLE.SYSTEM
   );
-  Assert.ok(
-    systemMessage.content.body.includes("table instructions content"),
-    "system prompt should include table instructions when pref is true"
+  Assert.equal(
+    systemMessage.content.version,
+    "chat-v1",
+    "version is stored on the system message content"
+  );
+  Assert.equal(
+    conversation.chatPromptVersion,
+    "chat-v1",
+    "getter reads the version from the system message"
+  );
+
+  _setLoadPromptForTesting(null);
+  sandbox.restore();
+});
+
+add_task(function test_chatPromptVersion_readsFromExistingSystemMessage() {
+  const conversation = new ChatConversation({});
+  conversation.addSystemMessage(SYSTEM_PROMPT_TYPE.TEXT, "body", "chat-v2");
+
+  Assert.equal(
+    conversation.chatPromptVersion,
+    "chat-v2",
+    "getter returns the version from a pre-existing system message"
   );
 });
 
-add_task(async function test_generatePrompt_tableInstructions_pref_disabled() {
-  Services.prefs.setBoolPref("browser.smartwindow.allowTables", true);
-  registerCleanupFunction(() =>
-    Services.prefs.clearUserPref("browser.smartwindow.allowTables")
-  );
-
-  const mockEngineInstance = {
-    loadPrompt: lazy.sinon
-      .stub()
-      .onFirstCall()
-      .resolves("system prompt {tableInstructions}")
-      .onSecondCall()
-      .resolves("do tables"),
-  };
+add_task(function test_chatPromptVersion_emptyForLegacyMessage() {
   const conversation = new ChatConversation({});
-  const getRealTimeInfoStub = lazy.sinon
-    .stub(ChatConversation, "getRealTimeInfo")
-    .resolves(null);
-  lazy.sinon.stub(conversation, "getMemoriesContext").resolves(null);
-
-  await conversation.generatePrompt("hello", null, mockEngineInstance);
-
-  getRealTimeInfoStub.restore();
-
+  // Simulate a system message persisted before this change shipped.
+  conversation.addSystemMessage(SYSTEM_PROMPT_TYPE.TEXT, "body");
   Assert.equal(
-    mockEngineInstance.loadPrompt.callCount,
-    2,
-    "loadPrompt should be called twice"
-  );
-  const systemMessage = conversation.messages.find(
-    m => m.role === MESSAGE_ROLE.SYSTEM
-  );
-  Assert.ok(
-    !systemMessage.content.body.includes("table instructions"),
-    "system prompt should not include table instructions when pref is false"
+    conversation.chatPromptVersion,
+    "",
+    "getter returns empty string for legacy system messages with no version"
   );
 });
 
@@ -1717,6 +1671,90 @@ add_task(function test_addUIToolToCurrentMessage_emits_events() {
   Assert.ok(completeEventFired, "Complete event should be re-emitted");
 });
 
+add_task(async function test_addUserMessage_dismisses_prior_undo() {
+  const conversation = new ChatConversation({});
+  conversation.addUserMessage("Close my tabs", "https://example.com/", 0);
+  conversation.addAssistantMessage("text", "Closed");
+
+  const assistant = conversation.messages.at(-1);
+  assistant.toolUIData = {
+    toolCallId: "t1",
+    uiType: "ai-action-result",
+    properties: { confirmedData: { operationId: "op-1" } },
+  };
+
+  // User sends a new message
+  conversation.addUserMessage("show my history", "https://example.com/", 0);
+
+  Assert.equal(
+    assistant.toolUIData.properties.confirmedData.operationId,
+    "op-1",
+    "Dismissal preserves other property keys"
+  );
+  Assert.strictEqual(
+    assistant.toolUIData.properties.undoDismissed,
+    true,
+    "Prior ai-action-result with active operationId gets undoDismissed on follow-up"
+  );
+});
+
+add_task(async function test_dismissPendingUndos_skips_without_operationId() {
+  const conversation = new ChatConversation({});
+  conversation.addUserMessage("Close my tabs", "https://example.com/", 0);
+  conversation.addAssistantMessage("text", "Closed");
+
+  const assistant = conversation.messages.at(-1);
+  assistant.toolUIData = {
+    toolCallId: "t1",
+    uiType: "ai-action-result",
+    properties: { confirmedData: {} },
+  };
+
+  conversation.addUserMessage("show my history", "https://example.com/", 0);
+
+  Assert.ok(
+    !assistant.toolUIData.properties.undoDismissed,
+    "ai-action-result without operationId is not dismissed"
+  );
+});
+
+add_task(async function test_dismissPendingUndos_only_dismisses_most_recent() {
+  const conversation = new ChatConversation({});
+
+  conversation.addUserMessage("Close A", "https://example.com/", 0);
+  conversation.addAssistantMessage("text", "Closed A");
+  const olderAssistant = conversation.messages.at(-1);
+
+  conversation.addAssistantMessage("text", "Closed B");
+  const newerAssistant = conversation.messages.at(-1);
+
+  // Set toolUIData on both before the next user message triggers undoDismissed
+  olderAssistant.toolUIData = {
+    toolCallId: "t1",
+    uiType: "ai-action-result",
+    properties: { confirmedData: { operationId: "op-older" } },
+  };
+  newerAssistant.toolUIData = {
+    toolCallId: "t2",
+    uiType: "ai-action-result",
+    properties: { confirmedData: { operationId: "op-newer" } },
+  };
+
+  conversation.addUserMessage("show my history", "https://example.com/", 0);
+
+  Assert.withSoftAssertions(function (soft) {
+    soft.strictEqual(
+      newerAssistant.toolUIData.properties.undoDismissed,
+      true,
+      "Most recent qualifying card is dismissed"
+    );
+    soft.ok(
+      !olderAssistant.toolUIData.properties.undoDismissed,
+      "Older qualifying card is left untouched"
+    );
+  });
+});
+
 add_task(function test_addToolCallMessage_emits_message_update() {
   const conversation = new ChatConversation({});
   conversation.addUserMessage("Get opened tabs", null);
@@ -1781,5 +1819,123 @@ add_task(function test_addToolCallMessage_emits_for_error_payload() {
     received.content.name,
     undefined,
     "Error-path TOOL message has no name field"
+  );
+});
+
+add_task(function test_resolvePendingToolConfirmation_no_messages() {
+  const conversation = new ChatConversation({});
+  Assert.equal(
+    conversation.resolvePendingToolConfirmation({ description: "x" }, "tc-1"),
+    false,
+    "Returns false when there are no messages"
+  );
+});
+
+add_task(function test_resolvePendingToolConfirmation_non_tool_message() {
+  const conversation = new ChatConversation({});
+  conversation.addUserMessage("hi", null);
+  conversation.addAssistantMessage("text", "hello");
+
+  Assert.equal(
+    conversation.resolvePendingToolConfirmation({ description: "x" }, "tc-1"),
+    false,
+    "Returns false when last message is not a TOOL message"
+  );
+});
+
+add_task(function test_resolvePendingToolConfirmation_tool_not_pending() {
+  const conversation = new ChatConversation({});
+  conversation.addUserMessage("hi", null);
+  conversation.addAssistantMessage("text", "hello");
+  conversation.addToolCallMessage({
+    tool_call_id: "tc-1",
+    name: "manage_tabs",
+    body: { success: true },
+  });
+
+  Assert.equal(
+    conversation.resolvePendingToolConfirmation({ description: "x" }, "tc-1"),
+    false,
+    "Returns false when the tool body is not pending"
+  );
+});
+
+add_task(function test_resolvePendingToolConfirmation_toolCallId_mismatch() {
+  const conversation = new ChatConversation({});
+  conversation.addUserMessage("close my tabs", null);
+  conversation.addAssistantMessage("text", "confirm?");
+  conversation.addToolCallMessage({
+    tool_call_id: "tc-1",
+    name: "manage_tabs",
+    body: { pending: true },
+  });
+
+  const noopResolved = conversation.resolvePendingToolConfirmation(
+    { description: "mismatch" },
+    "tc-other"
+  );
+  Assert.equal(
+    noopResolved,
+    false,
+    "Returns false when toolCallId does not match the most recent tool message"
+  );
+  Assert.deepEqual(
+    conversation.messages.at(-1).content.body,
+    { pending: true },
+    "Body should remain unchanged when toolCallId does not match"
+  );
+
+  const okResolved = conversation.resolvePendingToolConfirmation(
+    { description: "match" },
+    "tc-1"
+  );
+  Assert.equal(
+    okResolved,
+    true,
+    "Returns true when toolCallId filter matches the tail"
+  );
+});
+
+add_task(function test_resolvePendingToolConfirmation_resolves_pending_tail() {
+  const conversation = new ChatConversation({});
+  conversation.addUserMessage("close my tabs", null);
+  conversation.addAssistantMessage("text", "confirm?");
+  conversation.addToolCallMessage({
+    tool_call_id: "tc-1",
+    name: "manage_tabs",
+    body: { pending: true, action: "close" },
+  });
+
+  const tailBefore = conversation.messages.at(-1);
+
+  let emittedMessage = null;
+  conversation.on("chat-conversation:message-update", (_event, m) => {
+    emittedMessage = m;
+  });
+
+  const outcome = { description: "User confirmed." };
+  const resolved = conversation.resolvePendingToolConfirmation(outcome, "tc-1");
+
+  Assert.equal(resolved, true, "Returns true when a pending tail is resolved");
+  const tailAfter = conversation.messages.at(-1);
+  Assert.strictEqual(
+    tailAfter,
+    tailBefore,
+    "Resolves in place rather than appending a new message"
+  );
+  Assert.deepEqual(
+    tailAfter.content.body,
+    outcome,
+    "Body is replaced with the supplied outcome"
+  );
+  Assert.equal(
+    tailAfter.content.tool_call_id,
+    "tc-1",
+    "Other content keys are preserved"
+  );
+  Assert.equal(
+    emittedMessage,
+    tailAfter,
+    "Emits chat-conversation:message-update with the resolved tail message"
   );
 });

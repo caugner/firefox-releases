@@ -30,7 +30,7 @@
   <!-- Content description for close button while in multiselect mode in tab tray -->
   <string name="tab_tray_close_multiselect_content_description">Salir d\'o modo de selección multiple</string>
   <!-- About content. %1$s is the name of the app (for example "Firefox"). -->
-  <string name="about_content">%1$s ye produciu per Mozilla.</string>
+  <string name="about_content" tools:ignore="BrandUsage">%1$s ye produciu per Mozilla.</string>
   <!-- Private Browsing -->
   <string name="private_browsing_common_myths">Mitos comuns sobre la navegación privada</string>
   <!--
@@ -153,12 +153,6 @@
   <string name="browser_menu_read_close">Zarrar la vista de lectura</string>
   <!-- Browser menu button to open the current page in an external app -->
   <string name="browser_menu_open_app_link">Ubrir en aplicación</string>
-  <!--
-    Browser Toolbar
-
-    Content description for the Home screen button on the browser toolbar
-  -->
-  <string name="browser_toolbar_home">Pachina d’inicio</string>
   <!--
     Locale Settings Fragment
 
@@ -360,7 +354,7 @@
   <!-- Title for studies preferences -->
   <string name="preference_experiments_2">Estudios</string>
   <!-- Summary for studies preferences -->
-  <string name="preference_experiments_summary_2">Permite que Mozilla instale y execute estudios</string>
+  <string name="preference_experiments_summary_2" tools:ignore="BrandUsage">Permite que Mozilla instale y execute estudios</string>
   <!-- Preference for reconnecting to FxA sync -->
   <string name="preferences_sync_sign_in_to_reconnect">Inicia sesión pa reconnectar</string>
   <!-- Preference for removing FxA account -->
@@ -417,8 +411,6 @@
   <string name="library_desktop_bookmarks_unfiled">Atros marcapachinas</string>
   <!-- Option in Library to open History page -->
   <string name="library_history">Historial</string>
-  <!-- Option in Library to open a new tab -->
-  <string name="library_new_tab">Nueva pestanya</string>
   <!-- Settings Page Title -->
   <string name="settings_title">Achustes</string>
   <!-- Content description (not visible, for screen readers etc.): "Close button for library settings" -->
@@ -572,7 +564,7 @@
   -->
   <string name="tab_crash_title_2">Lo sentimos. %1$s no puede cargar ixa pachina.</string>
   <!-- Send crash report checkbox text on the tab crash page -->
-  <string name="tab_crash_send_report">Ninviar informe de fallos a Mozilla</string>
+  <string name="tab_crash_send_report" tools:ignore="BrandUsage">Ninviar informe de fallos a Mozilla</string>
   <!-- Close tab button text on the tab crash page -->
   <string name="tab_crash_close">Zarrar pestanya</string>
   <!-- Restore tab button text on the tab crash page -->
@@ -602,10 +594,6 @@
   <string name="edit_bookmark_folder_fragment_title">Editar carpeta</string>
   <!-- Bookmark URL editing field label -->
   <string name="bookmark_url_label">URL</string>
-  <!-- Bookmark FOLDER editing field label -->
-  <string name="bookmark_folder_label">CARPETA</string>
-  <!-- Bookmark NAME editing field label -->
-  <string name="bookmark_name_label">NOMBRE</string>
   <!-- Bookmark select folder screen title -->
   <string name="bookmark_select_folder_fragment_label">Triar carpeta</string>
   <!-- Bookmark editing error missing or improper URL -->
@@ -691,8 +679,6 @@
   <string name="collections_header">Coleccions</string>
   <!-- Content description (not visible, for screen readers etc.): Opens the collection menu when pressed -->
   <string name="collection_menu_button_content_description">Menú d’a colección</string>
-  <!-- Label to describe what collections are to a new user without any collections -->
-  <string name="no_collections_description2">Replega lo que t\'importa.\nAlza chuntas las busquedas similars, puestos y pestanyas pa acceder mas rapidament dimpués.</string>
   <!-- Title for the "select tabs" step of the collection creator -->
   <string name="create_collection_select_tabs">Triar pestanyas</string>
   <!-- Title for the "select collection" step of the collection creator -->
@@ -884,7 +870,11 @@
     Link displayed in enhanced tracking protection panel to access tracking protection settings
   -->
   <string name="etp_settings">Achustes de protección</string>
-  <!-- Preference title for enhanced tracking protection settings -->
+  <!--
+    Enhanced Tracking Protection
+
+    Preference title for enhanced tracking protection settings
+  -->
   <string name="preference_enhanced_tracking_protection">Protección contra seguimiento amillorada</string>
   <!-- Text displayed that links to website about enhanced tracking protection -->
   <string name="preference_enhanced_tracking_protection_explanation_learn_more">Leyer mas</string>
@@ -1115,8 +1105,6 @@
   <string name="synced_tabs_no_open_tabs">No i hai garra pestanya ubierta</string>
   <!-- Confirmation dialog button text when top sites limit is reached. -->
   <string name="top_sites_max_limit_confirmation_button">Vale, entendiu</string>
-  <!-- Content description for close button in collection placeholder. -->
-  <string name="remove_home_collection_placeholder_content_description">Eliminar</string>
   <!-- Translations feature -->
 
   <!-- TextField Design System Component -->

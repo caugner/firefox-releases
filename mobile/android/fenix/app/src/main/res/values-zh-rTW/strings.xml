@@ -72,7 +72,7 @@
   <!-- Text for the menu button to remove a recently saved bookmark from the user's home screen -->
   <string name="home_bookmarks_menu_item_remove">刪除</string>
   <!-- About content. %1$s is the name of the app (for example "Firefox"). -->
-  <string name="about_content">%1$s 是由 Mozilla 所打造。</string>
+  <string name="about_content" tools:ignore="BrandUsage">%1$s 是由 Mozilla 所打造。</string>
   <!-- Private Browsing -->
   <string name="private_browsing_common_myths">隱私瀏覽功能的常見迷思</string>
   <!-- Text to be announced by the accessibility service to inform the user that the private browsing mode is currently active. -->
@@ -149,6 +149,8 @@
   <string name="home_screen_shortcut_open_new_private_tab_2">開新隱私分頁</string>
   <!-- Shortcut action to open Passwords screen -->
   <string name="home_screen_shortcut_passwords">密碼</string>
+  <!-- Shortcut action to open uninstall survey -->
+  <string name="home_screen_shortcut_uninstall_survey">為什麼要解除安裝？</string>
   <!--
     Recent Tabs
 
@@ -332,21 +334,9 @@
   <!--
     Browser Toolbar
 
-    Content description for the Home screen button on the browser toolbar
-  -->
-  <string name="browser_toolbar_home">主畫面</string>
-  <!--
-    Browser Toolbar
-
     Content description for the translate page toolbar button that opens the translations dialog when no translation has occurred.
   -->
   <string name="browser_toolbar_translate">翻譯頁面</string>
-  <!--
-    Content description (not visible, for screen readers etc.) for the translate page toolbar button that opens the translations dialog when the page is translated successfully.
-    %1$s is the name of the language that is displayed in the original page. (For example: English)
-    %2$s is the name of the language which the page was translated to. (For example: French)
-  -->
-  <string name="browser_toolbar_translated_successfully">已將頁面從 %1$s 翻譯為 %2$s。</string>
   <!-- CFR description for the browser toolbar describing the "Shake to summarize feature" -->
   <string name="browser_toolbar_summarize_cfr_description">搖晃您的裝置，即可在幾秒內獲得頁面摘要內容。⚡️</string>
   <!--
@@ -377,8 +367,6 @@
   <string name="ai_controls_banner_headline">使用 %s，您隨時都可以自行選擇</string>
   <!-- Supporting text for the AI controls banner. %s is a learn more link using ai_controls_learn_more as text. -->
   <string name="ai_controls_banner_supporting_text_2">包含是否使用以 AI 加強的功能。%s</string>
-  <!-- Supporting text for the AI controls banner -->
-  <string name="ai_controls_banner_supporting_text">包含是否使用以 AI 加強的功能。</string>
   <!-- Link text for learning more about AI controls -->
   <string name="ai_controls_learn_more">更多資訊</string>
   <!-- Title for the block AI enhancements toggle -->
@@ -426,12 +414,6 @@
   <!--
     Search Fragment
 
-    Button in the search view that lets a user search by scanning a QR code
-  -->
-  <string name="search_scan_button_2">掃描 QR Code</string>
-  <!--
-    Search Fragment
-
     Button in the search view that lets a user navigate to the site in their clipboard
   -->
   <string name="awesomebar_clipboard_title">開啟剪貼簿中的鏈結</string>
@@ -474,62 +456,6 @@
     Content description (not visible, for screen readers etc.): Close button for the home onboarding dialog
   -->
   <string name="onboarding_home_content_description_close_button">關閉</string>
-  <!--
-    Juno first user onboarding flow experiment, strings are marked unused as they are only referenced by Nimbus experiments.
-
-    Description for learning more about our privacy notice.
-  -->
-  <string name="juno_onboarding_privacy_notice_text" tools:ignore="BrandUsage">Firefox 隱私權公告</string>
-  <!-- Title for set firefox as default browser screen used by Nimbus experiments. -->
-  <string name="juno_onboarding_default_browser_title_nimbus_2">我們希望確保您上網安全</string>
-  <!-- Description for set firefox as default browser screen used by Nimbus experiments. -->
-  <string name="juno_onboarding_default_browser_description_nimbus_3">我們這套由非營利組織所開發的瀏覽器，會自動封鎖讓大企業在網路上偷偷跟蹤您的程式。</string>
-  <!-- Text for the button to set firefox as default browser on the device -->
-  <string name="juno_onboarding_default_browser_positive_button" tools:ignore="UnusedResources">設為預設瀏覽器</string>
-  <!-- Text for the button dismiss the screen and move on with the flow -->
-  <string name="juno_onboarding_default_browser_negative_button" tools:ignore="UnusedResources">現在不要</string>
-  <!-- Title for sign in to sync screen. -->
-  <string name="juno_onboarding_sign_in_title_2">在不同裝置間切換時保持加密</string>
-  <!--
-    Description for sign in to sync screen. Nimbus experiments do not support string placeholders.
-    Note: The word "Firefox" should NOT be translated
-  -->
-  <string name="juno_onboarding_sign_in_description_3" tools:ignore="BrandUsage">Firefox 會在同步您的密碼、書籤等資料時自動加密。</string>
-  <!-- Text for the button to sign in to sync on the device -->
-  <string name="juno_onboarding_sign_in_positive_button" tools:ignore="UnusedResources">登入</string>
-  <!-- Text for the button dismiss the screen and move on with the flow -->
-  <string name="juno_onboarding_sign_in_negative_button" tools:ignore="UnusedResources">現在不要</string>
-  <!--
-    Title for enable notification permission screen used by Nimbus experiments. Nimbus experiments do not support string placeholders.
-    Note: The word "Firefox" should NOT be translated
-  -->
-  <string name="juno_onboarding_enable_notifications_title_nimbus_2" tools:ignore="BrandUsage">透過通知功能，讓您使用 Firefox 更安全</string>
-  <!--
-    Description for enable notification permission screen used by Nimbus experiments. Nimbus experiments do not support string placeholders.
-    Note: The word "Firefox" should NOT be translated
-  -->
-  <string name="juno_onboarding_enable_notifications_description_nimbus_2" tools:ignore="BrandUsage">在您的不同裝置間，安全地傳送分頁，並且探索 Firefox 當中其他保護隱私權的相關功能。</string>
-  <!-- Text for the button to request notification permission on the device -->
-  <string name="juno_onboarding_enable_notifications_positive_button" tools:ignore="UnusedResources">開啟通知</string>
-  <!-- Text for the button dismiss the screen and move on with the flow -->
-  <string name="juno_onboarding_enable_notifications_negative_button" tools:ignore="UnusedResources">現在不要</string>
-  <!--
-    Title for add search widget screen used by Nimbus experiments. Nimbus experiments do not support string placeholders.
-    Note: The word "Firefox" should NOT be translated
-  -->
-  <string name="juno_onboarding_add_search_widget_title" tools:ignore="BrandUsage,UnusedResources">試用 Firefox 搜尋小工具</string>
-  <!--
-    Description for add search widget screen used by Nimbus experiments. Nimbus experiments do not support string placeholders.
-    Note: The word "Firefox" should NOT be translated
-  -->
-  <string name="juno_onboarding_add_search_widget_description" tools:ignore="BrandUsage,UnusedResources">將 Firefox 新增到主畫面，很簡單就能開啟會封鎖跨網站追蹤器的隱私優先瀏覽器。</string>
-  <!--
-    Text for the button to add search widget on the device used by Nimbus experiments. Nimbus experiments do not support string placeholders.
-    Note: The word "Firefox" should NOT be translated
-  -->
-  <string name="juno_onboarding_add_search_widget_positive_button" tools:ignore="BrandUsage,UnusedResources">新增 Firefox 小工具</string>
-  <!-- Text for the button to dismiss the screen and move on with the flow -->
-  <string name="juno_onboarding_add_search_widget_negative_button" tools:ignore="UnusedResources">現在不要</string>
   <!-- Title for the privacy preferences dialog shown during onboarding. Note: The word "Firefox" should NOT be translated. -->
   <string name="onboarding_preferences_dialog_title" tools:ignore="BrandUsage">幫助我們讓 Firefox 變得更好</string>
   <!-- Title for the crash reporting option in the privacy preferences dialog shown during onboarding. -->
@@ -549,17 +475,13 @@
   <!-- Button text to reopen firefox after the crash is processed %s is the name of the app (for example "Firefox") -->
   <string name="startup_crash_restart">重新開啟 %s</string>
   <!-- Title for the usage data option in the privacy preferences dialog shown during onboarding. Note: The word "Mozilla" should NOT be translated. -->
-  <string name="onboarding_preferences_dialog_usage_data_title">傳送技術與互動資料給 Mozilla</string>
+  <string name="onboarding_preferences_dialog_usage_data_title" tools:ignore="BrandUsage">傳送技術與互動資料給 Mozilla</string>
   <string name="onboarding_preferences_dialog_usage_data_description_2" tools:ignore="BrandUsage">關於您的裝置、硬體設定，以及您如何使用 Firefox 的方式，可幫助我們為所有使用者改進功能、效能與穩定度。</string>
   <string name="onboarding_preferences_dialog_usage_data_learn_more_2">更多資訊</string>
   <!-- Positive button label for the privacy preferences dialog shown during onboarding. -->
   <string name="onboarding_preferences_dialog_positive_button">完成</string>
   <!-- Terms of service onboarding title card label. 'Firefox' intentionally hardcoded here -->
   <string name="onboarding_welcome_to_firefox" tools:ignore="BrandUsage">歡迎使用 Firefox</string>
-  <!-- Terms of service sub header label. -->
-  <string name="onboarding_terms_of_service_sub_header_2">又快又安全地上網</string>
-  <!-- Terms of service onboarding page continue button label. -->
-  <string name="onboarding_term_of_service_agree_and_continue_button_label_2">繼續</string>
   <!-- Line one of the terms of service onboarding page. %1$s is replaced by an active link, using onboarding_term_of_service_line_one_link_text_2 as text (“Firefox Terms of Use”). -->
   <string name="onboarding_term_of_service_line_one_2">若繼續，代表您同意 %1$s。</string>
   <!-- Used as text for the link in onboarding_term_of_service_line_one_2. -->
@@ -627,16 +549,6 @@
   <string name="onboarding_redesign_sync_positive_button" tools:ignore="UnusedResources">開始同步</string>
   <!-- Sync onboarding redesign negative button text. -->
   <string name="onboarding_redesign_sync_negative_button" tools:ignore="UnusedResources">現在不要</string>
-  <!-- Marketing onboarding page title. 'Firefox' is intentionally hardcoded. -->
-  <string name="onboarding_marketing_title" tools:ignore="BrandUsage,UnusedResources">協助我們讓 Firefox 成長</string>
-  <!-- Marketing onboarding page body. 'Firefox' is intentionally hardcoded. -->
-  <string name="onboarding_marketing_body" tools:ignore="BrandUsage,UnusedResources">當您分享如何發現 Firefox 以及是如何使用的時候，就能幫助我們將瀏覽器介紹給更多人。</string>
-  <!-- Marketing onboarding page opt-out checkbox. Unchecking the box does not increase data collection. Our data practices remain the same. 'Mozilla' is intentionally hardcoded. -->
-  <string name="onboarding_marketing_opt_out_checkbox">與 Mozilla 的行銷技術夥伴分享資料，此資料不會被賣掉，或用於向您顯示廣告。</string>
-  <!-- Marketing onboarding page clickable link text to "learn more" on how data is used. -->
-  <string name="onboarding_marketing_learn_more" tools:ignore="UnusedResources">我們會如何使用該資料</string>
-  <!-- Marketing onboarding page button label. Button to confirm choice and start browsing. -->
-  <string name="onboarding_marketing_positive_button" tools:ignore="UnusedResources">確認並開始上網</string>
   <!-- Marketing onboarding page title variant. “One last thing” refers to the final step or action in the onboarding process that we’re asking users to take before they can start using the browser. -->
   <string name="onboarding_marketing_title_1" tools:ignore="UnusedResources">還有一件事</string>
   <!-- Marketing onboarding page body variant. 'Firefox' is intentionally hardcoded. -->
@@ -716,12 +628,12 @@
   <!-- Marketing onboarding body. 'Firefox' and 'Mozilla' are intentionally hardcoded. -->
   <string name="nova_onboarding_marketing_body_2" tools:ignore="BrandUsage">與 Mozilla 的行銷夥伴分享您如何發現 Firefox 以及是如何使用的，我們絕不會販售此資料。</string>
   <!-- Marketing onboarding body. 'Firefox' and 'Mozilla' are intentionally hardcoded. -->
-  <string name="nova_onboarding_marketing_body_3" tools:ignore="BrandUsage">您可以透過讓 Mozilla 告知我們用來宣傳 Firefox 的平台您是 Firefox 使用者，幫助我們接觸更多人。</string>
+  <string name="nova_onboarding_marketing_body_3" tools:ignore="BrandUsage,UnusedResources">您可以透過讓 Mozilla 告知我們用來宣傳 Firefox 的平台您是 Firefox 使用者，幫助我們接觸更多人。</string>
   <!--
     Marketing onboarding body. 'Firefox' and 'Mozilla' are intentionally hardcoded.
     “Platform you came from” refers to the external app, website, store, campaign, or other source that directed the user to Firefox.
   -->
-  <string name="nova_onboarding_marketing_body_4" tools:ignore="BrandUsage">您可以透過讓 Mozilla 知道您是從哪個平台下載 Firefox 的，幫助我們接觸更多人。</string>
+  <string name="nova_onboarding_marketing_body_4" tools:ignore="BrandUsage,UnusedResources">您可以透過讓 Mozilla 知道您是從哪個平台下載 Firefox 的，幫助我們接觸更多人。</string>
   <!--
     Marketing onboarding body. 'Firefox' and 'Mozilla' are intentionally hardcoded.
     “Platform you came from” refers to the external app, website, store, campaign, or other source that directed the user to Firefox.
@@ -733,14 +645,33 @@
     %1$s is replaced by an active link, using nova_onboarding_marketing_body_link_text as text (“How we use the data”).
   -->
   <string name="nova_onboarding_marketing_body_6" tools:ignore="BrandUsage,UnusedResources">讓 Mozilla 知道您是從哪個平台下載 Firefox 的，幫助我們接觸更多人。%1$s</string>
+  <!--
+    Marketing onboarding body. 'Firefox' and 'Mozilla' are intentionally hardcoded.
+    “Platform you came from” refers to the external app, website, store, campaign, or other source that directed the user to Firefox.
+    %1$s is replaced by an active link, using nova_onboarding_marketing_body_link_text_1 as text (“Learn More”).
+  -->
+  <string name="nova_onboarding_marketing_body_7" tools:ignore="BrandUsage">您可以透過讓 Mozilla 知道您是從哪個平台下載 Firefox 的，幫助我們接觸更多人。%1$s</string>
+  <!-- Marketing onboarding additional body text. 'Firefox' is intentionally hardcoded. -->
+  <string name="nova_onboarding_marketing_body_line_two" tools:ignore="BrandUsage">Firefox 以獨立為榮，也致力於保護開放網路不受科技壟斷。</string>
+  <!--
+    Marketing onboarding additional body text. 'Firefox' is intentionally hardcoded.
+    “Allowing” refers to the main button “Allow and Continue”; the ask for the user is to allow communicating back to the platform.
+  -->
+  <string name="nova_onboarding_marketing_body_line_three" tools:ignore="BrandUsage">請考慮協助 Firefox 取得成功。</string>
   <!-- Marketing onboarding body link text. -->
   <string name="nova_onboarding_marketing_body_link_text">我們會如何使用該資料</string>
+  <!-- Marketing onboarding body link text. -->
+  <string name="nova_onboarding_marketing_body_link_text_1">更多資訊</string>
   <!-- Marketing onboarding primary button text. 'Firefox' is intentionally hardcoded. -->
-  <string name="nova_onboarding_marketing_primary_button_text" tools:ignore="BrandUsage">幫助 Firefox</string>
+  <string name="nova_onboarding_marketing_primary_button_text" tools:ignore="BrandUsage,UnusedResources">幫助 Firefox</string>
+  <!-- Marketing onboarding primary button text. -->
+  <string name="nova_onboarding_marketing_primary_button_text_3">是</string>
   <!-- Marketing onboarding primary button text. -->
   <string name="nova_onboarding_marketing_primary_button_text_2">允許並繼續</string>
   <!-- Marketing onboarding secondary button text. -->
-  <string name="nova_onboarding_marketing_secondary_button_text">不要，謝謝</string>
+  <string name="nova_onboarding_marketing_secondary_button_text" tools:ignore="UnusedResources">不要，謝謝</string>
+  <!-- Marketing onboarding secondary button text. -->
+  <string name="nova_onboarding_marketing_secondary_button_text_2">否</string>
   <!-- Notifications onboarding title. 'Firefox' is intentionally hardcoded. -->
   <string name="nova_onboarding_notifications_title" tools:ignore="BrandUsage,UnusedResources">透過通知功能，讓您使用 Firefox 更安全</string>
   <!-- Notifications onboarding subtitle. 'Firefox' is intentionally hardcoded. -->
@@ -774,41 +705,6 @@
   <string name="nova_onboarding_app_icon_prompt_body" tools:ignore="UnusedResources">為您的主畫面加上個人風格。</string>
   <!-- ==== End of Project "Nova" onboarding strings ==== -->
 
-  <!-- Onboarding header for the toolbar selection card, used by Nimbus experiments. -->
-  <string name="onboarding_customize_toolbar_title" tools:ignore="UnusedResources">挑選工具列要放置的位置</string>
-  <!-- Onboarding sub header for toolbar selection card, used by Nimbus experiments. -->
-  <string name="onboarding_customize_toolbar_description" tools:ignore="UnusedResources">讓搜尋觸手可及。</string>
-  <!-- Onboarding label for 'Save and continue' button, used by Nimbus experiments. -->
-  <string name="onboarding_save_and_continue_button">儲存並繼續</string>
-  <!-- Onboarding toolbar selection card label for 'top' option, used by Nimbus experiments. -->
-  <string name="onboarding_customize_toolbar_top_option">頂端</string>
-  <!-- Onboarding toolbar selection card label for 'bottom' option, used by Nimbus experiments. -->
-  <string name="onboarding_customize_toolbar_bottom_option">底端</string>
-  <!-- Onboarding toolbar selection card content description for the main image. -->
-  <string name="onboarding_customize_toolbar_main_image_content_description">於工具列選擇畫面中顯示工具列示意圖的大標圖片。</string>
-  <!-- Onboarding toolbar selection card content description for the toolbar placement image. -->
-  <string name="onboarding_customize_toolbar_placement_bottom_content_description">底部工具列的圖片</string>
-  <string name="onboarding_customize_toolbar_placement_top_content_description">頂端工具列的圖片</string>
-  <!-- Action label for toolbar options that can be selected. Talkback will append this to say "Double tap to select". -->
-  <string name="onboarding_customize_toolbar_a11y_action_label_select">選擇</string>
-  <!-- Onboarding header for the theme selection card, used by Nimbus experiments. -->
-  <string name="onboarding_customize_theme_title" tools:ignore="UnusedResources">挑選佈景主題</string>
-  <!-- Onboarding sub header for theme selection card, used by Nimbus experiments. -->
-  <string name="onboarding_customize_theme_description" tools:ignore="UnusedResources">用最適合您的色調上網。</string>
-  <!-- Onboarding label for 'Save and start browsing' button, used by Nimbus experiments. -->
-  <string name="onboarding_save_and_start_button">儲存並開始上網</string>
-  <!-- Onboarding theme selection card label for 'dark' option, used by Nimbus experiments. -->
-  <string name="onboarding_customize_theme_dark_option">暗色</string>
-  <!-- Onboarding theme selection card label for 'light' option, used by Nimbus experiments. -->
-  <string name="onboarding_customize_theme_light_option">亮色</string>
-  <!-- Onboarding theme selection card label for 'System auto' option, used by Nimbus experiments. -->
-  <string name="onboarding_customize_theme_system_option">自動使用系統色調</string>
-  <!-- Onboarding theme selection card content description for the main image. -->
-  <string name="onboarding_customize_theme_main_image_content_description">於佈景主題選擇畫面中顯示設計師與開發工具示意圖的大標圖片。</string>
-  <!-- Onboarding theme selection card content description for the theme selection image. %1$s is placeholder for either 'system', 'light' or 'dark'. -->
-  <string name="onboarding_customize_theme_content_description">%1$s佈景主題的圖片</string>
-  <!-- Action label for options that can be selected. Talkback will append this to say "Double tap to select". -->
-  <string name="onboarding_customize_theme_a11y_action_label_select">選擇</string>
   <!--
     Widget Picker
 
@@ -953,7 +849,7 @@
   <!-- Preference for accessibility -->
   <string name="preferences_accessibility">輔助功能</string>
   <!-- Preference to override the Mozilla account server -->
-  <string name="preferences_override_account_server">自訂 Mozilla 帳號伺服器</string>
+  <string name="preferences_override_account_server" tools:ignore="BrandUsage">自訂 Mozilla 帳號伺服器</string>
   <!-- Preference to override the Sync token server -->
   <string name="preferences_override_sync_tokenserver">自訂同步伺服器</string>
   <!-- Preference category for account information -->
@@ -981,7 +877,7 @@
   <!-- Preference description shown in the banner prompting the user to sign in for sync features -->
   <string name="preferences_sign_in_description">同步分頁、書籤、密碼等資訊。</string>
   <!-- Preference shown instead of account display name while account profile information isn't available yet. -->
-  <string name="preferences_account_default_name_2">Mozilla 帳號</string>
+  <string name="preferences_account_default_name_2" tools:ignore="BrandUsage">Mozilla 帳號</string>
   <!-- Preference text for account title when there was an error syncing FxA -->
   <string name="preferences_account_sync_error">重新連線，以恢復同步</string>
   <!-- Preference for language -->
@@ -1029,7 +925,7 @@
   <!-- Summary for preference to show Firefox Suggest search suggestions for web content -->
   <string name="preferences_show_nonsponsored_suggestions_summary">取得您搜尋內容的相關建議</string>
   <!-- Preference title for switch preference to show search optimization cards -->
-  <string name="preferences_show_search_optimization_cards">一邊打字，一邊從 Mozilla 取得建議</string>
+  <string name="preferences_show_search_optimization_cards" tools:ignore="BrandUsage">一邊打字，一邊從 Mozilla 取得建議</string>
   <!-- Preference for link sharing -->
   <string name="preferences_link_sharing">鏈結分享</string>
   <!-- Title for the link sharing toggle. %1$s is replaced by the brand name (e.g. Firefox). -->
@@ -1141,10 +1037,12 @@
   <string name="customize_toggle_pocket_sponsored">贊助內容</string>
   <!-- Title for the opening wallpaper settings screen -->
   <string name="customize_wallpapers">背景圖</string>
+  <!-- Label for the menu item that opens the wallpaper settings screen. -->
+  <string name="browser_menu_change_wallpaper">更改背景圖</string>
   <!-- Title for the customize home screen section with sponsored shortcuts. -->
   <string name="customize_toggle_contile">贊助捷徑</string>
   <!-- Title for the customize home screen section that toggles the Homepage sports widget. -->
-  <string name="customize_toggle_world_cup" tools:ignore="UnusedResources">世界盃足球賽</string>
+  <string name="customize_toggle_world_cup">世界盃足球賽</string>
   <!--
     Wallpapers
 
@@ -1357,7 +1255,7 @@
   <string name="preferences_usage_data_description_1" tools:ignore="BrandUsage">關於您的裝置、硬體設定，以及您的使用方式，可幫助我們為所有使用者改進 Firefox 功能、效能與穩定度。</string>
   <!-- Preference switch for daily usage ping data collection -->
   <string name="preferences_daily_usage_ping_title">每日使用情況回報</string>
-  <string name="preferences_daily_usage_ping_description">此資訊可幫助 Mozilla 估算活躍使用者數。</string>
+  <string name="preferences_daily_usage_ping_description" tools:ignore="BrandUsage">此資訊可幫助 Mozilla 估算活躍使用者數。</string>
   <string name="preferences_daily_usage_ping_learn_more">了解每日使用情況回報的更多資訊</string>
   <!-- Title for the crash reporting option in the privacy preferences dialog shown during onboarding. -->
   <string name="crash_reporting_snack_bar_message">已送出報告</string>
@@ -1383,7 +1281,7 @@
   <!-- Title for studies preferences -->
   <string name="preference_experiments_2">使用者研究</string>
   <!-- Summary for studies preferences -->
-  <string name="preference_experiments_summary_2">允許 Mozilla 安裝執行使用者研究</string>
+  <string name="preference_experiments_summary_2" tools:ignore="BrandUsage">允許 Mozilla 安裝執行使用者研究</string>
   <!--
     Turn On Sync Preferences
 
@@ -1484,8 +1382,6 @@
   <string name="library_desktop_bookmarks_unfiled">其他書籤</string>
   <!-- Option in Library to open History page -->
   <string name="library_history">瀏覽紀錄</string>
-  <!-- Option in Library to open a new tab -->
-  <string name="library_new_tab">開新分頁</string>
   <!-- Settings Page Title -->
   <string name="settings_title">設定</string>
   <!-- Content description (not visible, for screen readers etc.): "Close button for library settings" -->
@@ -2067,6 +1963,14 @@
   <!-- The error message of the URL text field when an invalid URL has been entered. -->
   <string name="webcompat_reporter_url_error_invalid">請輸入有效網址</string>
   <!-- The label/title of a field in the Web Compat Reporter feature for explaining a high-level reason why the site is broken. -->
+  <string name="webcompat_reporter_label_whats_broken_3">哪個部分不正常？</string>
+  <!-- Content description for the icon button that clears the selected broken site reason in the WebCompat Reporter. -->
+  <string name="webcompat_reporter_clear_reason_content_description">清除選擇的原因</string>
+  <!-- The error message of the description when the user selects "Something else" as the reason, but left the description empty or too short. -->
+  <string name="webcompat_reporter_description_error">請輸入至少 10 個字元</string>
+  <!-- The label/title of a mandatory field in the Web Compat Reporter feature for adding additional information. -->
+  <string name="webcompat_reporter_label_mandatory_description">請詳細描述問題，幫助我們調查問題</string>
+  <!-- The label/title of a field in the Web Compat Reporter feature for explaining a high-level reason why the site is broken. -->
   <string name="webcompat_reporter_label_whats_broken_2">哪個部分故障了？</string>
   <!-- The placeholder text for the dropdown where a user selects a high-level reason why the site is broken. -->
   <string name="webcompat_reporter_choose_reason_2">選擇原因</string>
@@ -2080,6 +1984,8 @@
   <string name="webcompat_reporter_add_more_info">加入更多資訊</string>
   <!-- The button text for the cancel button to leave the Web Compat Reporter feature. -->
   <string name="webcompat_reporter_cancel">取消</string>
+  <!-- The button text for the send button to submit the provided form data. -->
+  <string name="webcompat_reporter_send_report">傳送報告</string>
   <!-- The button text for the send button to submit the provided form data. -->
   <string name="webcompat_reporter_send">傳送</string>
   <!-- Text for a snackbar to confirm the successful submission of a WebCompat report. -->
@@ -2100,6 +2006,12 @@
   <string name="webcompat_reporter_preview_bottom_sheet_header">回報預覽</string>
   <!-- Label for the “Send” button shown in the WebCompat Report preview panel, which the user taps to submit the report. -->
   <string name="webcompat_reporter_preview_bottom_sheet_send">傳送</string>
+  <!-- Title for the Edit URL confirmation dialog in the WebCompatReporter -->
+  <string name="webcompat_reporter_edit_url_dialog_title">編輯網址</string>
+  <!-- Text shown on the save button for the Edit URL confirmation dialog in the WebCompatReporter. -->
+  <string name="webcompat_reporter_edit_url_dialog_save">儲存</string>
+  <!-- Text shown on the dismiss button for the Edit URL confirmation dialog in the WebCompatReporter. -->
+  <string name="webcompat_reporter_edit_url_dialog_dismiss">知道了！</string>
   <!--
     These reason strings are dropdown options on a WebCompat reporter form, indicating what is broken on the site.
 
@@ -2119,6 +2031,10 @@
   <!-- Broken site reason text for site asked to turn off ad blocker -->
   <string name="webcompat_reporter_reason_turn_off_adblocker">網站要求關閉廣告追蹤器</string>
   <!-- Broken site reason text for browser isn’t supported or blocked -->
+  <string name="webcompat_reporter_reason_notsupported_2">不支援或無法使用瀏覽器</string>
+  <!-- Broken site reason text for the site being deceptive -->
+  <string name="webcompat_reporter_reason_site_is_deceptive">是詐騙網站</string>
+  <!-- Broken site reason text for browser isn’t supported or blocked -->
   <string name="webcompat_reporter_reason_notsupported">不支援或無法使用瀏覽器</string>
   <!-- Broken site reason text for something else -->
   <string name="webcompat_reporter_reason_other">其他原因</string>
@@ -2129,7 +2045,7 @@
   -->
   <string name="tab_crash_title_2">很抱歉，%1$s 無法載入該頁面。</string>
   <!-- Send crash report checkbox text on the tab crash page -->
-  <string name="tab_crash_send_report">傳送錯誤報告給 Mozilla</string>
+  <string name="tab_crash_send_report" tools:ignore="BrandUsage">傳送錯誤報告給 Mozilla</string>
   <!-- Close tab button text on the tab crash page -->
   <string name="tab_crash_close">關閉分頁</string>
   <!-- Restore tab button text on the tab crash page -->
@@ -2228,12 +2144,8 @@
   <string name="edit_bookmark_folder_fragment_title">編輯資料夾</string>
   <!-- Bookmark URL editing field label -->
   <string name="bookmark_url_label">網址</string>
-  <!-- Bookmark FOLDER editing field label -->
-  <string name="bookmark_folder_label">資料夾</string>
   <!-- Text indicating which folder a bookmark or folder will be saved in -->
   <string name="bookmark_save_in_label">儲存於</string>
-  <!-- Bookmark NAME editing field label -->
-  <string name="bookmark_name_label">名稱</string>
   <!-- Label for a text input field for a bookmark or folder name -->
   <string name="bookmark_name_label_normal_case">名稱</string>
   <!-- Bookmark select folder screen title -->
@@ -2277,12 +2189,8 @@
   <string name="bookmark_empty_list_root_title">將您最愛的書籤放在一起</string>
   <!-- Bookmark screen folder description. %s is the count of bookmark folder children -->
   <string name="bookmarks_folder_description">資料夾中的書籤數量：%s</string>
-  <!-- Description for the bookmark list empty state when you're not signed into sync. -->
-  <string name="bookmark_empty_list_guest_description">一邊上網，一邊存下網站。登入後即可取回其他已同步裝置上的書籤。</string>
   <!-- Text for the button to navigate to sync authentication -->
   <string name="bookmark_empty_list_guest_cta">登入 Sync</string>
-  <!-- Description for the bookmark list empty state when you're signed into sync. -->
-  <string name="bookmark_empty_list_authenticated_description">一邊上網，一邊存下網站。我們也會取回您在其他已同步裝置上的書籤。</string>
   <!-- Description for the bookmark list empty state when you're in an empty folder. -->
   <string name="bookmark_empty_list_folder_description">一邊上網，一邊加入書籤，這樣之後就可以再找回您最愛的網站。</string>
   <!-- Description for the add new folder button when selecting a folder. -->
@@ -2397,8 +2305,6 @@
   <string name="collections_header">收藏集</string>
   <!-- Content description (not visible, for screen readers etc.): Opens the collection menu when pressed -->
   <string name="collection_menu_button_content_description">收藏集選單</string>
-  <!-- Label to describe what collections are to a new user without any collections -->
-  <string name="no_collections_description2">收集對您來說重要的東西。\n將類似的搜尋項目、網站、上網分頁收集起來，方便以後快速開啟。</string>
   <!-- Title for the "select tabs" step of the collection creator -->
   <string name="create_collection_select_tabs">選擇分頁</string>
   <!-- Title for the "select collection" step of the collection creator -->
@@ -2548,6 +2454,8 @@
   <string name="preferences_take_survey">填寫問卷</string>
   <!-- Preference for not taking the short survey. -->
   <string name="preferences_not_take_survey">不要，謝謝</string>
+  <!-- Error message shown in a Toast when the system fails to trigger the device uninstallation prompt. -->
+  <string name="uninstall_survey_error_failed">無法開啟系統解除安裝提示，請直接使用系統的解除安裝功能。</string>
   <!--
     Snackbar
 
@@ -2696,7 +2604,11 @@
     Link displayed in enhanced tracking protection panel to access tracking protection settings
   -->
   <string name="etp_settings">保護設定</string>
-  <!-- Preference title for enhanced tracking protection settings -->
+  <!--
+    Enhanced Tracking Protection
+
+    Preference title for enhanced tracking protection settings
+  -->
   <string name="preference_enhanced_tracking_protection">加強型追蹤保護</string>
   <!-- Preference summary for enhanced tracking protection settings on/off switch -->
   <string name="preference_enhanced_tracking_protection_summary">現在提供 Total Cookie Protection 功能，這是我們針對跨網站追蹤器迄今最強大的屏障。</string>
@@ -2848,8 +2760,6 @@
   <string name="etp_suspected_fingerprinters_description">開啟數位指紋追蹤程式保護，阻擋疑似是數位指紋追蹤程式的內容。</string>
   <!-- Category of trackers (fingerprinters) that can be blocked by Enhanced Tracking Protection -->
   <string name="etp_known_fingerprinters_title">已知的數位指紋追蹤程式</string>
-  <!-- Label for the fingerprinters category shown in the tracking protections dashboard breakdown -->
-  <string name="tracking_dashboard_fingerprinters_category_name">數位指紋追蹤程式</string>
   <!--
     Description of the SmartBlock Enhanced Tracking Protection feature. The * symbol is intentionally hardcoded here,
     as we use it on the UI to indicate which trackers have been partially unblocked.
@@ -3142,8 +3052,6 @@
   <string name="ip_protection_promo_headline">%s 內建的 VPN</string>
   <!-- Body text for the browser VPN promo card . %s is a learn more link using ip_protection_learn_more as text. -->
   <string name="ip_protection_promo_body_2">隱藏您的實際所在位置，就算是使用公共 Wi-Fi 也能獲得額外保護。%s</string>
-  <!-- Body text for the browser VPN promo card -->
-  <string name="ip_protection_promo_body">隱藏您的實際所在位置，就算是使用公共 Wi-Fi 也能獲得額外保護。</string>
   <!-- Link text that opens additional information about the browser VPN -->
   <string name="ip_protection_learn_more">更多資訊</string>
   <!-- Label for the monthly data allowance section on the browser VPN settings screen -->
@@ -3207,6 +3115,14 @@
   <string name="ip_protection_onboarding_body">透過隱藏您的實際所在位置，%1$s。就算使用公共 Wi-Fi 也沒問題。每月有 %2$d GB 免費流量。</string>
   <!-- Used as text for a link in ip_protection_onboarding_body. Make sure to adapt capitalization if the link is in the middle of the sentence. -->
   <string name="ip_protection_onboarding_body_link">為上網再加一層保護</string>
+  <!--
+    The body of the VPN onboarding card for a promotion that provides unlimited data bandwidth for a certain time.
+    %1$s is a localized date (for example "Jun 9") indicating the end of the promotional period.
+    %2$s is a link using ip_protection_onboarding_body_link_promo (“Learn more”) as text. It links to a support article about VPN on Firefox.
+  -->
+  <string name="ip_protection_onboarding_body_promo">開啟此功能即可讓您的上網過程更有隱私、更難被追蹤。立即試用，即可在 %1$s 前享用無限頻寬。%2$s</string>
+  <!-- Used as text for a link in ip_protection_onboarding_body. Make sure to adapt capitalization if the link is in the middle of the sentence. -->
+  <string name="ip_protection_onboarding_body_link_promo">更多資訊</string>
   <!-- Label for the dismiss button on the onboarding bottom sheet. -->
   <string name="ip_protection_onboarding_not_now_button">現在不要</string>
   <!-- Snackbar (in-app pop-up notification) text to signal the browser VPN connection error -->
@@ -3216,6 +3132,8 @@
     %1$d is the total monthly allowance in GB (for example "50").
   -->
   <string name="ip_protection_data_limit_reached_snackbar">已使用 %1$d GB VPN 流量。將於下個月重設存取權限。</string>
+  <!-- Snackbar (in-app pop-up notification) action button text that takes the user to the VPN settings screen. -->
+  <string name="ip_protection_data_limit_reached_snackbar_action">設定</string>
   <!--
     Autofill
 
@@ -3522,6 +3440,8 @@
   <string name="homepage_shortcuts_add_website">新增網站</string>
   <!-- Title text for the "Enter a Website URL" dialog for adding a shortcut. -->
   <string name="homepage_shortcuts_add_website_title">輸入網站網址</string>
+  <!-- Title for the "Popular sites" section in the "Add to homepage" bottom sheet. -->
+  <string name="homepage_shortcuts_popular_sites">熱門網站</string>
   <!-- Title text displayed in the dialog when shortcuts limit is reached. -->
   <string name="shortcut_max_limit_title">已達捷徑數量限制</string>
   <!-- Content description text displayed in the dialog when shortcut limit is reached. -->
@@ -3608,8 +3528,6 @@
   <string name="default_browser_experiment_card_title">切換您的預設瀏覽器</string>
   <!-- Default browser card text -->
   <string name="default_browser_experiment_card_text" tools:ignore="BrandUsage">設定使用 Firefox 自動開啟網站、郵件、簡訊當中的鏈結。</string>
-  <!-- Content description for close button in collection placeholder. -->
-  <string name="remove_home_collection_placeholder_content_description">移除</string>
   <!-- Content description radio buttons with a link to more information -->
   <string name="radio_preference_info_content_description">點這裡取得詳細資訊</string>
   <!-- Content description for the action bar "up" button -->
@@ -3641,20 +3559,10 @@
     Action label for elements that can be collapsed if interacting with them. Talkback will append this to say "Double tap to collapse".
   -->
   <string name="a11y_action_label_collapse">摺疊</string>
-  <!-- Current state for elements that can be collapsed if interacting with them. Talkback will dictate this after a state change. -->
-  <string name="a11y_state_label_collapsed">已摺疊</string>
   <!-- Action label for elements that can be expanded if interacting with them. Talkback will append this to say "Double tap to expand". -->
   <string name="a11y_action_label_expand">展開</string>
-  <!-- Current state for elements that can be expanded if interacting with them. Talkback will dictate this after a state change. -->
-  <string name="a11y_state_label_expanded">已展開</string>
   <!-- Action label for links to a website containing documentation about a wallpaper collection. Talkback will append this to say "Double tap to open link to learn more about this collection". -->
   <string name="a11y_action_label_wallpaper_collection_learn_more">開啟鏈結，了解此收藏集的更多資訊</string>
-  <!-- Content description for headings announced by accessibility service. %s is the text of the heading. Talkback will announce the text and then speak the word "Heading" indicating to the user that this text is a heading for a section. -->
-  <string name="a11y_heading">標題 %s</string>
-  <!-- Title for dialog displayed when trying to access links present in a text. -->
-  <string name="a11y_links_title">鏈結</string>
-  <!-- Additional content description for text bodies that contain urls. -->
-  <string name="a11y_links_available">可用鏈結</string>
   <!-- Translations feature -->
 
   <!--
@@ -3958,6 +3866,55 @@
   <string name="protection_panel_privacy_and_security_settings_2">隱私權設定</string>
   <!-- Title text for the protection panel permissions section. -->
   <string name="protection_panel_permissions_title">權限</string>
+  <plurals name="trackers_blocked_panel_total_num_trackers_blocked_2">
+    <!--
+      Text for displaying the total number of trackers blocked in the trackers blocked panel.
+      %1$d is a placeholder for the number of trackers blocked.
+    -->
+    <item quantity="other">已封鎖此網站上的 %1$d 組追蹤器</item>
+  </plurals>
+  <plurals name="trackers_blocked_panel_num_social_media_trackers">
+    <!--
+      Text for displaying in the trackers blocked panel the total number of blocked social media trackers.
+      %1$d is a placeholder for the number of social media trackers blocked.
+    -->
+    <item quantity="other">%1$d 組社群網路追蹤器</item>
+  </plurals>
+  <plurals name="trackers_blocked_panel_num_cross_site_cookies">
+    <!--
+      Text for displaying in the trackers blocked panel the total number of blocked cross-site tracking cookies.
+      %1$d is a placeholder for the number of cross-site tracking cookies blocked.
+    -->
+    <item quantity="other">%1$d 組跨網站追蹤 Cookie</item>
+  </plurals>
+  <plurals name="trackers_blocked_panel_num_cryptominers">
+    <!--
+      Text for displaying in the trackers blocked panel the total number of blocked cryptomining scripts.
+      %1$d is a placeholder for the number of cryptominers blocked.
+    -->
+    <item quantity="other">%1$d 組加密貨幣採礦程式</item>
+  </plurals>
+  <plurals name="trackers_blocked_panel_num_fingerprinters">
+    <!--
+      Text for displaying in the trackers blocked panel the total number of blocked fingerprinter scripts.
+      %1$d is a placeholder for the number of fingerprinters blocked.
+    -->
+    <item quantity="other">%1$d 組數位指紋追蹤程式</item>
+  </plurals>
+  <plurals name="trackers_blocked_panel_num_trackers_2">
+    <!--
+      Text for displaying in the trackers blocked panel the total number of blocked generic tracking scripts.
+      %1$d is a placeholder for the number of trackers blocked.
+    -->
+    <item quantity="other">%1$d 組追蹤用內容</item>
+  </plurals>
+  <plurals name="trackers_blocked_panel_num_trackers_blocked_this_week_2">
+    <!--
+      Text for displaying the number of trackers blocked this week in the trackers blocked panel.
+      %1$d is a placeholder for the number of trackers blocked this week.
+    -->
+    <item quantity="other">本週已封鎖 %1$d 組追蹤器</item>
+  </plurals>
   <!--
     Text for displaying the total number of trackers blocked in the trackers blocked panel.
     %d is a placeholder for the number of trackers blocked.
@@ -3969,11 +3926,6 @@
     %d is a placeholder for the number of trackers blocked.
   -->
   <string name="trackers_blocked_panel_categorical_num_trackers_blocked">%s：%d 組</string>
-  <!--
-    Text for displaying the number of trackers blocked this week in the trackers blocked panel.
-    %d is a placeholder for the number of trackers blocked this week.
-  -->
-  <string name="trackers_blocked_panel_num_trackers_blocked_this_week">本週封鎖的追蹤器：%d</string>
   <!--
     Description text for a dialog confirming whether the user wants to delete all data for current site.
     %s is a placeholder for the base domain of website.
@@ -3994,6 +3946,8 @@
     %s is a placeholder for the name of the certificate authority that issued the certificate.
   -->
   <string name="connection_security_panel_verified_by">由 %s 驗證</string>
+  <!-- Content description (not visible, for screen readers etc.) for the handle used to drag the protections dashboard to the bottom of the screen and close it. -->
+  <string name="tracker_protections_dashboard_close_handlebar_content_description">關閉儀表板</string>
   <!--
     Text for the connection security panel when the site uses a QWAC.
     %s is a placeholder for the organization for which the certificate was issued.
@@ -4117,6 +4071,26 @@
   <string name="microsurvey_sync_title" tools:ignore="BrandUsage,UnusedResources">您對 Firefox 的同步功能使用體驗滿意嗎？</string>
   <!-- Text shown in the survey title for 'describe your experience so far' microsurvey. Note: The word "Firefox" should NOT be translated. -->
   <string name="microsurvey_describe_your_experience_title" tools:ignore="BrandUsage,UnusedResources">請幫助我們改進 Firefox。下列選項當中哪一項最符合您目前為止的使用體驗？</string>
+  <!--
+    Uninstall Survey
+
+    Title text for the uninstall survey dialog, asking the user for the reason they are removing the app
+  -->
+  <string name="microsurvey_uninstall_survey_title">您的意見對我們很重要。請讓我們知道移除原因？</string>
+  <!-- Uninstall survey answer option -->
+  <string name="uninstall_survey_option_1_v2">網站速度很慢或不穩定</string>
+  <!-- Uninstall survey answer option -->
+  <string name="uninstall_survey_option_2_v2">網站無法正常運作</string>
+  <!-- Uninstall survey answer option -->
+  <string name="uninstall_survey_option_3_v2">缺少我需要的功能</string>
+  <!-- Uninstall survey answer option -->
+  <string name="uninstall_survey_option_4_v2">無法影片、下載檔案或播放媒體內容</string>
+  <!-- Uninstall survey answer option -->
+  <string name="uninstall_survey_option_5_v2">很難使用，或設計不良</string>
+  <!-- Uninstall survey answer option -->
+  <string name="uninstall_survey_option_6_v2">有隱私權或安全性疑慮</string>
+  <!-- Button label shown at the bottom of the uninstall survey -->
+  <string name="uninstall_survey_button_label">送出意見回饋並移除</string>
   <!--
     Accessibility
 
@@ -4566,7 +4540,7 @@
   <!-- Sports widget menu item to change the selected team. -->
   <string name="sports_widget_change_team">更換隊伍</string>
   <!-- Sports widget menu item to get a custom wallpaper for the widget. -->
-  <string name="sports_widget_get_custom_wallpaper">獲得自訂桌布</string>
+  <string name="sports_widget_get_custom_wallpaper">獲得自訂背景圖</string>
   <!-- Sports widget menu item to remove the widget from the homepage. -->
   <string name="sports_widget_remove">移除</string>
   <!-- Sports widget card title shown after a team is eliminated, asking if the user still wants to continue following the soccer tournament. -->
@@ -4584,7 +4558,7 @@
   <!-- Sports widget match status label shown during halftime of a match. -->
   <string name="sports_widget_halftime" tools:ignore="UnusedResources">中場休息</string>
   <!-- Sports widget match status label shown during extra time of a match. -->
-  <string name="sports_widget_extra_time" tools:ignore="UnusedResources">加時</string>
+  <string name="sports_widget_extra_time">加時</string>
   <!-- Sports widget match status label shown during penalties of a match. -->
   <string name="sports_widget_penalties">PK 大戰</string>
   <!--
@@ -4657,7 +4631,7 @@
     Content description (for accessibility, not displayed) for a page within the World Cup final results carousel.
     %1$d is the current page number, and %2$d is the total number of pages.
   -->
-  <string name="sports_widget_final_results_page_content_description" tools:ignore="UnusedResources">世界盃足球賽最終結果，第 %1$d 頁，共 %2$d 頁</string>
+  <string name="sports_widget_final_results_page_content_description" tools:ignore="UnusedResources">世界盃足球賽最終成績，第 %1$d 頁，共 %2$d 頁</string>
   <!-- Content description (for accessibility, not displayed) for the World Cup final results page. -->
   <string name="sports_widget_final_results_content_description">世界盃足球賽最終成績</string>
   <!-- Content description (for accessibility, not displayed) for the remove button that removes the sports widget from the homepage. -->
@@ -4696,6 +4670,44 @@
   <string name="privacy_notice_updated_homepage_message_privacy_notice" tools:ignore="UnusedResources">隱私權公告</string>
   <!-- The second active link used in privacy_notice_updated_homepage_message -->
   <string name="privacy_notice_updated_homepage_message_learn_more" tools:ignore="UnusedResources">更多資訊</string>
+  <!-- Google Lens prototype related strings -->
+  <string name="preferences_debug_settings_google_lens_integration">開啟 Google 智慧鏡頭整合</string>
+  <!-- Lens image search button content description -->
+  <string name="lens_search_content_description">以圖搜圖</string>
+  <!-- Content description for the gallery picker button in the Lens camera screen -->
+  <string name="content_description_gallery">從圖庫選擇照片，傳送到 Google 智慧鏡頭</string>
+  <!-- Content description for the shutter button in the Lens camera screen -->
+  <string name="content_description_take_photo">拍照後傳送到 Google 智慧鏡頭</string>
+  <!-- Image context menu entry that sends the long-pressed image to Google Lens -->
+  <string name="context_menu_open_image_with_google_lens">使用 Google 智慧鏡頭搜尋</string>
+  <!-- Toast shown when the user denies the camera permission requested by the Lens camera screen -->
+  <string name="lens_camera_permission_denied">存取被拒</string>
+  <!--
+    Title shown at the top of the camera screen, next to the close button, telling the
+    user that the photo they capture will be sent to Google Lens for a visual search.
+  -->
+  <string name="lens_camera_title_lens">Google 智慧鏡頭</string>
+  <!--
+    Title shown at the top of the camera screen, next to the close button, telling the
+    user that the camera is being used to scan a QR code.
+  -->
+  <string name="lens_camera_title_qr">QR Code</string>
+  <!-- Title for the Google Lens Search Settings page feature toggle -->
+  <string name="search_settings_google_lens_title">開啟 Google 智慧鏡頭搜尋功能</string>
+  <!-- Description for the Google Lens Search Settings page feature toggle -->
+  <string name="search_settings_google_lens_description">將圖片或照片傳送到 Google 進行圖片搜尋。</string>
+  <!-- Caption shown under the Google Lens toggle clarifying when the feature is available -->
+  <string name="preferences_google_lens_availability_caption">僅在上方有開啟 Google，且 Google 也是您當下選用的搜尋引擎時可以使用。</string>
+  <!-- Title for the Google Lens AI feature toggle -->
+  <string name="ai_controls_google_lens_title">Google 智慧鏡頭</string>
+  <!-- Description for the Google Lens AI feature toggle -->
+  <string name="ai_controls_google_lens_description">將圖片或照片傳送到 Google 進行圖片搜尋。</string>
+  <!-- Content description for the Google Lens half of the camera mode toggle -->
+  <string name="lens_camera_mode_lens">Google 智慧鏡頭</string>
+  <!-- Content description for the QR scanner half of the camera mode toggle -->
+  <string name="lens_camera_mode_qr">QR Code 掃描器</string>
+  <!-- Toast shown when the user picks an image from the gallery in QR mode but no QR code is found in it -->
+  <string name="lens_camera_qr_no_code_found">圖片中找不到 QR Code</string>
   <!--
     Firefox Labs
 
@@ -4732,6 +4744,8 @@
   <string name="firefox_labs_feature_enable_dialog_message">重新啟動 %s 才能開啟此功能。</string>
   <!-- The description text that is displayed in the confirmation dialog on the Firefox Labs screen for toggling "off" experimental features. %s is the name of the app (for example "Firefox Nightly") -->
   <string name="firefox_labs_feature_disable_dialog_message">重新啟動 %s 才能關閉此功能。</string>
+  <!-- Helper text shown beneath a Firefox Labs item when it is blocked from being turned on. -->
+  <string name="firefox_labs_feature_conflict">無法試用此功能。</string>
   <!-- Text displayed on the Firefox Labs screen when there are no Labs experimental features present. -->
   <string name="firefox_labs_no_labs_available_description">目前沒有可以嘗試的實驗性功能</string>
 </resources>

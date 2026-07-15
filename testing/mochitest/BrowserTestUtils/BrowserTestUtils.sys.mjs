@@ -1124,7 +1124,7 @@ export var BrowserTestUtils = {
    *
    * @param {object} [options]
    *        Options to pass to OpenBrowserWindow. Additionally, supports:
-   * @param {bool} [options.waitForTabURL]
+   * @param {string} [options.waitForTabURL]
    *        Forces the initial browserLoaded check to wait for the tab to
    *        load the given URL (instead of about:blank)
    *
@@ -1700,19 +1700,21 @@ export var BrowserTestUtils = {
    * @param {object}  options   The options to pass to MutationObserver.observe();
    * @param {function} checkFn  Function that returns true when it wants the promise to be
    * resolved.
+   * @returns {Promise<any>}    The value returned by `checkFn`.
    */
   waitForMutationCondition(target, options, checkFn) {
-    if (checkFn()) {
-      return Promise.resolve();
+    let retVal;
+    if ((retVal = checkFn())) {
+      return Promise.resolve(retVal);
     }
     return new Promise(resolve => {
       // @backward-compat { version 152 }
       // Get rid of the documentGlobal fallback once 152 makes it to release.
       let win = target.documentGlobal || target.ownerGlobal;
       let obs = new win.MutationObserver(function () {
-        if (checkFn()) {
+        if ((retVal = checkFn())) {
           obs.disconnect();
-          resolve();
+          resolve(retVal);
         }
       });
       obs.observe(target, options);
@@ -2951,6 +2953,42 @@ export var BrowserTestUtils = {
     await wizardReady;
 
     return wizardTab;
+  },
+
+  /**
+   * Run a query selector that pierces into open and closed Shadow DOM roots.
+   *
+   * @param {Document | ShadowRoot | Element} root
+   * @param {string} selector
+   * @returns {Element | null}
+   */
+  querySelectorDeep(root, selector) {
+    if (!root) {
+      return null;
+    }
+
+    const direct = root.querySelector?.(selector);
+    if (direct) {
+      return direct;
+    }
+
+    const doc = root.ownerDocument ?? root;
+    const treeWalker = doc.createTreeWalker(root, NodeFilter.SHOW_ELEMENT);
+
+    // Walk child elements to find other shadow roots.
+    let current = treeWalker.currentNode;
+    while (current) {
+      const shadow = current.openOrClosedShadowRoot;
+      if (shadow) {
+        const match = BrowserTestUtils.querySelectorDeep(shadow, selector);
+        if (match) {
+          return match;
+        }
+      }
+      current = treeWalker.nextNode();
+    }
+
+    return null;
   },
 
   /**

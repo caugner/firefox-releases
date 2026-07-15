@@ -10,14 +10,26 @@
 
 namespace mozilla::dom {
 
+// https://html.spec.whatwg.org/#concept-select-option-list
 bool HTMLOptionsCollection::IsValidOption(const HTMLOptionElement& aOption,
                                           const HTMLSelectElement& aRoot) {
-  auto* parent = aOption.GetParent();
-  if (parent == &aRoot) {
-    return true;
+  bool seenOptgroup = false;
+  for (nsINode* ancestor = aOption.GetParent(); ancestor;
+       ancestor = ancestor->GetParentNode()) {
+    if (ancestor == &aRoot) {
+      return true;
+    }
+    if (HTMLOptionElement::IsOptionListBoundary(*ancestor)) {
+      return false;
+    }
+    if (ancestor->IsHTMLElement(nsGkAtoms::optgroup)) {
+      if (seenOptgroup) {
+        return false;
+      }
+      seenOptgroup = true;
+    }
   }
-  return parent->IsHTMLElement(nsGkAtoms::optgroup) &&
-         parent->GetParent() == &aRoot;
+  return false;
 }
 
 static bool MatchOption(Element* aElement, int32_t aNamespaceID, nsAtom* aAtom,
@@ -79,16 +91,19 @@ JSObject* HTMLOptionsCollection::WrapObject(JSContext* aCx,
 }
 
 void HTMLOptionsCollection::SetLength(uint32_t aLength, ErrorResult& aError) {
-  Select()->SetLength(aLength, aError);
+  RefPtr<HTMLSelectElement> select = Select();
+  select->SetLength(aLength, aError);
 }
 
 void HTMLOptionsCollection::IndexedSetter(uint32_t aIndex,
                                           HTMLOptionElement* aOption,
                                           ErrorResult& aError) {
+  RefPtr<HTMLSelectElement> select = Select();
+
   // if the new option is null, just remove this option.  Note that it's safe
   // to pass a too-large aIndex in here.
   if (!aOption) {
-    Select()->Remove(aIndex);
+    select->Remove(aIndex);
 
     // We're done.
     return;
@@ -107,7 +122,7 @@ void HTMLOptionsCollection::IndexedSetter(uint32_t aIndex,
   NS_ASSERTION(aIndex <= mElements.Length(), "SetLength lied");
 
   if (aIndex == mElements.Length()) {
-    Select()->AppendChild(*aOption, aError);
+    select->AppendChild(*aOption, aError);
     return;
   }
 
@@ -138,9 +153,13 @@ void HTMLOptionsCollection::SetSelectedIndex(int32_t aSelectedIndex) {
 void HTMLOptionsCollection::Add(
     const HTMLOptionElementOrHTMLOptGroupElement& aElement,
     const Nullable<HTMLElementOrLong>& aBefore, ErrorResult& aError) {
-  Select()->Add(aElement, aBefore, aError);
+  RefPtr<HTMLSelectElement> select = Select();
+  select->Add(aElement, aBefore, aError);
 }
 
-void HTMLOptionsCollection::Remove(int32_t aIndex) { Select()->Remove(aIndex); }
+void HTMLOptionsCollection::Remove(int32_t aIndex) {
+  RefPtr<HTMLSelectElement> select = Select();
+  select->Remove(aIndex);
+}
 
 }  // namespace mozilla::dom

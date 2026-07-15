@@ -31,6 +31,10 @@
   <string name="tab_search_hint">Otsi kaartidest</string>
   <!-- Placeholder text shown in the search bar when using application search engines -->
   <string name="application_search_hint">Sisesta otsitav fraas</string>
+  <!-- The header text displayed on the private tabs page when no private tabs are open -->
+  <string name="tab_manager_empty_private_tabs_page_header">Privaatne veebilehitsemine</string>
+  <!-- The supplementary text displayed on the private tabs page when no private tabs are open. %1$s is the name of the app (for example "Firefox") -->
+  <string name="tab_manager_empty_private_tabs_page_description">%1$s ei mäleta ajalugu ega küpsiseid, aga uued järjehoidjad salvestatakse.</string>
   <!-- Tab tray multi select title in app bar. %1$d is the number of tabs selected -->
   <string name="tab_tray_multi_select_title">%1$d kaarti valitud</string>
   <!-- Label of button in create collection dialog for creating a new collection -->
@@ -52,9 +56,11 @@
   <!-- Text for the menu button to remove a recently saved bookmark from the user's home screen -->
   <string name="home_bookmarks_menu_item_remove">Eemalda</string>
   <!-- About content. %1$s is the name of the app (for example "Firefox"). -->
-  <string name="about_content">%1$s on Mozilla poolt toodetud.</string>
+  <string name="about_content" tools:ignore="BrandUsage">%1$s on Mozilla poolt toodetud.</string>
   <!-- Private Browsing -->
   <string name="private_browsing_common_myths">Levinumad müüdid privaatse veebilehitsemise kohta</string>
+  <!-- Text to be announced by the accessibility service to inform the user that the private browsing mode is currently active. -->
+  <string name="private_browsing_a11y_session_announcement">Privaatse veebilehitsemise seanss</string>
   <!--
     True Private Browsing Mode
 
@@ -165,6 +171,13 @@
   <string name="browser_menu_stop">Peata</string>
   <!-- Browser menu button that opens the extensions manager -->
   <string name="browser_menu_extensions">Lisad</string>
+  <!-- Browser menu group that contains additional settings in collapsed state -->
+  <string name="browser_menu_more_settings">Rohkem</string>
+  <!--
+    Content description (not visible, for screen readers etc.): Label for plus icon used to add extension.
+    %1$s is the name of the extension (for example: ClearURLs).
+  -->
+  <string name="browser_menu_extension_plus_icon_content_description_2">Lisa %1$s</string>
   <!-- Browser menu button that opens account settings -->
   <string name="browser_menu_account_settings">Konto andmed</string>
   <!-- Browser menu button that opens the settings menu -->
@@ -207,12 +220,14 @@
   <string name="browser_menu_new_private_tab">Uus privaatne kaart</string>
   <!-- Browser menu label that navigates to the Password screen -->
   <string name="browser_menu_passwords">Paroolid</string>
-  <!--
-    Browser Toolbar
-
-    Content description for the Home screen button on the browser toolbar
-  -->
-  <string name="browser_toolbar_home">Avaleht</string>
+  <!-- Browser menu label that bookmarks the currently visited page -->
+  <string name="browser_menu_bookmark_this_page_2">Lisa leht järjehoidjatesse</string>
+  <!-- Browser menu label that the saves the currently visited page as a PDF -->
+  <string name="browser_menu_save_as_pdf_2">Salvesta PDFina</string>
+  <!-- Browser menu label for navigating to the translation feature, which provides language translation options the current visited page -->
+  <string name="browser_menu_translate_page_2">Tõlgi leht</string>
+  <!-- Browser menu label for the print feature -->
+  <string name="browser_menu_print_2">Prindi</string>
   <!--
     Browser Toolbar
 
@@ -229,12 +244,6 @@
   <string name="default_locale_text">Järgitakse seadme keelt</string>
   <!-- Placeholder text shown in the search bar before a user enters text -->
   <string name="locale_search_hint">Otsi keelt</string>
-  <!--
-    Search Fragment
-
-    Button in the search view that lets a user search by scanning a QR code
-  -->
-  <string name="search_scan_button_2">Skanni QR-kood</string>
   <!--
     Search Fragment
 
@@ -274,14 +283,6 @@
     Content description (not visible, for screen readers etc.): Close button for the home onboarding dialog
   -->
   <string name="onboarding_home_content_description_close_button">Sulge</string>
-  <!-- Text for the button dismiss the screen and move on with the flow -->
-  <string name="juno_onboarding_default_browser_negative_button" tools:ignore="UnusedResources">Mitte praegu</string>
-  <!-- Text for the button dismiss the screen and move on with the flow -->
-  <string name="juno_onboarding_sign_in_negative_button" tools:ignore="UnusedResources">Mitte praegu</string>
-  <!-- Text for the button dismiss the screen and move on with the flow -->
-  <string name="juno_onboarding_enable_notifications_negative_button" tools:ignore="UnusedResources">Mitte praegu</string>
-  <!-- Text for the button to dismiss the screen and move on with the flow -->
-  <string name="juno_onboarding_add_search_widget_negative_button" tools:ignore="UnusedResources">Mitte praegu</string>
   <!-- Title for the crash reporting option in the privacy preferences dialog shown during onboarding. -->
   <string name="onboarding_preferences_dialog_crash_reporting_title">Vearaporteid saadetakse automaatselt</string>
   <!-- Description for the crash reporting option in the privacy preferences dialog shown during onboarding. -->
@@ -293,10 +294,6 @@
 
   <!-- ==== End of Project "Nova" onboarding strings ==== -->
 
-  <!-- Action label for toolbar options that can be selected. Talkback will append this to say "Double tap to select". -->
-  <string name="onboarding_customize_toolbar_a11y_action_label_select">valimiseks</string>
-  <!-- Action label for options that can be selected. Talkback will append this to say "Double tap to select". -->
-  <string name="onboarding_customize_theme_a11y_action_label_select">valimiseks</string>
   <!--
     Search Widget
 
@@ -444,6 +441,10 @@
   <string name="notifications_allowed_summary">Lubatud</string>
   <!-- Summary for notification preference indicating notifications are not allowed -->
   <string name="notifications_not_allowed_summary">Keelatud</string>
+  <!-- The title of the required permissions section from addon's permissions screen. -->
+  <string name="addons_permissions_heading_required_permissions">Nõutud õigused:</string>
+  <!-- The title of the required data collection permissions section from addon's permissions screen. -->
+  <string name="addons_permissions_heading_required_data_collection">Nõutud andmete kogumine:</string>
   <!-- Button caption to confirm the add-on collection configuration -->
   <string name="customize_addon_collection_ok">Olgu</string>
   <!-- Button caption to abort the add-on collection configuration -->
@@ -551,12 +552,12 @@
   <string name="preferences_usage_data_description_1" tools:ignore="BrandUsage">Andmed sinu seadme, riistvara konfiguratsiooni ja kasutuse kohta aitavad meil Firefoxi funktsioone, jõudlust ja stabiilsust täiustada.</string>
   <!-- Preference switch for daily usage ping data collection -->
   <string name="preferences_daily_usage_ping_title">Igapäevane kasutusping</string>
-  <string name="preferences_daily_usage_ping_description">See aitab Mozillal aktiivsete kasutajate arvu \u0020hinnata.</string>
+  <string name="preferences_daily_usage_ping_description" tools:ignore="BrandUsage">See aitab Mozillal aktiivsete kasutajate arvu \u0020hinnata.</string>
   <string name="preferences_daily_usage_ping_learn_more">Rohkem teavet igapäevasest kasutuspingust</string>
   <!-- Title for studies preferences -->
   <string name="preference_experiments_2">Uuringud</string>
   <!-- Summary for studies preferences -->
-  <string name="preference_experiments_summary_2">Võimaldab Mozillal paigaldada ja käivitada uuringuid</string>
+  <string name="preference_experiments_summary_2" tools:ignore="BrandUsage">Võimaldab Mozillal paigaldada ja käivitada uuringuid</string>
   <!-- Preference for reconnecting to FxA sync -->
   <string name="preferences_sync_sign_in_to_reconnect">Uue ühenduse loomiseks logi sisse</string>
   <!-- Preference for removing FxA account -->
@@ -575,6 +576,10 @@
   <string name="preference_top_toolbar">Üleval</string>
   <!-- Preference for using bottom toolbar -->
   <string name="preference_bottom_toolbar">All</string>
+  <!-- Preference for using simple toolbar -->
+  <string name="preference_simple_toolbar">Lihtne</string>
+  <!-- Preference for using expanded toolbar -->
+  <string name="preference_expanded_toolbar">Laiendatud</string>
   <!--
     Theme Preferences
 
@@ -615,8 +620,6 @@
   <string name="library_desktop_bookmarks_unfiled">Muud järjehoidjad</string>
   <!-- Option in Library to open History page -->
   <string name="library_history">Ajalugu</string>
-  <!-- Option in Library to open a new tab -->
-  <string name="library_new_tab">Uus kaart</string>
   <!-- Settings Page Title -->
   <string name="settings_title">Sätted</string>
   <!-- Content description (not visible, for screen readers etc.): "Close button for library settings" -->
@@ -789,8 +792,11 @@
     %1$d is the number of downloads selected
   -->
   <string name="download_multi_select_title">%1$d allalaadimist valitud</string>
+  <!-- Title for the dialog that is shown when there is not enough storage space to download a file. -->
+  <string name="download_file_has_not_enough_storage_dialog_title">Ei ole piisavalt ruumi</string>
   <!-- Text for the button to delete a single downloaded file item -->
   <string name="download_delete_item">Kustuta</string>
+  <string name="download_clear_search_description">Tühjenda</string>
   <!-- Text for the button to share the download URL -->
   <string name="download_share_url">Jaga URL-i</string>
   <!-- Text for the button to share the download file -->
@@ -858,7 +864,7 @@
   -->
   <string name="tab_crash_title_2">Vabandust. %1$sil pole selle lehe laadimine võimalik.</string>
   <!-- Send crash report checkbox text on the tab crash page -->
-  <string name="tab_crash_send_report">Mozillale saadetakse vearaport</string>
+  <string name="tab_crash_send_report" tools:ignore="BrandUsage">Mozillale saadetakse vearaport</string>
   <!-- Close tab button text on the tab crash page -->
   <string name="tab_crash_close">Sulge kaart</string>
   <!-- Restore tab button text on the tab crash page -->
@@ -896,12 +902,8 @@
   <string name="edit_bookmark_folder_fragment_title">Kausta muutmine</string>
   <!-- Bookmark URL editing field label -->
   <string name="bookmark_url_label">URL</string>
-  <!-- Bookmark FOLDER editing field label -->
-  <string name="bookmark_folder_label">KAUST</string>
   <!-- Text indicating which folder a bookmark or folder will be saved in -->
   <string name="bookmark_save_in_label">Salvestatakse</string>
-  <!-- Bookmark NAME editing field label -->
-  <string name="bookmark_name_label">NIMI</string>
   <!-- Label for a text input field for a bookmark or folder name -->
   <string name="bookmark_name_label_normal_case">Nimi</string>
   <!-- Bookmark select folder screen title -->
@@ -1003,6 +1005,8 @@
   <string name="studies_on">Sees</string>
   <!-- Summary of studies data on quit preference if it is set to off -->
   <string name="studies_off">Väljas</string>
+  <!-- Toggle if desktop site is turned off -->
+  <string name="browser_feature_desktop_site_off">Väljas</string>
   <!-- Category header of a preference that allows a user to alter settings related to web permissions. -->
   <string name="preferences_category_permissions">Õigused</string>
   <!-- Category header of a preference that allows a user to alter settings related to web content. -->
@@ -1017,8 +1021,6 @@
   <string name="collections_header">Kollektsioonid</string>
   <!-- Content description (not visible, for screen readers etc.): Opens the collection menu when pressed -->
   <string name="collection_menu_button_content_description">Kollektsioonide menüü</string>
-  <!-- Label to describe what collections are to a new user without any collections -->
-  <string name="no_collections_description2">Kogu asju, mis on sulle olulised.\nGrupeeri sarnaseid otsinguid, saite ja kaarte, et hiljem neile kiiresti ligi pääseda.</string>
   <!-- Title for the "select tabs" step of the collection creator -->
   <string name="create_collection_select_tabs">Kaartide valimine</string>
   <!-- Title for the "select collection" step of the collection creator -->
@@ -1249,7 +1251,11 @@
     Link displayed in enhanced tracking protection panel to access tracking protection settings
   -->
   <string name="etp_settings">Kaitse sätted</string>
-  <!-- Preference title for enhanced tracking protection settings -->
+  <!--
+    Enhanced Tracking Protection
+
+    Preference title for enhanced tracking protection settings
+  -->
   <string name="preference_enhanced_tracking_protection">Täiustatud jälitamisvastane kaitse</string>
   <!-- Preference summary for enhanced tracking protection settings on/off switch -->
   <string name="preference_enhanced_tracking_protection_summary">Nüüd täieliku küpsiste kaitsega – meie seni võimsaim tõke saitideüleste jälitajate vastu.</string>
@@ -1257,6 +1263,24 @@
   <string name="preference_enhanced_tracking_protection_explanation_2">%s kaitseb sind paljude tuntud jälitajate eest, kes jälgivad, mida sa võrgus olles teed.</string>
   <!-- Text displayed that links to website about enhanced tracking protection -->
   <string name="preference_enhanced_tracking_protection_explanation_learn_more">Rohkem teavet</string>
+  <plurals name="trackers_blocked_count_2">
+    <!--
+      Trackers blocked card on homepage
+
+      Text shown on the trackers blocked card. %d is the number of trackers blocked.
+    -->
+    <item quantity="one">%d jälitajat blokeeriti</item>
+    <item quantity="other">%d jälitajat blokeeriti</item>
+  </plurals>
+  <plurals name="trackers_blocked_count">
+    <!--
+      Trackers blocked card on homepage
+
+      Text shown on the trackers blocked card. %d is the number of trackers blocked.
+    -->
+    <item quantity="one">%d jälitajat blokeeriti</item>
+    <item quantity="other">%d jälitajat blokeeriti</item>
+  </plurals>
   <!-- Preference for enhanced tracking protection for the standard protection settings -->
   <string name="preference_enhanced_tracking_protection_standard_default_1">Tavaline (vaikimisi)</string>
   <!-- Preference description for enhanced tracking protection for the standard protection settings -->
@@ -1496,6 +1520,10 @@
   <string name="saved_login_clear_username">Tühjenda kasutajanimi</string>
   <!-- Content Description (for screenreaders etc) read for the button to clear the hostname field while creating a login -->
   <string name="saved_login_clear_hostname">Tühjenda sait</string>
+  <!-- Delete text for the login detail menu delete button -->
+  <string name="login_detail_menu_delete_button">Kustuta</string>
+  <!-- Content description, used by tools like screenreaders, to press on the clear search text button. -->
+  <string name="saved_logins_clear_search_text_button_content_description">Eemalda otsingutekst</string>
   <!-- Content Description (for screenreaders etc) read for the button to open a site in logins -->
   <string name="saved_login_open_site">Ava sait brauseris</string>
   <!-- Content Description (for screenreaders etc) read for the button to reveal a password in logins -->
@@ -1504,6 +1532,8 @@
   <string name="saved_login_hide_password">Varja parool</string>
   <!-- Message displayed in biometric prompt displayed for authentication before allowing users to view their passwords -->
   <string name="logins_biometric_prompt_message_2">Salvestatud paroolide vaatamiseks ava lukk</string>
+  <!-- Title of warning dialog if users have no device authentication set up -->
+  <string name="logins_warning_dialog_title_2">Kaitse salvestatud paroole</string>
   <!-- Negative button to ignore warning dialog if users have no device authentication set up -->
   <string name="logins_warning_dialog_later">Hiljem</string>
   <!-- Positive button to send users to set up a pin of warning dialog if users have no device authentication set up -->
@@ -1518,6 +1548,8 @@
   <string name="saved_logins_sort_strategy_alphabetically">Nimi (A-Y)</string>
   <!-- Saved logins sorting strategy menu item -by last used- (if selected, it will sort saved logins by last used) -->
   <string name="saved_logins_sort_strategy_last_used">Viimati kasutatud</string>
+  <!-- Badge label shown in the menu item when the browser VPN is off -->
+  <string name="preferences_ip_protection_off">Väljas</string>
   <!--
     Autofill
 
@@ -1741,6 +1773,12 @@
   <string name="synced_tabs_expand_group">Laienda sünkroniseeritud kaartide grupp</string>
   <!-- Content description for collapsing a group of synced tabs. -->
   <string name="synced_tabs_collapse_group">Ahenda sünkroniseeritud kaartide grupp</string>
+  <!--
+    Top Sites
+
+    Title text displayed for the shortcuts home screen section.
+  -->
+  <string name="homepage_shortcuts_title">Otseteed</string>
   <!-- Title text displayed in the dialog when shortcuts limit is reached. -->
   <string name="shortcut_max_limit_title">Otseteede limiit on täis</string>
   <!-- Content description text displayed in the dialog when shortcut limit is reached. -->
@@ -1791,8 +1829,6 @@
   <string name="google_search_engine_suggestion_header">Google\'i otsing</string>
   <!-- Default browser card text -->
   <string name="default_browser_experiment_card_text" tools:ignore="BrandUsage">Määra Firefox automaatselt avama linke, e-posti ja sõnumeid.</string>
-  <!-- Content description for close button in collection placeholder. -->
-  <string name="remove_home_collection_placeholder_content_description">Eemalda</string>
   <!-- Content description radio buttons with a link to more information -->
   <string name="radio_preference_info_content_description">Rohkema teabe jaoks puuduta</string>
   <!-- Content description for the action bar "up" button -->
@@ -1829,6 +1865,8 @@
   <string name="translations_bottom_sheet_negative_button_restore">Kuva algset</string>
   <!-- Button text on the translations dialog to begin a translation of the website. -->
   <string name="translations_bottom_sheet_positive_button">Tõlgi</string>
+  <!-- Default dropdown option when initially selecting a language from the translations dialog language selection dropdown. -->
+  <string name="translations_bottom_sheet_default_dropdown_selection">Vali keel</string>
   <!-- Snackbar title shown if the user closes the Translation Request dialogue and a translation is in progress. -->
   <string name="translation_in_progress_snackbar">Tõlkimine…</string>
   <!--
@@ -1933,10 +1971,18 @@
   <string name="download_language_file_dialog_positive_button_text_all_languages">Laadi alla ja tõlgi</string>
   <!-- Button text on the data saving mode warning dialog used by the translations feature to allow users to cancel the action and not perform a download of the language file. -->
   <string name="download_language_file_dialog_negative_button_text">Loobu</string>
+  <!-- Toggle if Enhanced Tracking Protection is turned off -->
+  <string name="protection_panel_etp_toggle_off">Väljas</string>
   <!-- Title text for the protection panel permissions section. -->
   <string name="protection_panel_permissions_title">Õigused</string>
+  <!-- Button text on the clear site data dialog to allow users to confirm they wish to clear the site data. -->
+  <string name="clear_site_data_dialog_positive_button_text">Kustuta</string>
   <!-- Button text on the clear site data dialog to allow users to cancel the action and not clear the site data. -->
   <string name="clear_site_data_dialog_negative_button_text">Loobu</string>
+  <!-- The error message of the text field in the tab creation tool when the text field is empty -->
+  <string name="debug_drawer_tab_tools_tab_quantity_empty_error">Tekstiväli on tühi</string>
+  <!-- The continue button label -->
+  <string name="micro_survey_continue_button_label" tools:ignore="UnusedResources">Jätka</string>
   <!-- TextField Design System Component -->
 
   <!-- Label for the primary action button to unlock private tabs -->
@@ -1973,9 +2019,15 @@
   <string name="review_prompt_feedback_header">Meil on kahju, et sul on probleeme. Anna meile teada, kuidas saaksime %1$si paremaks muuta.</string>
   <!-- Label for a button opening a feedback forum -->
   <string name="review_prompt_feedback_button">Anna tagasisidet</string>
+  <!-- Content description (not visible, for screen readers etc.) for the button to clear the search field for settings search -->
+  <string name="content_description_settings_search_clear_search">Tühjenda otsing</string>
+  <!-- Text of button allowing to clear history of recent searches done in the settings screen. -->
+  <string name="settings_search_clear_recent_searches_message">Kustuta kõik</string>
   <!-- ==== Terms of use pop up prompt ==== -->
 
   <!-- ==== Experiment strings. ==== -->
 
+  <!-- Sports widget menu item to remove the widget from the homepage. -->
+  <string name="sports_widget_remove">Eemalda</string>
   <!-- ==== End of Terms of use popup prompt. ==== -->
 </resources>

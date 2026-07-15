@@ -20,7 +20,6 @@ import org.mozilla.experiments.nimbus.internal.RecordedContext
 import org.mozilla.experiments.nimbus.internal.getCalculatedAttributes
 import org.mozilla.fenix.GleanMetrics.NimbusSystem
 import org.mozilla.fenix.ext.components
-import org.mozilla.fenix.ext.settings
 import org.mozilla.fenix.home.pocket.ContentRecommendationsFeatureHelper
 import org.mozilla.fenix.perf.runBlockingIncrement
 import org.mozilla.fenix.termsofuse.experimentation.TermsOfUseAdvancedTargetingHelper
@@ -182,7 +181,7 @@ class RecordedNimbusContext(
             context: Context,
             isFirstRun: Boolean,
         ): RecordedNimbusContext {
-            val settings = context.settings()
+            val settings = context.components.settings
             val langTag = LocaleManager.getCurrentLocale(context)
                 ?.toLanguageTag() ?: getSystemDefault().toLanguageTag()
             val termsOfUseAdvancedTargetingHelper = TermsOfUseAdvancedTargetingHelper(
@@ -200,7 +199,7 @@ class RecordedNimbusContext(
                 deviceInfo.localeTag,
             )
 
-            val isAiBlocked = runBlockingIncrement { context.components.aiControlsFeatureBlock.isBlocked.first() }
+            val isAiBlocked = runBlockingIncrement { context.components.aiFeatureBlockStorage.isBlocked.first() }
 
             return RecordedNimbusContext(
                 isFirstRun = isFirstRun,

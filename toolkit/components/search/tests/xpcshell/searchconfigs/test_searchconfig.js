@@ -561,7 +561,7 @@ const test = new SearchConfigTest([
   },
   {
     identifier: "ecosia",
-    aliases: [],
+    aliases: ["@ecosia"],
     default: {
       // Not default anywhere.
     },
@@ -642,6 +642,25 @@ const test = new SearchConfigTest([
         telemetryId: "google-com-nocodes",
         partnerCode: "",
         searchUrlParamNotInQuery: "client",
+      },
+    ],
+  },
+  {
+    identifier: "perplexity",
+    aliases: ["@perplexity"],
+    default: {
+      // Not default anywhere.
+    },
+    available: {
+      excluded: [
+        // Should be available everywhere.
+      ],
+    },
+    details: [
+      {
+        included: [{}],
+        domain: "www.perplexity.ai",
+        searchUrlCode: "pc=firefox",
       },
     ],
   },

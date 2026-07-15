@@ -58,7 +58,7 @@
   <!-- Text for the menu button to remove a recently saved bookmark from the user's home screen -->
   <string name="home_bookmarks_menu_item_remove">Tiyuj</string>
   <!-- About content. %1$s is the name of the app (for example "Firefox"). -->
-  <string name="about_content">%1$s b\'anon ruma Mozilla.</string>
+  <string name="about_content" tools:ignore="BrandUsage">%1$s b\'anon ruma Mozilla.</string>
   <!-- Private Browsing -->
   <string name="private_browsing_common_myths">Ch\'ob\'on taq tzij chi rij ri ichinan okem pa k\'amaya\'l</string>
   <!-- Text to be announced by the accessibility service to inform the user that the private browsing mode is currently active. -->
@@ -250,21 +250,9 @@
   <!--
     Browser Toolbar
 
-    Content description for the Home screen button on the browser toolbar
-  -->
-  <string name="browser_toolbar_home">Rutikirib\'al ruwäch</string>
-  <!--
-    Browser Toolbar
-
     Content description for the translate page toolbar button that opens the translations dialog when no translation has occurred.
   -->
   <string name="browser_toolbar_translate">Titzalq\'omïx ruxaq</string>
-  <!--
-    Content description (not visible, for screen readers etc.) for the translate page toolbar button that opens the translations dialog when the page is translated successfully.
-    %1$s is the name of the language that is displayed in the original page. (For example: English)
-    %2$s is the name of the language which the page was translated to. (For example: French)
-  -->
-  <string name="browser_toolbar_translated_successfully">Tzalq\'omin ruxaq %1$s pa %2$s.</string>
   <!--
     Locale Settings Fragment
 
@@ -303,57 +291,6 @@
     Content description (not visible, for screen readers etc.): Close button for the home onboarding dialog
   -->
   <string name="onboarding_home_content_description_close_button">Titz\'apïx</string>
-  <!--
-    Juno first user onboarding flow experiment, strings are marked unused as they are only referenced by Nimbus experiments.
-
-    Description for learning more about our privacy notice.
-  -->
-  <string name="juno_onboarding_privacy_notice_text" tools:ignore="BrandUsage">Firefox ichinan rutzijol</string>
-  <!-- Title for set firefox as default browser screen used by Nimbus experiments. -->
-  <string name="juno_onboarding_default_browser_title_nimbus_2">Niqa chi qawäch chi atqajikib\'an</string>
-  <!-- Description for set firefox as default browser screen used by Nimbus experiments. -->
-  <string name="juno_onboarding_default_browser_description_nimbus_3">Ri qokik\'amaya\'l re majun ch\'akoj rojqan nito\'on chi ri taq ajk\'ay man katkojqaj pan ewäl chupam ri web.</string>
-  <!-- Text for the button to set firefox as default browser on the device -->
-  <string name="juno_onboarding_default_browser_positive_button" tools:ignore="UnusedResources">Tiya\' kan achi\'el kanob\'äl k\'o wi</string>
-  <!-- Text for the button dismiss the screen and move on with the flow -->
-  <string name="juno_onboarding_default_browser_negative_button" tools:ignore="UnusedResources">Wakami mani</string>
-  <!-- Title for sign in to sync screen. -->
-  <string name="juno_onboarding_sign_in_title_2">Kak\'oje\' pa ewan sik\'inem toq ye\'ajäl ri taq awokisaxel</string>
-  <!-- Text for the button to sign in to sync on the device -->
-  <string name="juno_onboarding_sign_in_positive_button" tools:ignore="UnusedResources">Titikirisäx molojri\'ïl</string>
-  <!-- Text for the button dismiss the screen and move on with the flow -->
-  <string name="juno_onboarding_sign_in_negative_button" tools:ignore="UnusedResources">Wakami mani</string>
-  <!--
-    Title for enable notification permission screen used by Nimbus experiments. Nimbus experiments do not support string placeholders.
-    Note: The word "Firefox" should NOT be translated
-  -->
-  <string name="juno_onboarding_enable_notifications_title_nimbus_2" tools:ignore="BrandUsage">Ri taq rutzijol yatkito\' yalan at jikil pa Firefox</string>
-  <!--
-    Description for enable notification permission screen used by Nimbus experiments. Nimbus experiments do not support string placeholders.
-    Note: The word "Firefox" should NOT be translated
-  -->
-  <string name="juno_onboarding_enable_notifications_description_nimbus_2" tools:ignore="BrandUsage">Jikil ke\'ataqa\' taq ruwi\' chi kikojol taq okisaxel chuqa\' ke\'awila\' ch\'aqa\' chik taq rusamajib\'al richinanem Firefox.</string>
-  <!-- Text for the button to request notification permission on the device -->
-  <string name="juno_onboarding_enable_notifications_positive_button" tools:ignore="UnusedResources">Ketzij taq rutzijol</string>
-  <!-- Text for the button dismiss the screen and move on with the flow -->
-  <string name="juno_onboarding_enable_notifications_negative_button" tools:ignore="UnusedResources">Wakami mani</string>
-  <!--
-    Title for add search widget screen used by Nimbus experiments. Nimbus experiments do not support string placeholders.
-    Note: The word "Firefox" should NOT be translated
-  -->
-  <string name="juno_onboarding_add_search_widget_title" tools:ignore="BrandUsage,UnusedResources">Tatojtob\'ej ri ruwidget rukanob\'äl Firefox</string>
-  <!--
-    Description for add search widget screen used by Nimbus experiments. Nimbus experiments do not support string placeholders.
-    Note: The word "Firefox" should NOT be translated
-  -->
-  <string name="juno_onboarding_add_search_widget_description" tools:ignore="BrandUsage,UnusedResources">Rik\'in ri Firefox pa ruwa atikirib\'al, chanin yatok pan awokik\'amaya\'l ri nuya\' ruq\'ij ri ichinanem chuqa\' yeruq\'ät ri taq ojqanela\' chi kikojol taq ruxaq.</string>
-  <!--
-    Text for the button to add search widget on the device used by Nimbus experiments. Nimbus experiments do not support string placeholders.
-    Note: The word "Firefox" should NOT be translated
-  -->
-  <string name="juno_onboarding_add_search_widget_positive_button" tools:ignore="BrandUsage,UnusedResources">Titz\'aqatisäx ruwidget Firefox</string>
-  <!-- Text for the button to dismiss the screen and move on with the flow -->
-  <string name="juno_onboarding_add_search_widget_negative_button" tools:ignore="UnusedResources">Wakami mani</string>
   <!-- Button text to submit a startup crash report -->
   <string name="startup_crash_positive">Titaq rutzijol sachoj</string>
   <!-- Button text to continue and not send a startup crash report -->
@@ -489,7 +426,7 @@
   <!-- Preference for accessibility -->
   <string name="preferences_accessibility">Okel</string>
   <!-- Preference to override the Mozilla account server -->
-  <string name="preferences_override_account_server">Ichinan ruk\'u\'x rusamaj Mozilla account</string>
+  <string name="preferences_override_account_server" tools:ignore="BrandUsage">Ichinan ruk\'u\'x rusamaj Mozilla account</string>
   <!-- Preference to override the Sync token server -->
   <string name="preferences_override_sync_tokenserver">Ichinan ruk\'u\'x rusamaj Sync</string>
   <!-- Preference category for account information -->
@@ -503,7 +440,7 @@
   <!-- Preference for settings related to visual options -->
   <string name="preferences_customize">Tichinäx</string>
   <!-- Preference shown instead of account display name while account profile information isn't available yet. -->
-  <string name="preferences_account_default_name_2">Rub\'i\' rutaqoya\'l Mozilla</string>
+  <string name="preferences_account_default_name_2" tools:ignore="BrandUsage">Rub\'i\' rutaqoya\'l Mozilla</string>
   <!-- Preference text for account title when there was an error syncing FxA -->
   <string name="preferences_account_sync_error">Tokisäx chik richin nitikirisäx chik ri ximoj</string>
   <!-- Preference for language -->
@@ -683,7 +620,7 @@
   <!-- Title for studies preferences -->
   <string name="preference_experiments_2">Taq tijonïk</string>
   <!-- Summary for studies preferences -->
-  <string name="preference_experiments_summary_2">Taya\' q\'ij chi ri Mozilla nuyäk chuqa\' nub\'än taq tijonïk</string>
+  <string name="preference_experiments_summary_2" tools:ignore="BrandUsage">Taya\' q\'ij chi ri Mozilla nuyäk chuqa\' nub\'än taq tijonïk</string>
   <!-- Preference for reconnecting to FxA sync -->
   <string name="preferences_sync_sign_in_to_reconnect">Titikirisäx molojri\'ïl richin nok chik</string>
   <!-- Preference for removing FxA account -->
@@ -740,8 +677,6 @@
   <string name="library_desktop_bookmarks_unfiled">Ch\'aqa\' chik taq Yaketal</string>
   <!-- Option in Library to open History page -->
   <string name="library_history">Natab\'äl</string>
-  <!-- Option in Library to open a new tab -->
-  <string name="library_new_tab">K\'ak\'a\' ruwi\'</string>
   <!-- Settings Page Title -->
   <string name="settings_title">Taq nuk\'ulem</string>
   <!-- Content description (not visible, for screen readers etc.): "Close button for library settings" -->
@@ -924,7 +859,7 @@
   -->
   <string name="tab_crash_title_2">Takuyu\'. Man nitikïr ta nusamajij ri ruxaq ri %1$s.</string>
   <!-- Send crash report checkbox text on the tab crash page -->
-  <string name="tab_crash_send_report">Titaq rutzijol sachoj chi re ri Mozilla</string>
+  <string name="tab_crash_send_report" tools:ignore="BrandUsage">Titaq rutzijol sachoj chi re ri Mozilla</string>
   <!-- Close tab button text on the tab crash page -->
   <string name="tab_crash_close">Titz\'apïx ruwi\'</string>
   <!-- Restore tab button text on the tab crash page -->
@@ -960,10 +895,6 @@
   <string name="edit_bookmark_folder_fragment_title">Tinuk\' Molyakb\'äl</string>
   <!-- Bookmark URL editing field label -->
   <string name="bookmark_url_label">URL</string>
-  <!-- Bookmark FOLDER editing field label -->
-  <string name="bookmark_folder_label">MOLYAKWUJ</string>
-  <!-- Bookmark NAME editing field label -->
-  <string name="bookmark_name_label">B\'I\'AJ</string>
   <!-- Bookmark select folder screen title -->
   <string name="bookmark_select_folder_fragment_label">Ticha\' molyakb\'äl</string>
   <!-- Bookmark editing error missing or improper URL -->
@@ -1067,8 +998,6 @@
   <string name="collections_header">Taq mol</string>
   <!-- Content description (not visible, for screen readers etc.): Opens the collection menu when pressed -->
   <string name="collection_menu_button_content_description">Ruk\'utsamaj mol</string>
-  <!-- Label to describe what collections are to a new user without any collections -->
-  <string name="no_collections_description2">Ke\'amolo\' ri naqa chawäch.\nKe\'atzob\'ajij ri junam taq kanoxïk, taq ruxaq chuqa\' ri taq ruwi\' richin anin yatok chi kipam.</string>
   <!-- Title for the "select tabs" step of the collection creator -->
   <string name="create_collection_select_tabs">Kecha\' taq Ruwi\'</string>
   <!-- Title for the "select collection" step of the collection creator -->
@@ -1325,7 +1254,11 @@
     Link displayed in enhanced tracking protection panel to access tracking protection settings
   -->
   <string name="etp_settings">Runuk\'ulem Ojqanem</string>
-  <!-- Preference title for enhanced tracking protection settings -->
+  <!--
+    Enhanced Tracking Protection
+
+    Preference title for enhanced tracking protection settings
+  -->
   <string name="preference_enhanced_tracking_protection">Utzirisan Chajinïk chuwäch Ojqanem</string>
   <!-- Description of enhanced tracking protection. %s is the name of the app (for example "Firefox"). -->
   <string name="preference_enhanced_tracking_protection_explanation_2">%s yaruchajij chi kiwäch relik ojqanela\', ri nikoqaj ri nab\'än pa k\'amab\'ey.</string>
@@ -1789,8 +1722,6 @@
   <string name="other_default_search_engine_suggestion_header">Tikanöx pa %s</string>
   <!-- Default browser card text -->
   <string name="default_browser_experiment_card_text" tools:ignore="BrandUsage">Nub\'än kinuk\'ulem ximonel ajk\'amaya\'l taq ruxaq, taq taqoya\'l chuqa\' taq rutzijol richin yejaq pa ruyonil pa Firefox.</string>
-  <!-- Content description for close button in collection placeholder. -->
-  <string name="remove_home_collection_placeholder_content_description">Tiyuj</string>
   <!-- Content description radio buttons with a link to more information -->
   <string name="radio_preference_info_content_description">Tipitz\' richin ch\'aqa\' rub\'anikil</string>
   <!-- Content description for the action bar "up" button -->
@@ -1807,12 +1738,8 @@
     Action label for elements that can be collapsed if interacting with them. Talkback will append this to say "Double tap to collapse".
   -->
   <string name="a11y_action_label_collapse">Tich\'utinarisäx</string>
-  <!-- Current state for elements that can be collapsed if interacting with them. Talkback will dictate this after a state change. -->
-  <string name="a11y_state_label_collapsed">ch\'utinarisan</string>
   <!-- Action label for elements that can be expanded if interacting with them. Talkback will append this to say "Double tap to expand". -->
   <string name="a11y_action_label_expand">tirik\'</string>
-  <!-- Current state for elements that can be expanded if interacting with them. Talkback will dictate this after a state change. -->
-  <string name="a11y_state_label_expanded">nimirisan</string>
   <!-- Translations feature -->
 
   <!-- TextField Design System Component -->

@@ -91,6 +91,7 @@ let JSWINDOWACTORS = {
     matches: ["chrome://global/content/megalist/megalist.html"],
     allFrames: true,
     enablePreference: "browser.contextual-password-manager.enabled",
+    remoteTypes: ["parent"],
   },
 
   AboutLogins: {
@@ -202,6 +203,7 @@ let JSWINDOWACTORS = {
     },
 
     matches: ["about:tabcrashed*"],
+    remoteTypes: ["parent"],
   },
 
   AboutWelcome: {
@@ -240,6 +242,9 @@ let JSWINDOWACTORS = {
         "AIChatContent:DispatchNewChat": { wantUntrusted: true },
         "AIChatContent:AccountSignIn": { wantUntrusted: true },
         "AIChatContent:ToolUIUpdate": { wantUntrusted: true },
+        "AIChatContent:RequestAssets": { wantUntrusted: true },
+        "AIChatContent:HistoryGridRender": { wantUntrusted: true },
+        "AIChatContent:HistoryGridItemClick": { wantUntrusted: true },
       },
     },
     allFrames: true,
@@ -281,7 +286,6 @@ let JSWINDOWACTORS = {
         "BackupUI:EnableEncryption": { wantUntrusted: true },
         "BackupUI:DisableEncryption": { wantUntrusted: true },
         "BackupUI:ShowBackupLocation": { wantUntrusted: true },
-        "BackupUI:EditBackupLocation": { wantUntrusted: true },
         "BackupUI:SetEmbeddedComponentPersistentData": { wantUntrusted: true },
         "BackupUI:FlushEmbeddedComponentPersistentData": {
           wantUntrusted: true,
@@ -521,11 +525,13 @@ let JSWINDOWACTORS = {
     onAddActor(register, unregister) {
       let isRegistered = false;
 
-      // Register the actor if we have a provider or support provider-less
+      // Register the actor if an external chat provider is set, page summarization is enabled, or shortcuts are enabled
       const maybeRegister = () => {
         if (
           Services.prefs.getCharPref("browser.ml.chat.provider", "") ||
-          Services.prefs.getBoolPref("browser.ml.chat.page")
+          Services.prefs.getBoolPref("browser.ml.chat.page") ||
+          Services.prefs.getBoolPref("browser.ml.chat.shortcuts") ||
+          Services.prefs.getBoolPref("browser.ml.chat.shortcuts.smartwindow")
         ) {
           if (!isRegistered) {
             register();
@@ -539,6 +545,11 @@ let JSWINDOWACTORS = {
 
       Services.prefs.addObserver("browser.ml.chat.page", maybeRegister);
       Services.prefs.addObserver("browser.ml.chat.provider", maybeRegister);
+      Services.prefs.addObserver("browser.ml.chat.shortcuts", maybeRegister);
+      Services.prefs.addObserver(
+        "browser.ml.chat.shortcuts.smartwindow",
+        maybeRegister
+      );
       maybeRegister();
     },
   },
@@ -561,9 +572,11 @@ let JSWINDOWACTORS = {
       "chrome://browser/content/syncedtabs/sidebar.xhtml",
       "chrome://browser/content/places/historySidebar.xhtml",
       "chrome://browser/content/places/bookmarksSidebar.xhtml",
+      "chrome://browser/content/sidebar/sidebar-bookmarks.html",
       "chrome://browser/content/sidebar/sidebar-history.html",
       "chrome://browser/content/sidebar/sidebar-customize.html",
       "chrome://browser/content/sidebar/sidebar-syncedtabs.html",
+      "chrome://browser/content/sidebar/sidebar-opentabs.html",
       "chrome://browser/content/genai/chat.html",
       "about:firefoxview",
       "about:editprofile",
@@ -572,6 +585,7 @@ let JSWINDOWACTORS = {
       "about:opentabs",
       "about:aichatcontent",
     ],
+    remoteTypes: ["parent", "privilegedabout"],
   },
 
   LinkHandler: {

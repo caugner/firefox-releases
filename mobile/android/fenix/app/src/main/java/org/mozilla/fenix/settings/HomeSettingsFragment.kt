@@ -15,15 +15,16 @@ import androidx.preference.Preference
 import androidx.preference.PreferenceFragmentCompat
 import androidx.preference.SwitchPreferenceCompat
 import org.mozilla.fenix.GleanMetrics.CustomizeHome
+import org.mozilla.fenix.GleanMetrics.Events
 import org.mozilla.fenix.R
 import org.mozilla.fenix.components.Components
 import org.mozilla.fenix.components.appstate.AppAction
 import org.mozilla.fenix.e2e.SystemInsetsPaddedFragment
 import org.mozilla.fenix.ext.components
 import org.mozilla.fenix.ext.navigateWithBreadcrumb
-import org.mozilla.fenix.ext.settings
 import org.mozilla.fenix.ext.showToolbar
 import org.mozilla.fenix.home.pocket.ContentRecommendationsFeatureHelper
+import org.mozilla.fenix.home.sports.hasWorldCupEnded
 import org.mozilla.fenix.utils.Settings
 import org.mozilla.fenix.utils.view.addToRadioGroup
 
@@ -51,11 +52,11 @@ class HomeSettingsFragment : PreferenceFragmentCompat(), SystemInsetsPaddedFragm
 
     override fun onAttach(context: Context) {
         super.onAttach(context)
-        if (!::fenixSettings.isInitialized) {
-            fenixSettings = context.settings()
-        }
         if (!::fenixComponents.isInitialized) {
             fenixComponents = context.components
+        }
+        if (!::fenixSettings.isInitialized) {
+            fenixSettings = fenixComponents.settings
         }
     }
 
@@ -84,8 +85,12 @@ class HomeSettingsFragment : PreferenceFragmentCompat(), SystemInsetsPaddedFragm
         }
 
         requirePreference<SwitchPreferenceCompat>(R.string.pref_key_privacy_report).apply {
+            if (fenixSettings.longfoxEnabled) title = resources.getString(R.string.help_catch_trackers)
             isChecked = fenixSettings.showPrivacyReportFeature
-            onPreferenceChangeListener = createMetricPreferenceChangeListener("privacy_report")
+            onPreferenceChangeListener = createMetricPreferenceChangeListener(
+                metricKey = getString(R.string.pref_key_privacy_report_metric),
+                recordEventsToggle = true,
+            )
         }
 
         requirePreference<SwitchPreferenceCompat>(R.string.pref_key_recent_tabs).apply {
@@ -154,7 +159,10 @@ class HomeSettingsFragment : PreferenceFragmentCompat(), SystemInsetsPaddedFragm
         setupSportsWidgetPreferences()
     }
 
-    private fun createMetricPreferenceChangeListener(metricKey: String): Preference.OnPreferenceChangeListener {
+    private fun createMetricPreferenceChangeListener(
+        metricKey: String,
+        recordEventsToggle: Boolean = false,
+    ): Preference.OnPreferenceChangeListener {
         return Preference.OnPreferenceChangeListener { preference, newValue ->
             val newBooleanValue = newValue as? Boolean ?: return@OnPreferenceChangeListener false
 
@@ -164,6 +172,15 @@ class HomeSettingsFragment : PreferenceFragmentCompat(), SystemInsetsPaddedFragm
                     metricKey,
                 ),
             )
+
+            if (recordEventsToggle) {
+                Events.preferenceToggled.record(
+                    Events.PreferenceToggledExtra(
+                        newBooleanValue,
+                        metricKey,
+                    ),
+                )
+            }
 
             fenixSettings.preferences.edit { putBoolean(preference.key, newBooleanValue) }
 
@@ -194,7 +211,10 @@ class HomeSettingsFragment : PreferenceFragmentCompat(), SystemInsetsPaddedFragm
 
     private fun setupSportsWidgetPreferences() {
         requirePreference<SwitchPreferenceCompat>(R.string.pref_key_show_homepage_sports_widget).apply {
-            isVisible = fenixSettings.enableHomepageSportsWidget
+            // Once the World Cup is over the widget is retired: hide the toggle. The widget itself
+            // is hidden by the hasWorldCupEnded() gate on SportsWidgetState.isShown, so we leave the
+            // user's saved preference untouched rather than mutating it off a transient clock reading.
+            isVisible = fenixSettings.enableHomepageSportsWidget && !hasWorldCupEnded()
             isChecked = fenixSettings.showHomepageSportsWidget
             onPreferenceChangeListener = Preference.OnPreferenceChangeListener { preference, newValue ->
                 val newBooleanValue = newValue as? Boolean ?: return@OnPreferenceChangeListener false

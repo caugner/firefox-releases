@@ -13,6 +13,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.getSystemService
 import com.google.android.play.core.review.ReviewManagerFactory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.MainScope
+import kotlinx.coroutines.SupervisorJob
 import mozilla.components.concept.ai.controls.AIFeatureBlock
 import mozilla.components.concept.ai.controls.AIFeatureRegistry
 import mozilla.components.feature.addons.AddonManager
@@ -22,13 +26,12 @@ import mozilla.components.feature.addons.update.DefaultAddonUpdater
 import mozilla.components.feature.autofill.AutofillConfiguration
 import mozilla.components.feature.summarize.PageSummaryFeature
 import mozilla.components.feature.summarize.settings.SummarizationSettings
+import mozilla.components.lib.ai.controls.AIFeatureBlockStorage
+import mozilla.components.lib.ai.controls.dataStore
 import mozilla.components.lib.ai.controls.default
 import mozilla.components.lib.crash.store.CrashAction
 import mozilla.components.lib.crash.store.CrashMiddleware
 import mozilla.components.lib.integrity.googleplay.GooglePlayIntegrityClient
-import mozilla.components.lib.integrity.googleplay.GoogleProjectNumber
-import mozilla.components.lib.integrity.googleplay.IntegrityManagerProvider
-import mozilla.components.lib.integrity.googleplay.TokenProviderFactory
 import mozilla.components.lib.llm.mlpa.MlpaTokenStorage
 import mozilla.components.lib.publicsuffixlist.PublicSuffixList
 import mozilla.components.service.fxrelay.eligibility.RelayEligibilityStore
@@ -59,7 +62,9 @@ import org.mozilla.fenix.components.appstate.AppState
 import org.mozilla.fenix.components.appstate.setup.checklist.SetupChecklistState
 import org.mozilla.fenix.components.appstate.setup.checklist.getSetupChecklistCollection
 import org.mozilla.fenix.components.appstate.sports.SportsWidgetState
+import org.mozilla.fenix.components.bookmarks.lastSavedFolderCache
 import org.mozilla.fenix.components.ipprotection.IPProtection
+import org.mozilla.fenix.components.lens.GoogleLensAIControlFeature
 import org.mozilla.fenix.components.llm.Llm
 import org.mozilla.fenix.components.llm.ext.accessTokenProvider
 import org.mozilla.fenix.components.metrics.MetricsMiddleware
@@ -73,7 +78,6 @@ import org.mozilla.fenix.distributions.DistributionIdManager
 import org.mozilla.fenix.ext.asRecentTabs
 import org.mozilla.fenix.ext.components
 import org.mozilla.fenix.ext.filterState
-import org.mozilla.fenix.ext.settings
 import org.mozilla.fenix.ext.sort
 import org.mozilla.fenix.home.PocketMiddleware
 import org.mozilla.fenix.home.SettingsBackedPocketSettings
@@ -87,6 +91,7 @@ import org.mozilla.fenix.home.sports.SportsWidgetMiddleware
 import org.mozilla.fenix.home.sports.WorldCupMatchesRepository
 import org.mozilla.fenix.home.sports.client.AppServicesWorldCupMatchesClient
 import org.mozilla.fenix.home.sports.client.mockWorldCupBaseHost
+import org.mozilla.fenix.home.sports.hasWorldCupEnded
 import org.mozilla.fenix.ipprotection.IPProtectionManager
 import org.mozilla.fenix.ipprotection.store.DefaultIPProtectionPromptRepository
 import org.mozilla.fenix.messaging.state.MessagingMiddleware
@@ -102,6 +107,8 @@ import org.mozilla.fenix.reviewprompt.ReviewPromptMiddleware
 import org.mozilla.fenix.search.VoiceSearchAIControlFeature
 import org.mozilla.fenix.settings.ai.AIControlsSearchProvider
 import org.mozilla.fenix.settings.datachoices.DataChoicesSearchProvider
+import org.mozilla.fenix.settings.emailmasks.middleware.DefaultEmailMasksRepository
+import org.mozilla.fenix.settings.emailmasks.middleware.EmailMasksRepository
 import org.mozilla.fenix.settings.labs.FirefoxLabsSettingsSearchProvider
 import org.mozilla.fenix.settings.pagesummaries.PageSummariesSettingsSearchProvider
 import org.mozilla.fenix.settings.settingssearch.DefaultFenixSettingsIndexer
@@ -127,7 +134,7 @@ class Components(private val context: Context) {
         BackgroundServices(
             context,
             push,
-            context.settings(),
+            settings,
             analytics.crashReporter,
             core.lazyHistoryStorage,
             core.lazyBookmarksStorage,
@@ -152,6 +159,7 @@ class Components(private val context: Context) {
             topSitesStorage = lazyMonitored { core.topSitesStorage },
             bookmarksStorage = lazyMonitored { core.bookmarksStorage },
             historyStorage = lazyMonitored { core.historyStorage },
+            lastSavedFolderCache = lazyMonitored { context.components.settings.lastSavedFolderCache },
             syncedTabsCommands = lazyMonitored { backgroundServices.syncedTabsCommands },
             adsClientProvider = ads.lazyAdsClientProvider,
             appStore = lazyMonitored { appStore },
@@ -181,12 +189,12 @@ class Components(private val context: Context) {
 
     val addonsProvider by lazyMonitored {
         // Check if we have a customized (overridden) AMO collection (supported in Nightly & Beta)
-        if (FeatureFlags.customExtensionCollectionFeature && context.settings().amoCollectionOverrideConfigured()) {
+        if (FeatureFlags.customExtensionCollectionFeature && settings.amoCollectionOverrideConfigured()) {
             AMOAddonsProvider(
                 context,
                 core.client,
-                collectionUser = context.settings().overrideAmoUser,
-                collectionName = context.settings().overrideAmoCollection,
+                collectionUser = settings.overrideAmoUser,
+                collectionName = settings.overrideAmoCollection,
             )
         }
         // Use build config otherwise
@@ -233,12 +241,12 @@ class Components(private val context: Context) {
         AddonManager(core.store, core.engine, addonsProvider, addonUpdater)
     }
 
-    val analytics by lazyMonitored { Analytics(context, nimbus, performance.visualCompletenessQueue) }
+    val analytics by lazyMonitored { Analytics(context, settings, nimbus, performance.visualCompletenessQueue) }
 
     val remoteSettingsService = lazyMonitored {
         RemoteSettingsService(
             context,
-            when (context.settings().remoteSettingsServer) {
+            when (settings.remoteSettingsServer) {
                 context.getString(R.string.remote_settings_server_prod) -> RemoteSettingsServer.Prod.into()
                 context.getString(R.string.remote_settings_server_dev) -> RemoteSettingsServer.Dev.into()
                 context.getString(R.string.remote_settings_server_stage) -> RemoteSettingsServer.Stage.into()
@@ -351,7 +359,7 @@ class Components(private val context: Context) {
                     ),
                 ),
                 HomeTelemetryMiddleware(),
-                SetupChecklistPreferencesMiddleware(DefaultSetupChecklistRepository(context)),
+                SetupChecklistPreferencesMiddleware(DefaultSetupChecklistRepository(context, settings)),
                 SetupChecklistTelemetryMiddleware(),
                 ReviewPromptMiddleware(
                     continuousOnboardingInProgress = {
@@ -427,12 +435,10 @@ class Components(private val context: Context) {
     }
 
     val integrityClient by lazyMonitored {
-        GooglePlayIntegrityClient(
-            TokenProviderFactory.create(
-                IntegrityManagerProvider.create(context),
-                GoogleProjectNumber.create(BuildConfig.GPS_INTEGRITY_TOKEN),
-            ),
-            clientUUID,
+        GooglePlayIntegrityClient.create(
+            context = context,
+            projectNumberToken = BuildConfig.GPS_INTEGRITY_TOKEN,
+            requestHashProvider = clientUUID,
         )
     }
 
@@ -447,6 +453,13 @@ class Components(private val context: Context) {
     val settingsIndexer by lazyMonitored {
         DefaultFenixSettingsIndexer(
             context = context,
+            excludedPreferenceKeys = {
+                if (!settings.enableHomepageSportsWidget || hasWorldCupEnded()) {
+                    setOf(context.getString(R.string.pref_key_show_homepage_sports_widget))
+                } else {
+                    emptySet()
+                }
+            },
             additionalProviders = listOf(
                 DataChoicesSearchProvider,
                 AIControlsSearchProvider,
@@ -454,7 +467,7 @@ class Components(private val context: Context) {
                     summarizationFeatureConfiguration = core.summarizeFeatureSettings,
                 ),
                 FirefoxLabsSettingsSearchProvider(
-                    isLabsEnabled = { context.settings().enableFirefoxLabs },
+                    isLabsEnabled = { settings.enableFirefoxLabs },
                 ),
             ),
         )
@@ -485,6 +498,10 @@ class Components(private val context: Context) {
         RelayEligibilityStore(middleware = listOf(ClearLastUsedMiddleware()))
     }
 
+    val emailMasksRepository: EmailMasksRepository by lazyMonitored {
+        DefaultEmailMasksRepository(settings)
+    }
+
     val relayFeatureIntegration by lazyMonitored {
         RelayFeatureIntegration(
             engine = core.engine,
@@ -498,24 +515,42 @@ class Components(private val context: Context) {
         )
     }
 
+    val aiFeatureBlockStorage by lazyMonitored {
+        AIFeatureBlockStorage.dataStore(context)
+    }
+
+    val summarizationSettings: SummarizationSettings by lazyMonitored {
+        SummarizationSettings.dataStore(context)
+    }
+
+    val summarizationSettingsCache by lazyMonitored {
+        SummarizationSettingsCache(
+            settings = summarizationSettings,
+            scope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+        )
+    }
+
     val aiFeatureRegistry by lazyMonitored {
-        AIFeatureRegistry.default().also {
+        AIFeatureRegistry.default(scope = MainScope(), context = context).also {
             if (settings.shakeToSummarizeFeatureFlagEnabled) {
-                it.register(PageSummaryFeature(SummarizationSettings.dataStore(context)))
+                it.register(PageSummaryFeature(summarizationSettings))
             }
             it.register(
                 VoiceSearchAIControlFeature(
-                    settings = context.settings(),
+                    settings = settings,
                     onUpdateWidget = { VoiceSearchAIControlFeature.updateWidget(context) },
                 ),
             )
+            if (settings.googleLensIntegrationEnabled) {
+                it.register(GoogleLensAIControlFeature(settings = settings))
+            }
         }
     }
 
     @Suppress("unused")
     val aiControlsFeatureBlock by lazyMonitored {
         AIFeatureBlock.default(
-            context,
+            storage = aiFeatureBlockStorage,
             registry = aiFeatureRegistry,
         )
     }
@@ -538,6 +573,7 @@ class Components(private val context: Context) {
             browserStore = core.store,
             syncStore = backgroundServices.syncStore,
             lazyFxaAccountManager = lazy { backgroundServices.accountManager },
+            lazyAppStore = lazy { appStore },
             settings = settings,
             context = context,
         )

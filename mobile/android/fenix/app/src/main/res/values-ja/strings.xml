@@ -72,7 +72,7 @@
   <!-- Text for the menu button to remove a recently saved bookmark from the user's home screen -->
   <string name="home_bookmarks_menu_item_remove">削除</string>
   <!-- About content. %1$s is the name of the app (for example "Firefox"). -->
-  <string name="about_content">%1$s は Mozilla の製品です。</string>
+  <string name="about_content" tools:ignore="BrandUsage">%1$s は Mozilla の製品です。</string>
   <!-- Private Browsing -->
   <string name="private_browsing_common_myths">プライベートブラウジングについての誤解</string>
   <!-- Text to be announced by the accessibility service to inform the user that the private browsing mode is currently active. -->
@@ -332,21 +332,9 @@
   <!--
     Browser Toolbar
 
-    Content description for the Home screen button on the browser toolbar
-  -->
-  <string name="browser_toolbar_home">ホーム画面</string>
-  <!--
-    Browser Toolbar
-
     Content description for the translate page toolbar button that opens the translations dialog when no translation has occurred.
   -->
   <string name="browser_toolbar_translate">ページを翻訳</string>
-  <!--
-    Content description (not visible, for screen readers etc.) for the translate page toolbar button that opens the translations dialog when the page is translated successfully.
-    %1$s is the name of the language that is displayed in the original page. (For example: English)
-    %2$s is the name of the language which the page was translated to. (For example: French)
-  -->
-  <string name="browser_toolbar_translated_successfully">ページを %1$s から %2$s に翻訳しました。</string>
   <!-- CFR description for the browser toolbar describing the "Shake to summarize feature" -->
   <string name="browser_toolbar_summarize_cfr_description">端末を振ると、このページの内容を数秒で要約できます。⚡️</string>
   <!--
@@ -377,8 +365,6 @@
   <string name="ai_controls_banner_headline">%s には常に選択肢があります</string>
   <!-- Supporting text for the AI controls banner. %s is a learn more link using ai_controls_learn_more as text. -->
   <string name="ai_controls_banner_supporting_text_2">これには、AI で強化された機能を使用するかどうかも含まれます。%s</string>
-  <!-- Supporting text for the AI controls banner -->
-  <string name="ai_controls_banner_supporting_text">これには、AI で強化された機能を使用するかどうかも含まれます。</string>
   <!-- Link text for learning more about AI controls -->
   <string name="ai_controls_learn_more">詳細情報</string>
   <!-- Title for the block AI enhancements toggle -->
@@ -426,12 +412,6 @@
   <!--
     Search Fragment
 
-    Button in the search view that lets a user search by scanning a QR code
-  -->
-  <string name="search_scan_button_2">QR コードをスキャン</string>
-  <!--
-    Search Fragment
-
     Button in the search view that lets a user navigate to the site in their clipboard
   -->
   <string name="awesomebar_clipboard_title">クリップボードからリンクを入力</string>
@@ -474,62 +454,6 @@
     Content description (not visible, for screen readers etc.): Close button for the home onboarding dialog
   -->
   <string name="onboarding_home_content_description_close_button">閉じる</string>
-  <!--
-    Juno first user onboarding flow experiment, strings are marked unused as they are only referenced by Nimbus experiments.
-
-    Description for learning more about our privacy notice.
-  -->
-  <string name="juno_onboarding_privacy_notice_text" tools:ignore="BrandUsage">Firefox のプライバシー通知</string>
-  <!-- Title for set firefox as default browser screen used by Nimbus experiments. -->
-  <string name="juno_onboarding_default_browser_title_nimbus_2">私たちはあなたの安全を守りたいと願っています</string>
-  <!-- Description for set firefox as default browser screen used by Nimbus experiments. -->
-  <string name="juno_onboarding_default_browser_description_nimbus_3">非営利で作られた私たちのブラウザーは、企業によるウェブ上の密かな追跡を阻止するのに役立ちます。</string>
-  <!-- Text for the button to set firefox as default browser on the device -->
-  <string name="juno_onboarding_default_browser_positive_button" tools:ignore="UnusedResources">既定のブラウザーに設定</string>
-  <!-- Text for the button dismiss the screen and move on with the flow -->
-  <string name="juno_onboarding_default_browser_negative_button" tools:ignore="UnusedResources">後で</string>
-  <!-- Title for sign in to sync screen. -->
-  <string name="juno_onboarding_sign_in_title_2">端末間の移動時に暗号化した状態を維持します</string>
-  <!--
-    Description for sign in to sync screen. Nimbus experiments do not support string placeholders.
-    Note: The word "Firefox" should NOT be translated
-  -->
-  <string name="juno_onboarding_sign_in_description_3" tools:ignore="BrandUsage">Firefox は同期時にパスワードやブックマークなどを暗号化します。</string>
-  <!-- Text for the button to sign in to sync on the device -->
-  <string name="juno_onboarding_sign_in_positive_button" tools:ignore="UnusedResources">ログイン</string>
-  <!-- Text for the button dismiss the screen and move on with the flow -->
-  <string name="juno_onboarding_sign_in_negative_button" tools:ignore="UnusedResources">後で</string>
-  <!--
-    Title for enable notification permission screen used by Nimbus experiments. Nimbus experiments do not support string placeholders.
-    Note: The word "Firefox" should NOT be translated
-  -->
-  <string name="juno_onboarding_enable_notifications_title_nimbus_2" tools:ignore="BrandUsage">通知をオンにして Firefox で安全性を高めましょう</string>
-  <!--
-    Description for enable notification permission screen used by Nimbus experiments. Nimbus experiments do not support string placeholders.
-    Note: The word "Firefox" should NOT be translated
-  -->
-  <string name="juno_onboarding_enable_notifications_description_nimbus_2" tools:ignore="BrandUsage">端末間で安全にタブを送信するなど、Firefox の他のプライバシー機能を見つけましょう。</string>
-  <!-- Text for the button to request notification permission on the device -->
-  <string name="juno_onboarding_enable_notifications_positive_button" tools:ignore="UnusedResources">通知をオンにする</string>
-  <!-- Text for the button dismiss the screen and move on with the flow -->
-  <string name="juno_onboarding_enable_notifications_negative_button" tools:ignore="UnusedResources">後で</string>
-  <!--
-    Title for add search widget screen used by Nimbus experiments. Nimbus experiments do not support string placeholders.
-    Note: The word "Firefox" should NOT be translated
-  -->
-  <string name="juno_onboarding_add_search_widget_title" tools:ignore="BrandUsage,UnusedResources">Firefox 検索ウィジェットをお試しください</string>
-  <!--
-    Description for add search widget screen used by Nimbus experiments. Nimbus experiments do not support string placeholders.
-    Note: The word "Firefox" should NOT be translated
-  -->
-  <string name="juno_onboarding_add_search_widget_description" tools:ignore="BrandUsage,UnusedResources">Firefox をホーム画面に置いておくと、クロスサイトトラッカーをブロックするプライバシー優先のブラウザーに簡単にアクセスできます。</string>
-  <!--
-    Text for the button to add search widget on the device used by Nimbus experiments. Nimbus experiments do not support string placeholders.
-    Note: The word "Firefox" should NOT be translated
-  -->
-  <string name="juno_onboarding_add_search_widget_positive_button" tools:ignore="BrandUsage,UnusedResources">Firefox ウィジェットを追加</string>
-  <!-- Text for the button to dismiss the screen and move on with the flow -->
-  <string name="juno_onboarding_add_search_widget_negative_button" tools:ignore="UnusedResources">後で</string>
   <!-- Title for the privacy preferences dialog shown during onboarding. Note: The word "Firefox" should NOT be translated. -->
   <string name="onboarding_preferences_dialog_title" tools:ignore="BrandUsage">Firefox の改善にご協力ください</string>
   <!-- Title for the crash reporting option in the privacy preferences dialog shown during onboarding. -->
@@ -549,17 +473,13 @@
   <!-- Button text to reopen firefox after the crash is processed %s is the name of the app (for example "Firefox") -->
   <string name="startup_crash_restart">%s を再起動</string>
   <!-- Title for the usage data option in the privacy preferences dialog shown during onboarding. Note: The word "Mozilla" should NOT be translated. -->
-  <string name="onboarding_preferences_dialog_usage_data_title">技術データと対話データを Mozilla に送信する</string>
+  <string name="onboarding_preferences_dialog_usage_data_title" tools:ignore="BrandUsage">技術データと対話データを Mozilla に送信する</string>
   <string name="onboarding_preferences_dialog_usage_data_description_2" tools:ignore="BrandUsage">端末、ハードウェア構成、Firefox の使用状況に関するデータは、すべてのユーザーのために、機能やパフォーマンス、安定性の向上に役立てられます。</string>
   <string name="onboarding_preferences_dialog_usage_data_learn_more_2">詳細情報</string>
   <!-- Positive button label for the privacy preferences dialog shown during onboarding. -->
   <string name="onboarding_preferences_dialog_positive_button">完了</string>
   <!-- Terms of service onboarding title card label. 'Firefox' intentionally hardcoded here -->
   <string name="onboarding_welcome_to_firefox" tools:ignore="BrandUsage">Firefox へようこそ</string>
-  <!-- Terms of service sub header label. -->
-  <string name="onboarding_terms_of_service_sub_header_2">高速で安全なウェブブラウジング</string>
-  <!-- Terms of service onboarding page continue button label. -->
-  <string name="onboarding_term_of_service_agree_and_continue_button_label_2">続ける</string>
   <!-- Line one of the terms of service onboarding page. %1$s is replaced by an active link, using onboarding_term_of_service_line_one_link_text_2 as text (“Firefox Terms of Use”). -->
   <string name="onboarding_term_of_service_line_one_2">続けると、%1$s に同意したものとみなされます。</string>
   <!-- Used as text for the link in onboarding_term_of_service_line_one_2. -->
@@ -627,16 +547,6 @@
   <string name="onboarding_redesign_sync_positive_button" tools:ignore="UnusedResources">同期を開始</string>
   <!-- Sync onboarding redesign negative button text. -->
   <string name="onboarding_redesign_sync_negative_button" tools:ignore="UnusedResources">後で</string>
-  <!-- Marketing onboarding page title. 'Firefox' is intentionally hardcoded. -->
-  <string name="onboarding_marketing_title" tools:ignore="BrandUsage,UnusedResources">Firefox の成長に協力する</string>
-  <!-- Marketing onboarding page body. 'Firefox' is intentionally hardcoded. -->
-  <string name="onboarding_marketing_body" tools:ignore="BrandUsage,UnusedResources">Firefox を見つけた経緯や使用していることを共有していただくことで、より多くの人に私たちのブラウザーを紹介できます。</string>
-  <!-- Marketing onboarding page opt-out checkbox. Unchecking the box does not increase data collection. Our data practices remain the same. 'Mozilla' is intentionally hardcoded. -->
-  <string name="onboarding_marketing_opt_out_checkbox">Mozilla のマーケティング技術パートナーとデータを共有します。このデータは販売されたり、広告の表示に利用されたりすることはありません。</string>
-  <!-- Marketing onboarding page clickable link text to "learn more" on how data is used. -->
-  <string name="onboarding_marketing_learn_more" tools:ignore="UnusedResources">データの使途</string>
-  <!-- Marketing onboarding page button label. Button to confirm choice and start browsing. -->
-  <string name="onboarding_marketing_positive_button" tools:ignore="UnusedResources">確認してブラウジングを開始</string>
   <!-- Marketing onboarding page title variant. “One last thing” refers to the final step or action in the onboarding process that we’re asking users to take before they can start using the browser. -->
   <string name="onboarding_marketing_title_1" tools:ignore="UnusedResources">最後に</string>
   <!-- Marketing onboarding page body variant. 'Firefox' is intentionally hardcoded. -->
@@ -718,9 +628,11 @@
   <!-- Marketing onboarding body link text. -->
   <string name="nova_onboarding_marketing_body_link_text">データの使途</string>
   <!-- Marketing onboarding primary button text. 'Firefox' is intentionally hardcoded. -->
-  <string name="nova_onboarding_marketing_primary_button_text" tools:ignore="BrandUsage">Firefox に協力する</string>
+  <string name="nova_onboarding_marketing_primary_button_text" tools:ignore="BrandUsage,UnusedResources">Firefox に協力する</string>
+  <!-- Marketing onboarding primary button text. -->
+  <string name="nova_onboarding_marketing_primary_button_text_2">許可して続行する</string>
   <!-- Marketing onboarding secondary button text. -->
-  <string name="nova_onboarding_marketing_secondary_button_text">いいえ、結構です</string>
+  <string name="nova_onboarding_marketing_secondary_button_text" tools:ignore="UnusedResources">いいえ、結構です</string>
   <!-- Notifications onboarding title. 'Firefox' is intentionally hardcoded. -->
   <string name="nova_onboarding_notifications_title" tools:ignore="BrandUsage,UnusedResources">通知をオンにして Firefox で安全性を高めましょう</string>
   <!-- Notifications onboarding subtitle. 'Firefox' is intentionally hardcoded. -->
@@ -753,41 +665,6 @@
   <string name="nova_onboarding_app_icon_prompt_body" tools:ignore="UnusedResources">ホーム画面に自分らしさを加えましょう。</string>
   <!-- ==== End of Project "Nova" onboarding strings ==== -->
 
-  <!-- Onboarding header for the toolbar selection card, used by Nimbus experiments. -->
-  <string name="onboarding_customize_toolbar_title" tools:ignore="UnusedResources">ツールバーの配置を選択</string>
-  <!-- Onboarding sub header for toolbar selection card, used by Nimbus experiments. -->
-  <string name="onboarding_customize_toolbar_description" tools:ignore="UnusedResources">手元で検索。</string>
-  <!-- Onboarding label for 'Save and continue' button, used by Nimbus experiments. -->
-  <string name="onboarding_save_and_continue_button">保存して続ける</string>
-  <!-- Onboarding toolbar selection card label for 'top' option, used by Nimbus experiments. -->
-  <string name="onboarding_customize_toolbar_top_option">画面上部</string>
-  <!-- Onboarding toolbar selection card label for 'bottom' option, used by Nimbus experiments. -->
-  <string name="onboarding_customize_toolbar_bottom_option">画面下部</string>
-  <!-- Onboarding toolbar selection card content description for the main image. -->
-  <string name="onboarding_customize_toolbar_main_image_content_description">ツールバーが描かれたツールバー選択ビューの大きなヘッダー画像。</string>
-  <!-- Onboarding toolbar selection card content description for the toolbar placement image. -->
-  <string name="onboarding_customize_toolbar_placement_bottom_content_description">下部ツールバーの画像</string>
-  <string name="onboarding_customize_toolbar_placement_top_content_description">上部のツールバーの画像</string>
-  <!-- Action label for toolbar options that can be selected. Talkback will append this to say "Double tap to select". -->
-  <string name="onboarding_customize_toolbar_a11y_action_label_select">選択</string>
-  <!-- Onboarding header for the theme selection card, used by Nimbus experiments. -->
-  <string name="onboarding_customize_theme_title" tools:ignore="UnusedResources">テーマの選択</string>
-  <!-- Onboarding sub header for theme selection card, used by Nimbus experiments. -->
-  <string name="onboarding_customize_theme_description" tools:ignore="UnusedResources">最適な明るさでウェブをご覧ください。</string>
-  <!-- Onboarding label for 'Save and start browsing' button, used by Nimbus experiments. -->
-  <string name="onboarding_save_and_start_button">保存してブラウジングを開始</string>
-  <!-- Onboarding theme selection card label for 'dark' option, used by Nimbus experiments. -->
-  <string name="onboarding_customize_theme_dark_option">ダーク</string>
-  <!-- Onboarding theme selection card label for 'light' option, used by Nimbus experiments. -->
-  <string name="onboarding_customize_theme_light_option">ライト</string>
-  <!-- Onboarding theme selection card label for 'System auto' option, used by Nimbus experiments. -->
-  <string name="onboarding_customize_theme_system_option">システムテーマ</string>
-  <!-- Onboarding theme selection card content description for the main image. -->
-  <string name="onboarding_customize_theme_main_image_content_description">アーティストとビルダーツールが描かれたテーマ選択ビューの大きなヘッダー画像。</string>
-  <!-- Onboarding theme selection card content description for the theme selection image. %1$s is placeholder for either 'system', 'light' or 'dark'. -->
-  <string name="onboarding_customize_theme_content_description">%1$s テーマの画像</string>
-  <!-- Action label for options that can be selected. Talkback will append this to say "Double tap to select". -->
-  <string name="onboarding_customize_theme_a11y_action_label_select">選択</string>
   <!--
     Widget Picker
 
@@ -932,7 +809,7 @@
   <!-- Preference for accessibility -->
   <string name="preferences_accessibility">アクセシビリティ</string>
   <!-- Preference to override the Mozilla account server -->
-  <string name="preferences_override_account_server">カスタム Mozilla アカウントサーバー</string>
+  <string name="preferences_override_account_server" tools:ignore="BrandUsage">カスタム Mozilla アカウントサーバー</string>
   <!-- Preference to override the Sync token server -->
   <string name="preferences_override_sync_tokenserver">カスタム Sync サーバー</string>
   <!-- Preference category for account information -->
@@ -960,7 +837,7 @@
   <!-- Preference description shown in the banner prompting the user to sign in for sync features -->
   <string name="preferences_sign_in_description">タブやブックマーク、パスワードなどを同期しましょう。</string>
   <!-- Preference shown instead of account display name while account profile information isn't available yet. -->
-  <string name="preferences_account_default_name_2">Mozilla アカウント</string>
+  <string name="preferences_account_default_name_2" tools:ignore="BrandUsage">Mozilla アカウント</string>
   <!-- Preference text for account title when there was an error syncing FxA -->
   <string name="preferences_account_sync_error">再接続して同期を再開</string>
   <!-- Preference for language -->
@@ -1008,7 +885,7 @@
   <!-- Summary for preference to show Firefox Suggest search suggestions for web content -->
   <string name="preferences_show_nonsponsored_suggestions_summary">検索語句に関連した提案をウェブから取得します</string>
   <!-- Preference title for switch preference to show search optimization cards -->
-  <string name="preferences_show_search_optimization_cards">入力に応じて Mozilla からの候補を取得する</string>
+  <string name="preferences_show_search_optimization_cards" tools:ignore="BrandUsage">入力に応じて Mozilla からの候補を取得する</string>
   <!-- Preference for link sharing -->
   <string name="preferences_link_sharing">リンク共有</string>
   <!-- Title for the link sharing toggle. %1$s is replaced by the brand name (e.g. Firefox). -->
@@ -1120,10 +997,12 @@
   <string name="customize_toggle_pocket_sponsored">広告ストーリー</string>
   <!-- Title for the opening wallpaper settings screen -->
   <string name="customize_wallpapers">壁紙</string>
+  <!-- Label for the menu item that opens the wallpaper settings screen. -->
+  <string name="browser_menu_change_wallpaper">壁紙を変更</string>
   <!-- Title for the customize home screen section with sponsored shortcuts. -->
   <string name="customize_toggle_contile">広告ショートカット</string>
   <!-- Title for the customize home screen section that toggles the Homepage sports widget. -->
-  <string name="customize_toggle_world_cup" tools:ignore="UnusedResources">ワールドカップ</string>
+  <string name="customize_toggle_world_cup">ワールドカップ</string>
   <!--
     Wallpapers
 
@@ -1336,7 +1215,7 @@
   <string name="preferences_usage_data_description_1" tools:ignore="BrandUsage">端末、ハードウェア構成、アプリの使用状況に関するデータは、Firefox の機能やパフォーマンス、安定性の向上に役立てられます。</string>
   <!-- Preference switch for daily usage ping data collection -->
   <string name="preferences_daily_usage_ping_title">毎日の使用頻度を送信する</string>
-  <string name="preferences_daily_usage_ping_description">これは Mozilla がアクティブユーザー数を推定するのに役立ちます。</string>
+  <string name="preferences_daily_usage_ping_description" tools:ignore="BrandUsage">これは Mozilla がアクティブユーザー数を推定するのに役立ちます。</string>
   <string name="preferences_daily_usage_ping_learn_more">日ごとの使用状況データについての詳細</string>
   <!-- Title for the crash reporting option in the privacy preferences dialog shown during onboarding. -->
   <string name="crash_reporting_snack_bar_message">報告を送信しました</string>
@@ -1362,7 +1241,7 @@
   <!-- Title for studies preferences -->
   <string name="preference_experiments_2">調査</string>
   <!-- Summary for studies preferences -->
-  <string name="preference_experiments_summary_2">調査機能のインストールと実行を Mozilla に許可する</string>
+  <string name="preference_experiments_summary_2" tools:ignore="BrandUsage">調査機能のインストールと実行を Mozilla に許可する</string>
   <!--
     Turn On Sync Preferences
 
@@ -1463,8 +1342,6 @@
   <string name="library_desktop_bookmarks_unfiled">他のブックマーク</string>
   <!-- Option in Library to open History page -->
   <string name="library_history">履歴</string>
-  <!-- Option in Library to open a new tab -->
-  <string name="library_new_tab">新しいタブ</string>
   <!-- Settings Page Title -->
   <string name="settings_title">設定</string>
   <!-- Content description (not visible, for screen readers etc.): "Close button for library settings" -->
@@ -2052,6 +1929,8 @@
   <!-- The error message of the dropdown, prompting the user to select a high-level reason why the site is broken. -->
   <string name="webcompat_reporter_choose_reason_error">不具合の対象を選んでください</string>
   <!-- The label/title of an optional field in the Web Compat Reporter feature for adding additional information. -->
+  <string name="webcompat_reporter_label_description_2">問題について、できるだけ詳しく書いてください。調査の助けになります (任意)</string>
+  <!-- The label/title of an optional field in the Web Compat Reporter feature for adding additional information. -->
   <string name="webcompat_reporter_label_description">問題の詳細を記入してください (任意)</string>
   <!-- The button text for navigating away from the feature to provide more information on the broken site's bug report. -->
   <string name="webcompat_reporter_add_more_info">詳細情報を追加</string>
@@ -2062,7 +1941,11 @@
   <!-- Text for a snackbar to confirm the successful submission of a WebCompat report. -->
   <string name="webcompat_reporter_success_snackbar_text_2">報告を送信しました</string>
   <!-- Placeholder text for the description field to prompt the user on what they should type. -->
+  <string name="webcompat_reporter_problem_description_placeholder_text_2">何が起こりましたか？ どのような動作を期待していましたか？ 問題を再現する手順を記入してください。</string>
+  <!-- Placeholder text for the description field to prompt the user on what they should type. -->
   <string name="webcompat_reporter_problem_description_placeholder_text">何が起こったのか、本来は何が起こるべきだったのかをご記入ください。</string>
+  <!-- Label of the checkbox on the “Report broken site” screen for sending URLS blocked by Enhanced Tracking Protection. -->
+  <string name="webcompat_reporter_etp_checkbox_text_2">トラッキング防止でブロックされたアイテムのリストを送信する</string>
   <!-- Label of the checkbox on the “Report broken site” screen for sending URLS blocked by Enhanced Tracking Protection. -->
   <string name="webcompat_reporter_etp_checkbox_text">トラッキング防止機能がブロックした URL を送信する</string>
   <!-- Description text for the checkbox on the “Report broken site” screen for sending URLS blocked by Enhanced Tracking Protection. It informs the user when checked, the report will include the list of URLs that were blocked by Enhanced Tracking Protection on the current page. -->
@@ -2073,6 +1956,12 @@
   <string name="webcompat_reporter_preview_bottom_sheet_header">報告プレビュー</string>
   <!-- Label for the “Send” button shown in the WebCompat Report preview panel, which the user taps to submit the report. -->
   <string name="webcompat_reporter_preview_bottom_sheet_send">送信</string>
+  <!-- Title for the Edit URL confirmation dialog in the WebCompatReporter -->
+  <string name="webcompat_reporter_edit_url_dialog_title">ウェブサイトの URL を編集</string>
+  <!-- Text shown on the save button for the Edit URL confirmation dialog in the WebCompatReporter. -->
+  <string name="webcompat_reporter_edit_url_dialog_save">保存</string>
+  <!-- Text shown on the dismiss button for the Edit URL confirmation dialog in the WebCompatReporter. -->
+  <string name="webcompat_reporter_edit_url_dialog_dismiss">閉じる</string>
   <!--
     These reason strings are dropdown options on a WebCompat reporter form, indicating what is broken on the site.
 
@@ -2102,7 +1991,7 @@
   -->
   <string name="tab_crash_title_2">申し訳ありません。%1$s はそのページを読み込めません。</string>
   <!-- Send crash report checkbox text on the tab crash page -->
-  <string name="tab_crash_send_report">クラッシュレポートを Mozilla に送信する</string>
+  <string name="tab_crash_send_report" tools:ignore="BrandUsage">クラッシュレポートを Mozilla に送信する</string>
   <!-- Close tab button text on the tab crash page -->
   <string name="tab_crash_close">タブを閉じる</string>
   <!-- Restore tab button text on the tab crash page -->
@@ -2201,12 +2090,8 @@
   <string name="edit_bookmark_folder_fragment_title">フォルダー編集</string>
   <!-- Bookmark URL editing field label -->
   <string name="bookmark_url_label">URL</string>
-  <!-- Bookmark FOLDER editing field label -->
-  <string name="bookmark_folder_label">フォルダー</string>
   <!-- Text indicating which folder a bookmark or folder will be saved in -->
   <string name="bookmark_save_in_label">保存先</string>
-  <!-- Bookmark NAME editing field label -->
-  <string name="bookmark_name_label">名前</string>
   <!-- Label for a text input field for a bookmark or folder name -->
   <string name="bookmark_name_label_normal_case">名前</string>
   <!-- Bookmark select folder screen title -->
@@ -2250,12 +2135,8 @@
   <string name="bookmark_empty_list_root_title">お気に入りのブックマークをまとめて保存する</string>
   <!-- Bookmark screen folder description. %s is the count of bookmark folder children -->
   <string name="bookmarks_folder_description">フォルダー内のブックマーク: %s</string>
-  <!-- Description for the bookmark list empty state when you're not signed into sync. -->
-  <string name="bookmark_empty_list_guest_description">閲覧したサイトを保存しましょう。ログインすると、他の同期した端末からブックマークを読み込めます。</string>
   <!-- Text for the button to navigate to sync authentication -->
   <string name="bookmark_empty_list_guest_cta">ログインして同期</string>
-  <!-- Description for the bookmark list empty state when you're signed into sync. -->
-  <string name="bookmark_empty_list_authenticated_description">閲覧したサイトを保存しましょう。他の同期した端末からもブックマークを読み込みます。</string>
   <!-- Description for the bookmark list empty state when you're in an empty folder. -->
   <string name="bookmark_empty_list_folder_description">後でお気に入りのサイトを見つけられるように、閲覧したサイトをブックマークに追加しましょう。</string>
   <!-- Description for the add new folder button when selecting a folder. -->
@@ -2370,8 +2251,6 @@
   <string name="collections_header">コレクション</string>
   <!-- Content description (not visible, for screen readers etc.): Opens the collection menu when pressed -->
   <string name="collection_menu_button_content_description">コレクションメニュー</string>
-  <!-- Label to describe what collections are to a new user without any collections -->
-  <string name="no_collections_description2">ページを集めてグループ化しましょう。\n類似の検索、ウェブサイト、タブに後ですばやくアクセスできます。</string>
   <!-- Title for the "select tabs" step of the collection creator -->
   <string name="create_collection_select_tabs">タブの選択</string>
   <!-- Title for the "select collection" step of the collection creator -->
@@ -2669,7 +2548,11 @@
     Link displayed in enhanced tracking protection panel to access tracking protection settings
   -->
   <string name="etp_settings">追跡防止の設定</string>
-  <!-- Preference title for enhanced tracking protection settings -->
+  <!--
+    Enhanced Tracking Protection
+
+    Preference title for enhanced tracking protection settings
+  -->
   <string name="preference_enhanced_tracking_protection">強化型トラッキング防止</string>
   <!-- Preference summary for enhanced tracking protection settings on/off switch -->
   <string name="preference_enhanced_tracking_protection_summary">包括的 Cookie 保護が登場しました。これまでで最も強力なクロスサイトトラッカー遮断機能です。</string>
@@ -2821,8 +2704,6 @@
   <string name="etp_suspected_fingerprinters_description">フィンガープリント防止を有効にすると、疑わしいフィンガープリント採取を阻止します。</string>
   <!-- Category of trackers (fingerprinters) that can be blocked by Enhanced Tracking Protection -->
   <string name="etp_known_fingerprinters_title">既知のフィンガープリント採取</string>
-  <!-- Label for the fingerprinters category shown in the tracking protections dashboard breakdown -->
-  <string name="tracking_dashboard_fingerprinters_category_name">フィンガープリント採取</string>
   <!--
     Description of the SmartBlock Enhanced Tracking Protection feature. The * symbol is intentionally hardcoded here,
     as we use it on the UI to indicate which trackers have been partially unblocked.
@@ -3109,12 +2990,12 @@
   <string name="ip_protection_title">VPN</string>
   <!-- Label for the browser VPN toggle on the settings screen -->
   <string name="ip_protection_toggle_label">VPN</string>
+  <!-- Content description for the browser VPN settings screen top bar back button -->
+  <string name="ip_protection_navigate_back_button_content_description">前のページへ戻る</string>
   <!-- Headline for the browser VPN promo card. %s is the name of the app (for example "Firefox"). -->
   <string name="ip_protection_promo_headline">%s の組み込み VPN</string>
   <!-- Body text for the browser VPN promo card . %s is a learn more link using ip_protection_learn_more as text. -->
   <string name="ip_protection_promo_body_2">公衆 Wi-Fi であっても、ユーザーの現在位置を隠して追加の保護でブラウジングします。%s</string>
-  <!-- Body text for the browser VPN promo card -->
-  <string name="ip_protection_promo_body">公衆 Wi-Fi であっても、ユーザーの現在位置を隠して追加の保護でブラウジングします。</string>
   <!-- Link text that opens additional information about the browser VPN -->
   <string name="ip_protection_learn_more">詳細情報</string>
   <!-- Label for the monthly data allowance section on the browser VPN settings screen -->
@@ -3166,6 +3047,8 @@
   <string name="ip_protection_toolbar_pill_description">VPN が有効です。</string>
   <!-- Label for the button that starts the browser VPN authentication or authorization flow on the settings screen -->
   <string name="ip_protection_get_started">はじめる</string>
+  <!-- Label for the "connecting" state of the button that starts the browser VPN authentication or authorization flow on the settings screen -->
+  <string name="ip_protection_connecting">接続中...</string>
   <!-- Headline for the browser VPN onboarding card. %s is the name of the app (for example "Firefox"). -->
   <string name="ip_protection_onboarding_card_headline">%s の組み込み VPN をお試しください</string>
   <!--
@@ -3176,6 +3059,14 @@
   <string name="ip_protection_onboarding_body">公衆 Wi-Fi であっても、ユーザーの現在位置を隠して%1$sします。毎月無料で %2$d GB が利用できます。</string>
   <!-- Used as text for a link in ip_protection_onboarding_body. Make sure to adapt capitalization if the link is in the middle of the sentence. -->
   <string name="ip_protection_onboarding_body_link">追加の保護でブラウジング</string>
+  <!--
+    The body of the VPN onboarding card for a promotion that provides unlimited data bandwidth for a certain time.
+    %1$s is a localized date (for example "Jun 9") indicating the end of the promotional period.
+    %2$s is a link using ip_protection_onboarding_body_link_promo (“Learn more”) as text. It links to a support article about VPN on Firefox.
+  -->
+  <string name="ip_protection_onboarding_body_promo">オンにすると、ブラウジングのプライバシーが保護され、追跡されにくくなります。今すぐ試して、%1$s を通じて無制限の帯域幅を手に入れましょう。%2$s</string>
+  <!-- Used as text for a link in ip_protection_onboarding_body. Make sure to adapt capitalization if the link is in the middle of the sentence. -->
+  <string name="ip_protection_onboarding_body_link_promo">詳細情報</string>
   <!-- Label for the dismiss button on the onboarding bottom sheet. -->
   <string name="ip_protection_onboarding_not_now_button">後で</string>
   <!-- Snackbar (in-app pop-up notification) text to signal the browser VPN connection error -->
@@ -3185,6 +3076,8 @@
     %1$d is the total monthly allowance in GB (for example "50").
   -->
   <string name="ip_protection_data_limit_reached_snackbar">VPN データが %1$d GB 使用されました。アクセスは来月リセットされます。</string>
+  <!-- Snackbar (in-app pop-up notification) action button text that takes the user to the VPN settings screen. -->
+  <string name="ip_protection_data_limit_reached_snackbar_action">設定</string>
   <!--
     Autofill
 
@@ -3485,8 +3378,14 @@
   <string name="homepage_shortcuts_show_all_content_description">すべてのショートカットを表示します</string>
   <!-- Label for the "Add shortcut" button displayed as a tile. -->
   <string name="homepage_shortcuts_add_shortcut">ショートカットを追加</string>
+  <!-- Title for the "Add to homepage" bottom sheet. -->
+  <string name="homepage_shortcuts_add_to_homepage">ホームページに追加</string>
+  <!-- Label for the "Add website" button in the "Add to homepage" bottom sheet. -->
+  <string name="homepage_shortcuts_add_website">ウェブサイトを追加</string>
   <!-- Title text for the "Enter a Website URL" dialog for adding a shortcut. -->
   <string name="homepage_shortcuts_add_website_title">ウェブサイトの URL を入力してください</string>
+  <!-- Title for the "Popular sites" section in the "Add to homepage" bottom sheet. -->
+  <string name="homepage_shortcuts_popular_sites">人気サイト</string>
   <!-- Title text displayed in the dialog when shortcuts limit is reached. -->
   <string name="shortcut_max_limit_title">ショートカット数の上限に達しました</string>
   <!-- Content description text displayed in the dialog when shortcut limit is reached. -->
@@ -3573,8 +3472,6 @@
   <string name="default_browser_experiment_card_title">既定のブラウザーを変更しませんか</string>
   <!-- Default browser card text -->
   <string name="default_browser_experiment_card_text" tools:ignore="BrandUsage">ウェブサイトやメール、メッセージのリンクを自動的に Firefox で開きます。</string>
-  <!-- Content description for close button in collection placeholder. -->
-  <string name="remove_home_collection_placeholder_content_description">削除</string>
   <!-- Content description radio buttons with a link to more information -->
   <string name="radio_preference_info_content_description">詳細はこちら</string>
   <!-- Content description for the action bar "up" button -->
@@ -3606,20 +3503,10 @@
     Action label for elements that can be collapsed if interacting with them. Talkback will append this to say "Double tap to collapse".
   -->
   <string name="a11y_action_label_collapse">折りたたむ</string>
-  <!-- Current state for elements that can be collapsed if interacting with them. Talkback will dictate this after a state change. -->
-  <string name="a11y_state_label_collapsed">折りたたみ状態</string>
   <!-- Action label for elements that can be expanded if interacting with them. Talkback will append this to say "Double tap to expand". -->
   <string name="a11y_action_label_expand">展開する</string>
-  <!-- Current state for elements that can be expanded if interacting with them. Talkback will dictate this after a state change. -->
-  <string name="a11y_state_label_expanded">展開状態</string>
   <!-- Action label for links to a website containing documentation about a wallpaper collection. Talkback will append this to say "Double tap to open link to learn more about this collection". -->
   <string name="a11y_action_label_wallpaper_collection_learn_more">このコレクションの詳細についてはリンク先をご覧ください</string>
-  <!-- Content description for headings announced by accessibility service. %s is the text of the heading. Talkback will announce the text and then speak the word "Heading" indicating to the user that this text is a heading for a section. -->
-  <string name="a11y_heading">%s、見出し</string>
-  <!-- Title for dialog displayed when trying to access links present in a text. -->
-  <string name="a11y_links_title">リンク</string>
-  <!-- Additional content description for text bodies that contain urls. -->
-  <string name="a11y_links_available">利用可能なリンク</string>
   <!-- Translations feature -->
 
   <!--
@@ -3886,6 +3773,18 @@
     %s is the name of the app (for example "Firefox").
   -->
   <string name="protection_panel_banner_protected_title">%s の保護機能がオンです</string>
+  <plurals name="protection_panel_banner_protected_blocked_trackers_description">
+    <!--
+      Description text for the protection panel banner when privacy dashboard is enabled.
+      %1$d is the number of trackers blocked.
+    -->
+    <item quantity="other">このサイトでは %1$d 個のトラッカーをブロックしました。</item>
+  </plurals>
+  <!--
+    Description text for the protection panel banner when privacy dashboard is enabled.
+    and there are no trackers blocked.
+  -->
+  <string name="protection_panel_banner_protected_no_blocked_trackers_description">保護されています。</string>
   <!-- Description text for the protection panel banner when tracking protection is enabled. -->
   <string name="protection_panel_banner_protected_description">現在保護されています。何か問題があればお知らせします。</string>
   <!-- Label text for the Enhanced Tracking Protection toggle. -->
@@ -3911,6 +3810,55 @@
   <string name="protection_panel_privacy_and_security_settings_2">プライバシー設定</string>
   <!-- Title text for the protection panel permissions section. -->
   <string name="protection_panel_permissions_title">許可設定</string>
+  <plurals name="trackers_blocked_panel_total_num_trackers_blocked_2">
+    <!--
+      Text for displaying the total number of trackers blocked in the trackers blocked panel.
+      %1$d is a placeholder for the number of trackers blocked.
+    -->
+    <item quantity="other">このサイトでは %1$d 個のトラッカーをブロックしました</item>
+  </plurals>
+  <plurals name="trackers_blocked_panel_num_social_media_trackers">
+    <!--
+      Text for displaying in the trackers blocked panel the total number of blocked social media trackers.
+      %1$d is a placeholder for the number of social media trackers blocked.
+    -->
+    <item quantity="other">%1$d 個のソーシャルメディアトラッカー</item>
+  </plurals>
+  <plurals name="trackers_blocked_panel_num_cross_site_cookies">
+    <!--
+      Text for displaying in the trackers blocked panel the total number of blocked cross-site tracking cookies.
+      %1$d is a placeholder for the number of cross-site tracking cookies blocked.
+    -->
+    <item quantity="other">%1$d 個のクロスサイトトラッキング Cookie</item>
+  </plurals>
+  <plurals name="trackers_blocked_panel_num_cryptominers">
+    <!--
+      Text for displaying in the trackers blocked panel the total number of blocked cryptomining scripts.
+      %1$d is a placeholder for the number of cryptominers blocked.
+    -->
+    <item quantity="other">%1$d 個の暗号通貨マイニング</item>
+  </plurals>
+  <plurals name="trackers_blocked_panel_num_fingerprinters">
+    <!--
+      Text for displaying in the trackers blocked panel the total number of blocked fingerprinter scripts.
+      %1$d is a placeholder for the number of fingerprinters blocked.
+    -->
+    <item quantity="other">%1$d 個のフィンガープリント採取</item>
+  </plurals>
+  <plurals name="trackers_blocked_panel_num_trackers_2">
+    <!--
+      Text for displaying in the trackers blocked panel the total number of blocked generic tracking scripts.
+      %1$d is a placeholder for the number of trackers blocked.
+    -->
+    <item quantity="other">%1$d 個のトラッキングコンテンツ</item>
+  </plurals>
+  <plurals name="trackers_blocked_panel_num_trackers_blocked_this_week_2">
+    <!--
+      Text for displaying the number of trackers blocked this week in the trackers blocked panel.
+      %1$d is a placeholder for the number of trackers blocked this week.
+    -->
+    <item quantity="other">今週、%1$d 個のトラッカーをブロックしました</item>
+  </plurals>
   <!--
     Text for displaying the total number of trackers blocked in the trackers blocked panel.
     %d is a placeholder for the number of trackers blocked.
@@ -4532,7 +4480,7 @@
   <!-- Sports widget match status label shown during halftime of a match. -->
   <string name="sports_widget_halftime" tools:ignore="UnusedResources">ハーフタイム</string>
   <!-- Sports widget match status label shown during extra time of a match. -->
-  <string name="sports_widget_extra_time" tools:ignore="UnusedResources">延長戦</string>
+  <string name="sports_widget_extra_time">延長戦</string>
   <!-- Sports widget match status label shown during penalties of a match. -->
   <string name="sports_widget_penalties">ペナルティー</string>
   <!--
@@ -4645,10 +4593,25 @@
   <!-- The second active link used in privacy_notice_updated_homepage_message -->
   <string name="privacy_notice_updated_homepage_message_learn_more" tools:ignore="UnusedResources">詳細情報</string>
   <!--
+    Firefox Labs
+
+    Firefox Labs is the name of a screen in Settings to allow users to learn about
+    experimental and in-development features, and turn those features on and off.
+    The "Labs" portion can be localized, "Firefox" must be treated as a brand and kept
+    in English.
+  -->
+  <string name="firefox_labs_title" tools:ignore="BrandUsage">Firefox Labs</string>
+  <!-- Banner title text on the Firefox Labs screen. -->
+  <string name="firefox_labs_banner_title_2">実験的な機能をお試しください！</string>
+  <!--
     Banner description text on the Firefox Labs screen. Provides information on what Firefox Labs does. %s is the name of the app (for example "Firefox Nightly").
     Text will appear under the Firefox Labs banner title.
   -->
   <string name="firefox_labs_experimental_description">これらは開発段階のため進化していきますが、%s の動作に影響を与える可能性があります。</string>
+  <!-- The link text shown when a feedback URL for a Firefox Labs feature is available. The feedback URL page will allow users to provide opinions and suggestions. -->
+  <string name="firefox_labs_share_feedback">フィードバックを共有する</string>
+  <!-- Content description for the share feedback link on a Firefox Labs feature. This text will be used by screen readers to provide more context on the feedback link. %s is the name of the Firefox Labs feature. -->
+  <string name="firefox_labs_share_feedback_content_description">%s に関するフィードバックをお寄せください。</string>
   <!-- Button text on the Firefox Labs screen for restoring all toggles back to the default settings. The button will turn off any experimental features. -->
   <string name="firefox_labs_restore_default_button_text">初期設定に戻す</string>
   <!-- The title used in a confirmation dialog on the Firefox Labs screen when toggling "on" or "off" an experimental feature that requires a restart. -->
@@ -4661,6 +4624,10 @@
   <string name="firefox_labs_restore_defaults_dialog_title">再起動が必要です</string>
   <!-- The description used in a confirmation dialog on the Firefox Labs screen when restoring the application to its defaults by turning "off" any experimental features. %s is the name of the app (for example "Firefox Nightly") -->
   <string name="firefox_labs_restore_defaults_dialog_message">初期設定に戻すには、%s を再起動してください。</string>
+  <!-- The description text that is displayed in the confirmation dialog on the Firefox Labs screen for toggling "on" experimental features. %s is the name of the app (for example "Firefox Nightly") -->
+  <string name="firefox_labs_feature_enable_dialog_message">この機能を有効にするには、%s を再起動してください。</string>
+  <!-- The description text that is displayed in the confirmation dialog on the Firefox Labs screen for toggling "off" experimental features. %s is the name of the app (for example "Firefox Nightly") -->
+  <string name="firefox_labs_feature_disable_dialog_message">この機能を無効にするには、%s を再起動してください。</string>
   <!-- Text displayed on the Firefox Labs screen when there are no Labs experimental features present. -->
   <string name="firefox_labs_no_labs_available_description">現時点で試せる実験的な機能はありません</string>
 </resources>

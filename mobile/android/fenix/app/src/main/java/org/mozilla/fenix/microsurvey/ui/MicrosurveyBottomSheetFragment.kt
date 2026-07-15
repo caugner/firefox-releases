@@ -23,7 +23,6 @@ import kotlinx.coroutines.launch
 import org.mozilla.fenix.HomeActivity
 import org.mozilla.fenix.ext.openToBrowser
 import org.mozilla.fenix.ext.requireComponents
-import org.mozilla.fenix.ext.settings
 import org.mozilla.fenix.messaging.MicrosurveyMessageController
 import org.mozilla.fenix.microsurvey.ui.ext.MicrosurveyUIData
 import org.mozilla.fenix.microsurvey.ui.ext.toMicrosurveyUIData
@@ -72,8 +71,7 @@ class MicrosurveyBottomSheetFragment : BottomSheetDialogFragment() {
                 bottomSheet?.let {
                     it.setBackgroundResource(android.R.color.transparent)
                     val behavior = BottomSheetBehavior.from(it)
-                    behavior.setPeekHeightToHalfScreenHeight()
-                    behavior.state = BottomSheetBehavior.STATE_HALF_EXPANDED
+                    behavior.state = BottomSheetBehavior.STATE_EXPANDED
                 }
             }
         }
@@ -103,21 +101,17 @@ class MicrosurveyBottomSheetFragment : BottomSheetDialogFragment() {
                     },
                     onCloseButtonClicked = {
                         microsurveyMessageController.onMicrosurveyDismissed(it.id)
-                        requireContext().settings().shouldShowMicrosurveyPrompt = false
+                        requireComponents.settings.shouldShowMicrosurveyPrompt = false
                         activity.isMicrosurveyPromptDismissed.value = true
                         closeBottomSheet()
                     },
                     onSubmitButtonClicked = { answer ->
-                        requireContext().settings().shouldShowMicrosurveyPrompt = false
+                        requireComponents.settings.shouldShowMicrosurveyPrompt = false
                         activity.isMicrosurveyPromptDismissed.value = true
                         microsurveyMessageController.onSurveyCompleted(it.id, answer)
                     },
                 )
             }
         }
-    }
-
-    private fun BottomSheetBehavior<View>.setPeekHeightToHalfScreenHeight() {
-        peekHeight = resources.displayMetrics.heightPixels / 2
     }
 }

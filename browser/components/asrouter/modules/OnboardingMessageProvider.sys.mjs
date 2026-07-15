@@ -1557,12 +1557,6 @@ const BASE_MESSAGES = () => [
     template: "pb_newtab",
     groups: ["pbNewtab"],
     content: {
-      infoBody: "fluent:about-private-browsing-info-description-simplified",
-      infoEnabled: true,
-      infoIcon: "chrome://global/skin/icons/indicator-private-browsing.svg",
-      infoLinkText: "fluent:about-private-browsing-learn-more-link",
-      infoTitle: "",
-      infoTitleEnabled: false,
       promoEnabled: true,
       promoType: "FOCUS",
       promoHeader: "fluent:about-private-browsing-focus-promo-header-c",
@@ -1662,12 +1656,6 @@ const BASE_MESSAGES = () => [
     template: "pb_newtab",
     groups: ["pbNewtab"],
     content: {
-      infoBody: "fluent:about-private-browsing-info-description-simplified",
-      infoEnabled: true,
-      infoIcon: "chrome://global/skin/icons/indicator-private-browsing.svg",
-      infoLinkText: "fluent:about-private-browsing-learn-more-link",
-      infoTitle: "",
-      infoTitleEnabled: false,
       promoEnabled: true,
       promoType: "FOCUS",
       promoHeader: "fluent:about-private-browsing-focus-promo-header-c",
@@ -1763,12 +1751,6 @@ const BASE_MESSAGES = () => [
     template: "pb_newtab",
     groups: ["pbNewtab"],
     content: {
-      infoBody: "fluent:about-private-browsing-info-description-simplified",
-      infoEnabled: true,
-      infoIcon: "chrome://global/skin/icons/indicator-private-browsing.svg",
-      infoLinkText: "fluent:about-private-browsing-learn-more-link",
-      infoTitle: "",
-      infoTitleEnabled: false,
       promoEnabled: true,
       promoType: "FOCUS",
       promoHeader: "fluent:about-private-browsing-focus-promo-header-c",
@@ -1866,12 +1848,6 @@ const BASE_MESSAGES = () => [
     type: "default",
     groups: ["pbNewtab"],
     content: {
-      infoBody: "fluent:about-private-browsing-info-description-simplified",
-      infoEnabled: true,
-      infoIcon: "chrome://global/skin/icons/indicator-private-browsing.svg",
-      infoLinkText: "fluent:about-private-browsing-learn-more-link",
-      infoTitle: "",
-      infoTitleEnabled: false,
       promoEnabled: true,
       promoType: "PIN",
       promoHeader: "fluent:about-private-browsing-pin-promo-header",
@@ -1935,12 +1911,6 @@ const BASE_MESSAGES = () => [
     type: "default",
     groups: ["pbNewtab"],
     content: {
-      infoBody: "fluent:about-private-browsing-info-description-simplified",
-      infoEnabled: true,
-      infoIcon: "chrome://global/skin/icons/indicator-private-browsing.svg",
-      infoLinkText: "fluent:about-private-browsing-learn-more-link",
-      infoTitle: "",
-      infoTitleEnabled: false,
       promoEnabled: true,
       promoType: "COOKIE_BANNERS",
       promoHeader: "fluent:about-private-browsing-cookie-banners-promo-heading",
@@ -2120,7 +2090,7 @@ const BASE_MESSAGES = () => [
     content: {
       template: "multistage",
       transitions: true,
-      modal: "tab",
+      modal: "window",
       backdrop: "transparent",
       id: "RESTORE_FROM_BACKUP",
       screens: [
@@ -2166,7 +2136,7 @@ const BASE_MESSAGES = () => [
     content: {
       template: "multistage",
       transitions: true,
-      modal: "tab",
+      modal: "window",
       backdrop: "transparent",
       id: "RESTORE_FROM_BACKUP_NEED_DEFAULT_NEED_PIN",
       screens: [
@@ -2271,7 +2241,7 @@ const BASE_MESSAGES = () => [
     content: {
       template: "multistage",
       transitions: true,
-      modal: "tab",
+      modal: "window",
       backdrop: "transparent",
       id: "RESTORE_FROM_BACKUP_NEED_DEFAULT",
       screens: [
@@ -2354,7 +2324,7 @@ const BASE_MESSAGES = () => [
     content: {
       template: "multistage",
       transitions: true,
-      modal: "tab",
+      modal: "window",
       backdrop: "transparent",
       id: "RESTORE_FROM_BACKUP_NEED_PIN",
       screens: [
@@ -3231,7 +3201,6 @@ const BASE_MESSAGES = () => [
             position: "center",
             screen_style: {
               width: "560px",
-              maxHeight: "495px",
               overflow: "auto",
             },
             dismiss_button: { size: "small", action: { dismiss: true } },
@@ -3242,6 +3211,33 @@ const BASE_MESSAGES = () => [
                 subtitle: { string_id: "aiwindow-feedback-what-worked-well" },
                 style: { marginBlock: "0" },
                 data: { id: "feedback-text", rows: 4, character_limit: 1000 },
+              },
+              {
+                type: "textbox",
+                style: { marginBlock: "8px 0" },
+                header: {
+                  title: { string_id: "aiwindow-feedback-preview-report" },
+                  alternateTitle: {
+                    string_id: "aiwindow-feedback-preview-report",
+                  },
+                },
+                data: {
+                  id: "chat-log-preview",
+                  content: "",
+                  style: {
+                    backgroundColor: "#F9F9FB",
+                    maxHeight: "130px",
+                  },
+                },
+              },
+              {
+                type: "content-toggle",
+                data: {
+                  id: "page-content-toggle",
+                  label: {
+                    string_id: "aiwindow-feedback-include-page-content",
+                  },
+                },
               },
             ],
             above_button_content: [
@@ -3270,6 +3266,7 @@ const BASE_MESSAGES = () => [
               action: {
                 type: "MULTI_ACTION",
                 collectTextInput: true,
+                collectContentToggleState: true,
                 navigate: true,
                 data: { actions: [] },
               },
@@ -3304,7 +3301,6 @@ const BASE_MESSAGES = () => [
             position: "center",
             screen_style: {
               width: "560px",
-              maxHeight: "495px",
               overflow: "auto",
             },
             dismiss_button: { size: "small", action: { dismiss: true } },
@@ -3362,6 +3358,33 @@ const BASE_MESSAGES = () => [
                 style: { marginBlock: "0" },
                 data: { id: "feedback-text", rows: 4, character_limit: 1000 },
               },
+              {
+                type: "textbox",
+                style: { marginBlock: "8px 0" },
+                header: {
+                  title: { string_id: "aiwindow-feedback-preview-report" },
+                  alternateTitle: {
+                    string_id: "aiwindow-feedback-preview-report",
+                  },
+                },
+                data: {
+                  id: "chat-log-preview",
+                  content: "",
+                  style: {
+                    backgroundColor: "#F9F9FB",
+                    maxHeight: "130px",
+                  },
+                },
+              },
+              {
+                type: "content-toggle",
+                data: {
+                  id: "page-content-toggle",
+                  label: {
+                    string_id: "aiwindow-feedback-include-page-content",
+                  },
+                },
+              },
             ],
             above_button_content: [
               {
@@ -3390,6 +3413,7 @@ const BASE_MESSAGES = () => [
                 type: "MULTI_ACTION",
                 collectSelect: true,
                 collectTextInput: true,
+                collectContentToggleState: true,
                 navigate: true,
                 data: { actions: [] },
               },
@@ -3748,13 +3772,6 @@ export const OnboardingMessageProvider = {
         mobileContent.cta_paragraph.text = {
           string_id: "mr2022-onboarding-no-mobile-download-cta-text",
         };
-      }
-      // Update CN specific QRCode url
-      if (lazy.BrowserUtils.isChinaRepack()) {
-        mobileContent.hero_image.url = `${mobileContent.hero_image.url.slice(
-          0,
-          mobileContent.hero_image.url.indexOf(".svg")
-        )}-cn.svg`;
       }
     }
 

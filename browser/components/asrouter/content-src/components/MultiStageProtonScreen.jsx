@@ -191,6 +191,8 @@ export const MultiStageProtonScreen = props => {
       setActiveSingleSelectSelection={props.setActiveSingleSelectSelection}
       textInputs={props.textInputs}
       setTextInput={props.setTextInput}
+      contentToggleChecked={props.contentToggleChecked}
+      setContentToggleChecked={props.setContentToggleChecked}
       totalNumberOfScreens={props.totalNumberOfScreens}
       handleAction={props.handleAction}
       isFirstScreen={props.isFirstScreen}
@@ -487,19 +489,19 @@ export class ProtonScreen extends React.PureComponent {
       <picture className={className} style={pictureStyle}>
         {darkModeReducedMotionImageURL ? (
           <source
-            srcSet={darkModeReducedMotionImageURL}
+            srcset={darkModeReducedMotionImageURL}
             media="(prefers-color-scheme: dark) and (prefers-reduced-motion: reduce)"
           />
         ) : null}
         {darkModeImageURL ? (
           <source
-            srcSet={darkModeImageURL}
+            srcset={darkModeImageURL}
             media="(prefers-color-scheme: dark)"
           />
         ) : null}
         {reducedMotionImageURL ? (
           <source
-            srcSet={reducedMotionImageURL}
+            srcset={reducedMotionImageURL}
             media="(prefers-reduced-motion: reduce)"
           />
         ) : null}

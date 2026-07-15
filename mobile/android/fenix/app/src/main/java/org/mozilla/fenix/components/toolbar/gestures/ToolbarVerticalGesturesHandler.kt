@@ -9,6 +9,8 @@ import android.view.View
 import android.view.ViewConfiguration
 import androidx.core.graphics.contains
 import androidx.core.graphics.toPoint
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.navigation.NavController
 import mozilla.telemetry.glean.private.NoExtras
 import org.mozilla.fenix.GleanMetrics.Events
@@ -78,7 +80,12 @@ class ToolbarVerticalGesturesHandler(
         val isCurrentDestinationValid =
             currentDestinationId == R.id.browserFragment || currentDestinationId == R.id.homeFragment
 
-        if (!isCurrentDestinationValid || !startTouchPoint.isSwipeValid(currentSwipeYDistance)) {
+        @Suppress("ComplexCondition")
+        if (!isCurrentDestinationValid ||
+            appStore.state.searchState.isSearchActive ||
+            startTouchPoint.isInSystemGestureInset() ||
+            !startTouchPoint.isSwipeValid(currentSwipeXDistance, currentSwipeYDistance)
+        ) {
             return false
         }
 
@@ -112,13 +119,16 @@ class ToolbarVerticalGesturesHandler(
 
         return abs(currentSwipeYDistance) >= minimumSwipeDistance &&
             abs(currentSwipeXDistance) < minimumSwipeDistance &&
-            startTouchPoint.isSwipeValid(currentSwipeYDistance)
+            startTouchPoint.isSwipeValid(currentSwipeXDistance, currentSwipeYDistance)
     }
 
     /**
      * Check if the swipe originated from the toolbar or navigation bar.
      */
-    private fun PointF.isSwipeValid(distanceY: Float): Boolean {
+    private fun PointF.isSwipeValid(distanceX: Float, distanceY: Float): Boolean {
+        val isHorizontalSwipe = abs(distanceX) > abs(distanceY)
+        if (isHorizontalSwipe) return false
+
         val isSwipeUpOverNavbar = distanceY.isSwipeUp && isInTarget(navBarLayout)
         if (isSwipeUpOverNavbar) return true
 
@@ -127,6 +137,25 @@ class ToolbarVerticalGesturesHandler(
             BOTTOM -> distanceY.isSwipeUp
         }
         return isToolbarSwipeDirectionValid && isInTarget(toolbarLayout)
+    }
+
+    /**
+     * Check if the swipe started inside the bottom system gesture inset - the screen-edge region
+     * the OS reserves for the "swipe up to go home/background the app" gesture when gesture-based
+     * navigation is used.
+     * A bottom toolbar/navbar overlaps this region, so swipes originating there
+     * must be ignored to avoid mistaking the system gesture for a tabs tray swipe.
+     */
+    private fun PointF.isInSystemGestureInset(): Boolean {
+        val bottomInsets = ViewCompat.getRootWindowInsets(toolbarLayout)
+            ?.getInsets(WindowInsetsCompat.Type.systemGestures())
+            ?.bottom ?: 0
+
+        if (bottomInsets <= 0) return false
+
+        val rootView = toolbarLayout.rootView
+        val screenBottom = IntArray(2).apply { rootView.getLocationOnScreen(this) }[1] + rootView.height
+        return y >= screenBottom - bottomInsets
     }
 
     private fun getTargetView() = when ((navBarLayout?.height ?: 0) > 0) {

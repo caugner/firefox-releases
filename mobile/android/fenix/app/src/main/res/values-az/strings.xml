@@ -316,10 +316,6 @@
   <string name="edit_bookmark_folder_fragment_title">Qovluğu düzəlt</string>
   <!-- Bookmark URL editing field label -->
   <string name="bookmark_url_label">URL</string>
-  <!-- Bookmark FOLDER editing field label -->
-  <string name="bookmark_folder_label">QOVLUQ</string>
-  <!-- Bookmark NAME editing field label -->
-  <string name="bookmark_name_label">AD</string>
   <!-- Bookmark select folder screen title -->
   <string name="bookmark_select_folder_fragment_label">Qovluq seç</string>
   <!-- Bookmark editing error missing or improper URL -->
@@ -507,7 +503,11 @@
     Link displayed in enhanced tracking protection panel to access tracking protection settings
   -->
   <string name="etp_settings">Qoruma tənzimləmələri</string>
-  <!-- Preference title for enhanced tracking protection settings -->
+  <!--
+    Enhanced Tracking Protection
+
+    Preference title for enhanced tracking protection settings
+  -->
   <string name="preference_enhanced_tracking_protection">Artırılmış izlənmə qoruması</string>
   <!-- Text displayed that links to website about enhanced tracking protection -->
   <string name="preference_enhanced_tracking_protection_explanation_learn_more">Ətraflı öyrən</string>

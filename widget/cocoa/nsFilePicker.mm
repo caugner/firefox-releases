@@ -38,6 +38,17 @@ const char kShowHiddenFilesPref[] = "filepicker.showHiddenFiles";
 - (void)menuChangedItem:(NSNotification*)aSender;
 @end
 
+@interface MOZSaveFilePickerPopUpObserver : NSObject {
+  NSPopUpButton* mPopUpButton;
+  NSSavePanel* mSavePanel;
+  RefPtr<nsFilePicker> mFilePicker;
+}
+- (void)setPopUpButton:(NSPopUpButton*)aPopUpButton;
+- (void)setSavePanel:(NSSavePanel*)aSavePanel;
+- (void)setFilePicker:(nsFilePicker*)aFilePicker;
+- (void)menuChangedItem:(NSNotification*)aSender;
+@end
+
 NS_IMPL_ISUPPORTS(nsFilePicker, nsIFilePicker)
 
 static void SetShowHiddenFileState(NSSavePanel* panel) {
@@ -49,6 +60,22 @@ static void SetShowHiddenFileState(NSSavePanel* panel) {
   }
 
   NS_OBJC_END_TRY_IGNORE_BLOCK;
+}
+
+// On macOS 26 (Tahoe), the panel's sheet completion handler can run before the
+// modal session has fully unwound. Invoking the callback synchronously here
+// would let a consumer open another modal on top of a session that is still
+// tearing down, which hangs (bug 2053177). Deferring to a fresh main-thread
+// turn lets the modal finish unwinding before the callback runs.
+static void InvokeFilePickerCallbackDeferred(
+    nsIFilePickerShownCallback* aCallback, nsIFilePicker::ResultCode aResult) {
+  if (!aCallback) {
+    return;
+  }
+  nsCOMPtr<nsIFilePickerShownCallback> callback = aCallback;
+  NS_DispatchToMainThread(NS_NewRunnableFunction(
+      "nsFilePicker::InvokeCallback",
+      [callback, aResult]() { callback->Done(aResult); }));
 }
 
 nsFilePicker::nsFilePicker() = default;
@@ -244,6 +271,48 @@ static void UpdatePanelFileTypes(NSOpenPanel* aPanel, NSArray* aFilters) {
 }
 @end
 
+@implementation MOZSaveFilePickerPopUpObserver
+- (void)setPopUpButton:(NSPopUpButton*)aPopUpButton {
+  mPopUpButton = aPopUpButton;
+}
+
+- (void)setSavePanel:(NSSavePanel*)aSavePanel {
+  mSavePanel = aSavePanel;
+}
+
+- (void)setFilePicker:(nsFilePicker*)aFilePicker {
+  mFilePicker = aFilePicker;
+}
+
+- (void)menuChangedItem:(NSNotification*)aSender {
+  NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
+  int32_t selectedItem = [mPopUpButton indexOfSelectedItem];
+  if (selectedItem < 0) {
+    return;
+  }
+
+  mFilePicker->SetFilterIndex(selectedItem);
+  NSArray* filterList = mFilePicker->GetFilterList();
+
+  if (filterList && [filterList count] > 0) {
+    NSString* newExtension = [filterList objectAtIndex:0];
+    NSString* currentName = [mSavePanel nameFieldStringValue];
+    NSString* baseName = [currentName stringByDeletingPathExtension];
+    if (baseName.length > 0) {
+      [mSavePanel setNameFieldStringValue:
+                      [baseName stringByAppendingPathExtension:newExtension]];
+      // Keep the panel's allowed type in sync with the name field so the new
+      // extension is preserved on the saved file.
+      mSavePanel.allowedFileTypes = @[ newExtension ];
+    }
+  }
+  // For the "All Files" filter GetFilterList returns nil; we leave the name
+  // field and the allowed type untouched so the current extension is kept.
+
+  NS_OBJC_END_TRY_IGNORE_BLOCK;
+}
+@end
+
 void nsFilePicker::PresentOpenPanel(bool aAllowMultiple,
                                     nsIFilePickerShownCallback* aCallback) {
   NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
@@ -333,9 +402,7 @@ void nsFilePicker::PresentOpenPanel(bool aAllowMultiple,
         retVal = returnOK;
       }
     }
-    if (callback) {
-      callback->Done(retVal);
-    }
+    InvokeFilePickerCallbackDeferred(callback, retVal);
     NS_OBJC_END_TRY_IGNORE_BLOCK;
   });
 
@@ -392,9 +459,7 @@ void nsFilePicker::PresentFolderPanel(nsIFilePickerShownCallback* aCallback) {
         }
       }
     }
-    if (callback) {
-      callback->Done(retVal);
-    }
+    InvokeFilePickerCallbackDeferred(callback, retVal);
     NS_OBJC_END_TRY_IGNORE_BLOCK;
   });
 
@@ -413,23 +478,40 @@ void nsFilePicker::PresentSavePanel(nsIFilePickerShownCallback* aCallback) {
 
   SetDialogTitle(mTitle, thePanel);
 
-  // set up accessory view for file format options
-  if (mFilters.Length()) {
-    NSView* accessoryView = GetAccessoryView();
-    [thePanel setAccessoryView:accessoryView];
-  }
-
   // set up default file name
   NSString* defaultFilename =
       [NSString stringWithCharacters:reinterpret_cast<const unichar*>(
                                          mDefaultFilename.get())
                               length:mDefaultFilename.Length()];
 
-  // Set up the allowed type. This prevents the extension from being selected.
-  NSString* extension = defaultFilename.pathExtension;
-  if (extension.length != 0) {
-    thePanel.allowedFileTypes = @[ extension ];
+  // set up accessory view for file format options
+  MOZSaveFilePickerPopUpObserver* observer = nil;
+  if (mFilters.Length()) {
+    NSView* accessoryView = GetAccessoryView();
+    [thePanel setAccessoryView:accessoryView];
+
+    observer = [[MOZSaveFilePickerPopUpObserver alloc] init];
+    NSPopUpButton* popupButton =
+        [accessoryView viewWithTag:kSaveTypeControlTag];
+    [observer setPopUpButton:popupButton];
+    [observer setSavePanel:thePanel];
+    [observer setFilePicker:this];
+
+    [[NSNotificationCenter defaultCenter]
+        addObserver:observer
+           selector:@selector(menuChangedItem:)
+               name:NSMenuWillSendActionNotification
+             object:[popupButton menu]];
   }
+
+  // Declare the default file's extension as the allowed type so that saving
+  // without changing the format popup keeps it on the file. The observer
+  // updates this when the user changes the format.
+  NSString* defaultExtension = defaultFilename.pathExtension;
+  if (defaultExtension.length != 0) {
+    thePanel.allowedFileTypes = @[ defaultExtension ];
+  }
+
   // Allow users to change the extension.
   thePanel.allowsOtherFileTypes = YES;
 
@@ -446,7 +528,7 @@ void nsFilePicker::PresentSavePanel(nsIFilePickerShownCallback* aCallback) {
     // There's another extension here. Get the UTI.
     CFStringRef type = UTTypeCreatePreferredIdentifierForTag(
         kUTTagClassFilenameExtension, static_cast<CFStringRef>(otherExtension),
-        NULL);
+        nullptr);
     if (type) {
       if (!CFStringHasPrefix(type, CFSTR("dyn."))) {
         // We have a UTI, otherwise the type would have a "dyn." prefix. Ensure
@@ -470,6 +552,11 @@ void nsFilePicker::PresentSavePanel(nsIFilePickerShownCallback* aCallback) {
 
   BeginPanelAsync(thePanel, ^(NSModalResponse result) {
     NS_OBJC_BEGIN_TRY_IGNORE_BLOCK;
+    if (observer) {
+      [[NSNotificationCenter defaultCenter] removeObserver:observer];
+      [observer release];
+    }
+
     ResultCode retVal = returnCancel;
     if (result != NSModalResponseCancel) {
       // get the save type
@@ -498,9 +585,7 @@ void nsFilePicker::PresentSavePanel(nsIFilePickerShownCallback* aCallback) {
         }
       }
     }
-    if (callback) {
-      callback->Done(retVal);
-    }
+    InvokeFilePickerCallbackDeferred(callback, retVal);
     NS_OBJC_END_TRY_IGNORE_BLOCK;
   });
 
