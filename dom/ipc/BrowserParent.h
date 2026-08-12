@@ -431,12 +431,13 @@ class BrowserParent final : public PBrowserParent,
 #ifdef ACCESSIBILITY
   PDocAccessibleParent* AllocPDocAccessibleParent(
       PDocAccessibleParent*, const uint64_t&,
-      const MaybeDiscardedBrowsingContext&);
+      const MaybeDiscardedBrowsingContext&, const bool&);
   bool DeallocPDocAccessibleParent(PDocAccessibleParent*);
   virtual mozilla::ipc::IPCResult RecvPDocAccessibleConstructor(
       PDocAccessibleParent* aDoc, PDocAccessibleParent* aParentDoc,
       const uint64_t& aParentID,
-      const MaybeDiscardedBrowsingContext& aBrowsingContext) override;
+      const MaybeDiscardedBrowsingContext& aBrowsingContext,
+      const bool& aIsPrintDoc) override;
 #endif
 
   already_AddRefed<PSessionStoreParent> AllocPSessionStoreParent();
@@ -725,6 +726,8 @@ class BrowserParent final : public PBrowserParent,
 
   void MaybeInvokeDragSession(EventMessage aMessage);
 
+  BrowserParent* TopLevelBrowserParent();
+
  protected:
   friend BrowserBridgeParent;
   friend BrowserHost;
@@ -761,7 +764,7 @@ class BrowserParent final : public PBrowserParent,
       EmbedderElementEventType aFireEventAtEmbeddingElement);
 
   mozilla::ipc::IPCResult RecvRequestPointerLock(
-      RequestPointerLockResolver&& aResolve);
+      const bool& aUnadjustedMovement, RequestPointerLockResolver&& aResolve);
   mozilla::ipc::IPCResult RecvReleasePointerLock();
 
   mozilla::ipc::IPCResult RecvRequestPointerCapture(

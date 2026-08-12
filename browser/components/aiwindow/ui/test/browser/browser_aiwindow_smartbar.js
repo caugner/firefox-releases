@@ -99,7 +99,7 @@ add_task(async function test_smartbar_submit_chat() {
     );
 
     const conversation = fetchWithHistoryStub.firstCall.args[0].conversation;
-    const messages = conversation.getMessagesInOpenAiFormat();
+    const messages = conversation.getMessagesInChatCompletionsFormat();
     const userMessage = messages.findLast(message => message.role === "user");
 
     Assert.equal(
@@ -159,6 +159,9 @@ add_task(async function test_smartbar_explicit_navigate_action() {
 
   await typeInSmartbar(browser, testURL);
   await selectExplicitSmartbarAction(browser, "navigate");
+  // Picking an action locks the button but does not submit.
+  await waitForSmartbarAction(browser, "navigate");
+  await submitSmartbar(browser);
 
   await loaded;
   Assert.equal(
@@ -179,6 +182,14 @@ add_task(async function test_smartbar_explicit_search_action() {
   await stubLoadURL(browser, { captureURL: true });
   await typeInSmartbar(browser, searchQuery);
   await selectExplicitSmartbarAction(browser, "search");
+  // Picking an action locks the button but does not submit.
+  await waitForSmartbarAction(browser, "search");
+  const beforeSubmit = await getStubLoadURLResult(browser);
+  Assert.ok(
+    !beforeSubmit.called,
+    "Selecting an action should not submit on its own"
+  );
+  await submitSmartbar(browser);
 
   const searchResult = await getStubLoadURLResult(browser);
   Assert.ok(
@@ -299,7 +310,7 @@ add_task(async function test_smartbar_can_submit_followup_prompts() {
     await submitSmartbar(browser);
 
     const conversation = fetchWithHistoryStub.firstCall.args[0].conversation;
-    const messages = conversation.getMessagesInOpenAiFormat();
+    const messages = conversation.getMessagesInChatCompletionsFormat();
     const initialUserMessage = messages.find(
       message => message.content === intialPrompt
     );

@@ -13,6 +13,10 @@ const { PromiseTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/PromiseTestUtils.sys.mjs"
 );
 
+const { MockEngineManager } = ChromeUtils.importESModule(
+  "resource://testing-common/AIWindowTestUtils.sys.mjs"
+);
+
 // AI chat content loads Fluent strings asynchronously, which may not complete
 // before the test finishes.
 PromiseTestUtils.allowMatchingRejectionsGlobally(
@@ -25,10 +29,16 @@ PromiseTestUtils.allowMatchingRejectionsGlobally(
  * showing the "stop" CTA when we start typing the next message.
  *
  * @param {MozBrowser} browser
+ * @param {MockEngineManager} mockEngineManager
  */
-async function enterChatActiveState(browser) {
+async function enterChatActiveState(browser, mockEngineManager) {
   await typeInSmartbar(browser, "hello");
   await submitSmartbar(browser);
+
+  await mockEngineManager.respondTo({
+    purpose: "chat",
+    response: "Hello from mock.",
+  });
 
   const aiWindowEl = browser.contentDocument?.querySelector("ai-window");
   const aichatBrowser = await TestUtils.waitForCondition(
@@ -61,15 +71,13 @@ async function enterChatActiveState(browser) {
 
 add_task(async function test_chat_active_url_is_recognized_as_navigate() {
   const restoreSignIn = skipSignIn();
-  const { restore } = await stubEngineNetworkBoundaries({
-    serverOptions: { streamChunks: ["Hello from mock."] },
-  });
+  const mockEngineManager = new MockEngineManager();
 
   const win = await openAIWindow();
   const browser = win.gBrowser.selectedBrowser;
 
   try {
-    await enterChatActiveState(browser);
+    await enterChatActiveState(browser, mockEngineManager);
 
     await stubLoadURL(browser, { captureURL: true });
     await typeInSmartbar(browser, "https://example.com");
@@ -87,7 +95,7 @@ add_task(async function test_chat_active_url_is_recognized_as_navigate() {
   } finally {
     await BrowserTestUtils.closeWindow(win);
     restoreSignIn();
-    await restore();
+    mockEngineManager.cleanupMocks();
   }
 });
 
@@ -99,15 +107,13 @@ add_task(async function test_chat_active_url_is_recognized_as_navigate() {
  */
 async function assertChatInputStaysChat(input) {
   const restoreSignIn = skipSignIn();
-  const { restore } = await stubEngineNetworkBoundaries({
-    serverOptions: { streamChunks: ["Hello from mock."] },
-  });
+  const mockEngineManager = new MockEngineManager();
 
   const win = await openAIWindow();
   const browser = win.gBrowser.selectedBrowser;
 
   try {
-    await enterChatActiveState(browser);
+    await enterChatActiveState(browser, mockEngineManager);
 
     await stubLoadURL(browser, { captureURL: true });
 
@@ -139,9 +145,45 @@ async function assertChatInputStaysChat(input) {
   } finally {
     await BrowserTestUtils.closeWindow(win);
     restoreSignIn();
-    await restore();
+    mockEngineManager.cleanupMocks();
   }
 }
+
+add_task(async function test_chat_active_locked_action_wins_over_chat() {
+  const restoreSignIn = skipSignIn();
+  const mockEngineManager = new MockEngineManager();
+
+  const win = await openAIWindow();
+  const browser = win.gBrowser.selectedBrowser;
+
+  try {
+    await enterChatActiveState(browser, mockEngineManager);
+
+    await stubLoadURL(browser, { captureURL: true });
+
+    // A plain question would normally chat while suppressed; locking "search"
+    // must route the suppressed submit through the manual action instead.
+    await typeInSmartbar(browser, "tell me about cats");
+    await selectExplicitSmartbarAction(browser, "search");
+    await waitForSmartbarAction(browser, "search");
+
+    await submitSmartbar(browser);
+
+    const { called, url } = await getStubLoadURLResult(browser);
+    Assert.ok(
+      called,
+      "A locked search action should submit as a search even in chat-active mode"
+    );
+    Assert.ok(
+      url.includes("cats"),
+      `Search URL should contain the query: ${url}`
+    );
+  } finally {
+    await BrowserTestUtils.closeWindow(win);
+    restoreSignIn();
+    mockEngineManager.cleanupMocks();
+  }
+});
 
 add_task(async function test_chat_active_non_url_still_chats() {
   await assertChatInputStaysChat("tell me a story");

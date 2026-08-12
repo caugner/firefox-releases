@@ -95,6 +95,7 @@ Function PrepareTelemetryPing
     nsJSON::Set /tree ping "Data" "distribution_version" /value '"0"'
   ${EndIf}
 
+  ClearErrors
   ReadRegDWORD $0 HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion" "UBR"
   ${If} ${Errors}
     StrCpy $0 "-1" ; Assign -1 if an error occured during registry read
@@ -102,6 +103,7 @@ Function PrepareTelemetryPing
 
   nsJSON::Set /tree ping "Data" "windows_ubr" /value '$0'
 
+  ClearErrors
   ${GetParameters} $0
   ${GetOptions} $0 "/LaunchedFromMSI" $0
   ${IfNot} ${Errors}
@@ -345,6 +347,8 @@ Function PrepareStubInstallPing
   ${Select} "$ExitCode"
     ${Case} ${ERR_SUCCESS}
       nsJSON::Set /tree ping "Data" "succeeded" /value true
+    ${Case} ${ERR_USER_CANCELLED_BEFORE_DOWNLOAD}
+      nsJSON::Set /tree ping "Data" "user_cancelled_before_download" /value true
     ${Case} ${ERR_DOWNLOAD_CANCEL}
       nsJSON::Set /tree ping "Data" "user_cancelled" /value true
     ${Case} ${ERR_DOWNLOAD_TOO_MANY_RETRIES}

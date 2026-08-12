@@ -5,10 +5,10 @@
 #include "ScreenManager.h"
 
 #include "mozilla/ClearOnShutdown.h"
-#include "mozilla/dom/ContentParent.h"
-#include "mozilla/dom/DOMTypes.h"
 #include "mozilla/Logging.h"
 #include "mozilla/StaticPtr.h"
+#include "mozilla/dom/ContentParent.h"
+#include "mozilla/dom/DOMTypes.h"
 #ifdef MOZ_WAYLAND
 #  include "mozilla/WidgetUtilsGtk.h"
 #endif /* MOZ_WAYLAND */
@@ -137,7 +137,7 @@ already_AddRefed<Screen> ScreenManager::ScreenForRect(
     auto screen = MakeRefPtr<Screen>(
         LayoutDeviceIntRect(), LayoutDeviceIntRect(), 0, 0, 0,
         DesktopToLayoutDeviceScale(), CSSToLayoutDeviceScale(), 96 /* dpi */,
-        Screen::IsPseudoDisplay::No, Screen::IsHDR::No,
+        Screen::IsPseudoDisplay::No, Screen::IsHDR::No, 80.0f, 80.0f,
         hal::ScreenOrientation::None, 0);
     return screen.forget();
   }
@@ -222,7 +222,7 @@ already_AddRefed<Screen> ScreenManager::GetPrimaryScreen() {
                                  0, 0, 0, DesktopToLayoutDeviceScale(),
                                  CSSToLayoutDeviceScale(), 96 /* dpi */,
                                  Screen::IsPseudoDisplay::No, Screen::IsHDR::No,
-                                 hal::ScreenOrientation::None, 0);
+                                 80.0f, 80.0f, hal::ScreenOrientation::None, 0);
   }
 
   return do_AddRef(mScreenList[0]);

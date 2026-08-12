@@ -31,6 +31,8 @@
   <string name="history_search_hint">ਅਤੀਤ ਖੋਜੋ</string>
   <!-- Placeholder text shown in search bar when using bookmarks search -->
   <string name="bookmark_search_hint">ਬੁੱਕਮਾਰਕ ਖੋਜੋ</string>
+  <!-- Content description for the toolbar back button while searching bookmarks -->
+  <string name="bookmark_close_search_description">ਵਾਪਸ ਜਾਓ ਅਤੇ ਖੋਜ ਨੂੰ ਬੰਦ ਕਰੋ</string>
   <!-- Placeholder text shown in search bar when using tabs search -->
   <string name="tab_search_hint">ਟੈਬਾਂ ਖੋਜੋ</string>
   <!-- Placeholder text shown in the search bar when using application search engines -->
@@ -666,8 +668,6 @@
   <string name="nova_onboarding_marketing_primary_button_text" tools:ignore="BrandUsage,UnusedResources">Firefox ਦੀ ਮਦਦ ਕਰੋ</string>
   <!-- Marketing onboarding primary button text. -->
   <string name="nova_onboarding_marketing_primary_button_text_3">ਹਾਂ</string>
-  <!-- Marketing onboarding primary button text. -->
-  <string name="nova_onboarding_marketing_primary_button_text_2">ਸਹਿਮਤ ਅਤੇ ਜਾਰੀ ਰੱਖੋ</string>
   <!-- Marketing onboarding secondary button text. -->
   <string name="nova_onboarding_marketing_secondary_button_text" tools:ignore="UnusedResources">ਨਹੀਂ, ਧੰਨਵਾਦ</string>
   <!-- Marketing onboarding secondary button text. -->
@@ -978,6 +978,12 @@
   <string name="notifications_allowed_summary">ਇਜਾਜ਼ਤ ਦਿੱਤੇ</string>
   <!-- Summary for notification preference indicating notifications are not allowed -->
   <string name="notifications_not_allowed_summary">ਇਜ਼ਾਜਤ ਨਹੀ ਹੈ</string>
+  <!-- Preference for local network access / nearby devices in Android 17 -->
+  <string name="preferences_local_network_access">ਲੋਕਲ ਨੈੱਟਵਰਕ ਪਹੁੰਚ / ਨੇੜਲੇ ਡਿਵਾਈਸ</string>
+  <!-- Summary for local network access preference indicating access is allowed -->
+  <string name="local_network_access_allowed_summary">ਇਜਾਜ਼ਤ ਦਿੱਤੇ</string>
+  <!-- Summary for local network access preference indicating access is not allowed -->
+  <string name="local_network_access_not_allowed_summary">ਇਜ਼ਾਜਤ ਨਹੀ ਦਿੱਤੇ</string>
   <!--
     Add-on Permissions
 
@@ -1037,6 +1043,8 @@
   <string name="customize_toggle_pocket_sponsored">ਸਪਾਂਸਰ ਕੀਤੀਆਂ ਕਹਾਣੀਆਂ</string>
   <!-- Title for the opening wallpaper settings screen -->
   <string name="customize_wallpapers">ਵਾਲਪੇਪਰ</string>
+  <!-- Label for the menu item that opens the customize homepage settings screen. -->
+  <string name="browser_menu_customize_homepage">ਮੁੱਖ-ਸਫ਼ੇ ਨੂੰ ਕਸਟਮਾਈਜ਼ ਕਰੋ</string>
   <!-- Label for the menu item that opens the wallpaper settings screen. -->
   <string name="browser_menu_change_wallpaper">ਵਾਲਪੇਪਰ ਨੂੰ ਬਦਲੋ</string>
   <!-- Title for the customize home screen section with sponsored shortcuts. -->
@@ -1541,6 +1549,8 @@
   <string name="add_tab">ਟੈਬ ਜੋੜੋ</string>
   <!-- Content description (not visible, for screen readers etc.): Add tab button. Adds a news tab when pressed -->
   <string name="add_private_tab">ਪ੍ਰਾਈਵੇਟ ਟੈਬ ਜੋੜੋ</string>
+  <!-- Content description (not visible, for screen readers etc.): Create tab group button. Opens the create tab group sheet when pressed -->
+  <string name="create_tab_group_content_description">ਟੈਬ ਗਰੁੱਪ ਬਣਾਓ</string>
   <!-- Text for the tab search bar placeholder -->
   <string name="tab_manager_search_bar_placeholder">ਆਪਣੀਆਂ ਟੈਬਾਂ ਨੂੰ ਲੱਭੋ</string>
   <!-- Text shown in the menu to view recently closed tabs -->
@@ -1698,6 +1708,26 @@
   <string name="close_tab_and_delete_group_confirmation_dialog_confirm">ਗਰੁੱਪ ਨੂੰ ਹਟਾਓ</string>
   <!-- Text shown on the cancel button in the Close last tab and delete tab group confirmation dialog. -->
   <string name="close_tab_and_delete_group_confirmation_dialog_cancel">ਰੱਦ ਕਰੋ</string>
+  <!-- Content description for the three dot button next to a tab group" -->
+  <string name="tab_group_three_dot_button_content_description">ਹੋਰ ਚੋਣਾਂ</string>
+  <!-- Text shown on the edit button for a tab group on the three dot menu -->
+  <string name="tab_group_three_dot_menu_edit">ਸੋਧੋ</string>
+  <!-- Text shown on the ungroup button for a tab group on the three dot menu -->
+  <string name="tab_group_three_dot_menu_ungroup">ਅਣ-ਗਰੁੱਪ ਕਰੋ</string>
+  <!-- Text shown on the delete button for a tab group on the three dot menu -->
+  <string name="tab_group_three_dot_menu_delete">ਹਟਾਓ</string>
+  <!-- Text shown on the close button for a tab group on the three dot menu -->
+  <string name="tab_group_three_dot_menu_close">ਬੰਦ ਕਰੋ</string>
+  <!-- Title for the Ungroup tab group confirmation dialog. -->
+  <string name="ungroup_tab_group_confirmation_dialog_title">ਟੈਗ ਗਰੁੱਪ ਨੂੰ ਅਣ-ਗਰੁੱਪ ਕਰਨਾ ਹੈ?</string>
+  <!-- Text shown in the body of the Ungroup tab group confirmation dialog. -->
+  <string name="ungroup_tab_group_confirmation_dialog_body">ਟੈਬਾਂ ਇਸ ਗਰੁੱਪ ਉੱਤੇ ਖੁੱਲ੍ਹੀਆਂ ਰਹਿਣਗੀਆਂ, ਪਰ ਗਰੁੱਪ ਨੂੰ ਹਟਾਇਆ ਜਾਵੇਗਾ।</string>
+  <!-- Text shown on the Don't Ask Again checkbox button in the Ungroup tab group confirmation dialog. -->
+  <string name="ungroup_tab_group_confirmation_dialog_dont_ask_again">ਮੁੜ ਕੇ ਨਾ ਪੁੱਛੋ</string>
+  <!-- Text shown on the confirm button in the Ungroup tab group confirmation dialog. -->
+  <string name="ungroup_tab_group_confirmation_dialog_confirm">ਅਣ-ਗਰੁੱਪ ਕਰੋ</string>
+  <!-- Text shown on the cancel button in the Ungroup tab group confirmation dialog. -->
+  <string name="ungroup_tab_group_confirmation_dialog_cancel">ਰੱਦ ਕਰੋ</string>
   <!--
     Color labels for tab groups, used for accessibility and selection UI.
 
@@ -1712,8 +1742,6 @@
   <string name="tab_group_color_pink">ਗੁਲਾਬੀ</string>
   <!-- Tab group color: Purple -->
   <string name="tab_group_color_purple">ਵੈਂਗਣੀ</string>
-  <!-- Tab group color: Violet -->
-  <string name="tab_group_color_violet">ਜਾਮਨੀ</string>
   <!-- Tab group color: Blue -->
   <string name="tab_group_color_blue">ਨੀਲਾ</string>
   <!-- Tab group color: Cyan -->
@@ -1975,6 +2003,8 @@
   <string name="webcompat_reporter_description_error">ਘੱਟੋ-ਘੱਟ 10 ਅੱਖਰ ਦਿਓ</string>
   <!-- The label/title of a mandatory field in the Web Compat Reporter feature for adding additional information. -->
   <string name="webcompat_reporter_label_mandatory_description">ਮਸਲੇ ਬਾਰੇ ਜਾਂਚ ਕਰਨ ਲਈ ਸਾਡੀ ਮਦਦ ਵਾਸਤੇ ਵੇਰਵੇ ਸਮੇਤ ਸਮੱਸਿਆ ਦੀ ਜਾਣਕਾਰੀ ਦਿਓ</string>
+  <!-- The label/title of a optional field in the Web Compat Reporter feature for adding additional information. -->
+  <string name="webcompat_reporter_label_optional_description">ਮਸਲੇ ਬਾਰੇ ਜਾਂਚ ਕਰਨ ਲਈ ਸਾਡੀ ਮਦਦ ਵਾਸਤੇ ਵੇਰਵੇ ਸਮੇਤ ਸਮੱਸਿਆ ਦੀ ਜਾਣਕਾਰੀ ਦਿਓ (ਚੋਣਵਾਂ)</string>
   <!-- The label/title of a field in the Web Compat Reporter feature for explaining a high-level reason why the site is broken. -->
   <string name="webcompat_reporter_label_whats_broken_2">ਕੀ ਖ਼ਰਾਬ ਹੈ?</string>
   <!-- The placeholder text for the dropdown where a user selects a high-level reason why the site is broken. -->
@@ -1983,8 +2013,6 @@
   <string name="webcompat_reporter_choose_reason_error">ਕਾਰਨ ਚੁਣੋ ਜੀ</string>
   <!-- The label/title of an optional field in the Web Compat Reporter feature for adding additional information. -->
   <string name="webcompat_reporter_label_description_2">ਮਸਲੇ ਬਾਰੇ ਜਾਂਚ ਕਰਨ ਲਈ ਸਾਡੀ ਮਦਦ ਵਾਸਤੇ ਵੇਰਵੇ ਸਮੇਤ ਸਮੱਸਿਆ ਦੀ ਜਾਣਕਾਰੀ ਦਿਓ (ਚੋਣਵਾਂ)</string>
-  <!-- The label/title of an optional field in the Web Compat Reporter feature for adding additional information. -->
-  <string name="webcompat_reporter_label_description">ਸਮੱਸਿਆ ਬਾਰੇ ਜਾਣਕਾਰੀ ਦਿਓ (ਚੋਣਵਾਂ)</string>
   <!-- The button text for navigating away from the feature to provide more information on the broken site's bug report. -->
   <string name="webcompat_reporter_add_more_info">ਹੋਰ ਜਾਣਕਾਰੀ ਨੂੰ ਜੋੜੋ</string>
   <!-- The button text for the cancel button to leave the Web Compat Reporter feature. -->
@@ -1997,14 +2025,8 @@
   <string name="webcompat_reporter_success_snackbar_text_2">ਰਿਪੋਰਟ ਭੇਜੀ</string>
   <!-- Placeholder text for the description field to prompt the user on what they should type. -->
   <string name="webcompat_reporter_problem_description_placeholder_text_2">ਕੀ ਹੋਇਆ ਹੈ? ਤੁਸੀ ਕੀ ਹੋਣ ਦੀ ਆਸ ਕਰ ਰਹੇ ਸੀ? ਮਸਲਾ ਮੁੜ ਤਿਆਰ ਕਰਨ ਲਈ ਪੜਾਅ ਦਿਓ।</string>
-  <!-- Placeholder text for the description field to prompt the user on what they should type. -->
-  <string name="webcompat_reporter_problem_description_placeholder_text">ਕੀ ਵਾਪਰਿਆ ਸੀ? ਕੀ ਹੋਣਾ ਚਾਹੀਦਾ ਸੀ?</string>
   <!-- Label of the checkbox on the “Report broken site” screen for sending URLS blocked by Enhanced Tracking Protection. -->
   <string name="webcompat_reporter_etp_checkbox_text_2">ਟਰੈਕਿੰਗ ਸੁਰੱਖਿਆ ਵਲੋਂ ਪਾਬੰਦੀ ਲਈਆਂ ਚੀਜ਼ਾਂ ਦੀ ਸੂਚੀ ਭੇਜੋ</string>
-  <!-- Label of the checkbox on the “Report broken site” screen for sending URLS blocked by Enhanced Tracking Protection. -->
-  <string name="webcompat_reporter_etp_checkbox_text">ਟਰੈਕਿੰਗ ਸੁਰੱਖਿਆ ਵਲੋਂ URL ਨੂੰ ਭੇਜਿਆ ਜਾਂਦਾ ਹੈ</string>
-  <!-- Description text for the checkbox on the “Report broken site” screen for sending URLS blocked by Enhanced Tracking Protection. It informs the user when checked, the report will include the list of URLs that were blocked by Enhanced Tracking Protection on the current page. -->
-  <string name="webcompat_reporter_etp_checkbox_description">ਵਧਾਈ ਟਰੈਕਿੰਗ ਸੁਰੱਖਿਆ ਟਰੈਕਿੰਗ ਅਤੇ ਸਕ੍ਰਿਪਟਾਂ ਉੱਤੇ ਪਾਬੰਦੀ ਲਾ ਸਕਦੀ ਹੈ, ਜੋ ਕਿ ਵੈੱਬਸਾਈਟਾਂ ਨੂੰ ਠੀਕ ਤਰ੍ਹਾਂ ਕੰਮ ਕਰਨ ਲਈ ਚਾਹੀਦੀਆਂ ਹੋ ਸਕਦੀਆਂ ਹਨ।</string>
   <!-- The button text for the preview report button to view a preview of the report. -->
   <string name="webcompat_reporter_preview_report">ਰਿਪੋਰਟ ਦੀ ਝਲਕ</string>
   <!-- The title shown at the top of the WebCompat Report preview panel. This appears after the user taps the “Preview” button before sending a report. -->
@@ -2202,6 +2224,10 @@
   <string name="bookmark_select_folder_new_folder_button_title">ਨਵਾਂ ਫੋਲਡਰ</string>
   <!-- Bookmark snackbar message for moving a single item. %1$s is the title of the item being moved and %2$s is the new parent folder of the bookmark -->
   <string name="bookmark_moved_single_item">%1$s ਨੂੰ %2$s ਉੱਤੇ ਭੇਜਿਆ ਗਿਆ</string>
+  <!-- Text for bookmark search page when there are no results. -->
+  <string name="bookmark_no_search_results">ਕੋਈ ਮੇਲ ਨਹੀਂ ਲੱਭਿਆ।</string>
+  <!-- Additional text for bookmark search page when there are no results. -->
+  <string name="bookmark_no_search_results_additional_text">ਹੋਰ ਖੋਜ ਕਰਨ ਦੀ ਕੋਸ਼ਿਸ਼ ਕਰੋ!</string>
   <!--
     Site Permissions
 
@@ -2403,6 +2429,10 @@
   <string name="sync_sign_in">ਸਿੰਕ ਕਰਨ ਲਈ ਸਾਈਨ ਇਨ ਕਰੋ</string>
   <!-- An option from the share dialog to send link to all other sync devices -->
   <string name="sync_send_to_all">ਸਾਰੇ ਡਿਵਾਈਸਾਂ ‘ਤੇ ਭੇਜੋ</string>
+  <!-- Text displayed when no other sync devices are available for link sharing -->
+  <string name="sync_no_devices_available">ਕੋਈ ਡਿਵਾਈਸ ਮੌਜੂਦ ਨਹੀਂ ਹੈ</string>
+  <!-- Text displayed when no other sync devices are available for link sharing. -->
+  <string name="sync_no_devices_available_description">ਇਸ ਖਾਤੇ ਨਾਲ ਕੋਈ ਵੀ ਸਾਈਨ ਇਨ ਹੋਇਆ ਅਤੇ ਸਿੰਕ ਕੀਤੇ ਡਿਵਾਈਸ ਨੁੰ ਇੱਥੇ ਦਿਖਾਇਆ ਜਾਵੇਗਾ।</string>
   <!-- An option from the share dialog to reconnect to sync -->
   <string name="sync_reconnect">ਸਿੰਕ ਕਰਨ ਲਈ ਮੁੜ-ਕਨੈਕਟ ਕਰੋ</string>
   <!-- Text displayed when sync is offline and cannot be accessed -->
@@ -2629,15 +2659,6 @@
     -->
     <item quantity="one">%d ਟਰੈਕਰ ਉੱਤੇ ਪਾਬੰਦੀ ਲਾਈ</item>
     <item quantity="other">%d ਟਰੈਕਰਾਂ ਉੱਤੇ ਪਾਬੰਦੀ ਲਾਈ</item>
-  </plurals>
-  <plurals name="trackers_blocked_count">
-    <!--
-      Trackers blocked card on homepage
-
-      Text shown on the trackers blocked card. %d is the number of trackers blocked.
-    -->
-    <item quantity="one">%d ਟਰੈਕਰ ਉੱਤੇ ਪਾਬੰਦੀ ਲਗਾਈ</item>
-    <item quantity="other">%d ਟਰੈਕਰਾਂ ਉੱਤੇ ਪਾਬੰਦੀ ਲਗਾਈ</item>
   </plurals>
   <!-- Text shown on the trackers blocked card when no trackers have been blocked yet -->
   <string name="trackers_blocked_empty">ਤੁਸੀਂ ਸੁਰੱਖਿਅਤ ਹੋ</string>
@@ -3141,6 +3162,38 @@
   <string name="ip_protection_data_limit_reached_snackbar">VPN ਦੇ %1$d GB ਨੂੰ ਵਰਤਿਆ ਗਿਆ ਹੈ। ਪਹੁੰਚ ਅਗਲੇ ਮਹੀਨੇ ਮੁੜ-ਸੈੱਟ ਹੋਵੇਗੀ।</string>
   <!-- Snackbar (in-app pop-up notification) action button text that takes the user to the VPN settings screen. -->
   <string name="ip_protection_data_limit_reached_snackbar_action">ਸੈਟਿੰਗਾਂ</string>
+  <!-- Description shown on the browser VPN settings screen prompting the user to turn the VPN on. -->
+  <string name="ip_protection_settings_description" tools:ignore="UnusedResources">ਆਪਣੀ ਬਰਾਊਜ਼ਿੰਗ ਨੂੰ ਵੱਧ ਪ੍ਰਾਈਵੇਟ ਅਤੇ ਸੂਹ ਲੈਣਾ ਔਖਾ ਬਣਾਉਣ ਵਾਸਤੇ VPN ਨੂੰ ਚਾਲੂ ਕਰੋ।</string>
+  <!-- Title shown on the browser VPN settings screen for location selection section. -->
+  <string name="ip_protection_location_title" tools:ignore="UnusedResources">ਟਿਕਾਣਾ</string>
+  <!-- Label for the Recommended server location option which is automatically selected by the browser. -->
+  <string name="ip_protection_recommended_location" tools:ignore="UnusedResources">ਸਿਫ਼ਾਰਸ਼ੀ</string>
+  <!-- Headline for the card that promotes the standalone Mozilla VPN product. -->
+  <string name="ip_protection_mozilla_vpn_upsell_headline" tools:ignore="UnusedResources,BrandUsage">Mozilla VPN ਨਾਲ ਵੱਧ ਸੁਰੱਖਿਅਤ</string>
+  <!-- Body for the card that promotes the standalone Mozilla VPN product. -->
+  <string name="ip_protection_mozilla_vpn_upsell_body" tools:ignore="UnusedResources">300+ ਤੋਂ ਵੱਧ ਟਿਕਾਣਿਆਂ ਵਿੱਚੋਂ ਚੁਣੋ ਅਤੇ 5 ਤੱਕ ਡਿਵਾਈਸਾਂ ਉੱਤੇ ਆਪਣੀਆਂ ਸਾਰੀਆਂ ਐਪਾਂ ਨੂੰ ਸੁਰੱਖਿਅਤ ਬਣਾਓ।</string>
+  <!-- Label for the button that takes the user to get the standalone Mozilla VPN product. -->
+  <string name="ip_protection_mozilla_vpn_upsell_button" tools:ignore="UnusedResources,BrandUsage">Mozilla VPN ਲਵੋ</string>
+  <!-- Title for the browser VPN location picker screen. -->
+  <string name="ip_protection_location_picker_title" tools:ignore="UnusedResources">VPN ਟਿਕਾਣੇ ਨੂੰ ਚੁਣੋ</string>
+  <!-- Description for what it means to use the Recommended setting and let the app automatically pick the best server location. -->
+  <string name="ip_protection_location_fastest_description" tools:ignore="BrandUsage">Firefox ਸਭ ਤੋਂ ਤੇਜ਼ ਟਿਕਾਣਾ ਲੱਭਦਾ ਹੈ</string>
+  <!-- Error message shown when the selected browser VPN location is unavailable. -->
+  <string name="ip_protection_location_unavailable" tools:ignore="UnusedResources">ਟਿਕਾਣਾ ਮੌਜੂਦ ਨਹੀਂ ਹੈ। ਹੋਰ ਟਿਕਾਣੇ ਨੂੰ ਚੁਣੋ।</string>
+  <!-- Snackbar (in-app pop-up notification) text shown when the previously selected browser VPN location is unavailable and the recommended location was used instead. -->
+  <string name="ip_protection_location_unavailable_recommended_snackbar" tools:ignore="UnusedResources">ਚੁਣਿਆ ਗਿਆ VPN ਟਿਕਾਣੇ ਮੌਜੂਦ ਨਹੀਂ ਹੈ। ਸਿਫ਼ਾਰਸ਼ ਕੀਤੇ ਟਿਕਾਣੇ ਨਾਲ ਕਨੈਕਟ ਹੈ।</string>
+  <!-- Title for the card shown to the user when we are unable to fetch server locations -->
+  <string name="ip_protection_locations_unavailable_title">ਟਿਕਾਣੇ ਮੌਜੂਦ ਨਹੀਂ ਹਨ</string>
+  <!-- Description for the card shown to the user when we are unable to fetch server locations -->
+  <string name="ip_protection_locations_unavailable_description">ਸਿਫਾਰਸ਼ੀ ਟਿਕਾਣੇ ਲਈ ਬਦਲਿਆ ਗਿਆ ਹੈ।</string>
+  <!-- Title for the browser VPN location selection screen (displayed in the app bar) -->
+  <string name="ip_protection_locations_title">VPN ਟਿਕਾਣੇ ਨੂੰ ਚੁਣੋ</string>
+  <!-- Content description for the browser VPN location selection screen top bar back button -->
+  <string name="ip_protection_locations_navigate_back_button_content_description">ਪਿੱਛੇ ਵੱਲ ਨੈਵੀਗੇਟ ਕਰੋ</string>
+  <!-- Title for the card shown to the user when we are unable to fetch server locations -->
+  <string name="ip_protection_location_unavailable_title" tools:ignore="UnusedResources">ਪਿਛਲਾ ਟਿਕਾਣਾ ਮੌਜੂਦ ਨਹੀਂ ਹੈ</string>
+  <!-- Description for the card shown to the user when we are unable to fetch server locations -->
+  <string name="ip_protection_location_unavailable_recommended_description" tools:ignore="UnusedResources">ਸਿਫ਼ਾਰਸ਼ੀ ਟਿਕਾਣੇ ਨਾਲ ਕਨੈਕਟ ਹੈ।</string>
   <!--
     Autofill
 
@@ -3293,8 +3346,6 @@
   <string name="addresses_save_button">ਸੰਭਾਲੋ</string>
   <!-- The text for the "Cancel" button for cancelling adding, updating or deleting an address -->
   <string name="addresses_cancel_button">ਰੱਦ ਕਰੋ</string>
-  <!-- The text for the "Delete address" button for deleting an address -->
-  <string name="addressess_delete_address_button">ਸਿਰਨਾਵੇਂ ਨੂੰ ਹਟਾਓ</string>
   <!-- The title for the "Delete address" confirmation dialog -->
   <string name="addressess_confirm_dialog_message_2">ਇਹ ਸਿਰਨਾਵੇਂ ਨੂੰ ਹਟਾਉਣਾ ਹੈ?</string>
   <!-- The text for the positive button on "Delete address" dialog -->
@@ -3849,8 +3900,6 @@
     and there are no trackers blocked.
   -->
   <string name="protection_panel_banner_protected_no_blocked_trackers_description">ਤੁਸੀਂ ਸੁਰੱਖਿਅਤ ਹੋ।</string>
-  <!-- Description text for the protection panel banner when tracking protection is enabled. -->
-  <string name="protection_panel_banner_protected_description">ਤੁਸੀਂ ਸੁਰੱਖਿਅਤ ਹੋ। ਜੇ ਸਾਨੂੰ ਕੁਝ ਲੱਭਿਆ ਤਾਂ ਅਸੀਂ ਤੁਹਾਨੂੰ ਦੱਸਾਂਗੇ।</string>
   <!-- Label text for the Enhanced Tracking Protection toggle. -->
   <string name="protection_panel_etp_toggle_label">ਵਾਧਾ ਕੀਤੀ ਟਰੈਕਿੰਗ ਸੁਰੱਖਿਆ</string>
   <!-- Toggle if Enhanced Tracking Protection is turned on -->
@@ -3866,8 +3915,6 @@
     %d is a placeholder for the number of trackers blocked.
   -->
   <string name="protection_panel_num_trackers_blocked">ਪਾਬੰਦੀ ਲਾਏ ਟਰੈਕਰ: %d</string>
-  <!-- Text for when no trackers have been blocked. -->
-  <string name="protection_panel_no_trackers_blocked">ਕੋਈ ਟਰੈਕਰ ਨਹੀਂ ਲੱਭੇ</string>
   <!-- Text for when tracking protection is disabled and no trackers are blocked. -->
   <string name="protection_panel_etp_disabled_no_trackers_blocked">ਟਰੈਕਰਾਂ ਉੱਤੇ ਪਾਬੰਦੀ ਨਹੀਂ ਲਾਈ ਹੈ</string>
   <!-- Link text to navigate to privacy and security settings from the protection panel. -->
@@ -3930,17 +3977,6 @@
     <item quantity="one">ਇਸ ਹਫ਼ਤੇ %1$d ਟਰੈਕਰ ਉੱਤੇ ਪਾਬੰਦੀ ਲਾਈ</item>
     <item quantity="other">ਇਸ ਹਫ਼ਤੇ %1$d ਟਰੈਕਰਾਂ ਉੱਤੇ ਪਾਬੰਦੀ ਲਾਈ</item>
   </plurals>
-  <!--
-    Text for displaying the total number of trackers blocked in the trackers blocked panel.
-    %d is a placeholder for the number of trackers blocked.
-  -->
-  <string name="trackers_blocked_panel_total_num_trackers_blocked">ਪਾਬੰਦੀ ਲਾਏ ਟਰੈਕਰ: %d</string>
-  <!--
-    Text for displaying the number of trackers blocked for a specific tracker category in the trackers blocked panel.
-    %s is a placeholder for the name of the tracker category.
-    %d is a placeholder for the number of trackers blocked.
-  -->
-  <string name="trackers_blocked_panel_categorical_num_trackers_blocked">%s: %d</string>
   <!--
     Description text for a dialog confirming whether the user wants to delete all data for current site.
     %s is a placeholder for the base domain of website.
@@ -4723,6 +4759,16 @@
   <string name="lens_camera_mode_qr">QR ਸਕੈਨਰ</string>
   <!-- Toast shown when the user picks an image from the gallery in QR mode but no QR code is found in it -->
   <string name="lens_camera_qr_no_code_found">ਚਿੱਤਰ ਵਿੱਚ ਕੋਈ QR ਕੋਡ ਨਹੀਂ ਮਿਲਿਆ</string>
+  <!-- Title of the bottom sheet shown the first time the user opens the Google Lens camera screen -->
+  <string name="lens_opt_out_title">ਇਸ ਨੂੰ Google Lens ਨਾਲ ਲੱਭੋ</string>
+  <!-- Description of the bottom sheet shown the first time the user opens the Google Lens camera screen -->
+  <string name="lens_opt_out_description">ਕਿਸੇ ਚਿੱਤਰ ਨੂੰ ਚੁਣੋ ਜਾਂ ਆਪਣੇ ਕੈਮਰੇ ਨੂੰ ਵਰਤ ਕੇ Google Lens ਰਾਹੀਂ ਨਤੀਜੇ ਲਵੋ।</string>
+  <!-- Text of the link in the first-run Google Lens bottom sheet that opens the Search settings page -->
+  <string name="lens_opt_out_settings_link">Google Lens ਸੈਟਿੰਗਾਂ</string>
+  <!-- Button in the first-run Google Lens bottom sheet that dismisses it and starts the camera -->
+  <string name="lens_opt_out_try_it_now_button">ਹੁਣੇ ਅਜ਼ਮਾਓ</string>
+  <!-- Button in the first-run Google Lens bottom sheet that leaves Google Lens without using it -->
+  <string name="lens_opt_out_not_now_button">ਹੁਣੇ ਨਹੀਂ</string>
   <!--
     Firefox Labs
 

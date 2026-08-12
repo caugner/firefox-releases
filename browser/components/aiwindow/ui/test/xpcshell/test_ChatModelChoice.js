@@ -10,7 +10,9 @@ const {
   getCachedModelsData,
   getCurrentModelName,
   _clearModelsDataCacheForTesting,
-  openAIEngine,
+  _setRemoteClientForTesting,
+  _clearRemoteClientForTesting,
+  getRemoteClient,
   FEATURE_MAJOR_VERSIONS,
 } = ChromeUtils.importESModule(
   "moz-src:///browser/components/aiwindow/models/Utils.sys.mjs"
@@ -39,10 +41,17 @@ add_task(async function test_getModelForChoice_with_remote_settings_data() {
         model: "gemini-3.1-flash-lite",
         model_choice_id: "1",
         owner_name: "Google",
+        model_details: {
+          model: "gemini-3.1-flash-lite",
+          ownerName: "Google",
+          labelId: "fast",
+          shortName: "Gemini 3.1 Flash Lite",
+          brandName: "Gemini",
+        },
       },
     ];
 
-    sb.stub(openAIEngine, "getRemoteClient").returns({
+    _setRemoteClientForTesting({
       get: sb.stub().resolves(fakeRecords),
     });
 
@@ -50,7 +59,13 @@ add_task(async function test_getModelForChoice_with_remote_settings_data() {
 
     Assert.deepEqual(
       result,
-      { model: "gemini-3.1-flash-lite", ownerName: "Google", labelId: "fast" },
+      {
+        model: "gemini-3.1-flash-lite",
+        ownerName: "Google",
+        labelId: "fast",
+        shortName: "Gemini 3.1 Flash Lite",
+        brandName: "Gemini",
+      },
       "Should return correct model data for choice 1"
     );
   } finally {
@@ -61,7 +76,7 @@ add_task(async function test_getModelForChoice_with_remote_settings_data() {
 add_task(async function test_getModelForChoice_fallback_when_not_found() {
   const sb = sinon.createSandbox();
   try {
-    sb.stub(openAIEngine, "getRemoteClient").returns({
+    _setRemoteClientForTesting({
       get: sb.stub().resolves([]),
     });
 
@@ -99,6 +114,13 @@ add_task(async function test_getAllModelsData_with_remote_settings() {
         model_choice_id: "2",
         owner_name: "Alibaba",
         is_default: true,
+        model_details: {
+          model: "qwen3-235b-a22b-instruct-2507-maas",
+          ownerName: "Alibaba",
+          labelId: "allpurpose",
+          shortName: "Qwen 3 235B",
+          brandName: "Qwen",
+        },
       },
       {
         feature: "chat",
@@ -106,6 +128,13 @@ add_task(async function test_getAllModelsData_with_remote_settings() {
         model: "gemini-3.1-flash-lite",
         model_choice_id: "1",
         owner_name: "Google",
+        model_details: {
+          model: "gemini-3.1-flash-lite",
+          ownerName: "Google",
+          labelId: "fast",
+          shortName: "Gemini 3.1 Flash Lite",
+          brandName: "Gemini",
+        },
       },
       {
         feature: "chat",
@@ -113,10 +142,17 @@ add_task(async function test_getAllModelsData_with_remote_settings() {
         model: "gpt-oss-120b",
         model_choice_id: "3",
         owner_name: "OpenAI",
+        model_details: {
+          model: "gpt-oss-120b",
+          ownerName: "OpenAI",
+          labelId: "personal",
+          shortName: "GPT OSS 120B",
+          brandName: "GPT OSS",
+        },
       },
     ];
 
-    sb.stub(openAIEngine, "getRemoteClient").returns({
+    _setRemoteClientForTesting({
       get: sb.stub().resolves(fakeRecords),
       on: sb.stub(),
     });
@@ -130,16 +166,22 @@ add_task(async function test_getAllModelsData_with_remote_settings() {
           model: "gemini-3.1-flash-lite",
           ownerName: "Google",
           labelId: "fast",
+          shortName: "Gemini 3.1 Flash Lite",
+          brandName: "Gemini",
         },
         2: {
           model: "qwen3-235b-a22b-instruct-2507-maas",
           ownerName: "Alibaba",
           labelId: "allpurpose",
+          shortName: "Qwen 3 235B",
+          brandName: "Qwen",
         },
         3: {
           model: "gpt-oss-120b",
           ownerName: "OpenAI",
           labelId: "personal",
+          shortName: "GPT OSS 120B",
+          brandName: "GPT OSS",
         },
       },
       "Should return all model choices with correct data"
@@ -172,7 +214,7 @@ add_task(async function test_getCachedModelsData_returns_rs_data_after_fetch() {
         owner_name: "Google",
       },
     ];
-    sb.stub(openAIEngine, "getRemoteClient").returns({
+    _setRemoteClientForTesting({
       get: sb.stub().resolves(fakeRecords),
       on: sb.stub(),
     });
@@ -209,7 +251,7 @@ add_task(
           owner_name: "Google",
         },
       ];
-      sb.stub(openAIEngine, "getRemoteClient").returns({
+      _setRemoteClientForTesting({
         get: sb.stub().resolves(fakeRecords),
         on: sb.stub(),
       });
@@ -254,10 +296,17 @@ add_task(async function test_getAllModelsData_with_fallbacks() {
         model: "gemini-3.1-flash-lite",
         model_choice_id: "1",
         owner_name: "Google",
+        model_details: {
+          model: "gemini-3.1-flash-lite",
+          ownerName: "Google",
+          labelId: "fast",
+          shortName: "Gemini 3.1 Flash Lite",
+          brandName: "Gemini",
+        },
       },
     ];
 
-    sb.stub(openAIEngine, "getRemoteClient").returns({
+    _setRemoteClientForTesting({
       get: sb.stub().resolves(fakeRecords),
       on: sb.stub(),
     });
@@ -271,6 +320,8 @@ add_task(async function test_getAllModelsData_with_fallbacks() {
           model: "gemini-3.1-flash-lite",
           ownerName: "Google",
           labelId: "fast",
+          shortName: "Gemini 3.1 Flash Lite",
+          brandName: "Gemini",
         },
         2: {
           model: "qwen3-235b-a22b-instruct-2507-maas",
@@ -292,7 +343,7 @@ add_task(async function test_getAllModelsData_with_fallbacks() {
 
 add_task(async function test_cache_refreshes_on_sync() {
   _clearModelsDataCacheForTesting();
-  openAIEngine._remoteClient = null;
+  _clearRemoteClientForTesting();
   const sb = sinon.createSandbox();
   try {
     const initialRecords = [
@@ -314,7 +365,7 @@ add_task(async function test_cache_refreshes_on_sync() {
       },
     ];
 
-    const client = openAIEngine.getRemoteClient();
+    const client = getRemoteClient();
     const getStub = sb.stub(client, "get").resolves(initialRecords);
 
     await getAllModelsData();
@@ -334,6 +385,6 @@ add_task(async function test_cache_refreshes_on_sync() {
     );
   } finally {
     sb.restore();
-    openAIEngine._remoteClient = null;
+    _clearRemoteClientForTesting();
   }
 });

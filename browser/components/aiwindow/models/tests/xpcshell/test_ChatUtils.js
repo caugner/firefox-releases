@@ -15,7 +15,9 @@ const {
   detectTokens,
   sanitizeUntrustedContent,
   expandUrlTokens,
+  expandUrlTokensInToolParams,
   replaceUrlsWithTokens,
+  resolveMentionUrls,
 } = ChromeUtils.importESModule(
   "moz-src:///browser/components/aiwindow/models/ChatUtils.sys.mjs"
 );
@@ -227,9 +229,7 @@ add_task(async function test_constructRelevantMemoriesContextMessage() {
       {
         id: "food_drink.16ec1838",
         memory_summary: "Loves drinking coffee",
-        category: "Food & Drink",
-        intent: "Plan / Organize",
-        score: 3,
+        tags: ["category:Food & Drink", "intent:Plan / Organize"],
         similarity: 0.95,
       },
     ]);
@@ -605,6 +605,44 @@ add_task(function test_expandUrlTokens_wrong_tag_name() {
   );
 });
 
+add_task(function test_expandUrlTokensInToolParams_array_trailing_comma() {
+  const mapping = new Map([["FACEBOOK_COM_1", "https://www.facebook.com/"]]);
+  const toolParams = { url_tokens: ["§url_token: FACEBOOK_COM_1§,"] };
+  expandUrlTokensInToolParams(toolParams, mapping);
+  Assert.deepEqual(
+    toolParams.url_tokens,
+    ["https://www.facebook.com/"],
+    "Trailing comma around a token should be dropped so the URL still matches"
+  );
+});
+
+add_task(function test_expandUrlTokensInToolParams_array_unmapped_token() {
+  const mapping = new Map([["GITHUB_COM_1", "https://github.com/foo"]]);
+  const toolParams = { url_tokens: ["§url_token: UNKNOWN_1§,"] };
+  expandUrlTokensInToolParams(toolParams, mapping);
+  Assert.deepEqual(
+    toolParams.url_tokens,
+    ["§url_token: UNKNOWN_1§,"],
+    "An unmapped token should be left untouched"
+  );
+});
+
+add_task(function test_expandUrlTokensInToolParams_array_multiple_tokens() {
+  const mapping = new Map([
+    ["GITHUB_COM_1", "https://github.com/foo"],
+    ["GITHUB_COM_2", "https://github.com/bar"],
+  ]);
+  const toolParams = {
+    url_tokens: ["§url_token: GITHUB_COM_1§ and §url_token: GITHUB_COM_2§"],
+  };
+  expandUrlTokensInToolParams(toolParams, mapping);
+  Assert.deepEqual(
+    toolParams.url_tokens,
+    ["https://github.com/foo and https://github.com/bar"],
+    "Entries with multiple tokens should fall back to plain expansion"
+  );
+});
+
 add_task(function test_replaceUrlsWithTokens_serp_content_format() {
   const conversation = new ChatConversation({});
 
@@ -627,6 +665,58 @@ add_task(function test_replaceUrlsWithTokens_serp_content_format() {
   );
 });
 
+add_task(function test_replaceUrlsWithTokens_assistant_tool_calls() {
+  const conversation = new ChatConversation({});
+  const contentUrl = "https://github.com/mozilla/gecko-dev";
+  const toolOnlyUrl = "https://www.facebook.com/";
+  const plainText = "no url here";
+  const messages = [
+    {
+      role: "tool",
+      content: `See ${contentUrl} for the source.`,
+    },
+    {
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        {
+          id: "call_1",
+          type: "function",
+          function: {
+            name: "get_page_content",
+            arguments: JSON.stringify({
+              url_list: [contentUrl, toolOnlyUrl, plainText],
+            }),
+          },
+        },
+      ],
+    },
+  ];
+  replaceUrlsWithTokens(conversation, messages);
+
+  const contentToken = conversation.urlToToken.get(contentUrl);
+  const toolOnlyToken = conversation.urlToToken.get(toolOnlyUrl);
+  Assert.ok(
+    contentToken,
+    "URL from the tool message content should be tokenized"
+  );
+  Assert.ok(
+    toolOnlyToken,
+    "URL present only in tool call arguments should be extracted into a token"
+  );
+  Assert.equal(
+    messages[1].tool_calls[0].function.arguments,
+    JSON.stringify({
+      url_list: [
+        `§url_token: ${contentToken}§`,
+        `§url_token: ${toolOnlyToken}§`,
+        plainText,
+      ],
+    }),
+    "URLs should be replaced with tokens while a list item containing no URL is left unchanged"
+  );
+});
+
 add_task(function test_replaceUrlsWithTokens_runExtraction_content_format() {
   const conversation = new ChatConversation({});
 
@@ -646,5 +736,49 @@ add_task(function test_replaceUrlsWithTokens_runExtraction_content_format() {
   Assert.ok(
     conversation.urlToToken.has(inlineUrl),
     "URL in extracted page content body should also be extracted"
+  );
+});
+
+add_task(function test_resolveMentionUrls_resolves_single_mention() {
+  const url = "https://example.com/1";
+  const result = resolveMentionUrls(
+    `Summarize [@Page 1](mention:?href=${encodeURIComponent(url)})`
+  );
+  Assert.equal(
+    result,
+    `Summarize [@Page 1](${url})`,
+    "Inline @mention URL should be correctly rewritten"
+  );
+});
+
+add_task(function test_resolveMentionUrls_resolves_multiple_mentions() {
+  const url1 = "https://example.com/1";
+  const url2 = "https://example.com/2?a=b";
+  const result = resolveMentionUrls(
+    `[@One](mention:?href=${encodeURIComponent(url1)}) and [@Two](mention:?href=${encodeURIComponent(url2)})`
+  );
+  Assert.equal(
+    result,
+    `[@One](${url1}) and [@Two](${url2})`,
+    "All inline @mention URLs preserve their query strings"
+  );
+});
+
+add_task(function test_resolveMentionUrls_does_not_change_non_mention_urls() {
+  const text = "See [docs](https://example.com/docs) for more.";
+  Assert.equal(
+    resolveMentionUrls(text),
+    text,
+    "Non-mention URLs are unchanged"
+  );
+});
+
+add_task(function test_resolveMentionUrls_invalid_mentions() {
+  const text =
+    "These [@One](mention:?foo=bar) are [@Two](mention:?href=) invalid [@Three](mention:?) mentions.";
+  Assert.equal(
+    resolveMentionUrls(text),
+    text,
+    "Invalid mentions are unchanged"
   );
 });

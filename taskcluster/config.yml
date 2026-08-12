@@ -5,6 +5,33 @@
 trust-domain: gecko
 project-repo-param-prefix: ''
 product-dir: 'browser'
+# Mapping of project to the branches that should be considered "production"
+# releases. A value of `true` means all branches of the project are release
+# branches, while a list restricts releases to the named branches. Consumed by
+# mozilla_taskgraph.util.attributes:release_level.
+release-branches:
+    # https://github.com/mozilla-firefox/firefox
+    firefox:
+        - main
+        - beta
+        - release
+        - esr140
+        - esr153
+    mozilla-central: true
+    mozilla-beta: true
+    mozilla-release: true
+    mozilla-esr115: true
+    mozilla-esr140: true
+    mozilla-esr153: true
+    # bug 1845368: pine is a permanent project branch used for testing
+    # nightly updates
+    pine: true
+    # bug 1877483: larch has similar needs for nightlies
+    larch: true
+    # maple is also an L3 branch: https://phabricator.services.mozilla.com/D184833
+    maple: true
+    # bug 1988213: cypress project branch
+    cypress: true
 treeherder:
     group-names:
         'js-bench-sm': 'JavaScript shell benchmarks with Spidermonkey'
@@ -197,6 +224,12 @@ treeherder:
         'l10n': 'Localization checks'
         'wc': 'webcompat'
         'Boot': 'Bootstrap'
+        'inst': 'Linux installer tests'
+        'inst-apt': 'Linux installer tests: apt'
+        'inst-rpm': 'Linux installer tests: rpm'
+        'inst-flatpak': 'Linux installer tests: flatpak'
+        'inst-tarball': 'Linux installer tests: tarball'
+        'inst-snap': 'Linux installer tests: snap'
         'Attr-L10n': 'Build Attribution'
         'android-l10n': 'Import strings from android-l10n repo'
         'updt-tst': 'Test updates to release from older firefox versions'
@@ -342,6 +375,7 @@ treeherder:
         'service-merino-manifest': 'service-merino-manifest'
         'service-nimbus': 'service-nimbus'
         'service-pocket': 'service-pocket'
+        'service-sync': 'service-sync'
         'service-sync-autofill': 'service-sync-autofill'
         'service-sync-logins': 'service-sync-logins'
         'support-android-test': 'support-android-test'
@@ -366,6 +400,7 @@ treeherder:
         'tooling-detekt': 'tooling-detekt'
         'tooling-fetch-tests': 'tooling-fetch-tests'
         'tooling-lint': 'tooling-lint'
+        'ui-animation': 'ui-animation'
         'ui-autocomplete': 'ui-autocomplete'
         'ui-colors': 'ui-colors'
         'ui-fonts': 'ui-fonts'
@@ -396,6 +431,7 @@ index:
         - 'static-analysis'
         - 'devedition'
         - 'source'
+        - 'test'
         - 'system-symbols'
         - 'geckodriver'
 
@@ -557,7 +593,7 @@ taskgraph:
 
 workers:
     aliases:
-        b-linux(|-docker(|-x?large)-amd|-medium|-aarch64|-xlarge|-kvm):
+        b-linux(|-docker(|-x?large|-updatebot)-amd|-medium|-aarch64|-xlarge|-kvm):
             provisioner: '{trust-domain}-{level}'
             implementation: docker-worker
             os: linux
@@ -567,12 +603,7 @@ workers:
             implementation: generic-worker
             os: windows
             worker-type: '{alias}-azure'
-        b-win2022:
-            provisioner: '{trust-domain}-{level}'
-            implementation: generic-worker
-            os: windows
-            worker-type: '{alias}'
-        b-win2022-xxlarge:
+        b-win2022(|-xxlarge|-updatebot):
             provisioner: '{trust-domain}-{level}'
             implementation: generic-worker
             os: windows
@@ -933,6 +964,7 @@ mac-signing:
                       - "/Contents/MacOS/updater.app"
                       - "/Contents/MacOS/gpu-helper.app"
                       - "/Contents/Library/LaunchServices/org.mozilla.updater"
+                      - "/Contents/Library/LaunchServices/org.mozilla.dmgInstallHelper"
                       - "/Contents/MacOS/XUL"
                       - "/Contents/MacOS/pingsender"
                       - "/Contents/MacOS/nmhproxy"
@@ -987,6 +1019,7 @@ mac-signing:
                       - "/Contents/MacOS/updater.app"
                       - "/Contents/MacOS/gpu-helper.app"
                       - "/Contents/Library/LaunchServices/org.mozilla.updater"
+                      - "/Contents/Library/LaunchServices/org.mozilla.dmgInstallHelper"
                       - "/Contents/MacOS/pingsender"
                       - "/Contents/MacOS/nmhproxy"
                       - "/Contents/Frameworks/ChannelPrefs.framework"

@@ -18,7 +18,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -141,12 +141,17 @@ private fun Modifier.focusTextIndexRange(
 ) = composed(
     factory = {
         val density = LocalDensity.current
-        val textMeasurer = rememberTextMeasurer()
         val scrollState = rememberScrollState()
-        var textLayoutState: TextLayoutResult? by remember { mutableStateOf(null) }
-        var fadeFraction = remember { 0f }
+        var viewportWidth by remember { mutableIntStateOf(0) }
 
-        LaunchedEffect(textLayoutState, scrollState.maxValue) {
+        val textLayoutState = rememberTextLayoutResult(text, textStyle, viewportWidth)
+
+        val fadeFraction = when {
+            viewportWidth > 0 -> (with(density) { fadeLength.toPx() } / viewportWidth).coerceIn(0f, 1f)
+            else -> 0f
+        }
+
+        LaunchedEffect(textLayoutState, highlightRange, scrollState.maxValue) {
             val layout = textLayoutState ?: return@LaunchedEffect
             val endScrollValue = computeDomainEndScrollValue(text, highlightRange, scrollState, layout)
 
@@ -154,16 +159,7 @@ private fun Modifier.focusTextIndexRange(
         }
 
         onSizeChanged {
-            val currentWidth = with(density) { it.width.toDp() }
-            fadeFraction = (fadeLength / currentWidth).coerceIn(0f, 1f)
-
-            textLayoutState = textMeasurer.measure(
-                text = text,
-                maxLines = 1,
-                style = textStyle,
-                softWrap = false,
-                constraints = Constraints(maxWidth = it.width),
-            )
+            viewportWidth = it.width
         }
             .thenConditional(
                 Modifier
@@ -204,6 +200,29 @@ private fun Modifier.focusTextIndexRange(
     },
 )
 
+@Composable
+@VisibleForTesting
+internal fun rememberTextLayoutResult(
+    text: String,
+    textStyle: TextStyle,
+    viewportWidth: Int,
+): TextLayoutResult? {
+    val textMeasurer = rememberTextMeasurer()
+
+    return remember(text, textStyle, viewportWidth) {
+        when {
+            viewportWidth > 0 -> textMeasurer.measure(
+                text = text,
+                maxLines = 1,
+                style = textStyle,
+                softWrap = false,
+                constraints = Constraints(maxWidth = viewportWidth),
+            )
+            else -> null
+        }
+    }
+}
+
 @VisibleForTesting
 internal fun computeDomainEndScrollValue(
     text: String,
@@ -213,10 +232,10 @@ internal fun computeDomainEndScrollValue(
 ): Int = when (highlightRange?.second == text.length) {
     true -> scrollState.maxValue
     else -> {
-        val startIndex = highlightRange?.first ?: 0
+        val startIndex = (highlightRange?.first ?: 0).coerceIn(0, text.length)
 
         val endIndex = (highlightRange?.second?.plus(END_SCROLL_OFFSET) ?: 0)
-            .coerceAtMost(text.length)
+            .coerceIn(startIndex, text.length)
 
         // Compute the exact visual boundaries of the domain.
         val path = textLayoutResult.getPathForRange(startIndex, endIndex)

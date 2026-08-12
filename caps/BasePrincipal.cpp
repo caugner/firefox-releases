@@ -4,52 +4,45 @@
 
 #include "mozilla/BasePrincipal.h"
 
-#include "nsDocShell.h"
-
-#include "ExpandedPrincipal.h"
-#include "nsNetUtil.h"
-#include "nsContentUtils.h"
-#include "nsIOService.h"
-#include "nsIURIWithSpecialOrigin.h"
-#include "nsScriptSecurityManager.h"
-#include "nsServiceManagerUtils.h"
-#include "nsAboutProtocolUtils.h"
-#include "ThirdPartyUtil.h"
-#include "mozilla/ContentPrincipal.h"
-#include "mozilla/ExtensionPolicyService.h"
-#include "mozilla/NullPrincipal.h"
-#include "mozilla/dom/BlobURLProtocolHandler.h"
-#include "mozilla/dom/ChromeUtils.h"
-#include "mozilla/dom/ReferrerInfo.h"
-#include "mozilla/dom/ToJSValue.h"
-#include "mozilla/dom/nsMixedContentBlocker.h"
-#include "mozilla/Components.h"
-#include "mozilla/dom/StorageUtils.h"
-#include "mozilla/dom/StorageUtils.h"
-#include "mozilla/JSONStringWriteFuncs.h"
-#include "mozilla/JSONWriter.h"
-#include "nsIEffectiveTLDService.h"
-#include "nsIURL.h"
-#include "nsIURIMutator.h"
-#include "mozilla/StaticPrefs_permissions.h"
-#include "nsIURIMutator.h"
-#include "nsMixedContentBlocker.h"
-#include "prnetdb.h"
-#include "nsIURIFixup.h"
-#include "mozilla/dom/StorageUtils.h"
-#include "mozilla/StorageAccess.h"
-#include "nsPIDOMWindow.h"
-#include "nsIURIMutator.h"
-#include "mozilla/PermissionManager.h"
-
-#include "nsSerializationHelper.h"
-
-#include "js/JSON.h"
 #include "ContentPrincipalJSONHandler.h"
+#include "ExpandedPrincipal.h"
 #include "ExpandedPrincipalJSONHandler.h"
 #include "NullPrincipalJSONHandler.h"
 #include "PrincipalJSONHandler.h"
 #include "SubsumedPrincipalJSONHandler.h"
+#include "ThirdPartyUtil.h"
+#include "js/JSON.h"
+#include "mozilla/Components.h"
+#include "mozilla/ContentPrincipal.h"
+#include "mozilla/ExtensionPolicyService.h"
+#include "mozilla/JSONStringWriteFuncs.h"
+#include "mozilla/JSONWriter.h"
+#include "mozilla/NullPrincipal.h"
+#include "mozilla/PermissionManager.h"
+#include "mozilla/StaticPrefs_permissions.h"
+#include "mozilla/StorageAccess.h"
+#include "mozilla/dom/BlobURLProtocolHandler.h"
+#include "mozilla/dom/ChromeUtils.h"
+#include "mozilla/dom/ReferrerInfo.h"
+#include "mozilla/dom/StorageUtils.h"
+#include "mozilla/dom/ToJSValue.h"
+#include "mozilla/dom/nsMixedContentBlocker.h"
+#include "nsAboutProtocolUtils.h"
+#include "nsContentUtils.h"
+#include "nsDocShell.h"
+#include "nsIEffectiveTLDService.h"
+#include "nsIOService.h"
+#include "nsIURIFixup.h"
+#include "nsIURIMutator.h"
+#include "nsIURIWithSpecialOrigin.h"
+#include "nsIURL.h"
+#include "nsMixedContentBlocker.h"
+#include "nsNetUtil.h"
+#include "nsPIDOMWindow.h"
+#include "nsScriptSecurityManager.h"
+#include "nsSerializationHelper.h"
+#include "nsServiceManagerUtils.h"
+#include "prnetdb.h"
 
 namespace mozilla {
 
@@ -1261,12 +1254,13 @@ already_AddRefed<BasePrincipal> BasePrincipal::CreateContentPrincipal(
 
   // Blob URLs don't derive the principal directly from the URL in the same way
   // as normal content principals, and may have a non-content principal.
-  if (aURI->SchemeIs(BLOBURI_SCHEME)) {
+  nsCOMPtr<nsIURI> innermost = NS_GetInnermostURI(aURI);
+  if (innermost && innermost->SchemeIs(BLOBURI_SCHEME)) {
     MOZ_ASSERT(!aInitialDomain,
                "an initial domain for a blob URI makes no sense");
     nsCOMPtr<nsIPrincipal> blobPrincipal;
     if (!dom::BlobURLProtocolHandler::GetBlobURLPrincipal(
-            aURI, aAttrs, getter_AddRefs(blobPrincipal))) {
+            innermost, aAttrs, getter_AddRefs(blobPrincipal))) {
       // This isn't a valid Blob URL, give up and return a null principal.
       return NullPrincipal::Create(aAttrs);
     }

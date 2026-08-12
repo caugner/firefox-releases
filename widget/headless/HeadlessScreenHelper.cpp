@@ -4,10 +4,10 @@
 
 #include "HeadlessScreenHelper.h"
 
-#include "prenv.h"
-#include "mozilla/dom/DOMTypes.h"
 #include "mozilla/RefPtr.h"
+#include "mozilla/dom/DOMTypes.h"
 #include "nsTArray.h"
+#include "prenv.h"
 
 namespace mozilla {
 namespace widget {
@@ -30,10 +30,10 @@ LayoutDeviceIntRect HeadlessScreenHelper::GetScreenRect() {
 HeadlessScreenHelper::HeadlessScreenHelper() {
   AutoTArray<RefPtr<Screen>, 1> screenList;
   LayoutDeviceIntRect rect = GetScreenRect();
-  auto ret =
-      MakeRefPtr<Screen>(rect, rect, 24, 24, 0, DesktopToLayoutDeviceScale(),
-                         CSSToLayoutDeviceScale(), 96.0f,
-                         Screen::IsPseudoDisplay::No, Screen::IsHDR::No);
+  auto ret = MakeRefPtr<Screen>(
+      rect, rect, 24, 24, 0, DesktopToLayoutDeviceScale(),
+      CSSToLayoutDeviceScale(), 96.0f, Screen::IsPseudoDisplay::No,
+      Screen::IsHDR::No, 80.0f, 1000.0f);
   screenList.AppendElement(ret.forget());
   ScreenManager::Refresh(std::move(screenList));
 }

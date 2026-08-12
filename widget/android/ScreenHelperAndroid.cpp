@@ -3,15 +3,15 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "ScreenHelperAndroid.h"
-#include "AndroidRect.h"
-#include "nsThreadUtils.h"
 
 #include <mozilla/jni/Refs.h>
 
+#include "AndroidRect.h"
 #include "AndroidVsync.h"
 #include "mozilla/java/GeckoAppShellWrappers.h"
 #include "mozilla/java/ScreenManagerHelperNatives.h"
 #include "mozilla/widget/ScreenManager.h"
+#include "nsThreadUtils.h"
 #include "nsXULAppAPI.h"
 
 using namespace mozilla;
@@ -39,11 +39,16 @@ static already_AddRefed<Screen> MakePrimaryScreen() {
   auto orientation =
       hal::ScreenOrientation(java::GeckoAppShell::GetScreenOrientation());
   uint16_t angle = java::GeckoAppShell::GetScreenAngle();
+  // Note that sdrContentBrightness can vary in real time in response to varying
+  // ambient light level.
+  float sdrContentBrightness = java::GeckoAppShell::GetSDRContentBrightness();
+  float hdrPeakBrightness = java::GeckoAppShell::GetHDRPeakBrightness();
   float refreshRate = java::GeckoAppShell::GetScreenRefreshRate();
   return MakeAndAddRef<Screen>(
       bounds, bounds, depth, depth, refreshRate,
       DesktopToLayoutDeviceScale(density), CSSToLayoutDeviceScale(1.0f), dpi,
-      Screen::IsPseudoDisplay::No, Screen::IsHDR(isHDR), orientation, angle);
+      Screen::IsPseudoDisplay::No, Screen::IsHDR(isHDR), sdrContentBrightness,
+      hdrPeakBrightness, orientation, angle);
 }
 
 ScreenHelperAndroid::ScreenHelperAndroid() {

@@ -9,6 +9,8 @@ firefox-appdir = "browser"
 
 ["test_ChatUtils.js"]
 
+["test_Conversation.js"]
+
 ["test_ConversationSuggestions.js"]
 
 ["test_ManageTabs.js"]
@@ -17,21 +19,19 @@ firefox-appdir = "browser"
 
 ["test_MemoriesChatSource.js"]
 
-["test_MemoriesConversationScheduler.js"]
-
-["test_MemoriesDriftDetector.js"]
-
-["test_MemoriesHistoryScheduler.js"]
-
 ["test_MemoriesHistorySource.js"]
 
 ["test_MemoriesHistorySource_blocklist.js"]
 
 ["test_MemoriesManager.js"]
 
+["test_MemoriesSessionGate.js"]
+
 ["test_MemoriesSessions.js"]
 
-["test_PromptLoader_loadCallContext.js"]
+["test_Message.js"]
+
+["test_PromptLoader_buildConversation.js"]
 
 ["test_PromptOptimizer.js"]
 
@@ -50,6 +50,8 @@ firefox-appdir = "browser"
 ["test_TitleGeneration.js"]
 
 ["test_ToolDefinitions.js"]
+
+["test_Tools_AddMemory.js"]
 
 ["test_Tools_GetOpenTabs.js"]
 

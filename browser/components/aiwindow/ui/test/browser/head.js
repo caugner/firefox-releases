@@ -17,8 +17,13 @@ ChromeUtils.defineESModuleGetters(this, {
     "moz-src:///browser/components/aiwindow/models/Utils.sys.mjs",
   IntentClassifier:
     "moz-src:///browser/components/aiwindow/models/IntentClassifier.sys.mjs",
+  MENTION_TYPE:
+    "moz-src:///browser/components/urlbar/SmartbarMentionsPanelSearch.sys.mjs",
   openAIEngine: "moz-src:///browser/components/aiwindow/models/Utils.sys.mjs",
+  SmartbarMentionsPanelSearch:
+    "moz-src:///browser/components/urlbar/SmartbarMentionsPanelSearch.sys.mjs",
   PlacesTestUtils: "resource://testing-common/PlacesTestUtils.sys.mjs",
+  Region: "resource://gre/modules/Region.sys.mjs",
   SessionStore: "resource:///modules/sessionstore/SessionStore.sys.mjs",
   SessionWindowUI: "resource:///modules/sessionstore/SessionWindowUI.sys.mjs",
   sinon: "resource://testing-common/Sinon.sys.mjs",
@@ -27,6 +32,11 @@ ChromeUtils.defineESModuleGetters(this, {
 const { _setLoadPromptForTesting } = ChromeUtils.importESModule(
   "moz-src:///browser/components/aiwindow/ui/modules/ChatConversation.sys.mjs"
 );
+
+const { _setRemoteClientForTesting, _clearRemoteClientForTesting } =
+  ChromeUtils.importESModule(
+    "moz-src:///browser/components/aiwindow/models/Utils.sys.mjs"
+  );
 
 /**
  * @import { SmartbarAction } from "chrome://browser/content/aiwindow/components/input-cta/input-cta.mjs"
@@ -40,15 +50,14 @@ const AIWINDOW_URL = "chrome://browser/content/aiwindow/aiWindow.html";
 const FIRSTRUN_URL = "chrome://browser/content/aiwindow/firstrun.html";
 
 let gIntentEngineStub;
-let gRemoteClientStub;
 
 // Minimal RS records returned by the global getRemoteClient stub.
 // Version numbers must match FEATURE_MAJOR_VERSIONS in models/Utils.sys.mjs.
 const MOCK_RS_RECORDS = [
-  ["chat", 7],
+  ["chat", 8],
   ["title-generation", 1],
   ["conversation-starters-sidebar-system", 1],
-  ["conversation-suggestions-sidebar-starter", 2],
+  ["conversation-suggestions-sidebar-starter", 3],
   ["conversation-suggestions-followup", 1],
   ["conversation-suggestions-assistant-limitations", 1],
   ["conversation-suggestions-memories", 1],
@@ -63,6 +72,7 @@ const MOCK_RS_RECORDS = [
   ["memories-message-classification-system", 1],
   ["memories-message-classification-user", 1],
   ["memories-relevant-context", 2],
+  ["search-answer-generation", 1],
 ]
   .map(([feature, major]) => ({
     feature,
@@ -84,31 +94,114 @@ const MOCK_RS_RECORDS = [
       feature: "chat",
       model: "gemini-3.1-flash-lite",
       model_choice_id: "1",
+      model_details: {
+        model: "gemini-3.1-flash-lite",
+        ownerName: "Google",
+        labelId: "fast",
+        shortName: "Gemini 3.1 Flash Lite",
+        brandName: "Gemini",
+      },
       service_type: "ai",
       purpose: "chat",
       parameters: {},
       prompts: "Test system prompt.",
-      version: "v7.0",
+      version: "v8.0",
     },
     {
       feature: "chat",
       model: "qwen3-235b-a22b-instruct-2507-maas",
       model_choice_id: "2",
+      model_details: {
+        model: "qwen3-235b-a22b-instruct-2507-maas",
+        ownerName: "Alibaba",
+        labelId: "allpurpose",
+        shortName: "Qwen 3 235B",
+        brandName: "Qwen",
+      },
       service_type: "ai",
       purpose: "chat",
       parameters: {},
       prompts: "Test system prompt.",
-      version: "v7.0",
+      version: "v8.0",
     },
     {
       feature: "chat",
       model: "gpt-oss-120b",
       model_choice_id: "3",
+      model_details: {
+        model: "gpt-oss-120b",
+        ownerName: "OpenAI",
+        labelId: "personal",
+        shortName: "GPT OSS 120B",
+        brandName: "GPT OSS",
+      },
       service_type: "ai",
       purpose: "chat",
       parameters: {},
       prompts: "Test system prompt.",
-      version: "v7.0",
+      version: "v8.0",
+    },
+    // TODO 2053495
+    // v9 records for mistral release (browser.smartwindow.mistralRelease pref)
+    {
+      feature: "chat",
+      model: "generic",
+      service_type: "ai",
+      parameters: {},
+      prompts: "Test system prompt.",
+      version: "v9.0",
+      is_default: true,
+    },
+    {
+      feature: "chat",
+      model: "gemini-3.1-flash-lite",
+      model_choice_id: "1",
+      model_details: {
+        model: "gemini-3.1-flash-lite",
+        ownerName: "Google",
+        labelId: "fast",
+        shortName: "Gemini 3.1 Flash Lite",
+        brandName: "Gemini",
+      },
+      service_type: "ai",
+      purpose: "chat",
+      parameters: {},
+      prompts: "Test system prompt.",
+      version: "v9.0",
+    },
+    {
+      feature: "chat",
+      model: "qwen3-235b-a22b-instruct-2507-maas",
+      model_choice_id: "2",
+      model_details: {
+        model: "qwen3-235b-a22b-instruct-2507-maas",
+        ownerName: "Alibaba",
+        labelId: "allpurpose",
+        shortName: "Qwen 3 235B",
+        brandName: "Qwen",
+      },
+      service_type: "ai",
+      purpose: "chat",
+      parameters: {},
+      prompts: "Test system prompt.",
+      version: "v9.0",
+    },
+    {
+      feature: "chat",
+      model: "mistral-small-2603",
+      model_choice_id: "3",
+      model_details: {
+        model: "mistral-small-2603",
+        ownerName: "Mistral",
+        labelId: "personal",
+        shortName: "Mistral Small 4",
+        brandName: "Mistral",
+      },
+      service_type: "ai",
+      purpose: "chat",
+      parameters: {},
+      prompts: "Test system prompt.",
+      version: "v9.0",
     },
   ]);
 
@@ -136,15 +229,16 @@ add_setup(async function () {
     .resolves(fakeIntentEngine);
   registerCleanupFunction(() => gIntentEngineStub.restore());
 
-  // Stub getRemoteClient so loadCallContext never hits real Remote Settings.
-  gRemoteClientStub = sinon
-    .stub(openAIEngine, "getRemoteClient")
-    .returns({ get: async () => MOCK_RS_RECORDS });
-  registerCleanupFunction(() => gRemoteClientStub.restore());
+  // Stub the RS client so PromptLoader.buildConversation never hits real Remote Settings.
+  _setRemoteClientForTesting({ get: async () => MOCK_RS_RECORDS });
+  registerCleanupFunction(() => _clearRemoteClientForTesting());
 
-  // Stub ChatConversation's loadPrompt so generatePrompt doesn't hit RS.
+  // Stub ChatConversation's loadPrompt so loadSystemPrompt and
+  // injectRealTimeContext don't hit RS.
   _setLoadPromptForTesting(async () => "Test system prompt.");
-  registerCleanupFunction(() => _setLoadPromptForTesting(null));
+  registerCleanupFunction(() => {
+    _setLoadPromptForTesting(null);
+  });
 });
 
 /**
@@ -179,7 +273,7 @@ async function openAIWindow({ waitForTabURL = AIWINDOW_URL } = {}) {
  */
 async function waitForSidebarReady(win) {
   const sidebarBrowser = win.document.getElementById("ai-window-browser");
-  await BrowserTestUtils.waitForCondition(
+  await TestUtils.waitForCondition(
     () => sidebarBrowser.contentDocument?.querySelector("ai-window:defined"),
     "Sidebar ai-window should be loaded"
   );
@@ -187,29 +281,66 @@ async function waitForSidebarReady(win) {
 }
 
 /**
- * Opens a new AI Window with about:blank
- * and the chat assistant sidebar open
+ * Waits for the sidebar slide animation to settle into its closed state. The
+ * close animation keeps the box uncollapsed until the slide finishes, so
+ * `box.collapsed` (set by AIWindowUI._commitSidebarCollapsed) is the only
+ * reliable signal that the sidebar is fully closed.
  *
- * @returns {Promise<{win: Window, sidebarBrowser: MozBrowser}>}
+ * @param {Window} win - Window reference
+ * @returns {Promise<Element>} - The sidebar box element
  */
-async function openAIWindowWithSidebar() {
-  const win = await openAIWindow();
-  return openAIWindowSidebar(win);
+async function waitForSidebarClosed(win) {
+  const box = win.document.getElementById("ai-window-box");
+  await TestUtils.waitForCondition(
+    () => box.collapsed,
+    "Wait for AI sidebar slide-close to finish"
+  );
+  return box;
 }
 
 /**
- * Navigates an AI Window to about:blank and opens the sidebar.
+ * Waits for the sidebar slide animation to settle into its open state. During an
+ * open slide the box is uncollapsed up-front while the splitter stays hidden, so
+ * the splitter becoming visible (in AIWindowUI._commitSidebarCollapsed) is the
+ * signal that the slide has fully committed.
  *
- * @param {Window} win
+ * @param {Window} win - Window reference
+ * @returns {Promise<Element>} - The sidebar box element
+ */
+async function waitForSidebarOpen(win) {
+  const box = win.document.getElementById("ai-window-box");
+  const splitter = win.document.getElementById("ai-window-splitter");
+  await TestUtils.waitForCondition(
+    () =>
+      !box.collapsed && !splitter.collapsed && AIWindowUI.isSidebarOpen(win),
+    "Wait for AI sidebar slide-open to finish"
+  );
+  return box;
+}
+
+/**
+ * Opens a new AI Window with about:blank
+ * and the chat assistant sidebar open
+ *
+ * @param {string} [url] - URL to navigate the tab to
  * @returns {Promise<{win: Window, sidebarBrowser: MozBrowser}>}
  */
-async function openAIWindowSidebar(win) {
-  BrowserTestUtils.startLoadingURIString(
-    win.gBrowser.selectedBrowser,
-    "about:blank"
-  );
+async function openAIWindowWithSidebar(url = "about:blank") {
+  const win = await openAIWindow();
+  return openAIWindowSidebar(win, url);
+}
+
+/**
+ * Navigates an AI Window to the given URL and opens the sidebar.
+ *
+ * @param {Window} win
+ * @param {string} [url] - URL to navigate the tab to
+ * @returns {Promise<{win: Window, sidebarBrowser: MozBrowser}>}
+ */
+async function openAIWindowSidebar(win, url = "about:blank") {
+  BrowserTestUtils.startLoadingURIString(win.gBrowser.selectedBrowser, url);
   await BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser, {
-    wantLoad: "about:blank",
+    wantLoad: url,
   });
   if (!AIWindowUI.isSidebarOpen(win)) {
     info("Opening sidebar");
@@ -459,7 +590,7 @@ async function openTabContextMenuAndClickTabByLabel(sidebarBrowser, label) {
 }
 
 async function getSmartbarContextChipLabels(browser, expectedUrl) {
-  await BrowserTestUtils.waitForCondition(
+  await TestUtils.waitForCondition(
     () => browser.contentDocument?.querySelector("ai-window:defined"),
     "Sidebar ai-window should be loaded"
   );
@@ -585,7 +716,7 @@ async function selectSmartbarSearchEngine(browser) {
   );
   const mozButton = BrowserTestUtils.querySelectorDeep(inputCta, "moz-button");
 
-  const chevronButton = await BrowserTestUtils.waitForCondition(() =>
+  const chevronButton = await TestUtils.waitForCondition(() =>
     mozButton.shadowRoot.querySelector("#chevron-button")
   );
   const [mainPanel, searchSubpanel] =
@@ -599,7 +730,7 @@ async function selectSmartbarSearchEngine(browser) {
   mainPanel.querySelector('panel-item[icon="search-with"]').click();
   await subpanelShown;
 
-  const engineItem = await BrowserTestUtils.waitForCondition(() =>
+  const engineItem = await TestUtils.waitForCondition(() =>
     searchSubpanel.querySelector('panel-item[icon="engine"]')
   );
   engineItem.click();
@@ -1514,13 +1645,13 @@ function stopMockOpenAI(server) {
  *   website-chip-container in the selected user message
  */
 async function getUserMessageChipLabels(sidebarBrowser, messageIndex = 0) {
-  await BrowserTestUtils.waitForCondition(
+  await TestUtils.waitForCondition(
     () => sidebarBrowser.contentDocument?.querySelector("ai-window:defined"),
     "Sidebar ai-window should be loaded"
   );
 
   const aiWindowEl = sidebarBrowser.contentDocument.querySelector("ai-window");
-  const aichatBrowser = await BrowserTestUtils.waitForCondition(
+  const aichatBrowser = await TestUtils.waitForCondition(
     () => aiWindowEl.shadowRoot?.querySelector("#aichat-browser"),
     "Wait for aichat-browser"
   );
