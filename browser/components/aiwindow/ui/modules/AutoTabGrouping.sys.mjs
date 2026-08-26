@@ -9,6 +9,7 @@ const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   AutoTabGroupingSuggestions:
     "moz-src:///browser/components/aiwindow/ui/modules/AutoTabGroupingSuggestions.sys.mjs",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
   TabMetrics: "moz-src:///browser/components/tabbrowser/TabMetrics.sys.mjs",
   setTimeout: "resource://gre/modules/Timer.sys.mjs",
   clearTimeout: "resource://gre/modules/Timer.sys.mjs",
@@ -48,24 +49,15 @@ const CARD_TAG = "smartwindow-group-tabs-card";
 const FLYOUT_HIDE_DELAY_MS = 160;
 
 /**
- * Median and mean of a list of group sizes (tabs per group), rounded to
- * integers for the telemetry events.
+ * Total length of the given tabs' titles. The titles are the only text the
+ * on-device model is given, and the telemetry events report how much of it
+ * there was rather than the text itself.
  *
- * @param {number[]} sizes
- * @returns {{median: number, mean: number}}
+ * @param {MozTabbrowserTab[]} tabs
+ * @returns {number}
  */
-function sizeStats(sizes) {
-  if (!sizes.length) {
-    return { median: 0, mean: 0 };
-  }
-  const sorted = [...sizes].sort((a, b) => a - b);
-  const mid = Math.floor(sorted.length / 2);
-  const median =
-    sorted.length % 2
-      ? sorted[mid]
-      : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
-  const mean = Math.round(sizes.reduce((sum, n) => sum + n, 0) / sizes.length);
-  return { median, mean };
+function titleLength(tabs) {
+  return tabs.reduce((total, tab) => total + (tab.label?.length ?? 0), 0);
 }
 
 /**
@@ -99,6 +91,9 @@ export const AutoTabGrouping = {
    *
    * @typedef {object} RecentGroup
    * @property {number} id - Stable id used to find the row across re-renders.
+   * @property {number} suggestionId - Id of the suggestion this group was
+   *   created from, so the telemetry events about it all report the same
+   *   grouped_id from suggestion through to ungrouping.
    * @property {MozTabGroup} group - The created tab group, used to ungroup it.
    * @property {string} label - The created group's name.
    * @property {string} color - The created group's color name.
@@ -113,8 +108,7 @@ export const AutoTabGrouping = {
    * computePromise memoizes the in-flight clustering run (it resolves to
    * undefined once suggestions are stored) so a panel reopened while it is
    * still running awaits the same computation instead of getting stuck on the
-   * loading state. computeCount counts finished runs, used to flag reopened
-   * offers as recomputes in telemetry.
+   * loading state.
    *
    * recent holds the groups created from suggestions (newest first); the panel
    * lists them under "Just created" and the "Ungroup" button reverses all of
@@ -122,8 +116,8 @@ export const AutoTabGrouping = {
    * created" while the panel that created it stays open.
    *
    * @type {WeakMap<ChromeWindow, {computed: boolean, computing: boolean,
-   *   computeCount: number, computePromise: ?Promise<void>,
-   *   suggestions: GroupSuggestion[], recent: RecentGroup[]}>}
+   *   computePromise: ?Promise<void>, suggestions: GroupSuggestion[],
+   *   recent: RecentGroup[]}>}
    */
   _state: new WeakMap(),
 
@@ -141,7 +135,6 @@ export const AutoTabGrouping = {
         computed: false,
         computing: false,
         computePromise: null,
-        computeCount: 0,
         suggestions: [],
         recent: [],
       };
@@ -154,14 +147,17 @@ export const AutoTabGrouping = {
    * Toggle the "Organize Tabs" panel from the toolbar button.
    *
    * @param {ChromeWindow} win - The Smart Window.
+   * @param {object} [options]
+   * @param {string} [options.source] - What asked for the panel, recorded on
+   *   the menu_opened event: "button", "callout_click", or "message".
    */
-  toggleGroupTabsPanel(win) {
+  toggleGroupTabsPanel(win, { source = "button" } = {}) {
     const existing = this._panels.get(win);
     if (existing) {
       existing.hidePopup();
       return;
     }
-    this.showGroupTabsPanel(win).catch(e =>
+    this.showGroupTabsPanel(win, { source }).catch(e =>
       lazy.console.warn("showGroupTabsPanel failed", e)
     );
   },
@@ -171,8 +167,11 @@ export const AutoTabGrouping = {
    * run (or immediately if suggestions were already computed).
    *
    * @param {ChromeWindow} win
+   * @param {object} [options]
+   * @param {string} [options.source] - See toggleGroupTabsPanel.
    */
-  async showGroupTabsPanel(win) {
+  async showGroupTabsPanel(win, { source = "button" } = {}) {
+    const openedAt = Date.now();
     if (!win?.gBrowser || win.closed) {
       return;
     }
@@ -183,6 +182,11 @@ export const AutoTabGrouping = {
     if (!anchor || !popupSet) {
       return;
     }
+
+    Glean.smartWindow.autoTabGroupMenuOpened.record({
+      source,
+      tabs: win.gBrowser.tabs.length,
+    });
 
     const panel = this._buildPanelSkeleton(win);
     popupSet.appendChild(panel);
@@ -260,6 +264,16 @@ export const AutoTabGrouping = {
       return;
     }
     this._syncCard(win, panel);
+
+    await panel._card.updateComplete;
+    if (this._panels.get(win) !== panel) {
+      return;
+    }
+    Glean.smartWindow.autoTabGroupWindowDisplay.record({
+      suggested_groups: state.suggestions.length,
+      groups: state.recent.length,
+      time: Date.now() - openedAt,
+    });
   },
 
   /**
@@ -277,7 +291,8 @@ export const AutoTabGrouping = {
       this._createSuggestions(
         win,
         panel,
-        this._getState(win).suggestions.slice()
+        this._getState(win).suggestions.slice(),
+        { source: "collective_accept" }
       )
     );
     card.addEventListener("create-one", e =>
@@ -286,6 +301,9 @@ export const AutoTabGrouping = {
     card.addEventListener("ungroup", () => this._ungroupRecent(win, panel));
     card.addEventListener("close-duplicates", () =>
       this._closeDuplicateTabs(win, panel)
+    );
+    card.addEventListener("view-tab-groups", e =>
+      this._showGroupsFlyout(win, panel, e.detail.anchor)
     );
     card.addEventListener("preview", e => {
       // Focusing a row whose flyout was just dismissed must not reopen it;
@@ -367,6 +385,7 @@ export const AutoTabGrouping = {
       this._selectTab(win, panel, e.detail.id, e.detail.index)
     );
     flyoutEl.addEventListener("close-flyout", () => this._leaveFlyout(panel));
+    flyoutEl.addEventListener("close-panel", () => panel.hidePopup());
     flyoutPanel.appendChild(flyoutEl);
     flyoutPanel.addEventListener("mouseenter", () =>
       this._cancelHideFlyout(panel)
@@ -405,27 +424,61 @@ export const AutoTabGrouping = {
     card.suggestions = [...state.suggestions];
     card.recent = [...state.recent];
     card.duplicates = win.gBrowser.getAllDuplicateTabsToClose().length;
+    card.tabGroups = this._tabGroupCount(win);
     return hidden;
+  },
+
+  /**
+   * @param {ChromeWindow} win
+   * @returns {number}
+   */
+  _tabGroupCount(win) {
+    const saved = lazy.PrivateBrowsingUtils.isWindowPrivate(win)
+      ? 0
+      : win.SessionStore.savedGroups.length;
+    return win.gBrowser.getAllTabGroups().length + saved;
   },
 
   _createById(win, panel, id) {
     const suggestion = this._getState(win).suggestions.find(s => s.id === id);
     if (suggestion) {
-      this._createSuggestions(win, panel, [suggestion]);
+      this._createSuggestions(win, panel, [suggestion], {
+        source: "individual_accept",
+      });
     }
   },
 
   _showFlyoutById(win, panel, id, anchorRow) {
     const suggestion = this._getState(win).suggestions.find(s => s.id === id);
     if (suggestion) {
-      this._cancelHideFlyout(panel);
       this._showFlyout(win, panel, anchorRow, suggestion);
     }
   },
 
+  /**
+   * @param {ChromeWindow} win
+   * @param {XULElement} panel
+   * @param {Element} anchorRow
+   */
+  _showGroupsFlyout(win, panel, anchorRow) {
+    this._showFlyout(win, panel, anchorRow, null);
+    this._focusFlyout(panel);
+  },
+
+  /**
+   * Show the flyout beside a row, listing either the given suggestion's tabs or,
+   * with no suggestion, the user's tab groups.
+   *
+   * @param {ChromeWindow} win
+   * @param {XULElement} panel
+   * @param {Element} anchorRow
+   * @param {?GroupSuggestion} suggestion
+   */
   _showFlyout(win, panel, anchorRow, suggestion) {
+    this._cancelHideFlyout(panel);
     const flyoutPanel = this._ensureFlyoutPanel(win, panel);
     flyoutPanel._flyoutEl.suggestion = suggestion;
+    flyoutPanel._flyoutEl.groupsListId = suggestion ? 0 : this._nextId++;
 
     if (panel._activeRow && panel._activeRow !== anchorRow) {
       panel._activeRow.classList.remove("is-active");
@@ -473,17 +526,19 @@ export const AutoTabGrouping = {
     return hidden;
   },
 
-  _focusFlyout(panel) {
+  async _focusFlyout(panel) {
     const flyoutPanel = panel._flyoutPanel;
     if (!flyoutPanel) {
       return;
     }
     // Focus is refused while the popup is still opening, and the request goes
     // stale if the flyout hides before it opens.
-    const focusFirstTab = () =>
-      flyoutPanel.querySelector(".swgt-flyout-tab")?.focus();
+    const focusFirstTab = () => flyoutPanel._flyoutEl.focusFirstRow();
     if (flyoutPanel.state === "open") {
-      focusFirstTab();
+      await flyoutPanel._flyoutEl.updateComplete;
+      if (flyoutPanel.state === "open") {
+        focusFirstTab();
+      }
       return;
     }
     panel._focusFlyoutController?.abort();
@@ -576,8 +631,11 @@ export const AutoTabGrouping = {
    * @param {ChromeWindow} win
    * @param {XULElement} panel
    * @param {object[]} suggestions
+   * @param {object} options
+   * @param {string} options.source - Whether the user picked one group
+   *   ("individual_accept") or created them all at once ("collective_accept").
    */
-  _createSuggestions(win, panel, suggestions) {
+  _createSuggestions(win, panel, suggestions, { source }) {
     const state = this._getState(win);
     const windowTabs = new Set(win.gBrowser.tabs);
     // Our groups arrive fully formed (label and color chosen by the
@@ -591,42 +649,43 @@ export const AutoTabGrouping = {
       telemetrySource:
         lazy.TabMetrics.METRIC_SOURCE.SMART_WINDOW_GROUP_SUGGESTIONS,
     };
-    const created = [];
-    const sizes = [];
     for (const suggestion of suggestions) {
       const tabs = this._creatableTabs(windowTabs, suggestion);
       if (tabs.length < lazy.minTabsPerGroup) {
         continue;
       }
+      Glean.smartWindow.autoTabGroupAccepted.record({
+        grouped_tabs: tabs.length,
+        grouped_id: suggestion.id,
+        source,
+      });
+      let group;
+      let errorType = "";
       try {
-        const group = win.gBrowser.addTabGroup(tabs, {
+        group = win.gBrowser.addTabGroup(tabs, {
           label: suggestion.label,
           color: suggestion.color,
           metricsContext,
         });
-        if (group) {
-          const entry = {
-            id: this._nextId++,
-            group,
-            label: suggestion.label,
-            color: suggestion.color,
-          };
-          state.recent.unshift(entry);
-          created.push(entry);
-          sizes.push(tabs.length);
-        }
       } catch (e) {
         lazy.console.warn("addTabGroup failed", e);
+        errorType = e.name;
       }
-    }
-
-    if (created.length) {
-      const { median, mean } = sizeStats(sizes);
-      Glean.smartWindow.autoTabGroupCreated.record({
-        type: suggestions.length > 1 ? "all" : "individual",
-        count: created.length,
-        median_tabs: median,
-        mean_tabs: mean,
+      if (group) {
+        state.recent.unshift({
+          id: this._nextId++,
+          suggestionId: suggestion.id,
+          group,
+          label: suggestion.label,
+          color: suggestion.color,
+        });
+      }
+      Glean.smartWindow.autoTabGroupCompleted.record({
+        grouped_tabs: group ? tabs.length : 0,
+        grouped_id: suggestion.id,
+        source,
+        success: !!group,
+        error_type: errorType,
       });
     }
 
@@ -710,23 +769,42 @@ export const AutoTabGrouping = {
   _ungroupRecent(win, panel) {
     const state = this._getState(win);
     const entries = state.recent.slice();
-    let count = 0;
     for (const entry of entries) {
-      if (this._ungroup(win, entry)) {
-        count++;
+      // A group that is already gone (closed, or ungrouped from the tab strip)
+      // is nothing to undo, so it is left out of the events entirely.
+      if (!this._isGroupLive(win, entry.group)) {
+        continue;
       }
+      const groupedTabs = entry.group.tabs.length;
+      const source = "collective_ungroup";
+      Glean.smartWindow.autoTabUngroupRequested.record({
+        grouped_tabs: groupedTabs,
+        grouped_id: entry.suggestionId,
+        source,
+      });
+      let errorType = "";
+      try {
+        entry.group.ungroupTabs(this._metricsContext());
+      } catch (e) {
+        lazy.console.warn("ungroupTabs failed", e);
+        errorType = e.name;
+      }
+      Glean.smartWindow.autoTabUngroupCompleted.record({
+        grouped_tabs: groupedTabs,
+        grouped_id: entry.suggestionId,
+        source,
+        success: !errorType,
+        error_type: errorType,
+      });
     }
     this._forgetEntries(win, entries);
-    if (count) {
-      Glean.smartWindow.autoTabGroupUndone.record({ count });
-    }
     this._focusAfterRowRemoved(panel, this._syncCard(win, panel));
   },
 
   /**
    * Close this window's duplicate tabs, reusing the same tabbrowser action the
    * All Tabs menu offers. The panel is dismissed first: closing tabs raises a
-   * confirmation hint anchored to the All Tabs button, which an open panel
+   * confirmation hint anchored to the ATG button, which an open panel
    * would cover, and the warning prompt is modal.
    *
    * @param {ChromeWindow} win
@@ -735,20 +813,55 @@ export const AutoTabGrouping = {
   _closeDuplicateTabs(win, panel) {
     panel._restoreFocus = true;
     panel.hidePopup();
-    win.gBrowser.removeAllDuplicateTabs();
-  },
 
-  _ungroup(win, entry) {
-    if (!this._isGroupLive(win, entry.group)) {
-      return false;
-    }
+    const tabs = win.gBrowser.tabs.length;
+    Glean.smartWindow.closeDuplicateTabsRequested.record({ tabs });
+
+    const startedAt = Date.now();
+    Glean.smartWindow.closeDuplicateTabsStarted.record({
+      tabs,
+      total_length: titleLength(win.gBrowser.tabs),
+    });
+    let duplicates = [];
+    let errorType = "";
     try {
-      entry.group.ungroupTabs(this._metricsContext());
-      return true;
+      duplicates = win.gBrowser.getAllDuplicateTabsToClose();
     } catch (e) {
-      lazy.console.warn("ungroupTabs failed", e);
-      return false;
+      lazy.console.warn("getAllDuplicateTabsToClose failed", e);
+      errorType = e.name;
     }
+    Glean.smartWindow.closeDuplicateTabsCompleted.record({
+      tabs,
+      duplicate_tabs: duplicates.length,
+      success: !errorType,
+      error_type: errorType,
+      time: Date.now() - startedAt,
+    });
+    if (errorType) {
+      return;
+    }
+
+    try {
+      win.gBrowser.removeAllDuplicateTabs({
+        confirmationAnchor: win.document.getElementById(BUTTON_ID),
+      });
+    } catch (e) {
+      lazy.console.warn("removeAllDuplicateTabs failed", e);
+      errorType = e.name;
+    }
+    const closed = duplicates.filter(
+      tab => tab.closing || !win.gBrowser.tabs.includes(tab)
+    );
+    // Closing enough tabs raises a modal warning the user can back out of,
+    // which leaves nothing closed and nothing to record.
+    if (!errorType && !closed.length) {
+      return;
+    }
+    Glean.smartWindow.duplicateTabsClosed.record({
+      duplicate_tabs: closed.length,
+      success: !errorType,
+      error_type: errorType,
+    });
   },
 
   _forgetEntries(win, entries) {
@@ -769,7 +882,10 @@ export const AutoTabGrouping = {
     let timer;
     const timeout = new Promise((_, reject) => {
       timer = lazy.setTimeout(
-        () => reject(new Error("Auto Tab Grouping timed out")),
+        () =>
+          reject(
+            new DOMException("Auto Tab Grouping timed out", "TimeoutError")
+          ),
         ms
       );
     });
@@ -793,6 +909,8 @@ export const AutoTabGrouping = {
     if (state.computePromise) {
       return state.computePromise;
     }
+    const tabs = win.gBrowser.tabs.length;
+    Glean.smartWindow.autoTabGroupingRequested.record({ tabs });
     if (!lazy.AutoTabGroupingSuggestions.isAvailable) {
       return Promise.resolve();
     }
@@ -802,33 +920,48 @@ export const AutoTabGrouping = {
     }
     state.computing = true;
     state.computePromise = (async () => {
+      const startedAt = Date.now();
+      Glean.smartWindow.autoTabGroupingStarted.record({
+        tabs,
+        total_length: titleLength(candidates),
+      });
+      let suggestions = [];
+      let errorType = "";
       try {
         const proposals = await this._withTimeout(
           lazy.AutoTabGroupingSuggestions.buildProposals(candidates),
           lazy.timeoutMs
         );
-        state.suggestions = proposals.map((proposal, index) => ({
+        suggestions = proposals.map((proposal, index) => ({
           id: this._nextId++,
           ...lazy.AutoTabGroupingSuggestions.toSuggestionData(proposal, index),
         }));
+        state.suggestions = suggestions;
         state.computed = true;
-        state.computeCount++;
-        if (state.suggestions.length) {
-          const { median, mean } = sizeStats(
-            state.suggestions.map(s => s.tabs.length)
-          );
-          Glean.smartWindow.autoTabGroupOffered.record({
-            count: state.suggestions.length,
-            median_tabs: median,
-            mean_tabs: mean,
-            recomputed: state.computeCount > 1,
-          });
-        }
       } catch (e) {
         lazy.console.warn("Building group proposals failed", e);
+        errorType = e.name;
       } finally {
         state.computing = false;
         state.computePromise = null;
+      }
+
+      const groupedTabs = suggestions.flatMap(s => s.tabs);
+      Glean.smartWindow.autoTabGroupingCompleted.record({
+        tabs,
+        groups: suggestions.length,
+        grouped_tabs: groupedTabs.length,
+        success: !errorType,
+        error_type: errorType,
+        total_length: titleLength(groupedTabs),
+        time: Date.now() - startedAt,
+      });
+      for (const suggestion of suggestions) {
+        Glean.smartWindow.autoTabGroupSuggested.record({
+          grouped_tabs: suggestion.tabs.length,
+          total_length: titleLength(suggestion.tabs),
+          grouped_id: suggestion.id,
+        });
       }
     })();
     return state.computePromise;

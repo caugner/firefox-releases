@@ -288,6 +288,8 @@ toolbar .toolbaritem-combined-buttons {
     }
   }
 
+  /* Small subtree */
+  /* stylelint-disable-next-line stylelint-plugin-mozilla/no-has-selector */
   > separator:has(+ toolbarbutton:not([disabled]):hover),
   > toolbarbutton:not([disabled]):hover + separator {
     opacity: 0;
@@ -472,9 +474,6 @@ toolbarbutton.bookmark-item:not(.subviewbutton) {
 
 /* This rule applies to bookmark menu items too */
 .bookmark-item > label {
-  /* Ensure we use the direction of the bookmarks label instead of the
-     browser locale. */
-  unicode-bidi: plaintext;
   /* Preserve whitespace in bookmark names. */
   white-space: pre;
 }

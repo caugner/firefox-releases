@@ -1643,7 +1643,8 @@ const DisplayItemClipChain* nsDisplayListBuilder::CreateClipChainIntersection(
       if (clip2 && clip2->mASR == asr) {
         DisplayItemClip intersection = clip1->mClip;
         intersection.IntersectWith(clip2->mClip);
-        intersectedClips.AppendElement(ClipChainItem{intersection, asr});
+        intersectedClips.AppendElement(
+            ClipChainItem{std::move(intersection), asr});
         clip2 = clip2->mParent;
       } else {
         intersectedClips.AppendElement(ClipChainItem{clip1->mClip, asr});
@@ -3826,7 +3827,10 @@ bool nsDisplayTableBackgroundImage::IsInvalid(nsRect& aRect) const {
 nsDisplayThemedBackground::nsDisplayThemedBackground(
     nsDisplayListBuilder* aBuilder, nsIFrame* aFrame,
     const nsRect& aBackgroundRect)
-    : nsPaintedDisplayItem(aBuilder, aFrame), mBackgroundRect(aBackgroundRect) {
+    : nsPaintedDisplayItem(aBuilder, aFrame),
+      mBackgroundRect(aBackgroundRect),
+      mThemeTransparency(nsITheme::eUnknownTransparency),
+      mAppearance(StyleAppearance::None) {
   MOZ_COUNT_CTOR(nsDisplayThemedBackground);
 }
 
@@ -6028,10 +6032,15 @@ bool nsDisplayStickyPosition::UpdateScrollData(
     }
 
     if (ShouldGetStickyAnimationId()) {
+      // The animation id created by ClipManager is keyed on the ASR's
+      // mFrame, which for sticky ASRs is the first continuation.
+      auto displayItemKey = nsDisplayItem::GetPerFrameKey(
+          0, 0, DisplayItemType::TYPE_STICKY_POSITION);
       RefPtr<WebRenderAPZAnimationData> animationData =
           aData->GetManager()
               ->CommandBuilder()
-              .GetWebRenderUserData<WebRenderAPZAnimationData>(this);
+              .GetWebRenderUserData<WebRenderAPZAnimationData>(
+                  displayItemKey, mFrame->FirstContinuation());
       MOZ_ASSERT(animationData);
       aLayerData->SetStickyPositionAnimationId(animationData->GetAnimationId());
     }
@@ -8830,7 +8839,7 @@ void nsDisplayDestination::Paint(nsDisplayListBuilder* aBuilder,
 
 void nsDisplayAccessibleId::Paint(nsDisplayListBuilder* aBuilder,
                                   gfxContext* aCtx) {
-  aCtx->GetDrawTarget()->AccessibleId(mBrowsingContextId, mAccId);
+  aCtx->GetDrawTarget()->AccessibleId(mInnerWindowId, mAccId);
 }
 
 void nsDisplayListCollection::SerializeWithCorrectZOrder(
