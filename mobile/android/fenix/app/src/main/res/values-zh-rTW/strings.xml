@@ -151,16 +151,8 @@
     Header text on the homescreen for continuing to browse the most recent browser tab
   -->
   <string name="recent_tabs_header_2">繼續</string>
-  <!--
-    Recent Tabs
-
-    Header text for jumping back into the recent tab in the home screen
-  -->
-  <string name="recent_tabs_header">回到先前開啟頁面</string>
   <!-- Button text for showing all the tabs in the tabs tray -->
   <string name="recent_tabs_show_all">顯示全部</string>
-  <!-- Content description for the button which navigates the user to show all recent tabs in the tabs tray. -->
-  <string name="recent_tabs_show_all_content_description_2">顯示所有近期分頁按鈕</string>
   <!-- Text for button in synced tab card that opens synced tabs tray -->
   <string name="recent_tabs_see_all_synced_tabs_button_text">檢視所有同步的分頁</string>
   <!-- Accessibility description for device icon used for recent synced tab -->
@@ -295,8 +287,12 @@
   <string name="browser_menu_summarize_page">摘要本頁</string>
   <!-- Browser menu badge text for summarization feature -->
   <string name="browser_menu_summarize_page_badge">新功能</string>
+  <!-- Browser menu badge text for new, highlighted feature -->
+  <string name="browser_menu_page_badge_text">新功能</string>
   <!-- Browser menu label for navigating to the Web Compat Reporter feature, which provides users the ability to send bug reports for broken sites. -->
   <string name="browser_menu_webcompat_reporter_2">回報網站問題</string>
+  <!-- Browser menu label for adding a tab to a tab group -->
+  <string name="browser_menu_add_to_tab_group">新增至群組</string>
   <!-- Browser menu label that is displayed when the current page has been translated by the translation feature. -->
   <string name="browser_menu_translated">已翻譯</string>
   <!-- Browser menu label for the print feature -->
@@ -362,13 +358,13 @@
   <!-- Link text for learning more about AI controls -->
   <string name="ai_controls_learn_more">更多資訊</string>
   <!-- Title for the block AI enhancements toggle -->
-  <string name="ai_controls_block_ai_title">封鎖 AI 功能</string>
+  <string name="ai_controls_block_ai_title">封鎖 AI 強化功能</string>
   <!-- Description for the block AI enhancements toggle. %s is the name of the app (for example "Firefox"). -->
-  <string name="ai_controls_block_ai_description">封鎖的話，代表您不會在 %s 看到目前已有，或新推出的 AI 擴充功能，或是任何有關這些功能的彈出提示。</string>
+  <string name="ai_controls_block_ai_description">封鎖的話，代表您不會在 %s 看到目前已有，或新推出的 AI 強化功能，或是任何有關這些功能的彈出提示。</string>
   <!-- Link text to see what AI enhancements are and aren’t included -->
   <string name="ai_controls_see_whats_included">看看包含哪些項目，又不含哪些項目</string>
   <!-- Banner text shown when AI enhancements are blocked -->
-  <string name="ai_controls_blocked_info_banner">預設會封鎖目前與新推出的 AI 擴充功能，可在下方解除封鎖特定功能。</string>
+  <string name="ai_controls_blocked_info_banner">預設會封鎖目前與新推出的 AI 強化功能，可在下方解除封鎖特定功能。</string>
   <!-- Section header for the AI-powered features list -->
   <string name="ai_controls_ai_powered_features">由 AI 驅動的功能</string>
   <!-- Title for the translations AI feature toggle -->
@@ -384,9 +380,9 @@
   <!-- Description for the voice search AI feature toggle -->
   <string name="ai_controls_voice_search_description">語音內容會透過 Google Speech Services 轉換為文字。</string>
   <!-- Title for the block AI enhancements confirmation dialog -->
-  <string name="ai_controls_block_dialog_title">要封鎖 AI 功能嗎？</string>
+  <string name="ai_controls_block_dialog_title">要封鎖 AI 強化功能嗎？</string>
   <!-- Body text for the block AI enhancements confirmation dialog. %1$s is the name of the app (for example "Firefox"). -->
-  <string name="ai_controls_block_dialog_body">您不會在 %1$s 看到目前已有，或新推出的 AI 擴充功能，或是任何有關這些功能的彈出提示。但之後還是可以解除封鎖任何想要使用的功能。\n\n封鎖 AI 功能也會影響使用到 %1$s 提供的 AI 的擴充套件的相關功能。</string>
+  <string name="ai_controls_block_dialog_body">您不會在 %1$s 看到目前已有，或新推出的 AI 強化功能，或是任何有關這些功能的彈出提示。但之後還是可以解除封鎖任何想要使用的功能。\n\n封鎖也會影響使用到 %1$s 提供的 AI 的擴充套件。</string>
   <!-- Label shown above the list of features that will be blocked in the block AI dialog -->
   <string name="ai_controls_block_dialog_what_will_be_blocked">會封鎖哪些功能：</string>
   <!-- Cancel button text in the block AI enhancements confirmation dialog -->
@@ -909,6 +905,8 @@
   <string name="preference_downloads_folder_permission_lost" tools:ignore="UnusedResources">您沒有使用此資料夾的權限，請改選其他資料夾。</string>
   <!-- Preference title for choosing an app to handle downloads -->
   <string name="preferences_choose_app_for_downloads">使用另一套應用程式管理下載項目</string>
+  <!-- Message shown when no app is available to let the user pick a download folder. -->
+  <string name="preferences_downloads_no_folder_picker_available">無法開啟此裝置的資料夾挑選器。</string>
   <!-- Preference category for deleting or removing downloads -->
   <string name="preferences_category_delete_or_remove_downloads">刪除或移除下載項目</string>
   <string name="preferences_downloads_delete_from_device">從裝置刪除</string>
@@ -984,8 +982,6 @@
   <string name="customize_toggle_privacy_report">隱私權報告</string>
   <!-- Title for a customize home screen section. Continue is a section that displays the most recent browser tab, so users can continue browsing where they left off. -->
   <string name="customize_toggle_continue">繼續</string>
-  <!-- Header text for jumping back into the recent tab in customize the home screen -->
-  <string name="customize_toggle_jump_back_in">回到先前開啟頁面</string>
   <!-- Title for the customize home screen section with bookmarks. -->
   <string name="customize_toggle_bookmarks">書籤</string>
   <!--
@@ -1317,6 +1313,12 @@
     Preferences for showing tab strip
   -->
   <string name="preference_tab_strip_show">顯示分頁列</string>
+  <!-- Preference for tab bar placement (top or bottom of the screen) -->
+  <string name="preference_tab_strip_location_header">分頁列位置</string>
+  <!-- Preference for using top tab strip -->
+  <string name="preference_top_tab_strip">頂端</string>
+  <!-- Preference for using bottom tab strip -->
+  <string name="preference_bottom_tab_strip">底端</string>
   <!--
     Gestures Preferences
 
@@ -1419,6 +1421,8 @@
   <string name="preference_auto_close_tabs" tools:ignore="UnusedResources">自動關閉分頁</string>
   <!-- Content description (not visible, for screen readers etc.): Close tab button -->
   <string name="tab_manager_close_tabs">關閉</string>
+  <!-- Content description for the media playback indicator in the tabs tray. -->
+  <string name="tab_indicator_media_playing">正在播放媒體內容</string>
   <!--
     Opening screen
 
@@ -2534,7 +2538,7 @@
   <!-- Title for the Delete browsing data on quit preference -->
   <string name="preferences_delete_browsing_data_on_quit">離開時刪除瀏覽資料</string>
   <!-- Summary for the Delete browsing data on quit preference. "Quit" translation should match delete_browsing_data_on_quit_action translation. -->
-  <string name="preference_summary_delete_browsing_data_on_quit_2">點擊主選單中的「離開」時，自動清除上網資料</string>
+  <string name="preference_summary_delete_browsing_data_on_quit_2">點擊主選單中的「離開」時，自動清除瀏覽資料</string>
   <!-- Title text of a delete browsing data dialog. -->
   <string name="delete_history_prompt_title">要清除的時間範圍</string>
   <!-- Body text of a delete browsing data dialog. -->
@@ -2554,7 +2558,7 @@
   <!-- Text for the snackbar confirmation that the data was deleted -->
   <string name="preferences_delete_browsing_data_snackbar">已刪除瀏覽資料</string>
   <!-- Text for the snackbar to show the user that the deletion of browsing data is in progress -->
-  <string name="deleting_browsing_data_in_progress">正在刪除上網資料…</string>
+  <string name="deleting_browsing_data_in_progress">正在刪除瀏覽資料…</string>
   <!-- Dialog message to the user asking to delete all history items inside the opened group. %s is a history group name. -->
   <string name="delete_all_history_group_prompt_message">要刪除「%s」中的所有網站？</string>
   <!-- Text for the cancel button for the history group deletion dialog -->
@@ -2704,7 +2708,7 @@
   <!-- Category of trackers (cross-site tracking cookies) that can be blocked by Enhanced Tracking Protection -->
   <string name="etp_cookies_title_2">跨網站 Cookie</string>
   <!-- Description of cross-site tracking cookies that can be blocked by Enhanced Tracking Protection -->
-  <string name="etp_cookies_description">封鎖廣告網與分析公司用來在各個網站中收集您的上網資料的 Cookie。</string>
+  <string name="etp_cookies_description">封鎖廣告網與分析公司用來在各個網站中收集您的瀏覽資料的 Cookie。</string>
   <!-- Description of cross-site tracking cookies that can be blocked by Enhanced Tracking Protection -->
   <string name="etp_cookies_description_2">全方位 Cookie 保護功能會將 Cookie 隔離於您所在的網站當中，這樣廣告網所送出的追蹤器就無法透過 Cookie 在不同網站間追蹤您。</string>
   <!-- Category of trackers (cryptominers) that can be blocked by Enhanced Tracking Protection -->
@@ -2765,11 +2769,11 @@
   <!-- Title displayed for "Default Protection" option under "DNS over HTTPS" -->
   <string name="preference_doh_default_protection">預設保護</string>
   <!-- Summary displayed for "Default Protection" option under "DNS over HTTPS". %1$s is the name of the application (e.g. Fenix). -->
-  <string name="preference_doh_default_protection_summary">%1$s 會為您決定使用安全的 DNS 的時機，以保護您的隱私。</string>
+  <string name="preference_doh_default_protection_summary">%1$s 會為您決定使用安全 DNS 的時機，以保護您的隱私。</string>
   <!-- Bullet point 1 for "Default Protection" information page under "DNS over HTTPS" -->
   <string name="preference_doh_default_protection_info_1">使用您選擇的提供者</string>
   <!-- Bullet point 2 for "Default Protection" information page under "DNS over HTTPS" -->
-  <string name="preference_doh_default_protection_info_2">若無法使用安全的 DNS 提供者，就使用您的預設 DNS 解析器。</string>
+  <string name="preference_doh_default_protection_info_2">若無法使用安全 DNS 提供者，就使用您的預設 DNS 解析器</string>
   <!-- Bullet point 3 for "Default Protection" information page under "DNS over HTTPS". %1$s is replaced by a link using `preference_doh_learn_more` at text ("Learn More"). -->
   <string name="preference_doh_default_protection_info_3">盡可能使用本機提供者。%1$s</string>
   <!-- Bullet point 4 for "Default Protection" information page under "DNS over HTTPS" -->
@@ -2783,7 +2787,7 @@
   <!-- Bullet point 1 for "Increased Protection" information page under "DNS over HTTPS" -->
   <string name="preference_doh_increased_protection_info_1">使用您選擇的提供者</string>
   <!-- Bullet point 2 for "Increased Protection" information page under "DNS over HTTPS" -->
-  <string name="preference_doh_increased_protection_info_2">只在無法使用安全的 DNS 提供者時，使用您的預設 DNS 解析器。</string>
+  <string name="preference_doh_increased_protection_info_2">只在無法使用安全 DNS 提供者時，使用您的預設 DNS 解析器</string>
   <!-- Title displayed for "Max Protection" option under "DNS over HTTPS" -->
   <string name="preference_doh_max_protection">最大保護</string>
   <!-- Summary displayed for "Max Protection" option under "DNS over HTTPS". %1$s is the name of the application (e.g. Fenix). -->
@@ -2819,7 +2823,7 @@
   <!-- Preference to access list of login exceptions that we don't use DNS over HTTPS -->
   <string name="preference_doh_exceptions">例外網站</string>
   <!-- Description of "exceptions" for "DNS over HTTPS". %1$s is the name of the app (for example "Firefox"). -->
-  <string name="preference_doh_exceptions_summary">%1$s 不會對下列網站與子網域網站，使用安全的 DNS 進行查詢。</string>
+  <string name="preference_doh_exceptions_summary">%1$s 不會對下列網站與子網域網站，使用安全 DNS 進行查詢。</string>
   <!-- Text displayed that links to adding website domain for "DNS over HTTPS" exceptions. -->
   <string name="preference_doh_exceptions_add">新增網站</string>
   <!-- Text displayed above the input field when adding exceptions for "DNS over HTTPS". -->
@@ -3013,6 +3017,8 @@
   <!-- Label for the BETA badge for the browser VPN entry in the settings list -->
   <string name="preferences_ip_protection_beta_badge_label">BETA 測試</string>
   <!-- Title for the browser VPN settings screen (displayed in the app bar) -->
+  <string name="ip_protection_settings_title">內建 VPN</string>
+  <!-- Title for the browser VPN settings screen (displayed in the app bar) -->
   <string name="ip_protection_title">VPN</string>
   <!-- Label for the browser VPN toggle on the settings screen -->
   <string name="ip_protection_toggle_label">VPN</string>
@@ -3020,7 +3026,7 @@
   <string name="ip_protection_navigate_back_button_content_description">瀏覽上一頁</string>
   <!-- Headline for the browser VPN promo card. %s is the name of the app (for example "Firefox"). -->
   <string name="ip_protection_promo_headline">%s 內建的 VPN</string>
-  <!-- Body text for the browser VPN promo card . %s is a learn more link using ip_protection_learn_more as text. -->
+  <!-- Body text for the browser VPN settings header, shown when no promo is running. %s is a learn more link using ip_protection_learn_more as text. -->
   <string name="ip_protection_promo_body_2">隱藏您的實際所在位置，就算是使用公共 Wi-Fi 也能獲得額外保護。%s</string>
   <!-- Link text that opens additional information about the browser VPN -->
   <string name="ip_protection_learn_more">更多資訊</string>
@@ -3053,8 +3059,6 @@
   <string name="ip_protection_menu_error">錯誤</string>
   <!-- Badge label shown in the VPN menu item when the user is eligible for the feature but needs to authenticate / authorize to enable it -->
   <string name="ip_protection_menu_try_vpn_cta">免費試用</string>
-  <!-- Badge label shown in the menu item when the user is eligible to use the browser VPN but should authenticate or authorize it first. -->
-  <string name="ip_protection_menu_auth_required">試試看</string>
   <!-- Content description for the chevron button that opens the browser VPN settings screen -->
   <string name="ip_protection_navigate_settings">開啟 VPN 設定</string>
   <!--
@@ -3108,6 +3112,8 @@
     %1$d is the total monthly allowance in GB (for example "50").
   -->
   <string name="ip_protection_data_limit_reached_snackbar">已使用 %1$d GB VPN 流量。將於下個月重設存取權限。</string>
+  <!-- Snackbar (in-app pop-up notification) action button text that takes the user to the VPN settings screen. -->
+  <string name="ip_protection_open_settings_snackbar_action">設定</string>
   <!-- Snackbar (in-app pop-up notification) action button text that takes the user to the VPN settings screen. -->
   <string name="ip_protection_data_limit_reached_snackbar_action">設定</string>
   <!-- Description shown on the browser VPN settings screen prompting the user to turn the VPN on. -->
@@ -3165,7 +3171,7 @@
   <!-- Preference option for adding an address -->
   <string name="preferences_addresses_add_address">新增地址</string>
   <!-- Preference option for managing saved addresses -->
-  <string name="preferences_addresses_manage_addresses">管理已存地址</string>
+  <string name="preferences_addresses_manage_addresses">管理已儲存的地址</string>
   <!-- Preference for saving and filling addresses -->
   <string name="preferences_addresses_save_and_autofill_addresses_2">儲存並自動填寫地址</string>
   <!-- Preference summary for saving and filling address data -->
@@ -3229,7 +3235,7 @@
   <!-- Title of the "Edit address" screen -->
   <string name="addresses_edit_address">編輯地址</string>
   <!-- Title of the "Manage addresses" screen -->
-  <string name="addresses_manage_addresses">管理已存地址</string>
+  <string name="addresses_manage_addresses">管理已儲存的地址</string>
   <!-- The header for the name of an address. Name represents a person's full name, typically made up of a first, middle and last name, e.g. John Joe Doe. -->
   <string name="addresses_name">姓名</string>
   <!-- Label for an address field (e.g. mailing address) used as part of the form autofill feature. The organization's name related to the address helps in distinguishing addresses used for business or personal purposes. -->
@@ -4110,7 +4116,7 @@
   <!-- The title of the section header for the list of debug locales that can be enabled and disabled. -->
   <string name="debug_drawer_addresses_debug_locales_header">要開啟的除錯語系</string>
   <!-- The title of the header for the section for managing addresses. -->
-  <string name="debug_drawer_addresses_management_header">管理已存地址</string>
+  <string name="debug_drawer_addresses_management_header">管理已儲存的地址</string>
   <!-- The title of the button in the debug drawer for adding a new address. -->
   <string name="debug_drawer_add_new_address">新增所選語系的新地址</string>
   <!-- The title of the button for deleting in the debug drawer all addresses. -->
