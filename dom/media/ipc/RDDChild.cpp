@@ -11,7 +11,6 @@
 #include "mozilla/dom/MemoryReportRequest.h"
 #include "mozilla/gfx/GPUProcessManager.h"
 #include "mozilla/gfx/gfxVars.h"
-#include "mozilla/ipc/CrashReporterHost.h"
 #include "mozilla/ipc/Endpoint.h"
 
 #if defined(XP_LINUX) && defined(MOZ_SANDBOX)
@@ -131,10 +130,10 @@ mozilla::ipc::IPCResult RDDChild::RecvAddMemoryReport(
 
 #if defined(XP_WIN)
 mozilla::ipc::IPCResult RDDChild::RecvGetModulesTrust(
-    ModuleIdentifiers&& aModIdents, bool aRunAtNormalPriority,
+    ModulePaths&& aModPaths, bool aRunAtNormalPriority,
     GetModulesTrustResolver&& aResolver) {
   RefPtr<DllServices> dllSvc(DllServices::Get());
-  dllSvc->GetModulesTrust(std::move(aModIdents), aRunAtNormalPriority)
+  dllSvc->GetModulesTrust(std::move(aModPaths), aRunAtNormalPriority)
       ->Then(
           GetMainThreadSerialEventTarget(), __func__,
           [aResolver](ModulesMapResult&& aResult) {

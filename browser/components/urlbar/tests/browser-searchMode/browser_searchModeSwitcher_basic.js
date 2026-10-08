@@ -12,7 +12,16 @@ async function unloadSearchExtension(extension) {
 add_setup(async function setup() {
   requestLongerTimeout(5);
   await SpecialPowers.pushPrefEnv({
-    set: [["browser.search.suggest.enabled", false]],
+    set: [
+      ["browser.search.suggest.enabled", false],
+      // Tests get no default Top Sites, and disabled_unified_button opens the
+      // view on an empty string, which would otherwise leave it closed with no
+      // results.
+      [
+        "browser.newtabpage.activity-stream.default.sites",
+        "https://example.com/",
+      ],
+    ],
   });
   registerCleanupFunction(() => {
     Services.prefs.clearUserPref(
@@ -138,6 +147,11 @@ add_task(async function basic() {
   );
 
   info("Press on the bing menu button and enter search mode");
+  let viewOpened = false;
+  let observer = new MutationObserver(() => {
+    viewOpened ||= gURLBar.view.isOpen;
+  });
+  observer.observe(gURLBar, { attributeFilter: ["open"] });
   let popupHidden = UrlbarTestUtils.searchModeSwitcherPopupClosed(window);
   popup.querySelector("panel-item[data-engine-id=bing]").click();
   await popupHidden;
@@ -147,10 +161,16 @@ add_task(async function basic() {
     entry: "searchbutton",
     source: 3,
   });
+  await gURLBar.lastQueryContextPromise;
 
   info("Press the close button and escape search mode");
   gURLBar.querySelector(".searchmode-switcher-close").click();
   await UrlbarTestUtils.assertSearchMode(window, null);
+  observer.disconnect();
+  Assert.ok(
+    !viewOpened,
+    "The view never opened, since the engine had no results to show"
+  );
 });
 
 add_task(async function privileged_chicklet() {

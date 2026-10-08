@@ -33,7 +33,7 @@ were loaded into Firefox processes.
     ],
     "processes": {
       <string containing processType and pid, formatted as `${processType}.0x${pid}">`: {
-        // Except for Default (which is remapped to "browser"), one of the process string names specified in xpcom/build/GeckoProcessTypes.h.
+        // Except for Default (which is remapped to "browser"), one of the process string names specified in xpcom/build/GeckoProcessTypes.inc.
         "processType": <string>,
         // Elapsed time since process creation that this object was generated, in seconds.
         "elapsed": <number>,
@@ -43,11 +43,6 @@ were loaded into Firefox processes.
         "sanitizationFailures": <int>,
         // Number of dropped events due to failures computing trust levels.
         "trustTestFailures": <int>,
-        // Number of child process module loads where the DLL blocklist hook reached
-        // the load but could not duplicate the module's section.
-        "unverifiableLoads": <int>,
-        // Number of sections a child process sent that the parent refused as invalid.
-        "rejectedSections": <int>,
         // Array of module load events for this process. The entries of this array are ordered to be in sync with the combinedStacks.stacks array (see below)
         "events": [
           {
