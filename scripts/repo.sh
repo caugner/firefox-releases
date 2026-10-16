@@ -7,6 +7,15 @@ set -e
 # Without an argument, start after the newest major version tagged in the published releases repository.
 RELEASES_REMOTE="${RELEASES_REMOTE:-https://github.com/caugner/firefox-releases.git}"
 
+# BSD (macOS) and GNU (Linux) stat and date take different flags.
+if [ "$(uname)" = "Darwin" ]; then
+    stat_flags=(-f %m)
+    format_epoch() { date -r "$1" +"%Y-%m-%dT%H:%M:%S%z"; }
+else
+    stat_flags=(-c %Y)
+    format_epoch() { date -d "@$1" +"%Y-%m-%dT%H:%M:%S%z"; }
+fi
+
 MIN_VERSION="${1:-}"
 if [ -z "$MIN_VERSION" ]; then
     latest=$(git ls-remote --tags "$RELEASES_REMOTE" | sed -n 's|.*refs/tags/v\([0-9][0-9.]*\)$|\1|p' | sort -V | tail -n 1)
@@ -54,13 +63,12 @@ for archive in $(ls firefox-* | sort -V); do
 
     # Use $GIT ls-files to list tracked files, filter out any paths that contain a slash 
     # (i.e. keep only files in the repository root), then prefix each with "releases/" for the correct path.
-    latest_epoch=$(for f in $($GIT ls-files | grep -v '/'); do echo "releases/$f"; done | xargs stat -f "%m" | sort -n | tail -n 1)
+    latest_epoch=$(for f in $($GIT ls-files | grep -v '/'); do echo "releases/$f"; done | xargs stat "${stat_flags[@]}" | sort -n | tail -n 1)
 
     if [ -z "$latest_epoch" ]; then
         commit_date=$(date +"%Y-%m-%dT%H:%M:%S%z")
     else
-        # Convert epoch seconds to a formatted date using date -r on macOS.
-        commit_date=$(date -r "$latest_epoch" +"%Y-%m-%dT%H:%M:%S%z")
+        commit_date=$(format_epoch "$latest_epoch")
     fi
 
     # Commit with the commit date set to the latest file modification time among files in the repository root.
