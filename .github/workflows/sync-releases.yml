@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: First major version to import (default: the one after the newest tag)
+        description: "First major version to import (default: the one after the newest tag)"
         required: false
         default: ""
       dry-run:
@@ -62,5 +62,5 @@ jobs:
             echo "Dry run: not pushing."
             exit 0
           fi
-          tags=$(for c in $(git -C releases rev-list origin/releases..HEAD); do git -C releases tag --points-at "$c"; done)
-          git -C releases push --atomic origin HEAD:refs/heads/releases $(for t in $tags; do echo "refs/tags/$t"; done)
+          mapfile -t tags < <(git -C releases for-each-ref --format='%(refname)' --no-merged origin/releases refs/tags)
+          git -C releases push --atomic origin HEAD:refs/heads/releases "${tags[@]}"
