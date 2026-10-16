@@ -69,6 +69,9 @@ for archive in $(ls firefox-* | sort -V); do
     # Stage all extracted files.
     $GIT add .
 
+    # Pushing workflow files needs the `workflows` token permission, which the import job lacks.
+    $GIT rm -r -q --cached --ignore-unmatch .github/workflows
+
 
     # Use $GIT ls-files to list tracked files, filter out any paths that contain a slash 
     # (i.e. keep only files in the repository root), then prefix each with "releases/" for the correct path.
