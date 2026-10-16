@@ -37,30 +37,40 @@ jobs:
           path: releases
           fetch-depth: 1
 
-      - name: Download missing tarballs
+      - name: Import missing releases one at a time
         env:
           VERSION: ${{ inputs.version }}
-        run: scripts/download.sh "$VERSION"
-
-      - name: Import releases
-        id: import
-        env:
-          VERSION: ${{ inputs.version }}
-        run: |
-          git -C releases config user.name "github-actions[bot]"
-          git -C releases config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          scripts/repo.sh "$VERSION"
-          echo "count=$(git -C releases rev-list --count origin/releases..HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Push releases and tags
-        if: steps.import.outputs.count != '0'
-        env:
           DRY_RUN: ${{ inputs.dry-run }}
         run: |
-          git -C releases log --format='%h %s' origin/releases..HEAD
-          if [ "$DRY_RUN" = "true" ]; then
-            echo "Dry run: not pushing."
+          start="$VERSION"
+          if [ -z "$start" ]; then
+            latest=$(git ls-remote --tags "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY.git" | sed -n 's|.*refs/tags/v\([0-9][0-9.]*\)$|\1|p' | sort -V | tail -n 1)
+            start=$(( ${latest%%.*} + 1 ))
+          fi
+          versions=$(curl -fsSL https://raw.githubusercontent.com/mdn/browser-compat-data/refs/heads/main/browsers/firefox.json | \
+            jq -r '.browsers.firefox.releases | to_entries[] | select(.value.status != "beta" and .value.status != "nightly" and .value.status != "planned") | .key' | \
+            awk -v s="$start" '$1 ~ /^[0-9]+$/ && $1 >= s' | sort -n)
+          if [ -z "$versions" ]; then
+            echo "No new releases since $start."
             exit 0
           fi
-          mapfile -t tags < <(git -C releases for-each-ref --format='%(refname)' --no-merged origin/releases refs/tags)
-          git -C releases push --atomic origin HEAD:refs/heads/releases "${tags[@]}"
+
+          git -C releases config user.name "github-actions[bot]"
+          git -C releases config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          for v in $versions; do
+            echo "::group::Firefox $v"
+            scripts/download.sh "$v" "$v"
+            if [ ! -f "firefox-$v-source.tar.xz" ]; then
+              echo "Tarball for Firefox $v is not available yet."
+              exit 1
+            fi
+            scripts/repo.sh "$v" "$v"
+            rm -f "firefox-$v-source.tar.xz"
+            if [ "$DRY_RUN" = "true" ]; then
+              git -C releases log -1 --format='%h %s'
+            else
+              git -C releases push --atomic origin HEAD:refs/heads/releases "refs/tags/v$v"
+            fi
+            echo "::endgroup::"
+          done
