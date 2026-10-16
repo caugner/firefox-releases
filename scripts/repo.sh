@@ -66,6 +66,10 @@ for archive in $(ls firefox-* | sort -V); do
     # The --strip-components=1 flag removes the top-level directory.
     tar xf "$archive" -C releases --strip-components=1
 
+    # Drop binaries, media, fonts, and test data, as the safari-releases snapshots do.
+    find releases -path releases/.git -prune -o -type f \( -name '*.a' -o -name '*.apk' -o -name '*.bc' -o -name '*.bin' -o -name '*.bz2' -o -name '*.dat' -o -name '*.data' -o -name '*.db' -o -name '*.bdic' -o -name '*.crx' -o -name '*.def' -o -name '*.exr' -o -name '*.dic' -o -name '*.dll' -o -name '*.dmg' -o -name '*.exe' -o -name '*.gpg' -o -name '*.icc' -o -name '*.ivf' -o -name '*.jar' -o -name '*.jpeg' -o -name '*.jpg' -o -name '*.keystore' -o -name '*.lib' -o -name '*.m4v' -o -name '*.map' -o -name '*.mskp' -o -name '*.mp3' -o -name '*.mp4' -o -name '*.mov' -o -name '*.ogg' -o -name '*.ogv' -o -name '*.onnx' -o -name '*.otf' -o -name '*.ops' -o -name '*.pdb' -o -name '*.pcm' -o -name '*.png' -o -name '*.psd' -o -name '*.raw' -o -name '*.res' -o -name '*.sqlite' -o -name '*.so' -o -name '*.svg' -o -name '*.svgz' -o -name '*.tar.xz' -o -name '*.reality' -o -name '*.sdkdb' -o -name '*.tflite' -o -name '*.ttf' -o -name '*.wav' -o -name '*.webm' -o -name '*.webp' -o -name '*.woff' -o -name '*.woff2' -o -name '*.usdz' -o -name '*.y4m' -o -name '*.yuv' -o -name '*.wasm' -o -name '*.wast' -o -name '*.glb' -o -name '*.zip' \) -exec rm -f {} +
+    find releases -path releases/.git -prune -o -type d \( -name testdata -o -path '*/test/data' \) -prune -exec rm -rf {} +
+
     # Stage all extracted files.
     $GIT add .
 
