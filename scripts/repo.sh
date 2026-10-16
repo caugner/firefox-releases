@@ -17,6 +17,7 @@ else
 fi
 
 MIN_VERSION="${1:-}"
+MAX_VERSION="${2:-}"
 if [ -z "$MIN_VERSION" ]; then
     latest=$(git ls-remote --tags "$RELEASES_REMOTE" | sed -n 's|.*refs/tags/v\([0-9][0-9.]*\)$|\1|p' | sort -V | tail -n 1)
     [ -n "$latest" ] && MIN_VERSION=$(( ${latest%%.*} + 1 ))
@@ -43,6 +44,14 @@ for archive in $(ls firefox-* | sort -V); do
     if [ -n "$MIN_VERSION" ]; then
         if [ "$(printf '%s\n' "$MIN_VERSION" "$version" | sort -V | head -n1)" != "$MIN_VERSION" ]; then
             echo "Skipping $archive (version $version < $MIN_VERSION)"
+            continue
+        fi
+    fi
+
+    # Skip if version > MAX_VERSION
+    if [ -n "$MAX_VERSION" ]; then
+        if [ "$(printf '%s\n' "$MAX_VERSION" "$version" | sort -V | tail -n1)" != "$MAX_VERSION" ]; then
+            echo "Skipping $archive (version $version > $MAX_VERSION)"
             continue
         fi
     fi

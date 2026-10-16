@@ -13,6 +13,7 @@ fi
 RELEASES_REMOTE="${RELEASES_REMOTE:-https://github.com/caugner/firefox-releases.git}"
 
 MIN_VERSION="${1:-}"
+MAX_VERSION="${2:-}"
 if [ -z "$MIN_VERSION" ]; then
   latest=$(git ls-remote --tags "$RELEASES_REMOTE" | sed -n 's|.*refs/tags/v\([0-9][0-9.]*\)$|\1|p' | sort -V | tail -n 1)
   [ -n "$latest" ] && MIN_VERSION=$(( ${latest%%.*} + 1 ))
@@ -39,6 +40,9 @@ for version in $versions; do
   # Determine file extension based on major version
   version_major=$(echo $version | cut -d. -f1)
   if [ -n "$MIN_VERSION" ] && (( version_major < MIN_VERSION )); then
+    continue
+  fi
+  if [ -n "$MAX_VERSION" ] && (( version_major > MAX_VERSION )); then
     continue
   fi
   if (( version_major >= 41 )); then
