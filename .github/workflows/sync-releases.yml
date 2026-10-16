@@ -1,0 +1,66 @@
+name: sync-releases
+
+on:
+  schedule:
+    - cron: "0 15 * * 1-5"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: First major version to import (default: the one after the newest tag)
+        required: false
+        default: ""
+      dry-run:
+        description: Build the commits and tags without pushing
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: sync-releases
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: write
+    steps:
+      - name: Check out scripts
+        uses: actions/checkout@v4
+
+      - name: Check out releases
+        uses: actions/checkout@v4
+        with:
+          ref: releases
+          path: releases
+          fetch-depth: 1
+
+      - name: Download missing tarballs
+        env:
+          VERSION: ${{ inputs.version }}
+        run: scripts/download.sh "$VERSION"
+
+      - name: Import releases
+        id: import
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          git -C releases config user.name "github-actions[bot]"
+          git -C releases config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          scripts/repo.sh "$VERSION"
+          echo "count=$(git -C releases rev-list --count origin/releases..HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Push releases and tags
+        if: steps.import.outputs.count != '0'
+        env:
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          git -C releases log --format='%h %s' origin/releases..HEAD
+          if [ "$DRY_RUN" = "true" ]; then
+            echo "Dry run: not pushing."
+            exit 0
+          fi
+          tags=$(for c in $(git -C releases rev-list origin/releases..HEAD); do git -C releases tag --points-at "$c"; done)
+          git -C releases push --atomic origin HEAD:refs/heads/releases $(for t in $tags; do echo "refs/tags/$t"; done)
