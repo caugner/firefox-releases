@@ -2487,7 +2487,7 @@ void ScrollContainerFrame::ScrollToCSSPixels(const CSSPoint& aScrollPosition,
   // 'this' might be destroyed here
 }
 
-void ScrollContainerFrame::ScrollToCSSPixelsForApz(
+bool ScrollContainerFrame::ScrollToCSSPixelsForApz(
     const CSSPoint& aScrollPosition, ScrollSnapTargetIds&& aLastSnapTargetIds,
     const APZScrollGeneration& aGenerationOnApz) {
   mScrollGenerationOnApz = aGenerationOnApz;
@@ -2495,11 +2495,13 @@ void ScrollContainerFrame::ScrollToCSSPixelsForApz(
   nscoord halfRange = nsPresContext::CSSPixelsToAppUnits(1000);
   nsRect range(pt.x - halfRange, pt.y - halfRange, 2 * halfRange - 1,
                2 * halfRange - 1);
+  AutoWeakFrame weakFrame(this);
   ScrollToWithOrigin(
       pt, &range,
       ScrollOperationParams{ScrollMode::Instant, ScrollOrigin::Apz,
                             std::move(aLastSnapTargetIds)});
   // 'this' might be destroyed here
+  return weakFrame.IsAlive();
 }
 
 CSSIntPoint ScrollContainerFrame::GetRoundedScrollPositionCSSPixels() {
@@ -4820,8 +4822,8 @@ nsSize ScrollContainerFrame::GetVisualViewportSize() const {
 
 nsPoint ScrollContainerFrame::GetVisualViewportOffset() const {
   if (mIsRoot) {
-    auto* presShell = PresShell();
-    if (auto pendingUpdate = presShell->GetPendingVisualScrollUpdate()) {
+    auto* ps = PresShell();
+    if (auto pendingUpdate = ps->GetPendingVisualScrollUpdate()) {
       // The pending visual scroll update on the PresShell contains a raw,
       // unclamped offset (basically, whatever was passed to ScrollToVisual()).
       // It will be clamped on the APZ side, but if we use it as the
@@ -4831,7 +4833,9 @@ nsPoint ScrollContainerFrame::GetVisualViewportOffset() const {
       return GetScrollRangeForUserInputEvents().ClampPoint(
           pendingUpdate->mVisualScrollOffset);
     }
-    return presShell->GetVisualViewportOffset();
+    if (ps->IsVisualViewportOffsetSet()) {
+      return ps->GetVisualViewportOffset();
+    }
   }
   return GetScrollPosition();
 }

@@ -1122,14 +1122,12 @@ static Maybe<int32_t> ReadIntAttribute(const Element& aElement,
 // to fit to the screen when staggering windows; if they're negative,
 // we use the window's current size instead.
 bool AppWindow::LoadPositionFromXUL(int32_t aSpecWidth, int32_t aSpecHeight) {
-  // if we're the hidden window, don't try to validate our size/position. We're
-  // special.
-  if (mIsHiddenWindow) {
-    return false;
-  }
-
-  // If we're not in the normal sizemode, don't move the window around.
-  if (mWindow->SizeMode() != nsSizeMode_Normal) {
+  // There are a few cases where we don't want to honor the XUL position:
+  // * If we're the hidden window (we're hidden, so...)
+  // * If we're not in normal sizemode (no point in moving the window around).
+  // * If disabled (like on GTK) (the WM does a better job at this than us).
+  if (mIsHiddenWindow || mWindow->SizeMode() != nsSizeMode_Normal ||
+      !StaticPrefs::browser_load_xul_position_enabled()) {
     return false;
   }
 
@@ -1178,23 +1176,24 @@ bool AppWindow::LoadPositionFromXUL(int32_t aSpecWidth, int32_t aSpecHeight) {
     gotPosition = true;
   }
 
-  if (gotPosition) {
-    // Our position will be relative to our parent, if any
-    nsCOMPtr<nsIBaseWindow> parent(do_QueryReferent(mParentWindow));
-    if (parent) {
-      const DesktopIntPoint parentPos = RoundedToInt(
-          parent->GetPosition() / parent->DevicePixelsPerDesktopPixel());
-      specPoint += parentPos;
-    } else {
-      StaggerPosition(specPoint.x.value, specPoint.y.value, cssSize.width,
-                      cssSize.height);
-    }
+  if (!gotPosition) {
+    return false;
+  }
+  // Our position will be relative to our parent, if any
+  nsCOMPtr<nsIBaseWindow> parent(do_QueryReferent(mParentWindow));
+  if (parent) {
+    const DesktopIntPoint parentPos = RoundedToInt(
+        parent->GetPosition() / parent->DevicePixelsPerDesktopPixel());
+    specPoint += parentPos;
+  } else {
+    StaggerPosition(specPoint.x.value, specPoint.y.value, cssSize.width,
+                    cssSize.height);
   }
   mWindow->ConstrainPosition(specPoint);
   if (specPoint != curPoint) {
     SetPositionDesktopPix(specPoint.x, specPoint.y);
   }
-  return gotPosition;
+  return true;
 }
 
 static Maybe<int32_t> ReadSize(const Element& aElement, nsAtom* aAttr,
